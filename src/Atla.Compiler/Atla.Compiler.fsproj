@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="types\Position.fs" />
+    <Compile Include="types\Span.fs" />
+    <Compile Include="types\Input.fs" />
+    <Compile Include="Types\ParseResult.fs" />
+    <Folder Include="Ast\" />
+    <Compile Include="ast\Ast.fs" />
+    <Compile Include="Parsing\PackratParser.fs" />
+    <Compile Include="parsing\SourceChar.fs" />
+    <Compile Include="parsing\SourceString.fs" />
+    <Compile Include="Parsing\Token.fs" />
+    <Compile Include="Parsing\Lexer.fs" />
+    <Compile Include="parsing\Parser.fs" />
+
+  </ItemGroup>
+
+  <ItemGroup />
+
+</Project>

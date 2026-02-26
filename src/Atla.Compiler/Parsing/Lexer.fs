@@ -1,0 +1,68 @@
+namespace Atla.Compiler.Parsing
+
+open Atla.Compiler.Types
+open Atla.Compiler.Parsing.Combinators
+
+type StringInput(s: string) =
+    let lines = s.Split('\n')
+    interface Input<SourceChar> with
+        member _.get (arg: Position): SourceChar option =
+            if arg.Line < lines.Length then
+                let line = lines.[arg.Line]
+                let c = line.[arg.Column]
+                if arg.Column < line.Length then Some { char = c; span = { left = arg; right = arg.Advance(c); }} else None
+            else None
+
+        member _.next (arg: Position): Position =
+            let line = lines.[arg.Line]
+            if arg.Column < line.Length - 1 then
+                { arg with Column = arg.Column + 1 }
+            else
+                { Line = arg.Line + 1; Column = 0 }
+
+module Lexer =
+    let asToken<'T when 'T :> Token> (p: PackratParser<SourceChar, 'T>) : PackratParser<SourceChar, Token> =
+        p |>> fun t -> t :> Token
+
+    let keywords = [
+        // declarations
+        "let"; "var"; "fn"; "mod"; "def"; "use"; "import"; "struct"; "this"; "trait"; "impl";
+        // control flows
+        "for"; "in"; "if"; "else"; "match"; "do"; "while";
+        // block
+        "return"; "continue"; "break";
+        // boolean
+        "true"; "false"
+    ]
+    let delims = ['''; '"'; '`'; '#'; ','; ';'; ':'; '('; ')'; '['; ']'; '{'; '}']
+    let opSigns = ['+'; '-'; '*'; '/'; '%'; '<'; '>'; '='; '!'; '^'; '&'; '|'; '?'; '.']
+    
+    let ws = AcceptIf (fun c -> System.Char.IsWhiteSpace(c.char))
+    let alpha = AcceptIf (fun c -> System.Char.IsLetter(c.char))
+    let alpha_ = alpha <|> (AcceptIf (fun c -> c.char = '_'))
+    let digit = AcceptIf (fun c -> System.Char.IsDigit(c.char))
+    let nonZeroDigit = AcceptIf (fun c -> System.Char.IsDigit(c.char) && c.char <> '0')
+    let intZeroRaw = AcceptIf (fun c -> c.char = '0')
+    let intNotZeroRaw = nonZeroDigit <&> Many digit |>> fun (first, rest) -> SourceString.join (first :: rest)
+    let intRaw = (intZeroRaw |>> fun c -> { string = "0"; span = c.span }) <|> intNotZeroRaw
+    let floatRaw = intRaw <& AcceptIf (fun c -> c.char = '.') <&> intRaw |>> fun (intPart, fracPart) -> { string = intPart.string + "." + fracPart.string; span = { left = intPart.span.left; right = fracPart.span.right } }
+    let alphaNum: PackratParser<SourceChar, SourceChar> = alpha <|> digit
+    let alphaNum_ = alpha_ <|> digit
+    let keyword: PackratParser<SourceChar, Token.Keyword> =
+        keywords
+            |> List.map (fun kw -> (Phrase (kw |> Seq.toList) (fun (c, k) -> c.char = k) |>> fun chars -> let s = SourceString.join(chars) in Token.Keyword(s.string, s.span)))
+            |> List.fold (<|>) (Fail "No keywords")
+    let delim: PackratParser<SourceChar, Token.Delim> =
+        delims
+            |> List.map (fun d -> AcceptIf (fun (c: SourceChar) -> c.char = d) |>> fun c -> Token.Delim (c.char, c.span))
+            |> List.fold (<|>) (Fail "No delimiters")
+    let symbol: PackratParser<SourceChar, Token.Symbol> =
+        opSigns
+            |> List.map (fun sg -> Many1 (AcceptIf (fun c -> c.char = sg)) |>> fun cs -> let s = SourceString.join(cs) in Token.Symbol(s.string, s.span))
+            |> List.fold (<|>) (Fail "No signs")
+    let id = alpha_ <&> Many alphaNum_ |>> fun (first, rest) -> let s = SourceString.join(first :: rest) in Token.Id(s.string, s.span)
+    let int = intRaw |>> fun s -> Token.Int(System.Int32.Parse(s.string), s.span)
+    let float = floatRaw |>> fun s -> Token.Float(System.Double.Parse(s.string), s.span)
+
+    let tokenize : PackratParser<SourceChar, Token list> = 
+        Many (ws) &> SepBy ((asToken keyword) <|> (asToken delim) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many ws) <& Many ws <& Eoi |>> fun tokens -> tokens

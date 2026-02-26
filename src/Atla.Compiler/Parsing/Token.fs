@@ -1,0 +1,65 @@
+namespace Atla.Compiler.Parsing
+
+open Atla.Compiler.Types
+
+type Token = inherit HasSpan
+
+module Token =
+    type Id(str: string, span: Span) = 
+        member this.str = str
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type Int(value: int, span: Span) =
+        member this.value = value
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type Float(value: float, span: Span) =
+        member this.value = value
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type Char(value: char, span: Span) =
+        member this.value = value
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type String(value: string, span: Span) =
+        member this.value = value
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type Keyword(str: string, span: Span) =
+        member this.str = str
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type Symbol(str: string, span: Span) =
+        member this.str = str
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type Delim(char: char, span: Span) =
+        member this.char = char
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type Newline(indent: int, span: Span) =
+        member this.indent = indent
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    type Eoi(span: Span) =
+        member this.span = span
+        interface Token with
+            member this.span = span
