@@ -43,6 +43,17 @@ module Token =
 
     type Symbol(str: string, span: Span) =
         member this.str = str
+        member this.precedence = match str.Chars 0 with
+                                    | '*' | '/' | '%' -> 9
+                                    | '+' | '-' -> 8
+                                    | ':' -> 7
+                                    | '=' | '!' -> 6
+                                    | '<' | '>' -> 5
+                                    | '&' -> 4
+                                    | '^' -> 3
+                                    | '|' -> 2
+                                    | '.' -> 1
+                                    | _ -> 0
         member this.span = span
         interface Token with
             member this.span = span

@@ -10,14 +10,18 @@
     <Compile Include="types\Span.fs" />
     <Compile Include="types\Input.fs" />
     <Compile Include="Types\ParseResult.fs" />
-    <Folder Include="Ast\" />
     <Compile Include="ast\Ast.fs" />
+    <Folder Include="Ast\Eval\" />
+    <Compile Include="ast\eval\Type.fs" />
+    <Compile Include="ast\eval\Value.fs" />
+    <Compile Include="ast\eval\Scope.fs" />
+    <Compile Include="ast\eval\Eval.fs" />
     <Compile Include="Parsing\PackratParser.fs" />
-    <Compile Include="parsing\SourceChar.fs" />
-    <Compile Include="parsing\SourceString.fs" />
+    <Compile Include="Parsing\SourceChar.fs" />
+    <Compile Include="Parsing\SourceString.fs" />
     <Compile Include="Parsing\Token.fs" />
     <Compile Include="Parsing\Lexer.fs" />
-    <Compile Include="parsing\Parser.fs" />
+    <Compile Include="Parsing\Parser.fs" />
 
   </ItemGroup>
 

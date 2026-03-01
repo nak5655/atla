@@ -9,8 +9,10 @@ type StringInput(s: string) =
         member _.get (arg: Position): SourceChar option =
             if arg.Line < lines.Length then
                 let line = lines.[arg.Line]
-                let c = line.[arg.Column]
-                if arg.Column < line.Length then Some { char = c; span = { left = arg; right = arg.Advance(c); }} else None
+                if arg.Column < line.Length then
+                    let c = line.[arg.Column]
+                    Some { char = c; span = { left = arg; right = arg.Advance(c); }}
+                else None
             else None
 
         member _.next (arg: Position): Position =
@@ -26,7 +28,7 @@ module Lexer =
 
     let keywords = [
         // declarations
-        "let"; "var"; "fn"; "mod"; "def"; "use"; "import"; "struct"; "this"; "trait"; "impl";
+        "let"; "var"; "fn"; "mod"; "def"; "use"; "import"; "data"; "this"; "role"; "impl";
         // control flows
         "for"; "in"; "if"; "else"; "match"; "do"; "while";
         // block

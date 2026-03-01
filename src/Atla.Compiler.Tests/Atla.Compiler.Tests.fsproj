@@ -6,7 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Tests.fs" />
+    <Compile Include="Parsing\LexerTests.fs" />
+    <Compile Include="Parsing\ParserTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -18,6 +19,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Atla.Compiler\Atla.Compiler.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Ast\Eval\" />
+    <Compile Include="ast\eval\EvalTests.fs" />
+    <Folder Include="Parsing\" />
   </ItemGroup>
 
 </Project>
