@@ -7,16 +7,19 @@ type Scope(parent: Scope option) =
 
     member this.parent = parent
 
-    member this.SetVar(name: string, value: Value) : unit =
-        variables <- variables.Add(name, value)
+    member this.SetVar(name: string, variable: Variable) : unit =
+        variables <- variables.Add(name, variable)
 
-    member this.GetVar(name: string) : Value option =
+    member this.GetVar(name: string) : Variable option =
         match variables.TryFind(name) with
-        | Some value -> Some value
+        | Some variable -> Some variable
         | None ->
             match parent with
             | Some parentScope -> parentScope.GetVar(name)
             | None -> None
+
+    member this.HasVar(name: string) : bool =
+        variables.ContainsKey(name)
 
     member this.SetType(name: string, typeItem: Type) : unit =
         types <- types.Add(name, typeItem)
