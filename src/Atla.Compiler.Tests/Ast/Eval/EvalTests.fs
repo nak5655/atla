@@ -5,7 +5,9 @@ open Xunit
 open Atla.Compiler.Ast
 open Atla.Compiler.Types
 open Atla.Compiler.Parsing
-open Atla.Compiler.Ast.Eval
+open Atla.Compiler.Hir
+open Atla.Compiler.Hir.Eval
+open Atla.Compiler.Lowering
 
 module EvalTests =
     [<Fact>]
@@ -25,8 +27,9 @@ let greeting = do
                 let result = Parser.fileModule() tokenInput tokens.Head.span.left
                 match result with
                     | Success (moduleAst, _) ->
-                        let globalScope = Eval.Scope(None)
-                        Eval.evalModule globalScope moduleAst
+                        let hir = Desugar.desugarModule moduleAst
+                        let globalScope = Scope(None)
+                        Eval.evalModule globalScope hir
                         //Assert.Equal(Some(Value.Int 3), globalScope.GetVar("a"))
                     | Failure (reason, span) ->
                         Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

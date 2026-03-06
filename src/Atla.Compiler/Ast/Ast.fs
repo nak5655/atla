@@ -92,25 +92,6 @@ module Ast =
             interface HasSpan with
                 member this.span = span
     
-    module TypeExpr =
-        type Id(name: string, span: Span) =
-            member this.name = name
-            member this.span = span
-            interface TypeExpr with
-                member this.span = span
-            interface HasSpan with
-                member this.span = span
-
-    module DataItem =
-        type Field(name:string, typeExpr: TypeExpr, span: Span) =
-            member this.name = name
-            member this.typeExpr = typeExpr
-            member this.span = span
-            interface DataItem with
-                member this.span = span
-            interface HasSpan with
-                member this.span = span
-
     module Stmt =
         type Let(name: string, value: Expr, span: Span) =
             member this.name = name
@@ -169,6 +150,25 @@ module Ast =
             member this.message = message
             member this.span = span
             interface Stmt with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+                
+    module TypeExpr =
+        type Id(name: string, span: Span) =
+            member this.name = name
+            member this.span = span
+            interface TypeExpr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+    module DataItem =
+        type Field(name:string, typeExpr: TypeExpr, span: Span) =
+            member this.name = name
+            member this.typeExpr = typeExpr
+            member this.span = span
+            interface DataItem with
                 member this.span = span
             interface HasSpan with
                 member this.span = span

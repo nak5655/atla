@@ -1,4 +1,4 @@
-namespace Atla.Compiler.Ast.Eval
+namespace Atla.Compiler.Hir
 
 type Value =
     | Unit

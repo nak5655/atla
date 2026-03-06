@@ -1,3 +1,3 @@
-namespace Atla.Compiler.Ast.Eval
+namespace Atla.Compiler.Hir
 
 type Variable = { value: Value; isMutable: bool }
