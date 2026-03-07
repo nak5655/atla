@@ -12,9 +12,22 @@ module Desugar =
         | :? Ast.Expr.Float as floatExpr -> Hir.Expr.Float(floatExpr.value, floatExpr.span)
         | :? Ast.Expr.String as stringExpr -> Hir.Expr.String(stringExpr.value, stringExpr.span)
         | :? Ast.Expr.Id as idExpr -> Hir.Expr.Id(idExpr.name, idExpr.span)
+        | :? Ast.Expr.Block as blockExpr ->
+            let stmts = blockExpr.stmts |> List.map desugarStmt
+            match List.last stmts with
+            | Hir.Stmt.ExprStmt (lastExpr, _) -> Hir.Expr.Block(List.take(stmts.Length - 1) stmts, lastExpr, blockExpr.span)
+            | _ -> Hir.Expr.Block(stmts, Hir.Expr.Unit(blockExpr.span), blockExpr.span) // ブロックの最後のステートメントが式でない場合は Unit を返す
+        | :? Ast.Expr.Apply as applyExpr ->
+            let func = desugarExpr applyExpr.func
+            let args = applyExpr.args |> List.map desugarExpr
+            Hir.Expr.Apply(func, args, applyExpr.span)
+        | :? Ast.Expr.MemberAccess as memberAccessExpr ->
+            let receiver = desugarExpr memberAccessExpr.receiver
+            let memberName = memberAccessExpr.memberName
+            Hir.Expr.MemberAccess(receiver, memberName, memberAccessExpr.span)
         | _ -> failwith "Unsupported expression type"
 
-    let rec desugarStmt (stmt: Ast.Stmt) : Hir.Stmt =
+    and desugarStmt (stmt: Ast.Stmt) : Hir.Stmt =
         match stmt with
         | :? Ast.Stmt.Let as letStmt ->
             Hir.Stmt.Let(letStmt.name, false, desugarExpr letStmt.value, letStmt.span)
@@ -36,6 +49,11 @@ module Desugar =
         | :? Ast.DataItem.Field as field -> Hir.DataItem.Field(field.name, desugarTypeExpr field.typeExpr, field.span)
         | _ -> failwith "Unsupported data item type"
 
+    let rec desugarFnArg (fnArg: Ast.FnArg) : Hir.FnArg =
+        match fnArg with
+        | :? Ast.FnArg.Unit as unitArg -> Hir.FnArg.Unit(unitArg.span)
+        | :? Ast.FnArg.Named as namedArg -> Hir.FnArg.Named(namedArg.name, desugarTypeExpr namedArg.typeExpr, namedArg.span)
+
     let rec desugarDecl (decl: Ast.Decl) : Hir.Decl =
         match decl with
         | :? Ast.Decl.Import as importDecl ->
@@ -43,9 +61,12 @@ module Desugar =
         | :? Ast.Decl.Data as dataDecl ->
             let items = dataDecl.items |> List.map desugarDataItem
             Hir.Decl.Data(dataDecl.name, items, dataDecl.span)
+        | :? Ast.Decl.Fn as fnDecl ->
+            let args = fnDecl.args |> List.map desugarFnArg
+            let body = desugarExpr fnDecl.body
+            Hir.Decl.Fn(fnDecl.name, args, body, fnDecl.span)
         | _ -> failwith "Unsupported declaration type"
 
     let rec desugarModule (moduleAst: Ast.Module) : Hir.Module =
         let decls = moduleAst.decls |> List.map desugarDecl
-        let stmts = moduleAst.stmts |> List.map desugarStmt
-        Hir.Module(decls, stmts)
+        Hir.Module(decls)

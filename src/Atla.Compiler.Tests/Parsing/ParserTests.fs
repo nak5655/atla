@@ -11,32 +11,28 @@ module ParserTests =
         let program = """
 let greeting = do
     var a = 1
+    Console.WriteLine "Hello, \"World\"!"
     a
-let b = c"""
+"""
         let input: Input<SourceChar> = StringInput program
         let tokens = Lexer.tokenize input Position.Zero
         match tokens with
             | Success (tokens, _) ->
                 let tokenInput = TokenInput(tokens)
-                let result = Parser.letStmt() tokenInput tokens.Head.span.left
+                let result = Parser.fileModule() tokenInput tokens.Head.span.left
                 Assert.True(result.IsSuccess)
             | Failure (reason, span) ->
                 Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let helloData () =
+    let helloEnum () =
         let program = """
-type Shape =
-    data Rect: Shape =
-        var w: int
-        var h: int
-
-    data Triangle =
-        var b: int
-        var h: int
-
 role Area =
     fn area (self: &Self): int
+
+enum Shape = 
+    | Rect (w: Int) (h: Int)
+    | Triangle (b: Int) (h: Int)
 
 impl Shape as Area =
     fn area (self: &Self): int =
@@ -49,7 +45,7 @@ impl Shape as Area =
         match tokens with
             | Success (tokens, _) ->
                 let tokenInput = TokenInput(tokens)
-                let result = Parser.letStmt() tokenInput tokens.Head.span.left
+                let result = Parser.fileModule() tokenInput tokens.Head.span.left
                 Assert.True(result.IsSuccess)
             | Failure (reason, span) ->
                 Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

@@ -47,8 +47,14 @@ type Scope(parent: Scope option) =
 
     static member GlobalScope() : Scope =
         let globalScope = Scope(None)
-        globalScope.SetVar("+",
-                           { value = Value.Function (function
-                                                        | [Value.Int a; Value.Int b] -> Value.Int (a + b)
-                                                        | _ -> failwith "Invalid arguments for + operator") ; isMutable = false })
+        globalScope.SetVar("+", Variable(Value.Function (
+                                    function
+                                    | [Value.Int a; Value.Int b] -> Value.Int (a + b)
+                                    | _ -> failwith "Invalid arguments for + operator")
+                                    , false))
+        globalScope.SetVar("*", Variable(Value.Function (
+                                    function
+                                    | [Value.Int a; Value.Int b] -> Value.Int (a * b)
+                                    | _ -> failwith "Invalid arguments for * operator")
+                                    , false))
         globalScope

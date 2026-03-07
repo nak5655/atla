@@ -77,25 +77,26 @@ module Parser =
     let id = tid |>> fun id -> Ast.Expr.Id (id.str, id.span)
     let int: PackratParser<Token, Ast.Expr.Int> = AcceptMatch (fun t -> match t with :? Token.Int as st -> Some(Ast.Expr.Int(st.value, st.span)) | _ -> None)
     let float: PackratParser<Token, Ast.Expr.Float> = AcceptMatch (fun t -> match t with :? Token.Float as st -> Some(Ast.Expr.Float(st.value, st.span)) | _ -> None)
+    let str: PackratParser<Token, Ast.Expr.String> = AcceptMatch (fun t -> match t with :? Token.String as st -> Some(Ast.Expr.String(st.value, st.span)) | _ -> None)
     let rec paren (): PackratParser<Token, Ast.Expr> =
         Delay (fun () -> 
             delim '(' &> expr () <& delim ')'
         )
     and doExpr (): PackratParser<Token, Ast.Expr> = 
         Delay (fun () -> 
-            block (asToken (keyword "do")) (Once ((Many1 (stmt ()) |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.rev stmts).Head.span.right })) <& Eoi) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr))
+            block (asToken (keyword "do")) (Once ((Many1 (stmt ()) |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right })) <& Eoi) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr))
         )
 
     and factor (): PackratParser<Token, Ast.Expr> =
         Delay (fun () -> 
-            doExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int)
+            doExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str)
         )
 
     and memberAccess (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
             factor() <& symbol "." <&> tid |>> fun (expr, id) -> Ast.Expr.MemberAccess (expr, id.str, { left = expr.span.left; right = id.span.right })
         )
-
+        
     // 呼び出し式の項
     and term1 (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
@@ -173,13 +174,33 @@ module Parser =
             block (asToken (keyword "import")) (Once (SepBy1 tid (symbol ".") |>> fun ids -> Ast.Decl.Import (ids |> List.map (fun id -> id.str), { left = ids.Head.span.left; right = (List.last ids).span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
         )
 
+    and fnArgNamed (): PackratParser<Token, Ast.FnArg> =
+        Delay (fun () ->
+            delim '(' &> tid <& symbol ":" <&> typeExpr() <& delim ')' |>> fun (id, typeExpr) -> Ast.FnArg.Named(id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right })
+        )
+
+    and fnArgUnit (): PackratParser<Token, Ast.FnArg> =
+        Delay (fun () ->
+            delim '(' <&> delim ')' |>> fun (l,r) -> Ast.FnArg.Unit { left = l.span.left; right = r.span.right }
+        )
+
+    and fnArg (): PackratParser<Token, Ast.FnArg> =
+        Delay (fun () ->
+            fnArgUnit () <|> fnArgNamed ()
+        )    
+
+    and fnDecl (): PackratParser<Token, Ast.Decl> =
+        Delay (fun () ->
+            block (asToken (keyword "fn")) (Once (tid <&> Many (fnArg ()) <& symbol "=" <&> expr () |>> fun ((id, args), body) -> Ast.Decl.Fn (id.str, args, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+        )
+
     and decl (): PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            (dataDecl ()) <|> (importDecl ())
+            dataDecl () <|> importDecl () <|> fnDecl ()
         )
 
     and fileModule (): PackratParser<Token, Ast.Module> =
         Delay (fun () ->
-            Many (decl ()) <&> Many (stmt ()) |>> fun (decls, stmts) -> Ast.Module (decls, stmts)
+            Many (decl ()) |>> fun (decls) -> Ast.Module (decls)
         )
 

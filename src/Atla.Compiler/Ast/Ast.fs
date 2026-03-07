@@ -15,6 +15,9 @@ module Ast =
     type DataItem =
         abstract member span: Span
 
+    type FnArg =
+        abstract member span: Span
+
     type Decl =
         abstract member span: Span
 
@@ -58,15 +61,15 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type MemberAccess(target: Expr, memberName: string, span: Span) =
-            member this.target = target
+        type MemberAccess(receiver: Expr, memberName: string, span: Span) =
+            member this.receiver = receiver
             member this.memberName = memberName
             member this.span = span
             interface Expr with
                 member this.span = span
             interface HasSpan with
                 member this.span = span
-
+                
         type Apply(func: Expr, args: Expr list, span: Span) =
             member this.func = func
             member this.args = args
@@ -173,6 +176,24 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+
+    module FnArg =
+        type Unit(span: Span) =
+            member this.span = span
+            interface FnArg with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        type Named(name: string, typeExpr: TypeExpr, span: Span) =
+            member this.name = name
+            member this.typeExpr = typeExpr
+            member this.span = span
+            interface FnArg with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
     module Decl =
         type Import(path: string list, span: Span) =
             member this.path = path
@@ -191,6 +212,16 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        type Fn(name: string, args: FnArg list, body: Expr, span: Span) =
+            member this.name = name
+            member this.args = args
+            member this.body = body
+            member this.span = span
+            interface Decl with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type Error(message: string, span: Span) =
             member this.message = message
             member this.span = span
@@ -199,6 +230,5 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-    type Module(decls: Decl list, stmts: Stmt list) =
+    type Module(decls: Decl list) =
         member this.decls = decls
-        member this.stmts = stmts

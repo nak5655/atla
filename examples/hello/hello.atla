@@ -1,0 +1,4 @@
+import System.Console
+
+fn main () = do
+    Console.WriteLine "Hello, World!"

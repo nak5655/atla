@@ -65,6 +65,16 @@ module Lexer =
     let id = alpha_ <&> Many alphaNum_ |>> fun (first, rest) -> let s = SourceString.join(first :: rest) in Token.Id(s.string, s.span)
     let int = intRaw |>> fun s -> Token.Int(System.Int32.Parse(s.string), s.span)
     let float = floatRaw |>> fun s -> Token.Float(System.Double.Parse(s.string), s.span)
+    let stringEscape: PackratParser<SourceChar, Token.String> =
+        AcceptIf (fun c -> c.char = '\\') <&> AcceptIf (fun c -> c.char = '\\') |>> fun (a, b) -> Token.String("\\", { left = a.span.left; right = b.span.right })
+        <|> (AcceptIf (fun c -> c.char = '\\') <&> AcceptIf (fun c -> c.char = '"') |>> fun (a, b) -> Token.String("\"", { left = a.span.left; right = b.span.right }))
+        <|> (AcceptIf (fun c -> c.char = '\\') <&> AcceptIf (fun c -> c.char = 'n') |>> fun (a, b) -> Token.String("\n", { left = a.span.left; right = b.span.right }))
+        <|> (AcceptIf (fun c -> c.char = '\\') <&> AcceptIf (fun c -> c.char = 'r') |>> fun (a, b) -> Token.String("\r", { left = a.span.left; right = b.span.right }))
+        <|> (AcceptIf (fun c -> c.char = '\\') <&> AcceptIf (fun c -> c.char = 't') |>> fun (a, b) -> Token.String("\t", { left = a.span.left; right = b.span.right }))
+    let string: PackratParser<SourceChar, Token.String> =
+        AcceptIf (fun c -> c.char = '"') <&> Many (stringEscape <|> (AcceptIf (fun c -> c.char <> '"') |>> fun c -> Token.String(c.char.ToString(), c.span))) <&> AcceptIf (fun c -> c.char = '"') |>> fun ((openQuote, content), closeQuote) ->
+            let strContent = content |> List.map (fun t -> t.value) |> String.concat ""
+            Token.String(strContent, { left = openQuote.span.left; right = closeQuote.span.right })
 
     let tokenize : PackratParser<SourceChar, Token list> = 
-        Many (ws) &> SepBy ((asToken keyword) <|> (asToken delim) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many ws) <& Many ws <& Eoi |>> fun tokens -> tokens
+        Many (ws) &> SepBy ((asToken keyword) <|> (asToken string) <|> (asToken delim) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many ws) <& Many ws <& Eoi |>> fun tokens -> tokens

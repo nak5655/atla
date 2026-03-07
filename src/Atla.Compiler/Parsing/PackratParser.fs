@@ -20,7 +20,8 @@ module Combinators =
         fun input pos ->
             match input.get pos with
             | Some value when predicate value -> Success (value, input.next pos)
-            | _ -> Failure ("Unexpected input", { left = pos; right = pos })
+            | Some s -> Failure (sprintf "Unexpected input '%A'" s, { left = pos; right = pos })
+            | _ -> Failure ("Unexpected end of input", { left = pos; right = pos })
 
     let AcceptMatch (predicate: 'I -> 'A option) : PackratParser<'I, 'A> =
         fun input pos ->
@@ -28,7 +29,7 @@ module Combinators =
             | Some value ->
                 match predicate value with
                 | Some result -> Success (result, input.next pos)
-                | None -> Failure ("Unexpected input", { left = pos; right = pos })
+                | None -> Failure (sprintf "Unexpected input '%A'" value, { left = pos; right = pos })
             | None -> Failure ("Unexpected end of input", { left = pos; right = pos })
 
     let Fail (message: string) : PackratParser<'I, 'A> =
