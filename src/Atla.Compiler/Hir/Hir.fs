@@ -5,19 +5,10 @@ open Atla.Compiler.Types
 module Hir =
     // Expression HIR as a discriminated union
     type Expr =
-        | Unit of span: Span
-        | Int of value: int * span: Span
-        | Float of value: float * span: Span
-        | String of value: string * span: Span
-        | Id of name: string * span: Span
-        | Apply of func: Expr * args: Expr list * span: Span
-        | MemberAccess of receiver: Expr * memberName: string * span: Span
-        | Block of stmts: Stmt list * expr: Expr * span: Span
-        | If of cond: Expr * thenBranch: Expr * elseBranch: Expr option * span: Span
-        | Error of message: string * span: Span
+        abstract member typ: TypeCray with get, set
 
     // Statements
-    and Stmt =
+    type Stmt =
         | Let of name: string * isMutable: bool * value: Expr * span: Span
         | Assign of name: string * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
@@ -25,11 +16,7 @@ module Hir =
 
     // Type expressions
     type TypeExpr =
-        | IdType of name: string * span: Span
-
-    // Data items
-    type DataItem =
-        | Field of name: string * typeExpr: TypeExpr * span: Span
+        | Id of name: string * span: Span
 
     type FnArg =
         | Unit of span: Span
@@ -38,9 +25,102 @@ module Hir =
     // Declarations
     type Decl =
         | Import of path: string list * span: Span
-        | Data of name: string * items: DataItem list * span: Span
-        | Fn of name: string * args: FnArg list * body: Expr * span: Span
+        | Fn of name: string * args: FnArg list * ret: TypeExpr * body: Expr * span: Span
         | DeclError of message: string * span: Span
 
     type Module(decls: Decl list) =
         member this.decls = decls
+        
+    module Expr =
+        type Unit(span: Span) =
+            let mutable typ = TypeCray.Unit
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type Int(value:int, span: Span) =
+            let mutable typ = TypeCray.Int
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type Float(value: float, span: Span) =
+            let mutable typ = TypeCray.Float
+            member this.value = value
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type String(value: string, span: Span) =
+            let mutable typ = TypeCray.String
+            member this.value = value
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type Id(name: string, span: Span) =
+            let mutable typ = TypeCray.Unknown
+            member this.name = name
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type Apply(func: Expr, args: Expr list, span: Span) =
+            let mutable typ = TypeCray.Unknown
+            member this.func = func
+            member this.args = args
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type MemberAccess(receiver: Expr, memberName: string, span: Span) =
+            let mutable typ = TypeCray.Unknown
+            member this.receiver = receiver
+            member this.memberName = memberName
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type Block(stmts: Stmt list, expr: Expr, span: Span) =
+            let mutable typ = TypeCray.Unknown
+            member this.stmts = stmts
+            member this.expr = expr
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type If(cond: Expr, thenBranch: Expr, elseBranch: Expr option, span: Span) =
+            let mutable typ = TypeCray.Unknown
+            member this.cond = cond
+            member this.thenBranch = thenBranch
+            member this.elseBranch = elseBranch
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type Error(message: string, span: Span) =
+            let mutable typ = TypeCray.Unknown
+            member this.message = message
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v

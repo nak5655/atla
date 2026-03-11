@@ -1,39 +1,40 @@
 namespace Atla.Compiler.Hir
 
 open System.Collections.Generic
+open Atla.Compiler.Types
 
 type Scope(parent: Scope option) =
-    let mutable variables : Dictionary<string, Variable> = Dictionary()
-    let mutable types : Dictionary<string, Type> = Dictionary()
+    let mutable vars : Dictionary<string, TypeCray> = Dictionary()
+    let mutable types : Dictionary<string, TypeCray> = Dictionary()
     let mutable scopes : Dictionary<string, Scope> = Dictionary()
 
     member this.parent = parent
 
-    member this.SetVar(name: string, variable: Variable) : unit =
-        variables.[name] <- variable
+    member this.DeclareVar(name: string, typ: TypeCray) =
+        vars.[name] <- typ
 
-    member this.GetVar(name: string) : Variable option =
-        let mutable v = Unchecked.defaultof<Variable>
-        if variables.TryGetValue(name, &v) then
+    member this.ResolveVar(name: string) : TypeCray option =
+        let mutable v = Unchecked.defaultof<TypeCray>
+        if vars.TryGetValue(name, &v) then
             Some v
         else
             match parent with
-            | Some parentScope -> parentScope.GetVar(name)
+            | Some parentScope -> parentScope.ResolveVar(name)
             | None -> None
 
     member this.HasVar(name: string) : bool =
-        variables.ContainsKey(name)
+        vars.ContainsKey(name)
 
-    member this.SetType(name: string, typeItem: Type) : unit =
+    member this.DeclareType(name: string, typeItem: TypeCray) =
         types.[name] <- typeItem
 
-    member this.GetType(name: string) : Type option =
-        let mutable t = Unchecked.defaultof<Type>
+    member this.ResolveType(name: string) : TypeCray option =
+        let mutable t = Unchecked.defaultof<TypeCray>
         if types.TryGetValue(name, &t) then
             Some t
         else
             match parent with
-            | Some parentScope -> parentScope.GetType(name)
+            | Some parentScope -> parentScope.ResolveType(name)
             | None -> None
 
     member this.GetScope(name: string) : Scope option =
@@ -47,14 +48,9 @@ type Scope(parent: Scope option) =
 
     static member GlobalScope() : Scope =
         let globalScope = Scope(None)
-        globalScope.SetVar("+", Variable(Value.Function (
-                                    function
-                                    | [Value.Int a; Value.Int b] -> Value.Int (a + b)
-                                    | _ -> failwith "Invalid arguments for + operator")
-                                    , false))
-        globalScope.SetVar("*", Variable(Value.Function (
-                                    function
-                                    | [Value.Int a; Value.Int b] -> Value.Int (a * b)
-                                    | _ -> failwith "Invalid arguments for * operator")
-                                    , false))
+        globalScope.DeclareType("Int", TypeCray.Int)
+        globalScope.DeclareType("Float", TypeCray.Float)
+        globalScope.DeclareType("String", TypeCray.String)
+        globalScope.DeclareVar("+", TypeCray.Function([TypeCray.Int; TypeCray.Int], TypeCray.Int))
+        globalScope.DeclareVar("*", TypeCray.Function([TypeCray.Int; TypeCray.Int], TypeCray.Int))
         globalScope

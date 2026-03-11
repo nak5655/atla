@@ -8,7 +8,6 @@ type Value =
     | String of string
     | Function of (Value list -> Value)
     | Data of Map<string, Value>
-    | TypeRef of Type
     | Native of obj // for interop with .NET objects
 
     interface System.IEquatable<Value> with

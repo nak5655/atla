@@ -28,10 +28,10 @@ let greeting = do
     let helloEnum () =
         let program = """
 role Area =
-    fn area (self: &Self): int
+    def area(self: &Self) -> int
 
 enum Shape = 
-    | Rect (w: Int) (h: Int)
+    | Rect(w: Int, h: Int)
     | Triangle (b: Int) (h: Int)
 
 impl Shape as Area =

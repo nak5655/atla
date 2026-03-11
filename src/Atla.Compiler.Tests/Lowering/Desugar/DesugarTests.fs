@@ -6,16 +6,15 @@ open Atla.Compiler.Ast
 open Atla.Compiler.Types
 open Atla.Compiler.Parsing
 open Atla.Compiler.Hir
-open Atla.Compiler.Hir.Eval
 open Atla.Compiler.Lowering
 
-module EvalTests =
+module DesugarTests =
     [<Fact>]
-    let ``helloEval`` () =
+    let ``helloDesugar`` () =
         let program = """
 import System.Console
 
-fn main () = do
+def () main: () = do
     Console.WriteLine "Hello, World!"
 """
         let input: Input<SourceChar> = StringInput program
@@ -28,13 +27,7 @@ fn main () = do
             | Success (moduleAst, _) ->
                 let hir = Desugar.desugarModule moduleAst
                 let globalScope = Scope.GlobalScope ()
-                Eval.evalModule globalScope hir
-                globalScope.GetVar("main")
-                    |> Option.map (fun variable ->
-                        match variable.value with
-                        | Value.Function mainFunc -> Assert.Equal(Value.Unit, mainFunc [Value.Unit])
-                        | _ -> Assert.True(false, "Expected 'main' to be a function"))
-                    |> Option.defaultWith (fun () -> Assert.True(false, "Variable 'main' not found in global scope"))
+                ()
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->

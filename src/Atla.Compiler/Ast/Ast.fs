@@ -70,6 +70,15 @@ module Ast =
             interface HasSpan with
                 member this.span = span
                 
+        type StaticAccess(typeName: string, memberName: string, span: Span) =
+            member this.typeName = typeName
+            member this.memberName = memberName
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+                
         type Apply(func: Expr, args: Expr list, span: Span) =
             member this.func = func
             member this.args = args
@@ -212,9 +221,10 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Fn(name: string, args: FnArg list, body: Expr, span: Span) =
+        type Fn(name: string, args: FnArg list, ret: TypeExpr, body: Expr, span: Span) =
             member this.name = name
             member this.args = args
+            member this.ret = ret
             member this.body = body
             member this.span = span
             interface Decl with

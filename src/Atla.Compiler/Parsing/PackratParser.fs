@@ -5,6 +5,7 @@ open Atla.Compiler.Types
 
 type PackratParser<'I, 'A when 'I :> HasSpan> = Input<'I> -> Position -> ParseResult<'A>
 
+// TODO: メモ化
 module Combinators =
     let Memo (p: PackratParser<'I, 'A>) : PackratParser<'I, 'A> =
         let cache = Dictionary<Position, ParseResult<'A>>()

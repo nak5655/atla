@@ -97,10 +97,15 @@ module Parser =
             factor() <& symbol "." <&> tid |>> fun (expr, id) -> Ast.Expr.MemberAccess (expr, id.str, { left = expr.span.left; right = id.span.right })
         )
         
+    and staticAccess (): PackratParser<Token, Ast.Expr> =
+        Delay (fun () ->
+            tid <& delim ':' <& delim ':' <&> tid |>> fun (typ, id) -> Ast.Expr.StaticAccess (typ.str, id.str, { left = typ.span.left; right = id.span.right })
+        )
+        
     // 呼び出し式の項
     and term1 (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            memberAccess () <|> factor() 
+            staticAccess () <|> memberAccess () <|> factor() 
         )
 
     // 呼び出し式
@@ -191,7 +196,7 @@ module Parser =
 
     and fnDecl (): PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            block (asToken (keyword "fn")) (Once (tid <&> Many (fnArg ()) <& symbol "=" <&> expr () |>> fun ((id, args), body) -> Ast.Decl.Fn (id.str, args, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+            block (asToken (keyword "fn")) (Once (tid <&> Many (fnArg ()) <& delim ':' <&> typeExpr () <& symbol "=" <&> expr () |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
         )
 
     and decl (): PackratParser<Token, Ast.Decl> =

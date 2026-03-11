@@ -22,8 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Ast\Eval\" />
-    <Compile Include="ast\eval\EvalTests.fs" />
+    <Compile Include="Lowering\Desugar\DesugarTests.fs" />
     <Folder Include="Parsing\" />
   </ItemGroup>
 

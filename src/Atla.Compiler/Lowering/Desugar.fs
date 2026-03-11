@@ -41,13 +41,8 @@ module Desugar =
 
     let rec desugarTypeExpr (typeExpr: Ast.TypeExpr) : Hir.TypeExpr =
         match typeExpr with
-        | :? Ast.TypeExpr.Id as idTypeExpr -> Hir.TypeExpr.IdType(idTypeExpr.name, idTypeExpr.span)
+        | :? Ast.TypeExpr.Id as idTypeExpr -> Hir.TypeExpr.Id(idTypeExpr.name, idTypeExpr.span)
         | _ -> failwith "Unsupported type expression type"
-
-    let rec desugarDataItem (dataItem: Ast.DataItem) : Hir.DataItem =
-        match dataItem with
-        | :? Ast.DataItem.Field as field -> Hir.DataItem.Field(field.name, desugarTypeExpr field.typeExpr, field.span)
-        | _ -> failwith "Unsupported data item type"
 
     let rec desugarFnArg (fnArg: Ast.FnArg) : Hir.FnArg =
         match fnArg with
@@ -58,13 +53,11 @@ module Desugar =
         match decl with
         | :? Ast.Decl.Import as importDecl ->
             Hir.Decl.Import(importDecl.path, importDecl.span)
-        | :? Ast.Decl.Data as dataDecl ->
-            let items = dataDecl.items |> List.map desugarDataItem
-            Hir.Decl.Data(dataDecl.name, items, dataDecl.span)
         | :? Ast.Decl.Fn as fnDecl ->
             let args = fnDecl.args |> List.map desugarFnArg
+            let ret = desugarTypeExpr fnDecl.ret
             let body = desugarExpr fnDecl.body
-            Hir.Decl.Fn(fnDecl.name, args, body, fnDecl.span)
+            Hir.Decl.Fn(fnDecl.name, args, ret, body, fnDecl.span)
         | _ -> failwith "Unsupported declaration type"
 
     let rec desugarModule (moduleAst: Ast.Module) : Hir.Module =
