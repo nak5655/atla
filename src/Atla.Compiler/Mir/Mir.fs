@@ -23,14 +23,14 @@ module Mir =
     // Values in MIR
     type Value =
         | ImmVal of Imm
-        | Sym of Symbol
-        | Addr of Symbol
+        | Loc of int
+        | Arg of int
         | Field of inst: Symbol * field: FieldInfo
         override this.ToString() =
             match this with
             | ImmVal v -> sprintf "Imm(%s)" (v.ToString())
-            | Sym s -> sprintf "Sym(%A)" s
-            | Addr s -> sprintf "Addr(%A)" s
+            | Loc s -> sprintf "Loc(%A)" s
+            | Arg s -> sprintf "Arg(%A)" s
             | Field (sym, fi) -> sprintf "Field(%A, %A)" sym fi
 
     type OpCode =
@@ -78,63 +78,30 @@ module Mir =
             | Try(body, finallyBody) -> sprintf "Try(body=%d, finally=%d)" (List.length body) (List.length finallyBody)
 
     // Convenience wrapper for fields in generated types
-    type FieldDef(name: string, tyBuilder: TypeBuilder, fieldType: System.Type) =
-        let builder = tyBuilder.DefineField(name, fieldType, FieldAttributes.Public)
+    type Field(name: string, typ: System.Type) =
         member this.name = name
-        member this.builder = builder
+        member this.typ = typ
 
-    type ConstructorDef(builder: ConstructorBuilder) =
-        let mutable body : Ins list = []
-        member this.builder = builder
-        member val frame = Unchecked.defaultof<obj> with get, set // placeholder for Frame
-        member this.Body
-            with get() = body
-            and set(v) = body <- v
+    type Constructor(body: Ins list, frame: Frame) =
+        member this.body = body
+        member this.frame = frame
 
-    type MethodDef(builder: MethodBuilder) =
-        let mutable body : Ins list = []
-        member this.builder = builder
-        member val frame = Unchecked.defaultof<obj> with get, set
-        member this.Body
-            with get() = body
-            and set(v) = body <- v
+    type Method(name: string, body: Ins list, frame: Frame) =
+        member this.name = name
+        member this.body = body
+        member this.frame = frame
 
-    type MethodContainer =
-        abstract member DefineMethod: name:string * args:System.Type list * ret:System.Type -> MethodDef
-
-    type TypeDef(modBuilder: ModuleBuilder, name: string) =
-        let builder = modBuilder.DefineType(name, TypeAttributes.Public, typeof<System.Object>)
-        let fields = List<FieldDef>()
-        let ctors = List<ConstructorDef>()
-        let methods = List<MethodDef>()
-        member this.builder = builder
+    type Type(name: string, fields: Field list, ctors: Constructor list, methods: Method list) =
+        member this.name = name
         member this.fields = fields
         member this.ctors = ctors
         member this.methods = methods
-        member this.DefineField(name: string, fieldType: System.Type) =
-            let f = FieldDef(name, builder, fieldType)
-            fields.Add(f)
-            f
-        member this.DefineConstructor(argTypes: System.Type seq) =
-            let ctorBuilder = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, argTypes |> Seq.toArray)
-            let c = ConstructorDef(ctorBuilder)
-            ctors.Add(c)
-            c
-        interface MethodContainer with
-            member this.DefineMethod(name, args, ret) =
-                let mb = builder.DefineMethod(name, MethodAttributes.Public ||| MethodAttributes.Static, ret, args |> List.toArray)
-                let m = MethodDef(mb)
-                methods.Add(m)
-                m
 
-    type ModuleDef(name: string) =
-        let methods = List<MethodDef>()
-        member this.DefineMethod(name: string, args: System.Type list, ret: System.Type) =
-            let mb = builder.DefineGlobalMethod(name, MethodAttributes.Public ||| MethodAttributes.Static, ret, args |> List.toArray)
-            let m = MethodDef(mb)
-            methods.Add(m)
-            m
-
-    type Assembly(name: string) =
+    type Module(name: string, types: Type list, methods: Method list) =
         member this.name = name
-        member val modules = Dictionary<string, ModuleDef>()
+        member this.types = types
+        member this.methods = methods
+
+    type Assembly(name: string, modules: Module list) =
+        member this.name = name
+        member this.modules = modules

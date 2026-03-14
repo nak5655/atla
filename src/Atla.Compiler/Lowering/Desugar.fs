@@ -52,12 +52,15 @@ module Desugar =
     let rec desugarDecl (decl: Ast.Decl) : Hir.Decl =
         match decl with
         | :? Ast.Decl.Import as importDecl ->
-            Hir.Decl.Import(importDecl.path, importDecl.span)
+            if importDecl.path.Length = 0 then
+                Hir.Decl.DeclError("Import path cannot be empty", importDecl.span)
+            else
+                Hir.Decl.TypeDef(List.last importDecl.path, Hir.TypeExpr.Import(importDecl.path, importDecl.span), importDecl.span)
         | :? Ast.Decl.Fn as fnDecl ->
             let args = fnDecl.args |> List.map desugarFnArg
             let ret = desugarTypeExpr fnDecl.ret
             let body = desugarExpr fnDecl.body
-            Hir.Decl.Fn(fnDecl.name, args, ret, body, fnDecl.span)
+            Hir.Decl.Def(fnDecl.name, Hir.Expr.Fn(args, ret, body, fnDecl.span), fnDecl.span)
         | _ -> failwith "Unsupported declaration type"
 
     let rec desugarModule (moduleAst: Ast.Module) : Hir.Module =

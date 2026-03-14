@@ -35,6 +35,18 @@ module Typing =
             let argTypes: TypeCray list = applyExpr.args |> List.map (fun arg -> typingExpr scope arg TypeCray.Unknown
                                                                                  arg.typ)
             typingExpr scope applyExpr.func (TypeCray.Function(argTypes, expect))
+        | :? Hir.Expr.Fn as fnExpr ->
+            let (argTypes, retType) =
+                match expect with
+                | TypeCray.Function(argTypes, retType) -> (argTypes, retType)
+                | TypeCray.Unknown -> (List.replicate fnExpr.args.Length TypeCray.Unknown, TypeCray.Unknown)
+                | _ -> (List.replicate fnExpr.args.Length (TypeCray.Error "Type mismatch in function argument"), TypeCray.Error "Type mismatch in function return type")
+            let bodyScope = Scope(Some scope)
+            for (arg, expectedArgType) in List.zip fnExpr.args argTypes do
+                match arg with
+                | Hir.FnArg.Unit _ -> ()
+                | Hir.FnArg.Named (argName, _) -> bodyScope.DeclareVar(argName, expectedArgType)
+            typingExpr bodyScope fnExpr.body retType
         | :? Hir.Expr.Block as blockExpr ->
             // TODO: infer return statement types and unify with expect
             let blockScope = Scope(Some scope)
@@ -66,19 +78,10 @@ module Typing =
         // iterate declarations in the module
         for decl in moduleDecl.decls do
             match decl with
-            | Hir.Decl.Import _ -> ()
-            | Hir.Decl.Fn (name, args, ret, body, span) ->
-                let bodyScope = Scope(Some scope)
-                let mutable argTypes = []
-                for arg in args do
-                    match arg with
-                    | Hir.FnArg.Unit _ -> argTypes <- TypeCray.Unit :: argTypes
-                    | Hir.FnArg.Named (argName, typeExpr, _) ->
-                        let argType = evalTypeExpr bodyScope typeExpr
-                        argTypes <- argType :: argTypes
-                        bodyScope.DeclareVar(argName, argType)
-                let retType = evalTypeExpr scope ret
-                let fnType = TypeCray.Function(argTypes, retType)
-                scope.DeclareVar(name, fnType)
-                typingExpr bodyScope body retType
+            | Hir.Decl.Def (name, expr, span) ->
+                typingExpr scope expr TypeCray.Unknown
+                scope.DeclareVar(name, expr.typ)
+            | Hir.Decl.TypeDef (name, typeExpr, span) ->
+                let typ = evalTypeExpr scope typeExpr
+                scope.DeclareType(name, typ)
             | Hir.Decl.DeclError _ -> ()

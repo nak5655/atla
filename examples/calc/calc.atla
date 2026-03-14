@@ -1,0 +1,10 @@
+def (n: Int) fibonacci: Int =
+    match n
+        | 0 -> 0
+        | 1 -> 1
+        | 2 -> 1
+        | _ -> (n - 2) fibonacci + (n - 1) fibonacci
+
+def () main: () = 
+    let n = () Console::ReadLine Int32::Parse
+    n fibonacci Console::WriteLine

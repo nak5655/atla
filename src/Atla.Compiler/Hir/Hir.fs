@@ -17,19 +17,24 @@ module Hir =
     // Type expressions
     type TypeExpr =
         | Id of name: string * span: Span
+        | Import of path: string list * span: Span
 
     type FnArg =
         | Unit of span: Span
-        | Named of name: string * typeExpr: TypeExpr * span: Span
+        | Named of name: string * span: Span
 
     // Declarations
     type Decl =
-        | Import of path: string list * span: Span
-        | Fn of name: string * args: FnArg list * ret: TypeExpr * body: Expr * span: Span
+        | Def of name: string * expr: Expr * span: Span
+        | TypeDef of name: string * typeExpr: TypeExpr * span: Span
         | DeclError of message: string * span: Span
 
-    type Module(decls: Decl list) =
+    type Module(name: string, decls: Decl list) =
+        member this.name = name
         member this.decls = decls
+
+    type Assembly(modules: Module list) =
+        member this.modules = modules
         
     module Expr =
         type Unit(span: Span) =
@@ -42,6 +47,7 @@ module Hir =
 
         type Int(value:int, span: Span) =
             let mutable typ = TypeCray.Int
+            member this.value = value
             member this.span = span
             interface Expr with
                 member this.typ
@@ -79,6 +85,16 @@ module Hir =
             let mutable typ = TypeCray.Unknown
             member this.func = func
             member this.args = args
+            member this.span = span
+            interface Expr with
+                member this.typ
+                    with get() = typ
+                    and set(v) = typ <- v
+
+        type Fn(args: FnArg list, body: Expr, span: Span) =
+            let mutable typ = TypeCray.Unknown
+            member this.args = args
+            member this.body = body
             member this.span = span
             interface Expr with
                 member this.typ
