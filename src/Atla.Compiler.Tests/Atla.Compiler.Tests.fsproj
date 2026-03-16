@@ -23,6 +23,9 @@
 
   <ItemGroup>
     <Compile Include="Lowering\Desugar\DesugarTests.fs" />
+    <Folder Include="Lowering\Gen\" />
+    <Compile Include="lowering\gen\GenTests.fs" />
+    <Compile Include="lowering\LoweringTests.fs" />
     <Folder Include="Parsing\" />
   </ItemGroup>
 

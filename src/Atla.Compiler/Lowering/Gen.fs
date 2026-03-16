@@ -2,14 +2,16 @@ namespace Atla.Compiler.Lowering
 
 open System.Reflection
 open System.Reflection.Emit
+open System.Runtime.Loader
 open Atla.Compiler.Cir
 open System.Reflection.Metadata
 open System.Reflection.PortableExecutable
 open System.Reflection.Metadata.Ecma335
 open System.IO
+open System.Runtime.Versioning
 
 type Gen() =
-    let mutable mainMethodBuilder: MethodBuilder option = None
+    let mutable mainMethod: MethodInfo option = None
 
     let genIns (gen: ILGenerator) (ins: Cir.Ins) =
         match ins with
@@ -77,6 +79,7 @@ type Gen() =
         for sym in method.frame.locs do
             gen.DeclareLocal(sym.typ) |> ignore
 
+        
         for ins in method.body do
             genIns gen ins
             
@@ -88,6 +91,13 @@ type Gen() =
         for method in typ.methods do
             let methodBuilder = builder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, method.ret, List.toArray method.args)
             genMethod methodBuilder method
+            
+        builder.CreateType() |> ignore
+        
+        // main関数を見つけたら、エントリポイントに指定するために保存しておく
+        for method in builder.DeclaredMethods do
+            if method.Name = "main" then
+                mainMethod <- Some method
 
     let genModule (builder: ModuleBuilder) (modul: Cir.Module) =
         for typ in modul.types do
@@ -98,30 +108,66 @@ type Gen() =
             let methodBuilder = builder.DefineGlobalMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, method.ret, List.toArray method.args)
             genMethod methodBuilder method
 
-            // main関数を見つけたら、後でエントリポイントに指定するために保存しておく
-            if method.name = "main" then
-                mainMethodBuilder <- Some methodBuilder
-
-    let genAssembly (assembly: Cir.Assembly) (filePath: string)  =
-        let builder = PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
+        builder.CreateGlobalFunctions() |> ignore
+        
+    member this.GenAssembly (assembly: Cir.Assembly, filePath: string)  =
+        let builder = System.Reflection.Emit.PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
         for modul in assembly.modules do
             let moduleBuilder = builder.DefineDynamicModule(modul.name)
             genModule moduleBuilder modul
 
-        match mainMethodBuilder with
-        | Some m ->
-            // EntryPointを指定してビルドするために、ILとフィールドデータを手動で生成してPEファイルを作成する
-            let mutable ilStream = BlobBuilder()
-            let mutable fieldData = BlobBuilder()
-            let metadataBuilder = builder.GenerateMetadata(ref ilStream, ref fieldData)
+            // main関数を見つけたら、エントリポイントに指定するために保存しておく
+            match moduleBuilder.GetMethod("main") with
+            | null -> ()
+            | mm -> mainMethod <- Some mm
 
-            let peBuilder = ManagedPEBuilder(PEHeaderBuilder.CreateExecutableHeader(), MetadataRootBuilder(metadataBuilder), ilStream, fieldData, entryPoint = MetadataTokens.MethodDefinitionHandle(m.MetadataToken))
+        // ターゲットフレームワークを指定するために、TargetFrameworkAttributeをアセンブリに追加する
+        let tfaCtor = typeof<TargetFrameworkAttribute>.GetConstructor([| typeof<string> |])
+        let tfa = CustomAttributeBuilder(tfaCtor, [| ".NETCoreApp,Version=v10.0" |])
+        builder.SetCustomAttribute(tfa)
 
-            let peBlob = BlobBuilder()
-            peBuilder.Serialize(peBlob) |> ignore
+        // EntryPointを指定してビルドするために、ILとフィールドデータを手動で生成してPEファイルを作成する
+        let mutable ilStream = BlobBuilder()
+        let mutable fieldData = BlobBuilder()
+        let metadataBuilder = builder.GenerateMetadata(&ilStream, &fieldData)
 
-            use fs = new FileStream(filePath, FileMode.Create, FileAccess.Write)
+        let peBuilder =
+            match mainMethod with 
+            | Some m -> ManagedPEBuilder(
+                header = PEHeaderBuilder.CreateExecutableHeader(),
+                metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
+                ilStream = ilStream,
+                mappedFieldData = fieldData,
+                entryPoint = MetadataTokens.MethodDefinitionHandle(m.MetadataToken))
+            | _ -> ManagedPEBuilder(
+                header = PEHeaderBuilder.CreateExecutableHeader(),
+                metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
+                ilStream = ilStream,
+                mappedFieldData = fieldData)
 
-            peBlob.WriteContentTo(fs)
+        let peBlob = BlobBuilder()
+        peBuilder.Serialize(peBlob) |> ignore
 
-        | _ -> builder.Save(filePath)
+        use fs = new FileStream(filePath, FileMode.Create, FileAccess.Write)
+
+        peBlob.WriteContentTo(fs)
+
+        // dotnetコマンドで実行するためのランタイム構成ファイルを生成する
+        this.GenRuntimeConfig(filePath)
+
+    member this.GenRuntimeConfig (assemblyPath: string) =
+        let runtimeConfig = """{
+  "runtimeOptions": {
+    "tfm": "net10.0",
+    "framework": {
+      "name": "Microsoft.NETCore.App",
+      "version": "10.0.0"
+    },
+    "configProperties": {
+      "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization": false
+    }
+  }
+}
+        """
+        let configPath = Path.ChangeExtension(assemblyPath, ".runtimeconfig.json")
+        File.WriteAllText(configPath, runtimeConfig)

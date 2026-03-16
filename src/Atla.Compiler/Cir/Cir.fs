@@ -55,33 +55,28 @@ module Cir =
         | BrTrue of label: Label
         | BrFalse of label: Label
 
-    type Method = {
-        name: string
-        args: System.Type list
-        ret: System.Type
-        frame: Frame
-        body: Ins list
-    }
+    type Method(name: string, args: System.Type list, ret: System.Type, frame: Frame, body: Ins list) =
+        member this.name = name
+        member this.args = args
+        member this.ret = ret
+        member this.frame = frame
+        member this.body = body
 
-    type Constructor = {
-        frame: Frame
-        args: System.Type list
-        body: Ins list
-    }
+    type Constructor(args: System.Type list, frame: Frame, body: Ins list) =
+        member this.args = args
+        member this.frame = frame
+        member this.body = body
 
-    type Type = {
-        name: string
-        ctors: Constructor list
-        methods: Method list
-    }
+    type Type(name: string, ctors: Constructor list, methods: Method list) =
+        member this.name = name
+        member this.ctors = ctors
+        member this.methods = methods
 
-    type Module = {
-        name: string
-        methods: Method list
-        types: Type list
-    }
+    type Module(name: string, types: Type list, methods: Method list) =
+        member this.name = name
+        member this.types = types
+        member this.methods = methods
 
-    type Assembly = {
-        name: string
-        modules: Module list
-    }
+    type Assembly(name: string, modules: Module list) =
+        member this.name = name
+        member this.modules = modules

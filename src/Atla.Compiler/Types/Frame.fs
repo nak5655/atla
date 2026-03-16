@@ -17,10 +17,11 @@ type Frame() =
     member this.declareLoc(symbol: Symbol) =
         _locs <- _locs @ [symbol]
 
-    member this.declareTemp(): Symbol =
+    member this.declareTemp(typ: System.Type): Symbol =
         let temp = sprintf "$temp%d" (List.length _locs)
-        _locs <- _locs @ [temp]
-        temp
+        let sym = Symbol(temp, typ)
+        _locs <- _locs @ [sym]
+        sym
 
     member this.resolve(symbol: Symbol): FramePosition option =
         match List.tryFindIndex ((=) symbol) _args with

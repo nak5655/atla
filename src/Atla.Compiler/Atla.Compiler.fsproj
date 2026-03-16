@@ -18,20 +18,20 @@
     <Compile Include="Hir\Hir.fs" />
     <Folder Include="Mir\" />
     <Compile Include="mir\Mir.fs" />
-    <Compile Include="cir\Cir.fs" />
+    <Compile Include="Cir\Cir.fs" />
     <Compile Include="Lowering\Desugar.fs" />
     <Compile Include="Lowering\Typing.fs" />
-    <Compile Include="lowering\Layout.fs" />
-    <Compile Include="lowering\Gen.fs" />
+    <Compile Include="Lowering\Layout.fs" />
+    <Compile Include="lowering\Linearize.fs" />
+    <Compile Include="Lowering\Gen.fs" />
     <Compile Include="Parsing\PackratParser.fs" />
     <Compile Include="Parsing\SourceChar.fs" />
     <Compile Include="Parsing\SourceString.fs" />
     <Compile Include="Parsing\Token.fs" />
     <Compile Include="Parsing\Lexer.fs" />
     <Compile Include="Parsing\Parser.fs" />
+    <Compile Include="Compile.fs" />
 
   </ItemGroup>
-
-  <ItemGroup />
 
 </Project>

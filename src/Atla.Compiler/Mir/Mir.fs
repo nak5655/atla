@@ -82,12 +82,19 @@ module Mir =
         member this.name = name
         member this.typ = typ
 
-    type Constructor(body: Ins list, frame: Frame) =
+    type Argum(name: string, typ: System.Type) =
+        member this.name = name
+        member this.typ = typ
+
+    type Constructor(args: Argum list, body: Ins list, frame: Frame) =
+        member this.args = args
         member this.body = body
         member this.frame = frame
 
-    type Method(name: string, body: Ins list, frame: Frame) =
+    type Method(name: string, args: Argum list, ret: System.Type, body: Ins list, frame: Frame) =
         member this.name = name
+        member this.args = args
+        member this.ret = ret
         member this.body = body
         member this.frame = frame
 

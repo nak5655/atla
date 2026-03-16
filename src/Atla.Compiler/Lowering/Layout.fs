@@ -1,5 +1,6 @@
 namespace Atla.Compiler.Lowering
 
+open Atla.Compiler.Types
 open Atla.Compiler.Hir
 open Atla.Compiler.Mir
 
@@ -15,7 +16,8 @@ module Layout =
         | :? Hir.Expr.Float as floatExpr -> KNormal([], Some (Mir.Value.ImmVal(Mir.Imm.Float(floatExpr.value))))
         | :? Hir.Expr.String as stringExpr -> KNormal([], Some (Mir.Value.ImmVal(Mir.Imm.String(stringExpr.value))))
         | :? Hir.Expr.Id as idExpr ->
-            match frame.resolve(idExpr.name) with
+            let sysType = expr.typ.ToSystemType()
+            match frame.resolve(Symbol(idExpr.name, sysType)) with
             | Some (FramePosition.Loc i) -> KNormal([], Some (Mir.Value.Loc i))
             | Some (FramePosition.Arg i) -> KNormal([], Some (Mir.Value.Arg i))
             | None -> failwithf "Undefined variable: %s" idExpr.name
@@ -42,7 +44,8 @@ module Layout =
                 let insts = match rhsK.res with
                             | Some res -> rhsK.ins @ [Mir.Ins.RetValue res]
                             | None -> rhsK.ins @ [Mir.Ins.Ret]
-                methods <- Mir.Method(name, insts, frame) :: methods
+                let args = List.map (fun (arg: Symbol) -> Mir.Argum(arg.name, arg.typ)) frame.args
+                methods <- Mir.Method(name, args, expr.typ.ToSystemType(), insts, frame) :: methods
             | Hir.Decl.TypeDef (name, typeExpr, _) ->
                 // TODO
                 types <- Mir.Type(name, [], [], []) :: types

@@ -1,4 +1,4 @@
-namespace Atla.Compiler.Tests.Ast.Eval
+namespace Atla.Compiler.Tests.Lowering.Desugar
 
 open System
 open Xunit
@@ -25,7 +25,7 @@ def () main: () = do
             let result = Parser.fileModule() tokenInput tokens.Head.span.left
             match result with
             | Success (moduleAst, _) ->
-                let hir = Desugar.desugarModule moduleAst
+                let hir = Desugar.desugarModule("main", moduleAst)
                 let globalScope = Scope.GlobalScope ()
                 ()
             | Failure (reason, span) ->

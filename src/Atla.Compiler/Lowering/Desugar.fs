@@ -63,6 +63,6 @@ module Desugar =
             Hir.Decl.Def(fnDecl.name, Hir.Expr.Fn(args, ret, body, fnDecl.span), fnDecl.span)
         | _ -> failwith "Unsupported declaration type"
 
-    let rec desugarModule (moduleAst: Ast.Module) : Hir.Module =
+    let rec desugarModule (moduleName: string, moduleAst: Ast.Module) : Hir.Module =
         let decls = moduleAst.decls |> List.map desugarDecl
-        Hir.Module(decls)
+        Hir.Module(moduleName, decls)

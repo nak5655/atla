@@ -1,5 +1,6 @@
 namespace Atla.Compiler.Lowering
 
+open System
 open Atla.Compiler.Types
 open Atla.Compiler.Hir
 
@@ -10,6 +11,19 @@ module Typing =
             match scope.ResolveType(name) with
             | Some t -> t
             | None -> TypeCray.Error (sprintf "Undefined type '%s' at %A" name span)
+        | Hir.TypeExpr.Import (path, span) ->
+            let fullName = String.Join(".", path)
+            let maybeType =
+                AppDomain.CurrentDomain.GetAssemblies()
+                |> Array.choose (fun asm ->
+                    match asm.GetType(fullName) with
+                    | null -> None
+                    | t -> Some t)
+                |> Array.tryHead
+            match maybeType with
+            | Some t -> TypeCray.System t
+            | _ -> TypeCray.Error (sprintf "Undefined type '%s' at %A" fullName span)
+
 
     let rec typingExpr (scope: Scope) (expr: Hir.Expr) (expect: TypeCray) =
         match expr with
@@ -45,7 +59,9 @@ module Typing =
             for (arg, expectedArgType) in List.zip fnExpr.args argTypes do
                 match arg with
                 | Hir.FnArg.Unit _ -> ()
-                | Hir.FnArg.Named (argName, _) -> bodyScope.DeclareVar(argName, expectedArgType)
+                | Hir.FnArg.Named (argName, typeExpr, _) ->
+                    let typ = evalTypeExpr scope typeExpr
+                    bodyScope.DeclareVar(argName, expectedArgType.Unify(typ))
             typingExpr bodyScope fnExpr.body retType
         | :? Hir.Expr.Block as blockExpr ->
             // TODO: infer return statement types and unify with expect

@@ -21,7 +21,7 @@ module Hir =
 
     type FnArg =
         | Unit of span: Span
-        | Named of name: string * span: Span
+        | Named of name: string * typeExpr: TypeExpr * span: Span
 
     // Declarations
     type Decl =
@@ -91,9 +91,10 @@ module Hir =
                     with get() = typ
                     and set(v) = typ <- v
 
-        type Fn(args: FnArg list, body: Expr, span: Span) =
+        type Fn(args: FnArg list, ret: TypeExpr, body: Expr, span: Span) =
             let mutable typ = TypeCray.Unknown
             member this.args = args
+            member this.ret = ret
             member this.body = body
             member this.span = span
             interface Expr with
