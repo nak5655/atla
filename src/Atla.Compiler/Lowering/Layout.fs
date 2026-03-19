@@ -1,6 +1,5 @@
 namespace Atla.Compiler.Lowering
 
-open Atla.Compiler.Types
 open Atla.Compiler.Hir
 open Atla.Compiler.Mir
 
@@ -31,21 +30,53 @@ module Layout =
             let funcK = layoutExpr frame applyExpr.func
             ins <- ins @ funcK.ins
             KNormal(ins, funcK.res)
+        | :? Hir.Expr.Block as blockExpr ->
+            let mutable ins = []
+            for stmt in blockExpr.stmts do
+                ins <- ins @ layoutStmt frame stmt
+            let lastK = layoutExpr frame blockExpr.expr
+            ins <- ins @ lastK.ins
+            KNormal(ins, lastK.res)
+        | :? Hir.Expr.MemberAccess as memberAccess ->
+            let sysType = memberAccess.receiver.typ.ToSystemType()
+            match (memberAccess :> Hir.Expr).typ with
+            | TypeCray.Function _ ->
+                let methodInfo = sysType.GetMethod(memberAccess.memberName)
+                KNormal([], Some(Mir.Value.MethodVal(methodInfo)))
+            | _ ->
+                let fieldInfo = sysType.GetField(memberAccess.memberName)
+                KNormal([], Some(Mir.Value.Field(fieldInfo)))
         | _ -> failwithf "Unsupported expression type: %A" (expr.GetType())
+
+    and layoutStmt (frame: Frame) (stmt: Hir.Stmt) : Mir.Ins list =
+        match stmt with
+        | :? Hir.Stmt.Let as letStmt ->
+            let valueK = layoutExpr frame letStmt.value
+            let sym = Symbol(letStmt.name, letStmt.value.typ.ToSystemType())
+            frame.declareLoc(sym)
+            valueK.ins @ [Mir.Ins.Assign(sym, valueK.res.Value)]
+        | :? Hir.Stmt.Assign as assignStmt ->
+            let valueK = layoutExpr frame assignStmt.value
+            let sym = Symbol(assignStmt.name, assignStmt.value.typ.ToSystemType())
+            valueK.ins @ [Mir.Ins.Assign(sym, valueK.res.Value)]
+        | :? Hir.Stmt.ExprStmt as exprStmt ->
+            let exprK = layoutExpr frame exprStmt.expr
+            exprK.ins
+        | _ -> failwithf "Unsupported statement type: %A" (stmt.GetType())
 
     let layoutModule (hirModule: Hir.Module) : Mir.Module =
         let mutable methods = []
         let mutable types = []
         for decl in hirModule.decls do
             match decl with
-            | Hir.Decl.Def (name, expr, _) ->
+            | Hir.Decl.Fn (name, args, ret, body, _) ->
                 let frame = Frame()
-                let rhsK = layoutExpr frame expr
-                let insts = match rhsK.res with
-                            | Some res -> rhsK.ins @ [Mir.Ins.RetValue res]
-                            | None -> rhsK.ins @ [Mir.Ins.Ret]
-                let args = List.map (fun (arg: Symbol) -> Mir.Argum(arg.name, arg.typ)) frame.args
-                methods <- Mir.Method(name, args, expr.typ.ToSystemType(), insts, frame) :: methods
+                let bodyK = layoutExpr frame body
+                let insts = match bodyK.res with
+                            | Some res -> bodyK.ins @ [Mir.Ins.RetValue res]
+                            | None -> bodyK.ins @ [Mir.Ins.Ret]
+                let args = List.map (fun (arg: Symbol) -> arg.typ) frame.args
+                methods <- Mir.Method(name, args, body.typ.ToSystemType(), insts, frame) :: methods
             | Hir.Decl.TypeDef (name, typeExpr, _) ->
                 // TODO
                 types <- Mir.Type(name, [], [], []) :: types

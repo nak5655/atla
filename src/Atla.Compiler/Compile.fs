@@ -18,17 +18,15 @@ module Compiler =
             match Parser.fileModule() tokenInput tokens.Head.span.left with
             | Success (moduleAst, _) ->
                 // Desugaring
-                let hir = Desugar.desugarModule("main", moduleAst)
+                let hir = Semant.analyzeModule("main", moduleAst)
                 // Typing
                 let globalScope = Scope.GlobalScope ()
                 Typing.typingModule globalScope hir
                 // Lowering
                 let mir = Layout.layoutAssembly(asmName, Hir.Assembly [hir])
-                // Linearization
-                let cir = Linearize.linearizeAssembly mir
                 // Code Generation
                 let gen = Gen()
-                gen.GenAssembly(cir, Path.Join(outDir, sprintf "%s.dll" asmName))
+                gen.GenAssembly(mir, Path.Join(outDir, sprintf "%s.dll" asmName))
                 Ok ()
             | Failure (reason, span) ->
                 Result.Error $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}"

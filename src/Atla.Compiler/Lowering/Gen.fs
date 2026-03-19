@@ -2,8 +2,8 @@ namespace Atla.Compiler.Lowering
 
 open System.Reflection
 open System.Reflection.Emit
-open System.Runtime.Loader
-open Atla.Compiler.Cir
+open Atla.Compiler.Types
+open Atla.Compiler.Mir
 open System.Reflection.Metadata
 open System.Reflection.PortableExecutable
 open System.Reflection.Metadata.Ecma335
@@ -13,67 +13,94 @@ open System.Runtime.Versioning
 type Gen() =
     let mutable mainMethod: MethodInfo option = None
 
-    let genIns (gen: ILGenerator) (ins: Cir.Ins) =
+    let rec genValue (gen: ILGenerator) (value: Mir.Value) =
+        match value with
+        | Mir.Value.ImmVal imm ->
+            match imm with
+            | Mir.Imm.Bool b -> if b then gen.Emit(OpCodes.Ldc_I4_1) else gen.Emit(OpCodes.Ldc_I4_0)
+            | Mir.Imm.Int i -> gen.Emit(OpCodes.Ldc_I4, i)
+            | Mir.Imm.Float f -> gen.Emit(OpCodes.Ldc_R8, f)
+            | Mir.Imm.String s -> gen.Emit(OpCodes.Ldstr, s)
+        | Mir.Value.Loc index -> gen.Emit(OpCodes.Ldloc, index) // TODO Ldloc_0, Ldloc_1, Ldloc_2, Ldloc_3 を使う
+        | Mir.Value.Arg index -> gen.Emit(OpCodes.Ldarg, index) // TODO Ldarg_0, Ldarg_1, Ldarg_2, Ldarg_3 を使う
+        | Mir.Value.Field (field) ->
+            genValue gen (Mir.Value.Arg 0) // Assuming 'this' is at Arg 0
+            gen.Emit(OpCodes.Ldfld, field)
+
+
+    let genIns (frame: Frame) (gen: ILGenerator) (ins: Mir.Ins) =
         match ins with
-        | Cir.Ins.LdLoc index -> gen.Emit(OpCodes.Ldloc, index) // TODO Ldloc_0, Ldloc_1, Ldloc_2, Ldloc_3 を使う
-        | Cir.Ins.StLoc index -> gen.Emit(OpCodes.Stloc, index) // TODO Stloc_0, Stloc_1, Stloc_2, Stloc_3 を使う
-        | Cir.Ins.LdArg index -> gen.Emit(OpCodes.Ldarg, index) // TODO Ldarg_0, Ldarg_1, Ldarg_2, Ldarg_3 を使う
-        | Cir.Ins.StArg index -> gen.Emit(OpCodes.Starg, index)
-        | Cir.Ins.LdLocA index -> gen.Emit(OpCodes.Ldloca, index)
-        | Cir.Ins.LdArgA index -> gen.Emit(OpCodes.Ldarga, index)
-        | Cir.Ins.LdI32 value -> gen.Emit(OpCodes.Ldc_I4, value) // TODO Ldc_I4_0, ... Ldc_I4_8 を使う
-        | Cir.Ins.LdF64 value -> gen.Emit(OpCodes.Ldc_R8, value)
-        | Cir.Ins.LdStr str -> gen.Emit(OpCodes.Ldstr, str)
-        | Cir.Ins.StFld fieldInfo -> gen.Emit(OpCodes.Stfld, fieldInfo)
-        | Cir.Ins.LdFld fieldInfo -> gen.Emit(OpCodes.Ldfld, fieldInfo)
-        | Cir.Ins.Add -> gen.Emit(OpCodes.Add)
-        | Cir.Ins.Sub -> gen.Emit(OpCodes.Sub)
-        | Cir.Ins.Mul -> gen.Emit(OpCodes.Mul)
-        | Cir.Ins.Div -> gen.Emit(OpCodes.Div)
-        | Cir.Ins.Rem -> gen.Emit(OpCodes.Rem)
-        | Cir.Ins.Or -> gen.Emit(OpCodes.Or)
-        | Cir.Ins.And -> gen.Emit(OpCodes.And)
-        | Cir.Ins.Eq -> gen.Emit(OpCodes.Ceq)
-        | Cir.Ins.Call method ->
+        | Mir.Ins.Assign (sym, value) ->
+            genValue gen value
+            match frame.resolve(sym) with
+            | Some (FramePosition.Arg index) ->
+                gen.Emit(OpCodes.Starg, index)
+            | Some (FramePosition.Loc index) ->
+                gen.Emit(OpCodes.Stloc, index)
+            | None -> failwithf "Undefined variable: %A" sym
+        | Mir.Ins.TAC (dest, arg1, op, arg2) ->
+            genValue gen arg1
+            genValue gen arg2
+            let opcode =
+                match op with
+                | Mir.OpCode.Add -> OpCodes.Add
+                | Mir.OpCode.Sub -> OpCodes.Sub
+                | Mir.OpCode.Mul -> OpCodes.Mul
+                | Mir.OpCode.Div -> OpCodes.Div
+                | Mir.OpCode.Mod -> OpCodes.Rem
+                | Mir.OpCode.Or -> OpCodes.Or
+                | Mir.OpCode.And -> OpCodes.And
+                | Mir.OpCode.Eq -> OpCodes.Ceq
+            gen.Emit(opcode)
+            match frame.resolve(dest) with
+            | Some (FramePosition.Arg index) ->
+                gen.Emit(OpCodes.Starg, index)
+            | Some (FramePosition.Loc index) ->
+                gen.Emit(OpCodes.Stloc, index)
+            | None -> failwithf "Undefined variable: %A" dest
+        | Mir.Ins.RetValue value ->
+            genValue gen value
+            gen.Emit(OpCodes.Ret)
+        | Mir.Ins.Ret ->
+            gen.Emit(OpCodes.Ret)
+        | Mir.Ins.Call (method, args) ->
+            for arg in args do
+                genValue gen arg
             match method with
             | Choice1Of2 mi -> gen.Emit(OpCodes.Call, mi)
             | Choice2Of2 ci -> gen.Emit(OpCodes.Call, ci)
-        | Cir.Ins.CallVirt mi -> gen.Emit(OpCodes.Callvirt, mi)
-        | Cir.Ins.NewObj ctor -> gen.Emit(OpCodes.Newobj, ctor)
-        | Cir.Ins.Ret -> gen.Emit(OpCodes.Ret)
-        | Cir.Ins.BeginExceptionBlock -> gen.BeginExceptionBlock() |> ignore
-        | Cir.Ins.BeginFinallyBlock -> gen.BeginFinallyBlock() |> ignore
-        | Cir.Ins.EndExceptionBlock -> gen.EndExceptionBlock() |> ignore
-        | Cir.Ins.Nop -> gen.Emit(OpCodes.Nop)
-        | Cir.Ins.MarkLabel label ->
+        | Mir.Ins.MarkLabel label ->
             label.ilOffset <- gen.ILOffset // ジャンプ距離を計算するためにオフセットを保持しておく
             gen.MarkLabel(label.get(gen))
-        | Cir.Ins.Br label ->
+        | Mir.Ins.Jump label ->
             // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Br_S else OpCodes.Br;
             gen.Emit(op, label.get(gen))
-        | Cir.Ins.BrTrue label ->
+        | Mir.Ins.JumpTrue (cond, label) ->
+            genValue gen cond
             // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brtrue_S else OpCodes.Brtrue;
             gen.Emit(op, label.get(gen))
-        | Cir.Ins.BrFalse label ->
+        | Mir.Ins.JumpFalse (cond, label) ->
+            genValue gen cond
             // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brfalse_S else OpCodes.Brfalse;
             gen.Emit(op, label.get(gen))
+        | _ -> failwithf "Unsupported instruction: %A" ins
 
-    let genConstructor (ctorBuilder: ConstructorBuilder) (ctor: Cir.Constructor) =
+    let genConstructor (ctorBuilder: ConstructorBuilder) (ctor: Mir.Constructor) =
         let gen = ctorBuilder.GetILGenerator()
 
         for sym in ctor.frame.locs do
             gen.DeclareLocal(sym.typ) |> ignore
 
         for ins in ctor.body do
-            genIns gen ins
+            genIns ctor.frame gen ins
 
-    let genMethod (methodBuilder: MethodBuilder) (method: Cir.Method) =
+    let genMethod (methodBuilder: MethodBuilder) (method: Mir.Method) =
         let gen = methodBuilder.GetILGenerator()
 
         for sym in method.frame.locs do
@@ -81,9 +108,9 @@ type Gen() =
 
         
         for ins in method.body do
-            genIns gen ins
+            genIns method.frame gen ins
             
-    let genType (builder: TypeBuilder) (typ: Cir.Type) =
+    let genType (builder: TypeBuilder) (typ: Mir.Type) =
         for ctor in typ.ctors do
             let ctorBuilder = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, List.toArray ctor.args)
             genConstructor ctorBuilder ctor
@@ -99,7 +126,7 @@ type Gen() =
             if method.Name = "main" then
                 mainMethod <- Some method
 
-    let genModule (builder: ModuleBuilder) (modul: Cir.Module) =
+    let genModule (builder: ModuleBuilder) (modul: Mir.Module) =
         for typ in modul.types do
             let typeBuilder = builder.DefineType(typ.name, TypeAttributes.Public)
             genType typeBuilder typ
@@ -110,7 +137,7 @@ type Gen() =
 
         builder.CreateGlobalFunctions() |> ignore
         
-    member this.GenAssembly (assembly: Cir.Assembly, filePath: string)  =
+    member this.GenAssembly (assembly: Mir.Assembly, filePath: string)  =
         let builder = System.Reflection.Emit.PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
         for modul in assembly.modules do
             let moduleBuilder = builder.DefineDynamicModule(modul.name)

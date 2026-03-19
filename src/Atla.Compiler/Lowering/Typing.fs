@@ -1,12 +1,12 @@
 namespace Atla.Compiler.Lowering
 
 open System
-open Atla.Compiler.Types
 open Atla.Compiler.Hir
 
 module Typing =
     let evalTypeExpr (scope: Scope) (typeExpr: Hir.TypeExpr) : TypeCray =
         match typeExpr with
+        | Hir.TypeExpr.Unit (_) -> TypeCray.Unit
         | Hir.TypeExpr.Id (name, span) ->
             match scope.ResolveType(name) with
             | Some t -> t
@@ -44,7 +44,27 @@ module Typing =
             | Some varType ->
                 (idExpr :> Hir.Expr).typ <- varType.Unify(expect)
             | None ->
-                (idExpr :> Hir.Expr).typ <- TypeCray.Error (sprintf "Undefined variable '%s' at %A" idExpr.name idExpr.span)
+                match scope.ResolveType(idExpr.name) with
+                | Some typeItem ->
+                    (idExpr :> Hir.Expr).typ <- typeItem.Unify(expect)
+                | None ->
+                    (idExpr :> Hir.Expr).typ <- TypeCray.Error (sprintf "Undefined variable or type '%s' at %A" idExpr.name idExpr.span)
+        | :? Hir.Expr.MemberAccess as memberAccess ->
+            typingExpr scope memberAccess.receiver TypeCray.Unknown
+            match memberAccess.receiver.typ.Compress() with
+            | TypeCray.System sysType ->
+                let memberInfo = sysType.GetMember(memberAccess.memberName) |> Array.tryHead
+                match memberInfo with
+                | Some mi when mi.MemberType = System.Reflection.MemberTypes.Method ->
+                    let methodInfo = mi :?> System.Reflection.MethodInfo
+                    (memberAccess :> Hir.Expr).typ <- TypeCray.Function(methodInfo.GetParameters() |> Array.map (fun p -> TypeCray.System p.ParameterType) |> List.ofArray, TypeCray.System methodInfo.ReturnType).Unify(expect)
+                | Some mi when mi.MemberType = System.Reflection.MemberTypes.Field ->
+                    let fieldInfo = mi :?> System.Reflection.FieldInfo
+                    (memberAccess :> Hir.Expr).typ <- (TypeCray.System fieldInfo.FieldType).Unify(expect)
+                | _ ->
+                    (memberAccess :> Hir.Expr).typ <- TypeCray.Error (sprintf "Undefined member '%s' for type %A at %A" memberAccess.memberName sysType memberAccess.span)
+            | _ -> failwithf "Member access on non-system type at %A" memberAccess.span
+
         | :? Hir.Expr.Apply as applyExpr ->
             let argTypes: TypeCray list = applyExpr.args |> List.map (fun arg -> typingExpr scope arg TypeCray.Unknown
                                                                                  arg.typ)
@@ -69,34 +89,41 @@ module Typing =
             let mutable lastType = TypeCray.Unit
             for stmt in blockExpr.stmts do
                 typingStmt blockScope stmt
-            if blockExpr.stmts.Length > 0 then
-                match List.last blockExpr.stmts with
-                | Hir.Stmt.ExprStmt (lastExpr, _) -> lastType <- lastExpr.typ
-                | _ -> lastType <- TypeCray.Unit
+            typingExpr blockScope blockExpr.expr expect
+            lastType <- blockExpr.expr.typ
             (blockExpr :> Hir.Expr).typ <- lastType.Unify(expect)
 
     and typingStmt (scope: Scope) (stmt: Hir.Stmt) =
         match stmt with
-        | Hir.Stmt.Let (name, _, value, span) ->
-            typingExpr scope value TypeCray.Unknown
-            scope.DeclareVar(name, value.typ)
-        | Hir.Stmt.Assign (name, value, span) ->
-            match scope.ResolveVar(name) with
+        | :? Hir.Stmt.Let as letStmt ->
+            typingExpr scope letStmt.value TypeCray.Unknown
+            scope.DeclareVar(letStmt.name, letStmt.value.typ)
+        | :? Hir.Stmt.Assign as assignStmt ->
+            match scope.ResolveVar(assignStmt.name) with
             | Some typ ->
-                typingExpr scope value typ
-            | None -> failwithf "Undefined variable '%s' at %A" name span
-        | Hir.Stmt.ExprStmt (expr, span) ->
-            typingExpr scope expr TypeCray.Unknown
-        | Hir.Stmt.ErrorStmt (message, span) ->
+                typingExpr scope assignStmt.value typ
+            | None -> failwithf "Undefined variable '%s' at %A" assignStmt.name assignStmt.span
+        | :? Hir.Stmt.ExprStmt as exprStmt ->
+            typingExpr scope exprStmt.expr TypeCray.Unknown
+        | :? Hir.Stmt.ErrorStmt ->
             () // エラーステートメントは型推論の対象外
 
     let typingModule (scope: Scope) (moduleDecl: Hir.Module) =
         // iterate declarations in the module
         for decl in moduleDecl.decls do
             match decl with
-            | Hir.Decl.Def (name, expr, span) ->
-                typingExpr scope expr TypeCray.Unknown
-                scope.DeclareVar(name, expr.typ)
+            | Hir.Decl.Fn (name, args, ret, body, span) ->
+                let retType = evalTypeExpr scope ret
+                let bodyScope = Scope(Some scope)
+                let argTypes = args |> List.map (fun arg ->
+                    match arg with
+                    | Hir.FnArg.Unit _ -> TypeCray.Unit
+                    | Hir.FnArg.Named (argName, typeExpr, _) ->
+                        let typ = evalTypeExpr scope typeExpr
+                        bodyScope.DeclareVar(argName, typ)
+                        typ)
+                typingExpr bodyScope body retType
+                scope.DeclareVar(name, TypeCray.Function(argTypes, retType))
             | Hir.Decl.TypeDef (name, typeExpr, span) ->
                 let typ = evalTypeExpr scope typeExpr
                 scope.DeclareType(name, typ)

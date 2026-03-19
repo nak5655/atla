@@ -8,14 +8,11 @@ module Hir =
         abstract member typ: TypeCray with get, set
 
     // Statements
-    type Stmt =
-        | Let of name: string * isMutable: bool * value: Expr * span: Span
-        | Assign of name: string * value: Expr * span: Span
-        | ExprStmt of expr: Expr * span: Span
-        | ErrorStmt of message: string * span: Span
+    type Stmt = interface end
 
     // Type expressions
     type TypeExpr =
+        | Unit of span: Span
         | Id of name: string * span: Span
         | Import of path: string list * span: Span
 
@@ -25,7 +22,7 @@ module Hir =
 
     // Declarations
     type Decl =
-        | Def of name: string * expr: Expr * span: Span
+        | Fn of name: string * args: FnArg list * ret: TypeExpr * body: Expr * span: Span
         | TypeDef of name: string * typeExpr: TypeExpr * span: Span
         | DeclError of message: string * span: Span
 
@@ -141,3 +138,27 @@ module Hir =
                 member this.typ
                     with get() = typ
                     and set(v) = typ <- v
+
+    module Stmt =
+        type Let(name: string, isMutable: bool, value: Expr, span: Span) =
+            member this.name = name
+            member this.isMutable = isMutable
+            member this.value = value
+            member this.span = span
+            interface Stmt
+
+        type Assign(name: string, value: Expr, span: Span) =
+            member this.name = name
+            member this.value = value
+            member this.span = span
+            interface Stmt
+
+        type ExprStmt(expr: Expr, span: Span) =
+            member this.expr = expr
+            member this.span = span
+            interface Stmt
+
+        type ErrorStmt(message: string, span: Span) =
+            member this.message = message
+            member this.span = span
+            interface Stmt

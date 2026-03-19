@@ -25,7 +25,7 @@ def () main: () = do
             let result = Parser.fileModule() tokenInput tokens.Head.span.left
             match result with
             | Success (moduleAst, _) ->
-                let hir = Desugar.desugarModule("main", moduleAst)
+                let hir = Semant.analyzeModule("main", moduleAst)
                 let globalScope = Scope.GlobalScope ()
                 ()
             | Failure (reason, span) ->

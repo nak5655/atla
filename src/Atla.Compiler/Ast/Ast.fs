@@ -167,6 +167,13 @@ module Ast =
                 member this.span = span
                 
     module TypeExpr =
+        type Unit(span: Span) =
+            member this.span = span
+            interface TypeExpr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type Id(name: string, span: Span) =
             member this.name = name
             member this.span = span

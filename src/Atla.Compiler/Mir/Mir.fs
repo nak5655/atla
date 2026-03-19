@@ -25,13 +25,15 @@ module Mir =
         | ImmVal of Imm
         | Loc of int
         | Arg of int
-        | Field of inst: Symbol * field: FieldInfo
+        | Field of field: FieldInfo
+        | MethodVal of method: MethodInfo
         override this.ToString() =
             match this with
             | ImmVal v -> sprintf "Imm(%s)" (v.ToString())
             | Loc s -> sprintf "Loc(%A)" s
             | Arg s -> sprintf "Arg(%A)" s
-            | Field (sym, fi) -> sprintf "Field(%A, %A)" sym fi
+            | Field (fi) -> sprintf "Field(%A)" fi
+            | MethodVal (mi) -> sprintf "Method(%A)" mi
 
     type OpCode =
         | Add
@@ -44,7 +46,21 @@ module Mir =
         | Eq
 
     type Label() =
-        override this.ToString() = sprintf "Label(%d)" (this.GetHashCode())
+        let mutable _label: System.Reflection.Emit.Label option = None
+        let mutable _ilOffset: int = -1
+
+        member this.label
+            with get() = _label
+            and set(value) = _label <- value
+
+        member this.ilOffset
+            with get() = _ilOffset
+            and set(value) = _ilOffset <- value
+
+        member this.get(gen: ILGenerator): System.Reflection.Emit.Label =
+            if _label.IsNone then
+                _label <- Some (gen.DefineLabel())
+            _label.Value
 
     // Instructions
     type Ins =
@@ -82,16 +98,12 @@ module Mir =
         member this.name = name
         member this.typ = typ
 
-    type Argum(name: string, typ: System.Type) =
-        member this.name = name
-        member this.typ = typ
-
-    type Constructor(args: Argum list, body: Ins list, frame: Frame) =
+    type Constructor(args: System.Type list, body: Ins list, frame: Frame) =
         member this.args = args
         member this.body = body
         member this.frame = frame
 
-    type Method(name: string, args: Argum list, ret: System.Type, body: Ins list, frame: Frame) =
+    type Method(name: string, args: System.Type list, ret: System.Type, body: Ins list, frame: Frame) =
         member this.name = name
         member this.args = args
         member this.ret = ret

@@ -154,9 +154,19 @@ module Parser =
             letStmt() <|> varStmt() <|> assignStmt() <|> exprStmt()
         )
 
-    and typeExpr (): PackratParser<Token, Ast.TypeExpr> =
+    and typeExprUnit (): PackratParser<Token, Ast.TypeExpr> =
+        Delay (fun () ->
+            delim '(' <&> delim ')' |>> fun (l,r) -> Ast.TypeExpr.Unit ({ left = l.span.left; right = r.span.right })
+        )
+
+    and typeExprId (): PackratParser<Token, Ast.TypeExpr> =
         Delay (fun () ->
             tid |>> fun id -> Ast.TypeExpr.Id (id.str, id.span)
+        )
+        
+    and typeExpr (): PackratParser<Token, Ast.TypeExpr> =
+        Delay (fun () ->
+            typeExprUnit () <|> typeExprId ()
         )
 
     and dataField (): PackratParser<Token, Ast.DataItem.Field> =

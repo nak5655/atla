@@ -2,10 +2,7 @@ namespace Atla.Compiler.Tests.Lowering.Gen
 
 open System
 open Xunit
-open Atla.Compiler.Cir
-open Atla.Compiler.Types
-open Atla.Compiler.Parsing
-open Atla.Compiler.Hir
+open Atla.Compiler.Mir
 open Atla.Compiler.Lowering
 open System
 open System.IO
@@ -18,13 +15,12 @@ open System.Reflection.Metadata.Ecma335
 module GenTests =
     [<Fact>]
     let ``helloCIL`` () =
-        let cir = Cir.Assembly("HelloCIL", [
-            Cir.Module("MainModule", [], [
-                Cir.Method("main", [], typeof<Void>, Frame(), [
-                    Cir.Ins.LdStr "Hello, World!"
-                    Cir.Ins.Call(Choice1Of2 (typeof<Console>.GetMethod("WriteLine", [| typeof<string> |])))
-                    Cir.Ins.Ret
-                ])
+        let cir = Mir.Assembly("HelloCIL", [
+            Mir.Module("MainModule", [], [
+                Mir.Method("main", [], typeof<Void>, [
+                    Mir.Ins.Call(Choice1Of2 (typeof<Console>.GetMethod("WriteLine", [| typeof<string> |])), [Mir.Value.ImmVal(Mir.Imm.String("Hello, World!"))])
+                    Mir.Ins.Ret
+                ], Frame())
             ])
         ])
 

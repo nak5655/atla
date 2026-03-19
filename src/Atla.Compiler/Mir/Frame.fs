@@ -1,4 +1,4 @@
-namespace Atla.Compiler.Types
+namespace Atla.Compiler.Mir
 
 type FramePosition =
     | Arg of index: int
