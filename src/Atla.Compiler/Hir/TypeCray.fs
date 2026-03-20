@@ -2,12 +2,6 @@ namespace Atla.Compiler.Hir
 
 type TypeCray =
     | Unknown
-    | Unit
-    | Bool
-    | Int
-    | Float
-    | Char
-    | String
     | System of System.Type
     | Function of args: TypeCray list * ret: TypeCray
     | Var of TypeCray ref
@@ -26,12 +20,6 @@ type TypeCray =
     member this.Unify(other: TypeCray) : TypeCray =
         match this, other with
         | Unknown, t | t, Unknown -> t
-        | Unit, Unit -> Unit
-        | Bool, Bool -> Bool
-        | Int, Int -> Int
-        | Float, Float -> Float
-        | Char, Char -> Char
-        | String, String -> String
         | System t1, System t2 when t1 = t2 -> System t1
         | Function (args1, ret1), Function (args2, ret2) ->
             if List.length args1 = List.length args2 then
@@ -50,12 +38,6 @@ type TypeCray =
     member this.ToSystemType() : System.Type =
         match this with
         | Unknown -> failwith "Cannot convert unknown type to System.Type"
-        | Unit -> typeof<unit>
-        | Bool -> typeof<bool>
-        | Int -> typeof<int>
-        | Float -> typeof<float>
-        | Char -> typeof<char>
-        | String -> typeof<string>
         | System t -> t
         | Function (args, ret) ->
             let argTypes = args |> List.map (fun t -> t.ToSystemType()) |> List.toArray
@@ -63,3 +45,10 @@ type TypeCray =
             System.Linq.Expressions.Expression.GetFuncType(Array.append argTypes [|retType|])
         | Var t -> t.Value.ToSystemType()
         | Error msg -> failwithf "Cannot convert error type to System.Type: %s" msg
+
+    member this.HasError() : bool =
+        match this with
+        | Error _ -> true
+        | Var v -> v.Value.HasError()
+        | Function (args, ret) -> List.exists (fun (t: TypeCray) -> t.HasError()) args || ret.HasError()
+        | _ -> false

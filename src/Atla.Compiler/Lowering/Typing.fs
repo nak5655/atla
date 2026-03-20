@@ -6,7 +6,7 @@ open Atla.Compiler.Hir
 module Typing =
     let evalTypeExpr (scope: Scope) (typeExpr: Hir.TypeExpr) : TypeCray =
         match typeExpr with
-        | Hir.TypeExpr.Unit (_) -> TypeCray.Unit
+        | Hir.TypeExpr.Unit (_) -> TypeCray.System typeof<Void>
         | Hir.TypeExpr.Id (name, span) ->
             match scope.ResolveType(name) with
             | Some t -> t
@@ -28,17 +28,13 @@ module Typing =
     let rec typingExpr (scope: Scope) (expr: Hir.Expr) (expect: TypeCray) =
         match expr with
         | :? Hir.Expr.Unit as unitExpr ->
-            if expect <> TypeCray.Unit then
-               (unitExpr :> Hir.Expr).typ <- TypeCray.Error (sprintf "Expected type %A but got Unit at %A" expect unitExpr.span)
+            (unitExpr :> Hir.Expr).typ <- TypeCray.System(typeof<Void>).Unify(expect)
         | :? Hir.Expr.Int as intExpr ->
-            if expect <> TypeCray.Int then
-                (intExpr :> Hir.Expr).typ <- TypeCray.Error (sprintf "Expected type %A but got Int at %A" expect intExpr.span)
+            (intExpr :> Hir.Expr).typ <- TypeCray.System(typeof<int>).Unify(expect)
         | :? Hir.Expr.Float as floatExpr ->
-            if expect <> TypeCray.Float then
-                (floatExpr :> Hir.Expr).typ <- TypeCray.Error (sprintf "Expected type %A but got Float at %A" expect floatExpr.span)
+            (floatExpr :> Hir.Expr).typ <- TypeCray.System(typeof<float>).Unify(expect)
         | :? Hir.Expr.String as stringExpr ->
-            if expect <> TypeCray.String then
-                (stringExpr :> Hir.Expr).typ <- TypeCray.Error (sprintf "Expected type %A but got String at %A" expect stringExpr.span)
+            (stringExpr :> Hir.Expr).typ <- TypeCray.System(typeof<string>).Unify(expect)
         | :? Hir.Expr.Id as idExpr ->
             match scope.ResolveVar(idExpr.name) with
             | Some varType ->
@@ -53,22 +49,33 @@ module Typing =
             typingExpr scope memberAccess.receiver TypeCray.Unknown
             match memberAccess.receiver.typ.Compress() with
             | TypeCray.System sysType ->
-                let memberInfo = sysType.GetMember(memberAccess.memberName) |> Array.tryHead
-                match memberInfo with
-                | Some mi when mi.MemberType = System.Reflection.MemberTypes.Method ->
-                    let methodInfo = mi :?> System.Reflection.MethodInfo
-                    (memberAccess :> Hir.Expr).typ <- TypeCray.Function(methodInfo.GetParameters() |> Array.map (fun p -> TypeCray.System p.ParameterType) |> List.ofArray, TypeCray.System methodInfo.ReturnType).Unify(expect)
-                | Some mi when mi.MemberType = System.Reflection.MemberTypes.Field ->
-                    let fieldInfo = mi :?> System.Reflection.FieldInfo
-                    (memberAccess :> Hir.Expr).typ <- (TypeCray.System fieldInfo.FieldType).Unify(expect)
-                | _ ->
-                    (memberAccess :> Hir.Expr).typ <- TypeCray.Error (sprintf "Undefined member '%s' for type %A at %A" memberAccess.memberName sysType memberAccess.span)
+                let mutable members = sysType.GetMember(memberAccess.memberName) |> Array.map (fun mi ->
+                    match mi with
+                    | mi when mi.MemberType = System.Reflection.MemberTypes.Method ->
+                        let methodInfo = mi :?> System.Reflection.MethodInfo
+                        TypeCray.Function(methodInfo.GetParameters() |> Array.map (fun p -> TypeCray.System p.ParameterType) |> List.ofArray, TypeCray.System methodInfo.ReturnType).Unify(expect)
+                    | mi when mi.MemberType = System.Reflection.MemberTypes.Field ->
+                        let fieldInfo = mi :?> System.Reflection.FieldInfo
+                        (TypeCray.System fieldInfo.FieldType).Unify(expect)
+                    | _ -> failwithf "Unsupported member type '%A' for member '%s' at %A" mi.MemberType memberAccess.memberName memberAccess.span
+                )
+                members <- members |> Array.filter (fun t -> not (t.HasError()))
+                if members.Length <> 1 then
+                    (memberAccess :> Hir.Expr).typ <- TypeCray.Error (sprintf "Member '%s' not found or ambiguous in type '%s' at %A" memberAccess.memberName sysType.FullName memberAccess.span)
+                else
+                    let typ = members.[0]
+                    (memberAccess :> Hir.Expr).typ <- typ
+                
             | _ -> failwithf "Member access on non-system type at %A" memberAccess.span
 
         | :? Hir.Expr.Apply as applyExpr ->
             let argTypes: TypeCray list = applyExpr.args |> List.map (fun arg -> typingExpr scope arg TypeCray.Unknown
                                                                                  arg.typ)
             typingExpr scope applyExpr.func (TypeCray.Function(argTypes, expect))
+            match applyExpr.func.typ.Compress() with
+            | TypeCray.Function (params, ret) ->
+                (applyExpr :> Hir.Expr).typ <- ret.Unify(expect)
+            | _ -> (applyExpr :> Hir.Expr).typ <- TypeCray.Error (sprintf "Attempting to call a non-function type at %A" applyExpr.span)
         | :? Hir.Expr.Fn as fnExpr ->
             let (argTypes, retType) =
                 match expect with
@@ -86,11 +93,13 @@ module Typing =
         | :? Hir.Expr.Block as blockExpr ->
             // TODO: infer return statement types and unify with expect
             let blockScope = Scope(Some scope)
-            let mutable lastType = TypeCray.Unit
+            let mutable lastType = TypeCray.System(typeof<Void>)
             for stmt in blockExpr.stmts do
                 typingStmt blockScope stmt
-            typingExpr blockScope blockExpr.expr expect
-            lastType <- blockExpr.expr.typ
+            match List.last blockExpr.stmts with
+            | :? Hir.Stmt.ExprStmt as lastExprStmt ->
+                lastType <- lastExprStmt.expr.typ
+            | _ -> lastType <- TypeCray.System(typeof<Void>)
             (blockExpr :> Hir.Expr).typ <- lastType.Unify(expect)
 
     and typingStmt (scope: Scope) (stmt: Hir.Stmt) =
@@ -117,7 +126,7 @@ module Typing =
                 let bodyScope = Scope(Some scope)
                 let argTypes = args |> List.map (fun arg ->
                     match arg with
-                    | Hir.FnArg.Unit _ -> TypeCray.Unit
+                    | Hir.FnArg.Unit _ -> TypeCray.System (typeof<Void>)
                     | Hir.FnArg.Named (argName, typeExpr, _) ->
                         let typ = evalTypeExpr scope typeExpr
                         bodyScope.DeclareVar(argName, typ)

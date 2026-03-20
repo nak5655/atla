@@ -35,7 +35,7 @@ module Hir =
         
     module Expr =
         type Unit(span: Span) =
-            let mutable typ = TypeCray.Unit
+            let mutable typ = TypeCray.Unknown
             member this.span = span
             interface Expr with
                 member this.typ
@@ -43,7 +43,7 @@ module Hir =
                     and set(v) = typ <- v
 
         type Int(value:int, span: Span) =
-            let mutable typ = TypeCray.Int
+            let mutable typ = TypeCray.Unknown
             member this.value = value
             member this.span = span
             interface Expr with
@@ -52,7 +52,7 @@ module Hir =
                     and set(v) = typ <- v
 
         type Float(value: float, span: Span) =
-            let mutable typ = TypeCray.Float
+            let mutable typ = TypeCray.Unknown
             member this.value = value
             member this.span = span
             interface Expr with
@@ -61,7 +61,7 @@ module Hir =
                     and set(v) = typ <- v
 
         type String(value: string, span: Span) =
-            let mutable typ = TypeCray.String
+            let mutable typ = TypeCray.Unknown
             member this.value = value
             member this.span = span
             interface Expr with
@@ -109,10 +109,9 @@ module Hir =
                     with get() = typ
                     and set(v) = typ <- v
 
-        type Block(stmts: Stmt list, expr: Expr, span: Span) =
+        type Block(stmts: Stmt list, span: Span) =
             let mutable typ = TypeCray.Unknown
             member this.stmts = stmts
-            member this.expr = expr
             member this.span = span
             interface Expr with
                 member this.typ

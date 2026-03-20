@@ -13,9 +13,7 @@ module Semant =
         | :? Ast.Expr.Id as idExpr -> Hir.Expr.Id(idExpr.name, idExpr.span)
         | :? Ast.Expr.Block as blockExpr ->
             let stmts = blockExpr.stmts |> List.map analyzeStmt
-            match List.last stmts with
-            | :? Hir.Stmt.ExprStmt as exprStmt -> Hir.Expr.Block(List.take(stmts.Length - 1) stmts, exprStmt.expr, blockExpr.span)
-            | _ -> Hir.Expr.Block(stmts, Hir.Expr.Unit(blockExpr.span), blockExpr.span) // ブロックの最後のステートメントが式でない場合は Unit を返す
+            Hir.Expr.Block(stmts, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
             let func = analyzeExpr applyExpr.func
             let args = applyExpr.args |> List.map analyzeExpr

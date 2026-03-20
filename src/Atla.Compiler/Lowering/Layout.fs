@@ -1,5 +1,6 @@
 namespace Atla.Compiler.Lowering
 
+open System
 open Atla.Compiler.Hir
 open Atla.Compiler.Mir
 
@@ -29,19 +30,36 @@ module Layout =
                 argValues <- argValues @ [argK.res.Value]
             let funcK = layoutExpr frame applyExpr.func
             ins <- ins @ funcK.ins
-            KNormal(ins, funcK.res)
+            match funcK.res with
+            | Some (Mir.Value.MethodVal methodInfo) ->
+                ins <- ins @ [Mir.Ins.Call(Choice1Of2(methodInfo), argValues)]
+                KNormal(ins, None)
+            | _ -> failwithf "Expected a method value in function application, but got: %A" funcK.res
         | :? Hir.Expr.Block as blockExpr ->
             let mutable ins = []
-            for stmt in blockExpr.stmts do
+            for stmt in List.take (blockExpr.stmts.Length - 1) blockExpr.stmts do
                 ins <- ins @ layoutStmt frame stmt
-            let lastK = layoutExpr frame blockExpr.expr
-            ins <- ins @ lastK.ins
-            KNormal(ins, lastK.res)
+
+            // The last statement can be an expression statement, which determines the block's value
+            match List.last blockExpr.stmts with
+            | :? Hir.Stmt.ExprStmt as exprStmt ->
+                let sysType = exprStmt.expr.typ.ToSystemType()
+                if sysType = typeof<Void> then
+                    ins <- ins @ layoutStmt frame exprStmt
+                    KNormal(ins, None)
+                else
+                    let exprK = layoutExpr frame exprStmt.expr
+                    ins <- ins @ exprK.ins
+                    KNormal(ins, exprK.res)
+            | stmt ->
+                ins <- ins @ layoutStmt frame stmt
+                ins <- ins @ [Mir.Ins.Ret]
+                KNormal(ins, None)
         | :? Hir.Expr.MemberAccess as memberAccess ->
             let sysType = memberAccess.receiver.typ.ToSystemType()
             match (memberAccess :> Hir.Expr).typ with
-            | TypeCray.Function _ ->
-                let methodInfo = sysType.GetMethod(memberAccess.memberName)
+            | TypeCray.Function (args, ret) ->
+                let methodInfo = sysType.GetMethod(memberAccess.memberName, args |> List.map (fun t -> t.ToSystemType()) |> List.toArray)
                 KNormal([], Some(Mir.Value.MethodVal(methodInfo)))
             | _ ->
                 let fieldInfo = sysType.GetField(memberAccess.memberName)

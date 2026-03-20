@@ -48,9 +48,6 @@ type Scope(parent: Scope option) =
 
     static member GlobalScope() : Scope =
         let globalScope = Scope(None)
-        globalScope.DeclareType("Int", TypeCray.Int)
-        globalScope.DeclareType("Float", TypeCray.Float)
-        globalScope.DeclareType("String", TypeCray.String)
-        globalScope.DeclareVar("+", TypeCray.Function([TypeCray.Int; TypeCray.Int], TypeCray.Int))
-        globalScope.DeclareVar("*", TypeCray.Function([TypeCray.Int; TypeCray.Int], TypeCray.Int))
+        globalScope.DeclareVar("+", TypeCray.Function([TypeCray.System(typeof<int>); TypeCray.System(typeof<int>)], TypeCray.System(typeof<int>)))
+        globalScope.DeclareVar("*", TypeCray.Function([TypeCray.System(typeof<int>); TypeCray.System(typeof<int>)], TypeCray.System(typeof<int>)))
         globalScope

@@ -106,7 +106,6 @@ type Gen() =
         for sym in method.frame.locs do
             gen.DeclareLocal(sym.typ) |> ignore
 
-        
         for ins in method.body do
             genIns method.frame gen ins
             
