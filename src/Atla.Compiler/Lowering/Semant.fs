@@ -22,6 +22,17 @@ module Semant =
             let receiver = analyzeExpr memberAccessExpr.receiver
             let memberName = memberAccessExpr.memberName
             Hir.Expr.MemberAccess(receiver, memberName, memberAccessExpr.span)
+        | :? Ast.Expr.If as ifExpr ->
+            let rec analyzeIfBranches (branches: (Ast.IfBranch) list) : Hir.Expr =
+                match List.head branches with
+                | :? Ast.IfBranch.Then as thenBranch ->
+                    let cond = analyzeExpr thenBranch.cond
+                    let body = analyzeExpr thenBranch.body
+                    Hir.Expr.If(cond, body, analyzeIfBranches (List.tail branches), { left = thenBranch.span.left; right = (List.last branches).span.right }) :> Hir.Expr
+                | :? Ast.IfBranch.Else as elseBranch ->
+                    analyzeExpr elseBranch.body
+                | _ -> failwith "Unsupported if branch type"
+            analyzeIfBranches ifExpr.branches
         | _ -> failwith "Unsupported expression type"
 
     and analyzeStmt (stmt: Ast.Stmt) : Hir.Stmt =

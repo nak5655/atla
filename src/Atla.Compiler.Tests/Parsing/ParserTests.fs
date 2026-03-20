@@ -9,7 +9,7 @@ module ParserTests =
     [<Fact>]
     let ``hello`` () =
         let program = """
-let greeting = do
+fn greeting: () = do
     var a = 1
     Console.WriteLine "Hello, \"World\"!"
     a

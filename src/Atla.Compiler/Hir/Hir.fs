@@ -17,8 +17,7 @@ module Hir =
         | Import of path: string list * span: Span
 
     type FnArg =
-        | Unit of span: Span
-        | Named of name: string * typeExpr: TypeExpr * span: Span
+        abstract member span: Span
 
     // Declarations
     type Decl =
@@ -32,6 +31,22 @@ module Hir =
 
     type Assembly(modules: Module list) =
         member this.modules = modules
+
+    module FnArg =
+        type Unit(span: Span) =
+            member this.span = span
+            interface FnArg with
+                member this.span = span
+        type Named(name: string, typeExpr: TypeExpr, span: Span) =
+            let mutable _typ = TypeCray.Unknown
+            member this.name = name
+            member this.typeExpr = typeExpr
+            member this.span = span
+            member this.typ
+                with get() = _typ
+                and set(v) = _typ <- v
+            interface FnArg with
+                member this.span = span
         
     module Expr =
         type Unit(span: Span) =
@@ -118,7 +133,7 @@ module Hir =
                     with get() = typ
                     and set(v) = typ <- v
 
-        type If(cond: Expr, thenBranch: Expr, elseBranch: Expr option, span: Span) =
+        type If(cond: Expr, thenBranch: Expr, elseBranch: Expr, span: Span) =
             let mutable typ = TypeCray.Unknown
             member this.cond = cond
             member this.thenBranch = thenBranch

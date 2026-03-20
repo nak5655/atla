@@ -21,6 +21,35 @@ module Ast =
     type Decl =
         abstract member span: Span
 
+    type IfBranch =
+        abstract member span: Span
+
+    module IfBranch =
+        type Then(cond: Expr, body: Expr, span: Span) =
+            member this.cond = cond
+            member this.body = body
+            member this.span = span
+            interface IfBranch with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        type Else(body: Expr, span: Span) =
+            member this.body = body
+            member this.span = span
+            interface IfBranch with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        type Error(message: string, span: Span) =
+            member this.message = message
+            member this.span = span
+            interface IfBranch with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
     module Expr = 
         type Unit(span: Span) =
             member this.span = span
@@ -90,6 +119,14 @@ module Ast =
 
         type Block(stmts: Stmt list, span: Span) =
             member this.stmts = stmts
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        type If(branches: IfBranch list, span: Span) =
+            member this.branches = branches
             member this.span = span
             interface Expr with
                 member this.span = span

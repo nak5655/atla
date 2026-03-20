@@ -16,3 +16,22 @@ fn main: () = do
 """
         let res = Compiler.compile("HelloWorld", program, "files")
         Assert.True(res.IsOk)
+
+    [<Fact>]
+    let fibonacci () =
+        let program = """
+import System.Int32
+import System.Console
+
+fn fibonacci (n: Int): Int = if 
+    | n == 0 => 0
+    | n == 1 => 1
+    | n == 2 => 1
+    | else => fibonacci (n - 2) + fibonacci (n - 1)
+
+fn main: () = do
+    let n = Int32.Parse (Console.ReadLine ())
+    Console.WriteLine (fibonacci n)
+"""
+        let res = Compiler.compile("Fibonacci", program, "files")
+        Assert.True(res.IsOk)

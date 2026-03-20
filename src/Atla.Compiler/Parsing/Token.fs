@@ -40,6 +40,8 @@ module Token =
         member this.span = span
         interface Token with
             member this.span = span
+        override this.ToString (): string =
+            sprintf "Keyword('%s', %A)" str span
 
     type Symbol(str: string, span: Span) =
         member this.str = str
@@ -57,12 +59,16 @@ module Token =
         member this.span = span
         interface Token with
             member this.span = span
+        override this.ToString (): string =
+            sprintf "Symbol('%s', %A)" str span
 
     type Delim(char: char, span: Span) =
         member this.char = char
         member this.span = span
         interface Token with
             member this.span = span
+        override this.ToString (): string =
+            sprintf "Delim('%c', %A)" char span
 
     type Newline(indent: int, span: Span) =
         member this.indent = indent

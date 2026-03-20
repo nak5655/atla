@@ -64,6 +64,35 @@ module Layout =
             | _ ->
                 let fieldInfo = sysType.GetField(memberAccess.memberName)
                 KNormal([], Some(Mir.Value.Field(fieldInfo)))
+        | :? Hir.Expr.If as ifExpr ->
+            let mutable ins = []
+            let thenLabel = Mir.Label()
+            let elseLabel = Mir.Label()
+            let endLabel = Mir.Label()
+            let resSym = frame.declareTemp((ifExpr :> Hir.Expr).typ.ToSystemType())
+
+            // 条件式
+            let condK = layoutExpr frame ifExpr.cond
+            ins <- ins @ condK.ins
+            ins <- ins @ [Mir.Ins.JumpTrue(condK.res.Value, thenLabel)]
+            ins <- ins @ [Mir.Ins.JumpFalse(condK.res.Value, elseLabel)]
+
+            // Then
+            let thenK = layoutExpr frame ifExpr.thenBranch
+            ins <- ins @ [Mir.Ins.MarkLabel(thenLabel)] @ thenK.ins
+            ins <- ins @ [Mir.Ins.Assign(resSym, thenK.res.Value)]
+            ins <- ins @ [Mir.Ins.Jump(endLabel)]
+
+            // Else
+            let elseK = layoutExpr frame ifExpr.elseBranch
+            ins <- ins @ [Mir.Ins.MarkLabel(elseLabel)] @ elseK.ins
+            ins <- ins @ [Mir.Ins.Assign(resSym, elseK.res.Value)]
+            ins <- ins @ [Mir.Ins.Jump(endLabel)]
+
+            ins <- ins @ [Mir.Ins.MarkLabel(endLabel)]
+            match frame.resolve(resSym).Value with
+            | FramePosition.Loc i -> KNormal(ins, Some (Mir.Value.Loc i))
+            | _ -> failwithf "Expected a local variable for if expression result, but got: %A" (frame.resolve(resSym).Value)
         | _ -> failwithf "Unsupported expression type: %A" (expr.GetType())
 
     and layoutStmt (frame: Frame) (stmt: Hir.Stmt) : Mir.Ins list =
@@ -89,6 +118,12 @@ module Layout =
             match decl with
             | Hir.Decl.Fn (name, args, ret, body, _) ->
                 let frame = Frame()
+                for arg in args do
+                    match arg with
+                    | :? Hir.FnArg.Unit -> ()
+                    | :? Hir.FnArg.Named as namedArg ->
+                        frame.declareArg(Symbol(namedArg.name, namedArg.typ.ToSystemType()))                    
+                    | _ -> failwithf "Unsupported function argument type: %A" (arg.GetType())
                 let bodyK = layoutExpr frame body
                 let insts = match bodyK.res with
                             | Some res -> bodyK.ins @ [Mir.Ins.RetValue res]

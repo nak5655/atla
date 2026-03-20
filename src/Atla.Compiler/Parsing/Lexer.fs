@@ -34,7 +34,9 @@ module Lexer =
         // block
         "return"; "continue"; "break";
         // boolean
-        "true"; "false"
+        "true"; "false";
+        // arrows
+        "->"; "=>";
     ]
     let delims = ['''; '"'; '`'; '#'; ','; ';'; ':'; '('; ')'; '['; ']'; '{'; '}']
     let opSigns = ['+'; '-'; '*'; '/'; '%'; '<'; '>'; '='; '!'; '^'; '&'; '|'; '?'; '.']
@@ -59,9 +61,7 @@ module Lexer =
             |> List.map (fun d -> AcceptIf (fun (c: SourceChar) -> c.char = d) |>> fun c -> Token.Delim (c.char, c.span))
             |> List.fold (<|>) (Fail "No delimiters")
     let symbol: PackratParser<SourceChar, Token.Symbol> =
-        opSigns
-            |> List.map (fun sg -> Many1 (AcceptIf (fun c -> c.char = sg)) |>> fun cs -> let s = SourceString.join(cs) in Token.Symbol(s.string, s.span))
-            |> List.fold (<|>) (Fail "No signs")
+        Many1 (AcceptIf (fun c -> opSigns |> List.contains c.char)) |>> fun chars -> let s = SourceString.join(chars) in Token.Symbol(s.string, s.span)
     let id = alpha_ <&> Many alphaNum_ |>> fun (first, rest) -> let s = SourceString.join(first :: rest) in Token.Id(s.string, s.span)
     let int = intRaw |>> fun s -> Token.Int(System.Int32.Parse(s.string), s.span)
     let float = floatRaw |>> fun s -> Token.Float(System.Double.Parse(s.string), s.span)
