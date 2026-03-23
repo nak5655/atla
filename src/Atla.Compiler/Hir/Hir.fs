@@ -21,16 +21,18 @@ module Hir =
 
     // Declarations
     type Decl =
-        | Fn of name: string * args: FnArg list * ret: TypeExpr * body: Expr * span: Span
+        | Fn of name: string * args: FnArg list * ret: TypeExpr * body: Expr * scope: Scope * span: Span
         | TypeDef of name: string * typeExpr: TypeExpr * span: Span
         | DeclError of message: string * span: Span
 
-    type Module(name: string, decls: Decl list) =
+    type Module(name: string, decls: Decl list, scope: Scope) =
         member this.name = name
         member this.decls = decls
+        member this.scope = scope
 
-    type Assembly(modules: Module list) =
+    type Assembly(modules: Module list, scope: Scope) =
         member this.modules = modules
+        member this.scope = scope
 
     module FnArg =
         type Unit(span: Span) =
@@ -103,11 +105,12 @@ module Hir =
                     with get() = typ
                     and set(v) = typ <- v
 
-        type Fn(args: FnArg list, ret: TypeExpr, body: Expr, span: Span) =
+        type Fn(args: FnArg list, ret: TypeExpr, body: Expr, scope: Scope, span: Span) =
             let mutable typ = TypeCray.Unknown
             member this.args = args
             member this.ret = ret
             member this.body = body
+            member this.scope = scope
             member this.span = span
             interface Expr with
                 member this.typ
@@ -124,9 +127,10 @@ module Hir =
                     with get() = typ
                     and set(v) = typ <- v
 
-        type Block(stmts: Stmt list, span: Span) =
+        type Block(stmts: Stmt list, scope: Scope, span: Span) =
             let mutable typ = TypeCray.Unknown
             member this.stmts = stmts
+            member this.scope = scope
             member this.span = span
             interface Expr with
                 member this.typ

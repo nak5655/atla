@@ -10,13 +10,12 @@
     <Compile Include="types\Span.fs" />
     <Compile Include="types\Input.fs" />
     <Compile Include="Types\ParseResult.fs" />
-    <Compile Include="Ast\Ast.fs" />
+    <Compile Include="mir\Mir.fs" />
     <Compile Include="Hir\TypeCray.fs" />
+    <Compile Include="Hir\Symbol.fs" />
     <Compile Include="Hir\Scope.fs" />
     <Compile Include="Hir\Hir.fs" />
-    <Compile Include="Mir\Symbol.fs" />
-    <Compile Include="Mir\Frame.fs" />
-    <Compile Include="mir\Mir.fs" />
+    <Compile Include="Ast\Ast.fs" />
     <Compile Include="Lowering\Semant.fs" />
     <Compile Include="Lowering\Typing.fs" />
     <Compile Include="Lowering\Layout.fs" />

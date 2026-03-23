@@ -18,12 +18,11 @@ module Compiler =
             match Parser.fileModule() tokenInput tokens.Head.span.left with
             | Success (moduleAst, _) ->
                 // Desugaring
-                let hir = Semant.analyzeModule("main", moduleAst)
+                let hir = Semant.analyzeModule("main", moduleAst, Scope.GlobalScope ())
                 // Typing
-                let globalScope = Scope.GlobalScope ()
-                Typing.typingModule globalScope hir
+                Typing.typingModule hir
                 // Lowering
-                let mir = Layout.layoutAssembly(asmName, Hir.Assembly [hir])
+                let mir = Layout.layoutAssembly(asmName, Hir.Assembly ([hir], Scope.GlobalScope()))
                 // Code Generation
                 let gen = Gen()
                 gen.GenAssembly(mir, Path.Join(outDir, sprintf "%s.dll" asmName))

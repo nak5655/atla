@@ -21,23 +21,23 @@ type Gen() =
             | Mir.Imm.Int i -> gen.Emit(OpCodes.Ldc_I4, i)
             | Mir.Imm.Float f -> gen.Emit(OpCodes.Ldc_R8, f)
             | Mir.Imm.String s -> gen.Emit(OpCodes.Ldstr, s)
-        | Mir.Value.Loc index -> gen.Emit(OpCodes.Ldloc, index) // TODO Ldloc_0, Ldloc_1, Ldloc_2, Ldloc_3 を使う
-        | Mir.Value.Arg index -> gen.Emit(OpCodes.Ldarg, index) // TODO Ldarg_0, Ldarg_1, Ldarg_2, Ldarg_3 を使う
-        | Mir.Value.Field (field) ->
-            genValue gen (Mir.Value.Arg 0) // Assuming 'this' is at Arg 0
+        | Mir.Value.RegVal reg ->
+            match reg with
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Ldloc, index) // TODO Ldloc_0, Ldloc_1, Ldloc_2, Ldloc_3 を使う
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Ldarg, index) // TODO Ldarg_0, Ldarg_1, Ldarg_2, Ldarg_3 を使う
+        | Mir.Value.FieldVal (field) ->
+            genValue gen (Mir.Value.RegVal (Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0
             gen.Emit(OpCodes.Ldfld, field)
 
-
-    let genIns (frame: Frame) (gen: ILGenerator) (ins: Mir.Ins) =
+    let genIns (gen: ILGenerator) (ins: Mir.Ins) =
         match ins with
-        | Mir.Ins.Assign (sym, value) ->
+        | Mir.Ins.Assign (reg, value) ->
             genValue gen value
-            match frame.resolve(sym) with
-            | Some (FramePosition.Arg index) ->
+            match reg with
+            | Mir.Reg.Arg index ->
                 gen.Emit(OpCodes.Starg, index)
-            | Some (FramePosition.Loc index) ->
+            | Mir.Reg.Loc index ->
                 gen.Emit(OpCodes.Stloc, index)
-            | None -> failwithf "Undefined variable: %A" sym
         | Mir.Ins.TAC (dest, arg1, op, arg2) ->
             genValue gen arg1
             genValue gen arg2
@@ -52,12 +52,11 @@ type Gen() =
                 | Mir.OpCode.And -> OpCodes.And
                 | Mir.OpCode.Eq -> OpCodes.Ceq
             gen.Emit(opcode)
-            match frame.resolve(dest) with
-            | Some (FramePosition.Arg index) ->
+            match dest with
+            | Mir.Reg.Arg index ->
                 gen.Emit(OpCodes.Starg, index)
-            | Some (FramePosition.Loc index) ->
+            | Mir.Reg.Loc index ->
                 gen.Emit(OpCodes.Stloc, index)
-            | None -> failwithf "Undefined variable: %A" dest
         | Mir.Ins.RetValue value ->
             genValue gen value
             gen.Emit(OpCodes.Ret)
@@ -94,20 +93,20 @@ type Gen() =
     let genConstructor (ctorBuilder: ConstructorBuilder) (ctor: Mir.Constructor) =
         let gen = ctorBuilder.GetILGenerator()
 
-        for sym in ctor.frame.locs do
-            gen.DeclareLocal(sym.typ) |> ignore
+        for typ in ctor.frame.locs do
+            gen.DeclareLocal(typ) |> ignore
 
         for ins in ctor.body do
-            genIns ctor.frame gen ins
+            genIns gen ins
 
     let genMethod (methodBuilder: MethodBuilder) (method: Mir.Method) =
         let gen = methodBuilder.GetILGenerator()
 
-        for sym in method.frame.locs do
-            gen.DeclareLocal(sym.typ) |> ignore
+        for typ in method.frame.locs do
+            gen.DeclareLocal(typ) |> ignore
 
         for ins in method.body do
-            genIns method.frame gen ins
+            genIns gen ins
             
     let genType (builder: TypeBuilder) (typ: Mir.Type) =
         for ctor in typ.ctors do

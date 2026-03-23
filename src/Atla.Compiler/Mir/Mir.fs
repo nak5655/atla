@@ -6,6 +6,9 @@ open System.Reflection.Emit
 open System.Collections.Generic
 open Atla.Compiler.Types
 
+// MIRでは
+// - 型はSystem.Typeに確定済み
+// - 変数名をインデックスに変換済み
 module Mir =
     // Immediate values in MIR
     type Imm =
@@ -20,19 +23,25 @@ module Mir =
             | Float v -> sprintf "Float(%f)" v
             | String s -> sprintf "String(%s)" s
 
+    type Reg =
+        | Loc of int
+        | Arg of int
+        override this.ToString() =
+            match this with
+            | Loc index -> sprintf "Loc(%d)" index
+            | Arg index -> sprintf "Arg(%d)" index
+
     // Values in MIR
     type Value =
         | ImmVal of Imm
-        | Loc of int
-        | Arg of int
-        | Field of field: FieldInfo
+        | RegVal of Reg
+        | FieldVal of field: FieldInfo
         | MethodVal of method: MethodInfo
         override this.ToString() =
             match this with
             | ImmVal v -> sprintf "Imm(%s)" (v.ToString())
-            | Loc s -> sprintf "Loc(%A)" s
-            | Arg s -> sprintf "Arg(%A)" s
-            | Field (fi) -> sprintf "Field(%A)" fi
+            | RegVal v -> sprintf "Reg(%s)" (v.ToString())
+            | FieldVal (fi) -> sprintf "Field(%A)" fi
             | MethodVal (mi) -> sprintf "Method(%A)" mi
 
     type OpCode =
@@ -64,12 +73,12 @@ module Mir =
 
     // Instructions
     type Ins =
-        | Assign of name: Symbol * value: Value
-        | AssignField of inst: Symbol * field: FieldInfo * value: Value
-        | TAC of dest: Symbol * lhs: Value * op: OpCode * rhs: Value
+        | Assign of dest: Reg * value: Value
+        | AssignField of inst: Reg * field: FieldInfo * value: Value
+        | TAC of dest: Reg * lhs: Value * op: OpCode * rhs: Value
         | Call of method: Choice<MethodInfo, ConstructorInfo> * args: Value list
-        | CallAssign of dst: Symbol * method: MethodInfo * args: Value list
-        | New of dst: Symbol * ctor: ConstructorInfo * args: Value list
+        | CallAssign of dst: Reg* method: MethodInfo * args: Value list
+        | New of dst: Reg * ctor: ConstructorInfo * args: Value list
         | Ret
         | RetValue of value: Value
         | Jump of label: Label
@@ -97,6 +106,18 @@ module Mir =
     type Field(name: string, typ: System.Type) =
         member this.name = name
         member this.typ = typ
+
+    type Frame() =
+        let mutable _args: List<System.Type> = List()
+        let mutable _locs: List<System.Type> = List()
+        member this.args = _args
+        member this.locs = _locs
+        member this.addArg(typ: System.Type): Reg =
+            _args.Add(typ)
+            Reg.Arg(_args.Count - 1)
+        member this.addLoc(typ: System.Type): Reg =
+            _locs.Add(typ)
+            Reg.Loc(_locs.Count - 1)
 
     type Constructor(args: System.Type list, body: Ins list, frame: Frame) =
         member this.args = args

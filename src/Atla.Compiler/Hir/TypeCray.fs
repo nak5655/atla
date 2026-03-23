@@ -33,7 +33,7 @@ type TypeCray =
             // v は 'TypeCray ref' なので中身を書き換えられる
             v.Value <- t
             t.Compress()
-        | _ -> Error "Type mismatch"
+        | _ -> Error (sprintf "Type mismatch between '%A' and '%A'" this other)
 
     member this.ToSystemType() : System.Type =
         match this with
