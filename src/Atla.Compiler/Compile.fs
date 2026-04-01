@@ -1,9 +1,10 @@
 namespace Atla.Compiler
 
-open Atla.Compiler.Ast
-open Atla.Compiler.Types
-open Atla.Compiler.Parsing
-open Atla.Compiler.Hir
+open Atla.Compiler.Data
+open Atla.Compiler.Syntax
+open Atla.Compiler.Syntax.Data
+open Atla.Compiler.Semantics
+open Atla.Compiler.Semantics.Data
 open Atla.Compiler.Lowering
 open System.IO
 
@@ -17,12 +18,13 @@ module Compiler =
             // Parsing
             match Parser.fileModule() tokenInput tokens.Head.span.left with
             | Success (moduleAst, _) ->
-                // Desugaring
-                let hir = Semant.analyzeModule("main", moduleAst, Scope.GlobalScope ())
+                // Semantic Analysis
+                let symbolTable = SymbolTable()
+                let hir = Analyze.analyzeModule(symbolTable, "main", moduleAst)
                 // Typing
                 Typing.typingModule hir
                 // Lowering
-                let mir = Layout.layoutAssembly(asmName, Hir.Assembly ([hir], Scope.GlobalScope()))
+                let mir = Layout.layoutAssembly(asmName, Hir.Assembly ("hello", [hir]))
                 // Code Generation
                 let gen = Gen()
                 gen.GenAssembly(mir, Path.Join(outDir, sprintf "%s.dll" asmName))

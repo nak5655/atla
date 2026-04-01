@@ -1,4 +1,4 @@
-namespace Atla.Compiler.Types
+namespace Atla.Compiler.Data
 
 type Span =
     { left: Position; right: Position }

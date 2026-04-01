@@ -6,26 +6,26 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="types\Position.fs" />
-    <Compile Include="types\Span.fs" />
-    <Compile Include="types\Input.fs" />
-    <Compile Include="Types\ParseResult.fs" />
-    <Compile Include="mir\Mir.fs" />
-    <Compile Include="Hir\TypeCray.fs" />
-    <Compile Include="Hir\Symbol.fs" />
-    <Compile Include="Hir\Scope.fs" />
-    <Compile Include="Hir\Hir.fs" />
-    <Compile Include="Ast\Ast.fs" />
-    <Compile Include="Lowering\Semant.fs" />
-    <Compile Include="Lowering\Typing.fs" />
-    <Compile Include="Lowering\Layout.fs" />
+    <Compile Include="Data\Position.fs" />
+    <Compile Include="Data\Span.fs" />
+    <Compile Include="Syntax\Data\Token.fs" />
+    <Compile Include="Syntax\Data\SourceChar.fs" />
+    <Compile Include="Syntax\Data\SourceString.fs" />
+    <Compile Include="Syntax\Data\Input.fs" />
+    <Compile Include="Syntax\Data\ParseResult.fs" />
+    <Compile Include="Syntax\Data\Ast.fs" />
+    <Compile Include="Syntax\PackratParser.fs" />
+    <Compile Include="Syntax\Lexer.fs" />
+    <Compile Include="Syntax\Parser.fs" />
+    <Compile Include="Semantics\Data\Type.fs" />
+    <Compile Include="Semantics\Data\Symbol.fs" />
+    <Compile Include="Semantics\Data\Scope.fs" />
+    <Compile Include="Semantics\Data\Hir.fs" />
+    <Compile Include="Semantics\Typing.fs" />
+    <Compile Include="Semantics\Analyze.fs" />
+    <Compile Include="Lowering\Data\Layout.fs" />
+    <Compile Include="Lowering\Data\Mir.fs" />
     <Compile Include="Lowering\Gen.fs" />
-    <Compile Include="Parsing\PackratParser.fs" />
-    <Compile Include="Parsing\SourceChar.fs" />
-    <Compile Include="Parsing\SourceString.fs" />
-    <Compile Include="Parsing\Token.fs" />
-    <Compile Include="Parsing\Lexer.fs" />
-    <Compile Include="Parsing\Parser.fs" />
     <Compile Include="Compile.fs" />
 
   </ItemGroup>

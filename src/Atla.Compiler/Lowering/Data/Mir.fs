@@ -104,8 +104,12 @@ module Mir =
 
     // Convenience wrapper for fields in generated types
     type Field(name: string, typ: System.Type) =
+        let mutable _builder: FieldBuilder option = None
         member this.name = name
         member this.typ = typ
+        member this.builder
+            with get() = _builder.Value
+            and set(v) = _builder <- Some v
 
     type Frame() =
         let mutable _args: List<System.Type> = List()
@@ -120,28 +124,48 @@ module Mir =
             Reg.Loc(_locs.Count - 1)
 
     type Constructor(args: System.Type list, body: Ins list, frame: Frame) =
+        let mutable _builder: ConstructorBuilder option = None
         member this.args = args
         member this.body = body
         member this.frame = frame
+        member this.builder
+            with get() = _builder.Value
+            and set(v) = _builder <- Some v
 
     type Method(name: string, args: System.Type list, ret: System.Type, body: Ins list, frame: Frame) =
+        let mutable _builder: MethodBuilder option = None
         member this.name = name
         member this.args = args
         member this.ret = ret
         member this.body = body
         member this.frame = frame
+        member this.builder
+            with get() = _builder.Value
+            and set(v) = _builder <- Some v
 
     type Type(name: string, fields: Field list, ctors: Constructor list, methods: Method list) =
+        let mutable _builder: TypeBuilder option = None
         member this.name = name
         member this.fields = fields
         member this.ctors = ctors
         member this.methods = methods
+        member this.builder
+            with get() = _builder.Value
+            and set(v) = _builder <- Some v
 
     type Module(name: string, types: Type list, methods: Method list) =
+        let mutable _builder: ModuleBuilder option = None
         member this.name = name
         member this.types = types
         member this.methods = methods
+        member this.builder
+            with get() = _builder.Value
+            and set(v) = _builder <- Some v
 
     type Assembly(name: string, modules: Module list) =
+        let mutable _builder: PersistedAssemblyBuilder option = None
         member this.name = name
         member this.modules = modules
+        member this.builder
+            with get() = _builder.Value
+            and set(v) = _builder <- Some v

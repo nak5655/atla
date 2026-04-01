@@ -1,7 +1,8 @@
-namespace Atla.Compiler.Parsing
+namespace Atla.Compiler.Syntax
 
-open Atla.Compiler.Types
-open Atla.Compiler.Parsing.Combinators
+open Atla.Compiler.Data
+open Atla.Compiler.Syntax.Data
+open Atla.Compiler.Syntax.Combinators
 
 type StringInput(s: string) =
     let lines = s.Split('\n')

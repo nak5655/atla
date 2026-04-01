@@ -1,7 +1,8 @@
-namespace Atla.Compiler.Parsing
+namespace Atla.Compiler.Syntax
 
 open System.Collections.Generic
-open Atla.Compiler.Types
+open Atla.Compiler.Data
+open Atla.Compiler.Syntax.Data
 
 type PackratParser<'I, 'A when 'I :> HasSpan> = Input<'I> -> Position -> ParseResult<'A>
 

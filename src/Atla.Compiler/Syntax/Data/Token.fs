@@ -1,6 +1,6 @@
-namespace Atla.Compiler.Parsing
+namespace Atla.Compiler.Syntax.Data
 
-open Atla.Compiler.Types
+open Atla.Compiler.Data
 
 type Token = inherit HasSpan
 

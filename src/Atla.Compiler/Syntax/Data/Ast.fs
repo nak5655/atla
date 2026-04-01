@@ -1,6 +1,6 @@
-namespace Atla.Compiler.Ast
+namespace Atla.Compiler.Syntax.Data
 
-open Atla.Compiler.Types
+open Atla.Compiler.Data
 
 module Ast =
     type Expr =

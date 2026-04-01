@@ -1,4 +1,4 @@
-namespace Atla.Compiler.Types
+namespace Atla.Compiler.Data
 
 type Position =
     { Line: int

@@ -90,8 +90,8 @@ type Gen() =
             gen.Emit(op, label.get(gen))
         | _ -> failwithf "Unsupported instruction: %A" ins
 
-    let genConstructor (ctorBuilder: ConstructorBuilder) (ctor: Mir.Constructor) =
-        let gen = ctorBuilder.GetILGenerator()
+    let genConstructor (ctor: Mir.Constructor) =
+        let gen = ctor.builder.GetILGenerator()
 
         for typ in ctor.frame.locs do
             gen.DeclareLocal(typ) |> ignore
@@ -99,8 +99,8 @@ type Gen() =
         for ins in ctor.body do
             genIns gen ins
 
-    let genMethod (methodBuilder: MethodBuilder) (method: Mir.Method) =
-        let gen = methodBuilder.GetILGenerator()
+    let genMethod (method: Mir.Method) =
+        let gen = method.builder.GetILGenerator()
 
         for typ in method.frame.locs do
             gen.DeclareLocal(typ) |> ignore
@@ -108,37 +108,37 @@ type Gen() =
         for ins in method.body do
             genIns gen ins
             
-    let genType (builder: TypeBuilder) (typ: Mir.Type) =
+    let genType (typ: Mir.Type) =
         for ctor in typ.ctors do
-            let ctorBuilder = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, List.toArray ctor.args)
-            genConstructor ctorBuilder ctor
+            ctor.builder <- typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, List.toArray ctor.args)
+            genConstructor ctor
 
         for method in typ.methods do
-            let methodBuilder = builder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, method.ret, List.toArray method.args)
-            genMethod methodBuilder method
+            method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, method.ret, List.toArray method.args)
+            genMethod method
             
-        builder.CreateType() |> ignore
+        typ.builder.CreateType() |> ignore
         
         // main関数を見つけたら、エントリポイントに指定するために保存しておく
-        for method in builder.DeclaredMethods do
+        for method in typ.builder.DeclaredMethods do
             if method.Name = "main" then
                 mainMethod <- Some method
 
     let genModule (builder: ModuleBuilder) (modul: Mir.Module) =
         for typ in modul.types do
-            let typeBuilder = builder.DefineType(typ.name, TypeAttributes.Public)
-            genType typeBuilder typ
+            typ.builder <- modul.builder.DefineType(typ.name, TypeAttributes.Public)
+            genType typ
         
         for method in modul.methods do
-            let methodBuilder = builder.DefineGlobalMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, method.ret, List.toArray method.args)
-            genMethod methodBuilder method
+            method.builder <- builder.DefineGlobalMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, method.ret, List.toArray method.args)
+            genMethod method
 
         builder.CreateGlobalFunctions() |> ignore
         
     member this.GenAssembly (assembly: Mir.Assembly, filePath: string)  =
-        let builder = System.Reflection.Emit.PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
+        assembly.builder <- System.Reflection.Emit.PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
         for modul in assembly.modules do
-            let moduleBuilder = builder.DefineDynamicModule(modul.name)
+            let moduleBuilder = assembly.builder.DefineDynamicModule(modul.name)
             genModule moduleBuilder modul
 
             // main関数を見つけたら、エントリポイントに指定するために保存しておく
@@ -149,12 +149,12 @@ type Gen() =
         // ターゲットフレームワークを指定するために、TargetFrameworkAttributeをアセンブリに追加する
         let tfaCtor = typeof<TargetFrameworkAttribute>.GetConstructor([| typeof<string> |])
         let tfa = CustomAttributeBuilder(tfaCtor, [| ".NETCoreApp,Version=v10.0" |])
-        builder.SetCustomAttribute(tfa)
+        assembly.builder.SetCustomAttribute(tfa)
 
         // EntryPointを指定してビルドするために、ILとフィールドデータを手動で生成してPEファイルを作成する
         let mutable ilStream = BlobBuilder()
         let mutable fieldData = BlobBuilder()
-        let metadataBuilder = builder.GenerateMetadata(&ilStream, &fieldData)
+        let metadataBuilder = assembly.builder.GenerateMetadata(&ilStream, &fieldData)
 
         let peBuilder =
             match mainMethod with 
