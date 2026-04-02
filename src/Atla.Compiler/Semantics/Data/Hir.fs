@@ -15,9 +15,9 @@ module Hir =
         | String of value: string * span: Span
         | Id of sym: SymbolId * typ: TypeId * span: Span
         | Apply of func: Expr * arg: Expr * typ: TypeId * span: Span
-        | Lambda of args: Arg list * ret: TypeId * body: Expr * scope: Scope * lambdaTyp: TypeId * span: Span
+        | Lambda of args: Arg list * ret: TypeId * body: Expr * typ: TypeId * span: Span
         | MemberAccess of receiver: Expr * memberName: string * typ: TypeId * span: Span
-        | Block of stmts: Stmt list * expr: Expr * scope: Scope * typ: TypeId * span: Span
+        | Block of stmts: Stmt list * expr: Expr * typ: TypeId * span: Span
         | If of cond: Expr * thenBranch: Expr * elseBranch: Expr * typ: TypeId * span: Span
         | ExprError of message: string * errTyp: TypeId * span: Span
 
@@ -29,9 +29,9 @@ module Hir =
             | String _ -> TypeId.String
             | Id (_, t, _) -> t
             | Apply (_, _, t, _) -> t
-            | Lambda (_, _, _, _, t, _) -> t
+            | Lambda (_, _, _, t, _) -> t
             | MemberAccess (_, _, t, _) -> t
-            | Block (_, _, _, t, _) -> t
+            | Block (_, _, t, _) -> t
             | If (_, _, _, t, _) -> t
             | ExprError (_, t, _) -> t
 
@@ -43,9 +43,9 @@ module Hir =
             | String (_, span) -> span
             | Id (_, _, span) -> span
             | Apply (_, _, _, span) -> span
-            | Lambda (_, _, _, _, _, span) -> span
+            | Lambda (_, _, _, _, span) -> span
             | MemberAccess (_, _, _, span) -> span
-            | Block (_, _, _, _, span) -> span
+            | Block (_, _, _, span) -> span
             | If (_, _, _, _, span) -> span
             | ExprError (_, _, span) -> span
 

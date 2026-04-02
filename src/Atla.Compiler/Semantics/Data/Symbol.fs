@@ -56,3 +56,8 @@ type SymbolTable() =
 
     member this.Get(id: SymbolId): SymbolInfo =
         _table.[id]
+
+    member this.TryGetValue(id: SymbolId): SymbolInfo option =
+        match _table.TryGetValue(id) with
+        | true, info -> Some info
+        | false, _ -> None
