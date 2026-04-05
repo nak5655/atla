@@ -47,23 +47,23 @@ type Scope(parent: Scope option) =
         globalScope.DeclareType("Float", TypeId.System(typeof<float>))
         globalScope.DeclareType("String", TypeId.System(typeof<string>))
 
-        globalScope.DeclareVar(Symbol.NativeMethod("==",
+        globalScope.DeclareVar(Name.NativeMethod("==",
             TypeCray.Function([TypeCray.System(typeof<int>); TypeCray.System(typeof<int>)], TypeCray.System(typeof<bool>)),
             fun (dest, xs) -> [Mir.TAC(dest, xs.[0], Mir.OpCode.Eq, xs.[1])]
             ))
-        globalScope.DeclareVar(Symbol.NativeMethod("+",
+        globalScope.DeclareVar(Name.NativeMethod("+",
             TypeCray.Function([TypeCray.System(typeof<int>); TypeCray.System(typeof<int>)], TypeCray.System(typeof<int>)),
             fun (dest, xs) -> [Mir.TAC(dest, xs.[0], Mir.OpCode.Add, xs.[1])]
             ))
-        globalScope.DeclareVar(Symbol.NativeMethod("-",
+        globalScope.DeclareVar(Name.NativeMethod("-",
             TypeCray.Function([TypeCray.System(typeof<int>); TypeCray.System(typeof<int>)], TypeCray.System(typeof<int>)),
             fun (dest, xs) -> [Mir.TAC(dest, xs.[0], Mir.OpCode.Sub, xs.[1])]
             ))
-        globalScope.DeclareVar(Symbol.NativeMethod("*",
+        globalScope.DeclareVar(Name.NativeMethod("*",
             TypeCray.Function([TypeCray.System(typeof<int>); TypeCray.System(typeof<int>)], TypeCray.System(typeof<int>)),
             fun (dest, xs) -> [Mir.TAC(dest, xs.[0], Mir.OpCode.Mul, xs.[1])]
             ))
-        globalScope.DeclareVar(Symbol.NativeMethod("/",
+        globalScope.DeclareVar(Name.NativeMethod("/",
             TypeCray.Function([TypeCray.System(typeof<int>); TypeCray.System(typeof<int>)], TypeCray.System(typeof<int>)),
             fun (dest, xs) -> [Mir.TAC(dest, xs.[0], Mir.OpCode.Div, xs.[1])]
             ))

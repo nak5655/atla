@@ -20,7 +20,8 @@ module Compiler =
             | Success (moduleAst, _) ->
                 // Semantic Analysis
                 let symbolTable = SymbolTable()
-                let hir = Analyze.analyzeModule(symbolTable, "main", moduleAst)
+                let typeSubst = TypeSubst()
+                let hir = Analyze.analyzeModule(symbolTable, typeSubst, "main", moduleAst)
                 // Typing
                 Typing.typingModule hir
                 // Lowering

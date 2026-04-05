@@ -17,14 +17,22 @@ type TypeId =
     | Int
     | Float
     | String
-    | Data of id: string
-    | System of classPath: string
-    | Arrow of arg: TypeId * ret: TypeId
+    | Name of symbolId: SymbolId // TODO: App of SymbolId * TypeId list // 型コンストラクタ適用
+    | Fn of args: TypeId list * ret: TypeId
     | Meta of TypeMeta
+    | Native of System.Type
     | Error of message: string
 
 module TypeId =
     let freshMeta () = Meta (TypeMeta.fresh())
+    
+    let fromSystemType (t: System.Type) : TypeId =
+        if t = typeof<unit> then Unit
+        elif t = typeof<bool> then Bool
+        elif t = typeof<int> then Int
+        elif t = typeof<float> then Float
+        elif t = typeof<string> then String
+        else Native t
 
 type TypeSubst = Dictionary<TypeMeta, TypeId>
 
@@ -36,9 +44,8 @@ module Type =
             match subst.TryGetValue(m2) with
             | true, t' -> occurs subst m t'
             | false, _ -> false
-        | Arrow (a, b) -> occurs subst m a || occurs subst m b
+        | Fn (args, ret) -> List.exists (occurs subst m) args || occurs subst m ret
         | _ -> false
-
 
     let rec canUnify (subst: TypeSubst) (a: TypeId) (b: TypeId) : bool =
         match a, b with
@@ -47,16 +54,27 @@ module Type =
         | Int, Int -> true
         | Float, Float -> true
         | String, String -> true
-        | Data id1, Data id2 when id1 = id2 -> true
-        | System p1, System p2 when p1 = p2 -> true
-        | Arrow (arg1, ret1), Arrow (arg2, ret2) ->
-            (canUnify subst arg1 arg2) && (canUnify subst ret1 ret2)
+        | Name id1, Name id2 when id1 = id2 -> true
+        | Fn (args1, ret1), Fn (args2, ret2) ->
+            if List.length args1 <> List.length args2 then
+                false
+             else
+                (List.zip args1 args2) |> List.forall (fun (a1, a2) -> canUnify subst a1 a2) && (canUnify subst ret1 ret2)
         | Meta a, b -> 
             match subst.TryGetValue(a) with
             | true, a' -> canUnify subst a' b
             | false, _ -> true // まだ型変数が具体的な型に置き換えられていない場合は、どの型とも単一化可能とする
         | a, Meta b -> canUnify subst (Meta b) a
         | _ -> false
+
+    let rec resolve (subst: TypeSubst) (t: TypeId) : TypeId =
+        match t with
+        | Meta m ->
+            match subst.TryGetValue(m) with
+            | true, t' -> resolve subst t'
+            | false, _ -> t
+        | Fn (args, ret) -> Fn (List.map (resolve subst) args, resolve subst ret)
+        | _ -> t
 
     // 単一化
     let rec unify (subst: TypeSubst) (a: TypeId) (b: TypeId) : TypeId =
@@ -66,14 +84,17 @@ module Type =
         | Int, Int -> Int
         | Float, Float -> Float
         | String, String -> String
-        | Data id1, Data id2 when id1 = id2 -> Data id1
-        | System p1, System p2 when p1 = p2 -> System p1
-        | Arrow (arg1, ret1), Arrow (arg2, ret2) ->
-            let arg = unify subst arg1 arg2
-            let ret = unify subst ret1 ret2
-            Arrow (arg, ret)
+        | Name id1, Name id2 when id1 = id2 -> Name id1
+        | Fn (args1, ret1), Fn (args2, ret2) ->
+            if List.length args1 <> List.length args2 then
+                failwith "Cannot unify function types with different number of arguments"
+            else
+                let args = List.zip args1 args2 |> List.map (fun (a1, a2) -> unify subst a1 a2)
+                let ret = unify subst ret1 ret2
+                Fn (args, ret)
         | Meta m, t
         | t, Meta m ->
+            let t = resolve subst t
             if occurs subst m t then
                 failwith "Occurs check failed"
             subst.[m] <- t
@@ -84,7 +105,7 @@ module Type =
     let rec hasError (subst: TypeSubst) (t: TypeId) : bool =
         match t with
         | Error _ -> true
-        | Arrow (arg, ret) -> hasError subst arg || hasError subst ret
+        | Fn (args, ret) -> List.exists (hasError subst) args || hasError subst ret
         | Meta m ->
             match subst.TryGetValue(m) with
             | true, t' -> hasError subst t'

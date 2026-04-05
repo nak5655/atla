@@ -1,5 +1,6 @@
 namespace Atla.Compiler.Semantics.Data
 
+open System.Reflection
 open Atla.Compiler.Data
 
 module Hir =
@@ -8,15 +9,26 @@ module Hir =
         member this.typ = typ
         member this.span = span
 
+    type Callable =
+        | Fn of SymbolId
+        | BuiltinOperator of Builtins.Operators
+        | NativeMethod of MethodInfo list
+        | NativeConstructor of ConstructorInfo list
+
+    type Member =
+        | NativeField of FieldInfo
+        | NativeProperty of PropertyInfo
+        | NativeMethod of MethodInfo
+
     type Expr =
         | Unit of span: Span
         | Int of value: int * span: Span
         | Float of value: float * span: Span
         | String of value: string * span: Span
         | Id of sym: SymbolId * typ: TypeId * span: Span
-        | Apply of func: Expr * arg: Expr * typ: TypeId * span: Span
+        | Call of func: Callable * instance: Expr option * args: Expr list * typ: TypeId * span: Span
         | Lambda of args: Arg list * ret: TypeId * body: Expr * typ: TypeId * span: Span
-        | MemberAccess of receiver: Expr * memberName: string * typ: TypeId * span: Span
+        | MemberAccess of mem: Member * instance: Expr option * typ: TypeId * span: Span
         | Block of stmts: Stmt list * expr: Expr * typ: TypeId * span: Span
         | If of cond: Expr * thenBranch: Expr * elseBranch: Expr * typ: TypeId * span: Span
         | ExprError of message: string * errTyp: TypeId * span: Span
@@ -28,7 +40,7 @@ module Hir =
             | Float _ -> TypeId.Float
             | String _ -> TypeId.String
             | Id (_, t, _) -> t
-            | Apply (_, _, t, _) -> t
+            | Call (_, _, _, t, _) -> t
             | Lambda (_, _, _, t, _) -> t
             | MemberAccess (_, _, t, _) -> t
             | Block (_, _, t, _) -> t
@@ -42,7 +54,7 @@ module Hir =
             | Float (_, span) -> span
             | String (_, span) -> span
             | Id (_, _, span) -> span
-            | Apply (_, _, _, span) -> span
+            | Call (_, _, _, _, span) -> span
             | Lambda (_, _, _, _, span) -> span
             | MemberAccess (_, _, _, span) -> span
             | Block (_, _, _, span) -> span

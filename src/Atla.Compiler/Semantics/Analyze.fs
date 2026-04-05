@@ -1,5 +1,6 @@
 namespace Atla.Compiler.Semantics
 
+open System.Reflection
 open System.Collections.Generic
 open Atla.Compiler.Syntax.Data
 open Atla.Compiler.Semantics.Data
@@ -28,50 +29,98 @@ module Analyze =
             | _ -> failwith "Unsupported function argument type"
 
         member this.declareLocal (name: string) (typ: TypeId) : SymbolId =
+            let sid = symbolTable.NextId()
             let symInfo = SymbolInfo(name, typ, SymbolKind.Local())
-            let sym = symbolTable.Add(symInfo)
-            scope.DeclareVar(name, sym)
-            sym
+            symbolTable.Add(sid, symInfo)
+            scope.DeclareVar(name, sid)
+            sid
 
         // シンボルテーブルにローカル変数を追加し、スコープに宣言する
         member this.declareLocalMeta (name: string) : SymbolId =
+            let sid = symbolTable.NextId()
             let symInfo = SymbolInfo(name, TypeId.Meta (TypeMeta.fresh ()), SymbolKind.Local())
-            let sym = symbolTable.Add(symInfo)
-            scope.DeclareVar(name, sym)
-            sym
+            symbolTable.Add(sid, symInfo)
+            scope.DeclareVar(name, sid)
+            sid
             
         member this.declareArg (name: string) (typ: TypeId) : SymbolId =
+            let sid = symbolTable.NextId()
             let symInfo = SymbolInfo(name, typ, SymbolKind.Arg())
-            let sym = symbolTable.Add(symInfo)
-            scope.DeclareVar(name, sym)
-            sym
+            let sym = symbolTable.Add(sid, symInfo)
+            scope.DeclareVar(name, sid)
+            sid
 
         member this.resolveVar (name: string) (expected: TypeId) : SymbolId list =
             scope.ResolveVar(name, expected)
 
         member this.declareSystemType (classPath: string) : SymbolId =
+            let sid = symbolTable.NextId()
             let name = Array.last (classPath.Split('.'))
-            let tid = TypeId.System(classPath)
+            let tid = TypeId.Name(sid)
             let kind = SymbolKind.SystemType(System.Type.GetType(classPath))
             let symInfo = SymbolInfo(name, tid, kind)
-            let sym = symbolTable.Add(symInfo)
-            scope.DeclareType(name, sym)
-            sym
+            let sym = symbolTable.Add(sid, symInfo)
+            scope.DeclareType(name, sid)
+            sid
 
         member this.resolveSymType (sym: SymbolId) : TypeId =
-            match symbolTable.TryGetValue(sym) with
+            match symbolTable.Get(sym) with
             | Some(symInfo) -> symInfo.typ
             | _ -> TypeId.Error (sprintf "Undefined symbol '%A'" sym)
 
+        member this.resolveSym(sym: SymbolId) : SymbolInfo option =
+            symbolTable.Get(sym)
+
         member this.unifyTypes (t1: TypeId) (t2: TypeId) : unit =
             Type.unify typSubst t1 t2 |> ignore
+
+        member this.resolveTyp (tid: TypeId) : SymbolInfo option =
+            match Type.resolve typSubst tid with
+            | TypeId.Name sym -> 
+                match symbolTable.Get(sym) with
+                | Some symInfo -> Some symInfo
+                | None -> None
+            | _ -> None
+
+        member this.resolveNativeMember (memberInfos: MemberInfo list) (typ: TypeId) : (MemberInfo * TypeId) list =
+            let result = List<MemberInfo * TypeId>()
+            for memberInfo in memberInfos do
+                match memberInfo with
+                | :? MethodInfo as methodInfo ->
+                    let methodType = TypeId.Fn([for p in methodInfo.GetParameters() -> TypeId.fromSystemType p.ParameterType], TypeId.fromSystemType methodInfo.ReturnType)
+                    if Type.canUnify typSubst methodType typ then
+                        result.Add(memberInfo, methodType)
+                | :? FieldInfo as fieldInfo ->
+                    let fieldType = TypeId.fromSystemType fieldInfo.FieldType
+                    if Type.canUnify typSubst fieldType typ then
+                        result.Add(memberInfo, fieldType)
+                | :? PropertyInfo as propertyInfo ->
+                    let propertyType = TypeId.fromSystemType propertyInfo.PropertyType
+                    if Type.canUnify typSubst propertyType typ then
+                        result.Add(memberInfo, propertyType)
+                | _ -> ()
+            
+            Seq.toList result
 
         member this.sub(): Env =
             let blockScope = Scope(Some this.scope)
             Env(this.symbolTable, this.typSubst, blockScope)
 
+    // 式を名前解決したあと、関数として意味解析を行う
+    let rec analyzeExprAsCallable (env:Env) (expr: Ast.Expr) (expected: TypeId): Hir.Callable option =
+        match analyzeExpr env expr expected with
+        | Hir.Expr.Id (sym, typ, _) ->
+            match env.resolveSym sym with
+            | Some symInfo ->
+                match symInfo.kind with
+                | SymbolKind.NativeMethod methodInfos -> Some (Hir.Callable.NativeMethod methodInfos)
+                | SymbolKind.Constructor ctorInfos -> Some (Hir.Callable.NativeConstructor ctorInfos)
+                | SymbolKind.BuiltinOperator op -> Some (Hir.Callable.BuiltinOperator op)
+                | _ -> None
+            | None -> None
+        | _ -> None
 
-    let rec analyzeExpr (env: Env) (expr: Ast.Expr) (expected: TypeId) : Hir.Expr =
+    and analyzeExpr (env: Env) (expr: Ast.Expr) (expected: TypeId) : Hir.Expr =
         match expr with
         | :? Ast.Expr.Unit as unitExpr ->
             env.unifyTypes expected TypeId.Unit
@@ -90,8 +139,8 @@ module Analyze =
             | [sym] ->
                 env.unifyTypes expected (env.resolveSymType sym)
                 Hir.Expr.Id(sym, env.resolveSymType sym, idExpr.span)
-            | [] -> Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" idExpr.name idExpr.span, TypeId.Error (sprintf "Undefined variable '%s'" idExpr.name), idExpr.span)
-            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s' at %A" idExpr.name idExpr.span, TypeId.Error (sprintf "Ambiguous variable '%s'" idExpr.name), idExpr.span)
+            | [] -> Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" idExpr.name idExpr.span, expected, idExpr.span)
+            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s' at %A" idExpr.name idExpr.span, expected, idExpr.span)
         | :? Ast.Expr.Block as blockExpr ->
             let blockEnv = env.sub()
             let stmts = blockExpr.stmts |> List.map (analyzeStmt blockEnv)
@@ -104,17 +153,40 @@ module Analyze =
                 let unitExpr = Hir.Expr.Unit ({left = blockExpr.span.right; right = blockExpr.span.right})
                 Hir.Expr.Block(stmts, unitExpr, expected, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
-            // 関数本体の名前解析と型推論を行う
-            let func = analyzeExpr env applyExpr.func (TypeId.Arrow (TypeId.freshMeta (), expected))
             // 引数の名前解析と型推論を行いながら、Applyに畳み込む
-            List.tail (applyExpr.args) |> List.fold (fun acc arg ->
-                let argExpr = analyzeExpr env arg (TypeId.freshMeta())
-                // TODO: Applyの型は、関数の型から引数の型を引いていく形で推論する必要がある
-                Hir.Expr.Apply(acc, argExpr, TypeId.freshMeta(), applyExpr.span)) func
+            let args = applyExpr.args |> List.map (fun arg ->
+                analyzeExpr env arg (TypeId.freshMeta()))
+            // 引数の型から、関数本体の名前解析と型推論を行う
+            let funcType = args |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, expected)
+            let callable = analyzeExprAsCallable env applyExpr.func funcType
+            match callable with
+            | Some callable ->
+                Hir.Expr.Call(callable, None, args, expected, applyExpr.span)
+            | _ -> Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, expected, applyExpr.span)
         | :? Ast.Expr.MemberAccess as memberAccessExpr ->
-            // TODO: メンバーアクセスの解析は、まずレシーバーの型を推論し、その型に対してメンバー名で名前解決を行う必要がある
+            // まずレシーバーの式を解析して型を推論する
             let receiver = analyzeExpr env memberAccessExpr.receiver (TypeId.freshMeta())
-            Hir.Expr.MemberAccess(receiver, memberAccessExpr.memberName, TypeId.freshMeta(), memberAccessExpr.span)
+            // レシーバーの型から、メンバーアクセスの名前解決と型推論を行う
+            match env.resolveTyp receiver.typ with
+            | Some symInfo ->
+                match symInfo.kind with
+                | SymbolKind.SystemType sysType ->
+                    // System.Typeのstaticメンバーアクセスをサポートする
+                    let methodInfos = sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static) |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName) |> Seq.toList
+                    match env.resolveNativeMember methodInfos expected with
+                    | [memberInfo, tid] ->
+                        match memberInfo with
+                        | :? MethodInfo as methodInfo ->
+                            Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, tid, memberAccessExpr.span)
+                        | :? FieldInfo as fieldInfo ->
+                            Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, tid, memberAccessExpr.span)
+                        | :? PropertyInfo as propertyInfo ->
+                            Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, tid, memberAccessExpr.span)
+                        | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span, expected, memberAccessExpr.span)
+                    | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, expected, memberAccessExpr.span)
+                    | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, expected, memberAccessExpr.span)
+                | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, expected, memberAccessExpr.span)
+            | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, expected, memberAccessExpr.span)
         | :? Ast.Expr.If as ifExpr ->
             let rec analyzeIfBranches (branches: Ast.IfBranch list) : Hir.Expr =
                 match List.head branches with
@@ -173,18 +245,13 @@ module Analyze =
         // 返り値の型を名前解決する
         let retType = env.resolveTypeExpr fnDecl.ret
 
-        // 引数の型を名前解決し、Arrow型に折り畳む
-        let tid = List.rev fnDecl.args |> List.fold (fun acc (arg: Ast.FnArg) ->
-            match arg with
-            | :? Ast.FnArg.Named as namedArg ->
-                let argType = bodyEnv.resolveArgType arg
-                bodyEnv.declareArg namedArg.name argType |> ignore
-                TypeId.Arrow(argType, acc)
-            | _ -> TypeId.Arrow(TypeId.Unit, acc)) retType
+        // 引数の型を名前解決する
+        let argTypes = fnDecl.args |> List.map bodyEnv.resolveArgType
+
+        let tid = TypeId.Fn(argTypes, retType)
 
         // 関数のシンボルを定義する
         let sym = env.declareLocal fnDecl.name tid
-
         // 関数本体を解析する
         let body = analyzeExpr bodyEnv fnDecl.body (TypeId.freshMeta ())
 

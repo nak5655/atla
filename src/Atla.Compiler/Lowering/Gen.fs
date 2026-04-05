@@ -2,8 +2,7 @@ namespace Atla.Compiler.Lowering
 
 open System.Reflection
 open System.Reflection.Emit
-open Atla.Compiler.Types
-open Atla.Compiler.Mir
+open Atla.Compiler.Lowering.Data
 open System.Reflection.Metadata
 open System.Reflection.PortableExecutable
 open System.Reflection.Metadata.Ecma335

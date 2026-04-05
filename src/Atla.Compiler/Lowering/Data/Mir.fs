@@ -1,10 +1,9 @@
-namespace Atla.Compiler.Mir
+namespace Atla.Compiler.Lowering.Data
 
 open System
 open System.Reflection
 open System.Reflection.Emit
 open System.Collections.Generic
-open Atla.Compiler.Types
 
 // MIRでは
 // - 型はSystem.Typeに確定済み
@@ -77,7 +76,7 @@ module Mir =
         | AssignField of inst: Reg * field: FieldInfo * value: Value
         | TAC of dest: Reg * lhs: Value * op: OpCode * rhs: Value
         | Call of method: Choice<MethodInfo, ConstructorInfo> * args: Value list
-        | CallAssign of dst: Reg* method: MethodInfo * args: Value list
+        | CallAssign of dst: Reg * method: MethodInfo * args: Value list
         | New of dst: Reg * ctor: ConstructorInfo * args: Value list
         | Ret
         | RetValue of value: Value
@@ -111,18 +110,6 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Frame() =
-        let mutable _args: List<System.Type> = List()
-        let mutable _locs: List<System.Type> = List()
-        member this.args = _args
-        member this.locs = _locs
-        member this.addArg(typ: System.Type): Reg =
-            _args.Add(typ)
-            Reg.Arg(_args.Count - 1)
-        member this.addLoc(typ: System.Type): Reg =
-            _locs.Add(typ)
-            Reg.Loc(_locs.Count - 1)
-
     type Constructor(args: System.Type list, body: Ins list, frame: Frame) =
         let mutable _builder: ConstructorBuilder option = None
         member this.args = args
@@ -132,13 +119,12 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Method(name: string, args: System.Type list, ret: System.Type, body: Ins list, frame: Frame) =
+    type Method(name: string, args: System.Type list, ret: System.Type, body: Ins list) =
         let mutable _builder: MethodBuilder option = None
         member this.name = name
         member this.args = args
         member this.ret = ret
         member this.body = body
-        member this.frame = frame
         member this.builder
             with get() = _builder.Value
             and set(v) = _builder <- Some v
