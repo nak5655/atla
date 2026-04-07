@@ -12,8 +12,10 @@ module Hir =
     type Callable =
         | Fn of SymbolId
         | BuiltinOperator of Builtins.Operators
-        | NativeMethod of MethodInfo list
-        | NativeConstructor of ConstructorInfo list
+        | NativeMethod of MethodInfo
+        | NativeMethodGroup of MethodInfo list
+        | NativeConstructor of ConstructorInfo
+        | NativeConstructorGroup of ConstructorInfo list
 
     type Member =
         | NativeField of FieldInfo
@@ -73,14 +75,21 @@ module Hir =
         member this.body = body
         member this.span = span
 
+    type Method(sym: SymbolId, body: Expr, typ: TypeId, span: Span) =
+        member this.sym = sym
+        member this.body = body
+        member this.typ = typ
+        member this.span = span
+
     type Type(sym: SymbolId, fields: Field list) =
         member this.sym = sym
         member this.fields = fields
 
-    type Module(name: string, types: Type list, fields: Field list, scope: Scope) =
+    type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope) =
         member this.name = name
         member this.types = types
         member this.fields = fields
+        member this.methods = methods
         member this.scope = scope
 
     type Assembly(name: string, modules: Module list) =

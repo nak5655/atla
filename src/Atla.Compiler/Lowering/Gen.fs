@@ -100,7 +100,7 @@ type Gen() =
 
     let genMethod (method: Mir.Method) =
         let gen = method.builder.GetILGenerator()
-
+        
         for typ in method.frame.locs do
             gen.DeclareLocal(typ) |> ignore
 

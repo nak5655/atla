@@ -113,8 +113,8 @@ module Analyze =
             match env.resolveSym sym with
             | Some symInfo ->
                 match symInfo.kind with
-                | SymbolKind.NativeMethod methodInfos -> Some (Hir.Callable.NativeMethod methodInfos)
-                | SymbolKind.Constructor ctorInfos -> Some (Hir.Callable.NativeConstructor ctorInfos)
+                | SymbolKind.NativeMethod methodInfos -> Some (Hir.Callable.NativeMethodGroup methodInfos)
+                | SymbolKind.Constructor ctorInfos -> Some (Hir.Callable.NativeConstructorGroup ctorInfos)
                 | SymbolKind.BuiltinOperator op -> Some (Hir.Callable.BuiltinOperator op)
                 | _ -> None
             | None -> None
@@ -239,7 +239,7 @@ module Analyze =
         // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
         env.declareSystemType classPath |> ignore
 
-    let analyzeFn (env: Env) (fnDecl: Ast.Decl.Fn) : Hir.Field =
+    let analyzeMethod (env: Env) (fnDecl: Ast.Decl.Fn) : Hir.Method =
         let bodyEnv = env.sub()
 
         // 返り値の型を名前解決する
@@ -255,20 +255,21 @@ module Analyze =
         // 関数本体を解析する
         let body = analyzeExpr bodyEnv fnDecl.body (TypeId.freshMeta ())
 
-        Hir.Field(sym, tid, body, fnDecl.span)
+        Hir.Method(sym, body, tid, fnDecl.span)
 
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Hir.Module =
         let moduleScope = Scope(Some (Scope.GlobalScope()))
         let env = Env(symbolTable, typeSubst, moduleScope)
 
         let fields = List<Hir.Field>()
+        let methods = List<Hir.Method>()
         let types = List<Hir.Type>()
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Import as importDecl ->
                 analyzeImport env importDecl
             | :? Ast.Decl.Fn as fnDecl ->
-                fields.Add(analyzeFn env fnDecl)
+                methods.Add(analyzeMethod env fnDecl)
             | _ -> failwith "Unsupported declaration type in module"
 
-        Hir.Module(moduleName, types |> Seq.toList, fields |> Seq.toList, moduleScope)
+        Hir.Module(moduleName, types |> Seq.toList, fields |> Seq.toList, methods |> Seq.toList, moduleScope)

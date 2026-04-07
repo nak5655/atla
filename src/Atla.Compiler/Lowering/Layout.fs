@@ -6,22 +6,12 @@ open Atla.Compiler.Semantics.Data
 open Atla.Compiler.Lowering.Data
 
 module Layout =
-    type Env(symbolTable: SymbolTable, typeSubst: TypeSubst) =
-        member this.symbolTable = symbolTable
-        member this.typeSubst = typeSubst
+    type Env(symbolTable: SymbolTable) =
 
         member this.resolveSym(sym: SymbolId) : SymbolInfo option =
             match symbolTable.Get(sym) with
             | Some info -> Some info
             | None -> None
-
-        member this.resolveType(tid: TypeId): SymbolInfo option =
-            match Type.resolve typeSubst tid with
-            | TypeId.Name sym -> 
-                match symbolTable.Get(sym) with
-                | Some info -> Some info
-                | None -> None
-            | _ -> None
 
         member this.declareTemp (frame: Frame) (typ: TypeId): Mir.Reg =
             let sid = symbolTable.NextId()
@@ -44,51 +34,39 @@ module Layout =
             | Some (Mir.Reg.Loc i) -> KNormal([], Some (Mir.Value.RegVal(Mir.Reg.Loc i)))
             | Some (Mir.Reg.Arg i) -> KNormal([], Some (Mir.Value.RegVal(Mir.Reg.Arg i)))
             | None -> failwithf "Undefined variable: %A" sym
-        | Hir.Expr.Call (func, args, _, _) ->
+        | Hir.Expr.Call (func, instance, args, _, _) ->
             match func with
-            | Hir.Expr.Id (sym, _, _) ->
-                match env.resolveSym(sym) with
-                | Some(symInfo) ->
-                    match symInfo.kind with
-                    | SymbolKind.NativeMethod mi ->
-                        // 通常の関数呼び出し
-                        let mutable ins = []
-                        let mutable argValues = []
-                        
-                        for arg in args do
-                            let argK = layoutExpr env frame arg
-                            ins <- ins @ argK.ins
-                            argValues <- argValues @ [argK.res.Value]
-
-                        let funcK = layoutExpr env frame func
-                        ins <- ins @ funcK.ins
-
-                        match funcK.res with
-                        | Some (Mir.Value.MethodVal methodInfo) ->
-                            ins <- ins @ [Mir.Ins.Call(Choice1Of2(methodInfo), argValues)]
-                            KNormal(ins, None)
-                        | _ -> failwithf "Expected a method value in function application, but got: %A" funcK.res
-                    | SymbolKind.BuiltinOperator op ->
-                        //  組み込み関数呼び出し
-                        let mutable ins = []
-                        let mutable argValues = []
-
-                        for arg in args do
-                            let argK = layoutExpr env frame arg
-                            ins <- ins @ argK.ins
-                            argValues <- argValues @ [argK.res.Value]
-
-                        let resReg = env.declareTemp frame expr.typ
-
-                        match op with
-                        | SymbolKind.OpAdd -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Add, argValues.[1])]
-                        | SymbolKind.OpSub -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Sub, argValues.[1])]
-                        | SymbolKind.OpMul -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Mul, argValues.[1])]
-                        | SymbolKind.OpDiv -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Div, argValues.[1])]
-                        | SymbolKind.OpEq -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Eq, argValues.[1])]
-
-                        KNormal(ins, Some(Mir.Value.RegVal(resReg)))
-                | _ -> failwithf "Undefined symbol in function application: %A" sym
+            | Hir.Callable.NativeMethod mi ->
+                // 通常の関数呼び出し
+                let mutable ins = []
+                let mutable argValues = []
+                
+                for arg in args do
+                    let argK = layoutExpr env frame arg
+                    ins <- ins @ argK.ins
+                    argValues <- argValues @ [argK.res.Value]
+                let resReg = env.declareTemp frame expr.typ
+                ins <- ins @ [Mir.Ins.Call(Choice1Of2(mi), argValues)]
+                KNormal(ins, Some(Mir.Value.RegVal(resReg))) 
+            | Hir.Callable.BuiltinOperator op ->
+                // 組み込み演算子呼び出し
+                let mutable ins = []
+                let mutable argValues = []
+                for arg in args do
+                    let argK = layoutExpr env frame arg
+                    ins <- ins @ argK.ins
+                    argValues <- argValues @ [argK.res.Value]
+                let resReg = env.declareTemp frame expr.typ
+                match op with
+                | Builtins.OpAdd -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Add, argValues.[1])]
+                | Builtins.OpSub -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Sub, argValues.[1])]
+                | Builtins.OpMul -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Mul, argValues.[1])]
+                | Builtins.OpDiv -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Div, argValues.[1])]
+                | Builtins.OpEq -> ins <- ins @ [Mir.Ins.TAC(resReg, argValues.[0], Mir.OpCode.Eq, argValues.[1])]
+                KNormal(ins, Some(Mir.Value.RegVal(resReg)))
+            | Hir.Callable.Fn sym ->
+                // TODO: 関数呼び出しの解決
+                failwithf "Function calls by symbol are not yet implemented: %A" sym
             | _ -> failwithf "Unsupported function expression in application: %A" func
         | Hir.Expr.Block (stmts, expr, _, _) ->
             let mutable ins = []
@@ -115,27 +93,27 @@ module Layout =
             | _ ->
                 let fieldInfo = sysType.GetField(memberAccess.memberName)
                 KNormal([], Some(Mir.Value.FieldVal(fieldInfo)))
-        | :? Hir.Expr.If as ifExpr ->
+        | Hir.Expr.If (cond, thenBranch, elseBranch, typ, _) ->
             let mutable ins = []
             let thenLabel = Mir.Label()
             let elseLabel = Mir.Label()
             let endLabel = Mir.Label()
-            let resReg = frame.addLoc((ifExpr :> Hir.Expr).typ.ToSystemType())
+            let resReg = env.declareTemp frame typ
 
             // 条件式
-            let condK = layoutExpr(symTbl, frame, ifExpr.cond)
+            let condK = layoutExpr env frame cond
             ins <- ins @ condK.ins
             ins <- ins @ [Mir.Ins.JumpTrue(condK.res.Value, thenLabel)]
             ins <- ins @ [Mir.Ins.JumpFalse(condK.res.Value, elseLabel)]
 
             // Then
-            let thenK = layoutExpr(symTbl, frame, ifExpr.thenBranch)
+            let thenK = layoutExpr env frame thenBranch
             ins <- ins @ [Mir.Ins.MarkLabel(thenLabel)] @ thenK.ins
             ins <- ins @ [Mir.Ins.Assign(resReg, thenK.res.Value)]
             ins <- ins @ [Mir.Ins.Jump(endLabel)]
 
             // Else
-            let elseK = layoutExpr(symTbl, frame, ifExpr.elseBranch)
+            let elseK = layoutExpr env frame elseBranch
             ins <- ins @ [Mir.Ins.MarkLabel(elseLabel)] @ elseK.ins
             ins <- ins @ [Mir.Ins.Assign(resReg, elseK.res.Value)]
             ins <- ins @ [Mir.Ins.Jump(endLabel)]
@@ -146,56 +124,56 @@ module Layout =
 
     and layoutStmt (env: Env) (frame: Frame) (stmt: Hir.Stmt) : Mir.Ins list =
         match stmt with
-        | :? Hir.Stmt.Let as letStmt ->
-            let valueK = layoutExpr(symTbl, frame, letStmt.value)
-            let typ = letStmt.value.typ.ToSystemType()
-            let reg = frame.addLoc(typ)
-            symTbl.Add(letStmt.name, typ, reg)
-            valueK.ins @ [Mir.Ins.Assign(reg, valueK.res.Value)]
-        | :? Hir.Stmt.Assign as assignStmt ->
-            let valueK = layoutExpr(symTbl, frame, assignStmt.value)
-            let typ = assignStmt.value.typ.ToSystemType()
-            match symTbl.resolve(assignStmt.name, typ) with
-            | Some reg -> valueK.ins @ [Mir.Ins.Assign(reg, valueK.res.Value)]
-            | None -> failwithf "Undefined variable: %s" assignStmt.name
-        | :? Hir.Stmt.ExprStmt as exprStmt ->
-            let exprK = layoutExpr(symTbl, frame, exprStmt.expr)
+        | Hir.Stmt.Let (sym, typ, body, _) ->
+            let bodyK = layoutExpr env frame body
+            let reg = frame.addLoc sym
+            bodyK.ins @ [Mir.Ins.Assign(reg, bodyK.res.Value)]
+        | Hir.Stmt.Assign (sym, body, _) ->
+            let bodyK = layoutExpr env frame body
+            match frame.get sym with
+            | Some (Mir.Reg.Loc i) -> bodyK.ins @ [Mir.Ins.Assign(Mir.Reg.Loc i, bodyK.res.Value)]
+            | Some (Mir.Reg.Arg i) -> bodyK.ins @ [Mir.Ins.Assign(Mir.Reg.Arg i, bodyK.res.Value)]
+            | None -> failwithf "Undefined variable in assignment: %A" sym
+        | Hir.Stmt.ExprStmt (expr, _) ->
+            let exprK = layoutExpr env frame expr
             exprK.ins
         | _ -> failwithf "Unsupported statement type: %A" (stmt.GetType())
 
+    let layoutMethod (env: Env) (hirMethod: Hir.Method) : Mir.Method =
+        let bodyK = layoutExpr env (Frame()) hirMethod.body
+        match hirMethod.typ with
+        | TypeId.Fn (args, ret) -> Mir.Method(hirMethod.sym, args, ret, bodyK.ins)
+        | _ -> failwithf "Expected a function type for method, but got: %A" hirMethod.typ
+
     let layoutType (hirType: Hir.Type) : Mir.Type =
-        let mutable fields = []
-        let mutable ctors = []
-        let mutable methods = []
+        let fields = List<Mir.Field>()
+        let ctors = List<Mir.Constructor>()
+        let methods = List<Mir.Method>()
 
         for field in hirType.fields do
-            fields <- Mir.Field(field.name, field.typ.ToSystemType()) :: fields
-        for ctor in hirType.ctors do
-            let symTable = SymbolTable()
-            let frame = Mir.Frame()
-            let ins = layoutExpr(symTable, frame, ctor.body) |> fun k -> k.ins @ [Mir.Ins.Ret]
-            ctors <- Mir.Constructor(ctor.args |> List.map (fun t -> t.typ.ToSystemType()), ins, frame) :: ctors
-        for method in hirType.methods do
-            let symTable = SymbolTable()
-            let frame = Mir.Frame()
-            let ins = layoutExpr(symTable, frame, method.body) |> fun k -> k.ins @ [Mir.Ins.Ret]
-            methods <- Mir.Method(method.name, method.args |> List.map (fun t -> t.typ.ToSystemType()), method.ret.ToSystemType(), ins, frame) :: methods
+            fields.Add(Mir.Field(field.sym, field.typ))
+        // TODO constructors and methods
 
-        Mir.Type(hirType.name, List.rev fields, List.rev ctors, List.rev methods)
+        Mir.Type(hirType.sym, Seq.toList fields, Seq.toList ctors, Seq.toList methods)
 
     let layoutModule (env: Env) (hirModule: Hir.Module) : Mir.Module =
-        let mutable types = []
-        let mutable methods = []
+        let types = List<Mir.Type>()
+        let methods = List<Mir.Method>()
 
         for typ in hirModule.types do
-            types <- layoutType typ :: types
-        for method in hirModule.methods do
-            let symTable = SymbolTable()
-            let frame = Mir.Frame()
-            let ins = layoutExpr(symTable, frame, method.body) |> fun k -> k.ins @ [Mir.Ins.Ret]
-            methods <- Mir.Method(method.name, method.args |> List.map (fun t -> t.typ.ToSystemType()), method.ret.ToSystemType(), ins, frame) :: methods
+            types.Add(layoutType typ)
 
-        Mir.Module(hirModule.name, types, methods)
+        for method in hirModule.methods do
+            match env.resolveSym(method.sym) with
+            | Some symInfo ->
+                match symInfo.typ with
+                | TypeId.Fn (args, ret) ->
+                    let methodInfo = symInfo.kind |> function
+                        | SymbolKind.NativeMethod miList -> miList |> List.find (fun mi -> mi.GetParameters().Length = args.Length && mi.ReturnType = ret.ToSystemType())
+                        | _ -> failwithf "Expected a native method for module-level method, but got: %A" symInfo.kind
+                    methods.Add(Mir.Method(method.sym, args, ret, ))
+
+        Mir.Module(hirModule.name, Seq.toList types, Seq.toList methods)
 
     let layoutAssembly (env: Env) (asm: Hir.Assembly) : Mir.Assembly =
         let mutable mirModules = []
