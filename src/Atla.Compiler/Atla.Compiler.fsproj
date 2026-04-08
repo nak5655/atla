@@ -23,7 +23,6 @@
     <Compile Include="Semantics\Data\SymbolInfo.fs" />
     <Compile Include="Semantics\Data\Scope.fs" />
     <Compile Include="Semantics\Data\Hir.fs" />
-    <Compile Include="Semantics\Typing.fs" />
     <Compile Include="Semantics\Analyze.fs" />
     <Compile Include="Lowering\Data\Mir.fs" />
     <Compile Include="lowering\data\Frame.fs" />

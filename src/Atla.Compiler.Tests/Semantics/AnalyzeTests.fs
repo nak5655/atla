@@ -1,0 +1,26 @@
+namespace Atla.Compiler.Tests.Semantics
+
+open Xunit
+open Atla.Compiler.Data
+open Atla.Compiler.Syntax.Data
+open Atla.Compiler.Semantics
+open Atla.Compiler.Semantics.Data
+
+module AnalyzeTests =
+    [<Fact>]
+    let ``analyzeMethod infers argument reference type`` () =
+        let span = Span.Empty
+        let argType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let arg = Ast.FnArg.Named("x", argType, span) :> Ast.FnArg
+        let body = Ast.Expr.Id("x", span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("id", [arg], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([fnDecl])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        let hirModule = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
+
+        match hirModule.methods.Head.body with
+        | Hir.Expr.Id (_, typ, _) -> Assert.Equal(TypeId.Int, Type.resolve subst typ)
+        | other -> Assert.True(false, $"expected Hir.Expr.Id but got {other}")
