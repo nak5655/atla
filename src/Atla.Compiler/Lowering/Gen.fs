@@ -1,16 +1,35 @@
 namespace Atla.Compiler.Lowering
 
+open System
 open System.Reflection
 open System.Reflection.Emit
 open Atla.Compiler.Lowering.Data
+open Atla.Compiler.Semantics.Data
 open System.Reflection.Metadata
 open System.Reflection.PortableExecutable
 open System.Reflection.Metadata.Ecma335
 open System.IO
 open System.Runtime.Versioning
+open System.Collections.Generic
 
 type Gen() =
     let mutable mainMethod: MethodInfo option = None
+    
+    let resolveType (typeBuilders: Dictionary<SymbolId, TypeBuilder>) (typ: TypeId) : Type =
+        match typ with
+        | TypeId.Unit -> typeof<Void>
+        | TypeId.Bool -> typeof<bool>
+        | TypeId.Int -> typeof<int>
+        | TypeId.Float -> typeof<float>
+        | TypeId.String -> typeof<string>
+        | TypeId.Native t -> t
+        | TypeId.Name sym ->
+            match typeBuilders.TryGetValue(sym) with
+            | true, builder -> builder :> Type
+            | false, _ -> failwithf "Unknown type symbol: %A" sym
+        | TypeId.Fn _ -> failwithf "Function type is not supported for CIL member signatures: %A" typ
+        | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" typ
+        | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
 
     let rec genValue (gen: ILGenerator) (value: Mir.Value) =
         match value with
@@ -89,7 +108,7 @@ type Gen() =
             gen.Emit(op, label.get(gen))
         | _ -> failwithf "Unsupported instruction: %A" ins
 
-    let genConstructor (ctor: Mir.Constructor) =
+    let genConstructor (_: TypeId -> Type) (ctor: Mir.Constructor) =
         let gen = ctor.builder.GetILGenerator()
         let frame = ctor.frame
 
@@ -101,7 +120,7 @@ type Gen() =
         for ins in ctor.body do
             genIns gen ins
 
-    let genMethod (method: Mir.Method) =
+    let genMethod (_: TypeId -> Type) (method: Mir.Method) =
         let gen = method.builder.GetILGenerator()
         let frame = method.frame
 
@@ -113,14 +132,21 @@ type Gen() =
         for ins in method.body do
             genIns gen ins
             
-    let genType (typ: Mir.Type) =
+    let genType (resolveMirType: TypeId -> Type) (typ: Mir.Type) =
+        for field in typ.fields do
+            let fieldType = resolveMirType field.typ
+            field.builder <- typ.builder.DefineField(sprintf "field_%d" field.sym.id, fieldType, FieldAttributes.Public)
+
         for ctor in typ.ctors do
-            ctor.builder <- typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, List.toArray ctor.args)
-            genConstructor ctor
+            let ctorArgTypes = ctor.args |> List.map resolveMirType |> List.toArray
+            ctor.builder <- typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorArgTypes)
+            genConstructor resolveMirType ctor
 
         for method in typ.methods do
-            method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, method.ret, List.toArray method.args)
-            genMethod method
+            let methodArgTypes = method.args |> List.map resolveMirType |> List.toArray
+            let methodRetType = resolveMirType method.ret
+            method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
+            genMethod resolveMirType method
             
         typ.builder.CreateType() |> ignore
         
@@ -130,13 +156,22 @@ type Gen() =
                 mainMethod <- Some method
 
     let genModule (builder: ModuleBuilder) (modul: Mir.Module) =
+        let typeBuilders = Dictionary<SymbolId, TypeBuilder>()
+
         for typ in modul.types do
             typ.builder <- modul.builder.DefineType(typ.name, TypeAttributes.Public)
-            genType typ
+            typeBuilders.Add(typ.sym, typ.builder)
+
+        let resolveMirTypeInModule = resolveType typeBuilders
+
+        for typ in modul.types do
+            genType resolveMirTypeInModule typ
         
         for method in modul.methods do
-            method.builder <- builder.DefineGlobalMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, method.ret, List.toArray method.args)
-            genMethod method
+            let methodArgTypes = method.args |> List.map resolveMirTypeInModule |> List.toArray
+            let methodRetType = resolveMirTypeInModule method.ret
+            method.builder <- builder.DefineGlobalMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
+            genMethod resolveMirTypeInModule method
 
         builder.CreateGlobalFunctions() |> ignore
         

@@ -1,36 +1,56 @@
 namespace Atla.Compiler.Tests.Lowering.Gen
 
 open System
-open Xunit
-open Atla.Compiler.Mir
-open Atla.Compiler.Lowering
-open System
 open System.IO
 open System.Reflection
-open System.Reflection.Emit
-open System.Reflection.Metadata
-open System.Reflection.PortableExecutable
-open System.Reflection.Metadata.Ecma335
+open Xunit
+open Atla.Compiler.Lowering
+open Atla.Compiler.Lowering.Data
+open Atla.Compiler.Semantics.Data
 
 module GenTests =
     [<Fact>]
-    let ``helloCIL`` () =
-        let cir = Mir.Assembly("HelloCIL", [
-            Mir.Module("MainModule", [], [
-                Mir.Method("main", [], typeof<Void>, [
-                    Mir.Ins.Call(Choice1Of2 (typeof<Console>.GetMethod("WriteLine", [| typeof<string> |])), [Mir.Value.ImmVal(Mir.Imm.String("Hello, World!"))])
-                    Mir.Ins.Ret
-                ], Mir.Frame())
-            ])
-        ])
+    let ``GenAssembly resolves TypeId.Name from module type table`` () =
+        let typeSym = SymbolId 100
+        let mainSym = SymbolId 101
+        let useFooSym = SymbolId 102
 
-        if Directory.Exists("files") <> true then
-            Directory.CreateDirectory("files") |> ignore
+        let mirType = Mir.Type("Foo", typeSym, [], [], [])
 
-        let asmPath = Path.Join("files", "helloCIL.dll");
+        let mainMethod =
+            Mir.Method(
+                "main",
+                mainSym,
+                [],
+                TypeId.Unit,
+                [ Mir.Ins.Ret ],
+                Mir.Frame())
+
+        let useFooMethod =
+            Mir.Method(
+                "useFoo",
+                useFooSym,
+                [ TypeId.Name typeSym ],
+                TypeId.Unit,
+                [ Mir.Ins.Ret ],
+                Mir.Frame())
+
+        let assembly =
+            Mir.Assembly(
+                "GenTypeResolution",
+                [ Mir.Module("MainModule", [ mirType ], [ mainMethod; useFooMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-type-resolution.dll")
         let gen = Gen()
-        gen.GenAssembly(cir, asmPath)
+        gen.GenAssembly(assembly, asmPath)
 
-        let asm = Assembly.LoadFile(Path.GetFullPath(asmPath))
-        Assert.True(asm.EntryPoint.IsStatic)
-        Assert.Equal(typeof<Void>, asm.EntryPoint.ReturnType)
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        let globalType = loaded.GetType("<Module>")
+        let useFoo = globalType.GetMethod("useFoo", BindingFlags.Public ||| BindingFlags.Static)
+
+        Assert.NotNull(useFoo)
+        Assert.Equal(1, useFoo.GetParameters().Length)
+        Assert.Equal("Foo", useFoo.GetParameters().[0].ParameterType.Name)
