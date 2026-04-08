@@ -116,8 +116,17 @@ module Analyze =
                 | SymbolKind.NativeMethod methodInfos -> Some (Hir.Callable.NativeMethodGroup methodInfos)
                 | SymbolKind.Constructor ctorInfos -> Some (Hir.Callable.NativeConstructorGroup ctorInfos)
                 | SymbolKind.BuiltinOperator op -> Some (Hir.Callable.BuiltinOperator op)
+                | SymbolKind.Local ()
+                | SymbolKind.Arg () ->
+                    match Type.resolve env.typSubst symInfo.typ with
+                    | TypeId.Fn _ -> Some (Hir.Callable.Fn sym)
+                    | _ -> None
                 | _ -> None
             | None -> None
+        | Hir.Expr.MemberAccess (memberInfo, _, _, _) ->
+            match memberInfo with
+            | Hir.Member.NativeMethod methodInfo -> Some (Hir.Callable.NativeMethod methodInfo)
+            | _ -> None
         | _ -> None
 
     and analyzeExpr (env: Env) (expr: Ast.Expr) (expected: TypeId) : Hir.Expr =
@@ -248,12 +257,21 @@ module Analyze =
         // 引数の型を名前解決する
         let argTypes = fnDecl.args |> List.map bodyEnv.resolveArgType
 
+        fnDecl.args
+        |> List.iteri (fun index arg ->
+            match arg with
+            | :? Ast.FnArg.Named as namedArg ->
+                let argType = argTypes.[index]
+                bodyEnv.declareArg namedArg.name argType |> ignore
+            | :? Ast.FnArg.Unit -> ()
+            | _ -> failwith "Unsupported function argument type")
+
         let tid = TypeId.Fn(argTypes, retType)
 
         // 関数のシンボルを定義する
         let sym = env.declareLocal fnDecl.name tid
         // 関数本体を解析する
-        let body = analyzeExpr bodyEnv fnDecl.body (TypeId.freshMeta ())
+        let body = analyzeExpr bodyEnv fnDecl.body retType
 
         Hir.Method(sym, body, tid, fnDecl.span)
 

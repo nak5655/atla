@@ -91,18 +91,24 @@ type Gen() =
 
     let genConstructor (ctor: Mir.Constructor) =
         let gen = ctor.builder.GetILGenerator()
+        let frame = ctor.frame
 
-        for typ in ctor.frame.locs do
-            gen.DeclareLocal(typ) |> ignore
+        for KeyValue(_, reg) in frame.locs do
+            match reg with
+            | Mir.Reg.Loc _ -> gen.DeclareLocal(typeof<obj>) |> ignore
+            | Mir.Reg.Arg _ -> ()
 
         for ins in ctor.body do
             genIns gen ins
 
     let genMethod (method: Mir.Method) =
         let gen = method.builder.GetILGenerator()
-        
-        for typ in method.frame.locs do
-            gen.DeclareLocal(typ) |> ignore
+        let frame = method.frame
+
+        for KeyValue(_, reg) in frame.locs do
+            match reg with
+            | Mir.Reg.Loc _ -> gen.DeclareLocal(typeof<obj>) |> ignore
+            | Mir.Reg.Arg _ -> ()
 
         for ins in method.body do
             genIns gen ins

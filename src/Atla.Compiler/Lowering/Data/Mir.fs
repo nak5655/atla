@@ -31,6 +31,27 @@ module Mir =
             | Loc index -> sprintf "Loc(%d)" index
             | Arg index -> sprintf "Arg(%d)" index
 
+    type Frame() =
+        let mutable _args: Dictionary<SymbolId, Reg> = Dictionary()
+        let mutable _locs: Dictionary<SymbolId, Reg> = Dictionary()
+        member this.args = _args
+        member this.locs = _locs
+
+        member this.addArg(sym: SymbolId): Reg =
+            let reg = Reg.Arg(_args.Count)
+            _args.Add(sym, reg)
+            reg
+
+        member this.addLoc(sym: SymbolId): Reg =
+            let reg = Reg.Loc(_locs.Count)
+            _locs.Add(sym, reg)
+            reg
+
+        member this.get(sym: SymbolId): Reg option =
+            if _args.ContainsKey(sym) then Some _args.[sym]
+            elif _locs.ContainsKey(sym) then Some _locs.[sym]
+            else None
+
     // Values in MIR
     type Value =
         | ImmVal of Imm
@@ -111,20 +132,22 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Constructor(args: TypeId list, body: Ins list) =
+    type Constructor(args: TypeId list, body: Ins list, frame: Frame) =
         let mutable _builder: ConstructorBuilder option = None
         member this.args = args
         member this.body = body
+        member this.frame = frame
         member this.builder
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Method(sym: SymbolId, args: TypeId list, ret: TypeId, body: Ins list) =
+    type Method(sym: SymbolId, args: TypeId list, ret: TypeId, body: Ins list, frame: Frame) =
         let mutable _builder: MethodBuilder option = None
         member this.sym = sym
         member this.args = args
         member this.ret = ret
         member this.body = body
+        member this.frame = frame
         member this.builder
             with get() = _builder.Value
             and set(v) = _builder <- Some v

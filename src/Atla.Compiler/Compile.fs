@@ -22,8 +22,6 @@ module Compiler =
                 let symbolTable = SymbolTable()
                 let typeSubst = TypeSubst()
                 let hir = Analyze.analyzeModule(symbolTable, typeSubst, "main", moduleAst)
-                // Typing
-                Typing.typingModule hir
                 // Lowering
                 let mir = Layout.layoutAssembly(asmName, Hir.Assembly ("hello", [hir]))
                 // Code Generation
