@@ -139,7 +139,7 @@ module Layout =
         | Hir.Stmt.ErrorStmt (message, _) ->
             failwithf "Cannot lower erroneous statement: %s" message
 
-    let private layoutMethod (hirMethod: Hir.Method) : Mir.Method =
+    let private layoutMethod (methodName: string) (hirMethod: Hir.Method) : Mir.Method =
         let frame = Mir.Frame()
         let bodyKn = layoutExpr frame hirMethod.body
         let body =
@@ -152,16 +152,36 @@ module Layout =
             | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
 
         match hirMethod.typ with
-        | TypeId.Fn (args, ret) -> Mir.Method(hirMethod.sym, args, ret, body, frame)
+        | TypeId.Fn (args, ret) -> Mir.Method(methodName, hirMethod.sym, args, ret, body, frame)
         | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
 
-    let private layoutType (hirType: Hir.Type) : Mir.Type =
+    let private layoutType (typeName: string) (hirType: Hir.Type) : Mir.Type =
         let fields = hirType.fields |> List.map (fun field -> Mir.Field(field.sym, field.typ))
-        Mir.Type(hirType.sym, fields, [], [])
+        Mir.Type(typeName, hirType.sym, fields, [], [])
 
     let private layoutModule (hirModule: Hir.Module) : Mir.Module =
-        let types = hirModule.types |> List.map layoutType
-        let methods = hirModule.methods |> List.map layoutMethod
+        let resolveTypeName (sym: SymbolId) =
+            hirModule.scope.types
+            |> Seq.tryPick (fun (KeyValue(name, typ)) ->
+                match typ with
+                | TypeId.Name tid when obj.ReferenceEquals(tid, sym) -> Some name
+                | _ -> None)
+            |> Option.defaultValue (sprintf "type_%d" sym.id)
+
+        let resolveMethodName (sym: SymbolId) =
+            hirModule.scope.vars
+            |> Seq.tryPick (fun (KeyValue(name, sid)) ->
+                if obj.ReferenceEquals(sid, sym) then Some name else None)
+            |> Option.defaultValue (sprintf "fn_%d" sym.id)
+
+        let types =
+            hirModule.types
+            |> List.map (fun hirType -> layoutType (resolveTypeName hirType.sym) hirType)
+
+        let methods =
+            hirModule.methods
+            |> List.map (fun hirMethod -> layoutMethod (resolveMethodName hirMethod.sym) hirMethod)
+
         Mir.Module(hirModule.name, types, methods)
 
     let layoutAssembly (asmName: string, asm: Hir.Assembly) : Mir.Assembly =
