@@ -44,8 +44,7 @@ module GenTests =
         Directory.CreateDirectory(outputDir) |> ignore
 
         let asmPath = Path.Join(outputDir, "gen-type-resolution.dll")
-        let gen = Gen()
-        gen.GenAssembly(assembly, asmPath)
+        Gen.genAssembly(assembly, asmPath)
 
         let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
         let globalType = loaded.GetType("<Module>")

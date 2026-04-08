@@ -25,8 +25,7 @@ module Compiler =
                 // Lowering
                 let mir = Layout.layoutAssembly(asmName, Hir.Assembly ("hello", [hir]))
                 // Code Generation
-                let gen = Gen()
-                gen.GenAssembly(mir, Path.Join(outDir, sprintf "%s.dll" asmName))
+                Gen.genAssembly(mir, Path.Join(outDir, sprintf "%s.dll" asmName))
                 Ok ()
             | Failure (reason, span) ->
                 Result.Error $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}"

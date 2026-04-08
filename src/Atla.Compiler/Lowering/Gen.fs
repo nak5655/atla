@@ -12,10 +12,11 @@ open System.IO
 open System.Runtime.Versioning
 open System.Collections.Generic
 
-type Gen() =
-    let mutable mainMethod: MethodInfo option = None
-    
-    let resolveType (typeBuilders: Dictionary<SymbolId, TypeBuilder>) (typ: TypeId) : Type =
+module Gen =
+    type Env =
+        { typeBuilders: Dictionary<SymbolId, TypeBuilder> }
+
+    let private resolveType (env: Env) (typ: TypeId) : Type =
         match typ with
         | TypeId.Unit -> typeof<Void>
         | TypeId.Bool -> typeof<bool>
@@ -24,14 +25,14 @@ type Gen() =
         | TypeId.String -> typeof<string>
         | TypeId.Native t -> t
         | TypeId.Name sym ->
-            match typeBuilders.TryGetValue(sym) with
+            match env.typeBuilders.TryGetValue(sym) with
             | true, builder -> builder :> Type
             | false, _ -> failwithf "Unknown type symbol: %A" sym
         | TypeId.Fn _ -> failwithf "Function type is not supported for CIL member signatures: %A" typ
         | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" typ
         | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
 
-    let rec genValue (gen: ILGenerator) (value: Mir.Value) =
+    let rec private genValue (gen: ILGenerator) (value: Mir.Value) =
         match value with
         | Mir.Value.ImmVal imm ->
             match imm with
@@ -41,21 +42,19 @@ type Gen() =
             | Mir.Imm.String s -> gen.Emit(OpCodes.Ldstr, s)
         | Mir.Value.RegVal reg ->
             match reg with
-            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Ldloc, index) // TODO Ldloc_0, Ldloc_1, Ldloc_2, Ldloc_3 を使う
-            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Ldarg, index) // TODO Ldarg_0, Ldarg_1, Ldarg_2, Ldarg_3 を使う
-        | Mir.Value.FieldVal (field) ->
-            genValue gen (Mir.Value.RegVal (Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Ldloc, index)
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Ldarg, index)
+        | Mir.Value.FieldVal field ->
+            genValue gen (Mir.Value.RegVal(Mir.Reg.Arg 0))
             gen.Emit(OpCodes.Ldfld, field)
 
-    let genIns (gen: ILGenerator) (ins: Mir.Ins) =
+    let private genIns (gen: ILGenerator) (ins: Mir.Ins) =
         match ins with
         | Mir.Ins.Assign (reg, value) ->
             genValue gen value
             match reg with
-            | Mir.Reg.Arg index ->
-                gen.Emit(OpCodes.Starg, index)
-            | Mir.Reg.Loc index ->
-                gen.Emit(OpCodes.Stloc, index)
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         | Mir.Ins.TAC (dest, arg1, op, arg2) ->
             genValue gen arg1
             genValue gen arg2
@@ -71,10 +70,8 @@ type Gen() =
                 | Mir.OpCode.Eq -> OpCodes.Ceq
             gen.Emit(opcode)
             match dest with
-            | Mir.Reg.Arg index ->
-                gen.Emit(OpCodes.Starg, index)
-            | Mir.Reg.Loc index ->
-                gen.Emit(OpCodes.Stloc, index)
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         | Mir.Ins.RetValue value ->
             genValue gen value
             gen.Emit(OpCodes.Ret)
@@ -87,32 +84,28 @@ type Gen() =
             | Choice1Of2 mi -> gen.Emit(OpCodes.Call, mi)
             | Choice2Of2 ci -> gen.Emit(OpCodes.Call, ci)
         | Mir.Ins.MarkLabel label ->
-            label.ilOffset <- gen.ILOffset // ジャンプ距離を計算するためにオフセットを保持しておく
+            label.ilOffset <- gen.ILOffset
             gen.MarkLabel(label.get(gen))
         | Mir.Ins.Jump label ->
-            // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
-            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Br_S else OpCodes.Br;
+            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Br_S else OpCodes.Br
             gen.Emit(op, label.get(gen))
         | Mir.Ins.JumpTrue (cond, label) ->
             genValue gen cond
-            // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
-            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brtrue_S else OpCodes.Brtrue;
+            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brtrue_S else OpCodes.Brtrue
             gen.Emit(op, label.get(gen))
         | Mir.Ins.JumpFalse (cond, label) ->
             genValue gen cond
-            // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
-            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brfalse_S else OpCodes.Brfalse;
+            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brfalse_S else OpCodes.Brfalse
             gen.Emit(op, label.get(gen))
         | _ -> failwithf "Unsupported instruction: %A" ins
 
-    let genConstructor (_: TypeId -> Type) (ctor: Mir.Constructor) =
+    let private genConstructor (_env: Env) (ctor: Mir.Constructor) =
         let gen = ctor.builder.GetILGenerator()
-        let frame = ctor.frame
 
-        for KeyValue(_, reg) in frame.locs do
+        for KeyValue(_, reg) in ctor.frame.locs do
             match reg with
             | Mir.Reg.Loc _ -> gen.DeclareLocal(typeof<obj>) |> ignore
             | Mir.Reg.Arg _ -> ()
@@ -120,107 +113,107 @@ type Gen() =
         for ins in ctor.body do
             genIns gen ins
 
-    let genMethod (_: TypeId -> Type) (method: Mir.Method) =
+    let private genMethod (_env: Env) (method: Mir.Method) =
         let gen = method.builder.GetILGenerator()
-        let frame = method.frame
 
-        for KeyValue(_, reg) in frame.locs do
+        for KeyValue(_, reg) in method.frame.locs do
             match reg with
             | Mir.Reg.Loc _ -> gen.DeclareLocal(typeof<obj>) |> ignore
             | Mir.Reg.Arg _ -> ()
 
         for ins in method.body do
             genIns gen ins
-            
-    let genType (resolveMirType: TypeId -> Type) (typ: Mir.Type) =
+
+    let private genType (env: Env) (typ: Mir.Type) : MethodInfo option =
         for field in typ.fields do
-            let fieldType = resolveMirType field.typ
+            let fieldType = resolveType env field.typ
             field.builder <- typ.builder.DefineField(sprintf "field_%d" field.sym.id, fieldType, FieldAttributes.Public)
 
         for ctor in typ.ctors do
-            let ctorArgTypes = ctor.args |> List.map resolveMirType |> List.toArray
+            let ctorArgTypes = ctor.args |> List.map (resolveType env) |> List.toArray
             ctor.builder <- typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorArgTypes)
-            genConstructor resolveMirType ctor
+            genConstructor env ctor
 
         for method in typ.methods do
-            let methodArgTypes = method.args |> List.map resolveMirType |> List.toArray
-            let methodRetType = resolveMirType method.ret
+            let methodArgTypes = method.args |> List.map (resolveType env) |> List.toArray
+            let methodRetType = resolveType env method.ret
             method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
-            genMethod resolveMirType method
-            
+            genMethod env method
+
         typ.builder.CreateType() |> ignore
-        
-        // main関数を見つけたら、エントリポイントに指定するために保存しておく
-        for method in typ.builder.DeclaredMethods do
-            if method.Name = "main" then
-                mainMethod <- Some method
 
-    let genModule (builder: ModuleBuilder) (modul: Mir.Module) =
-        let typeBuilders = Dictionary<SymbolId, TypeBuilder>()
+        typ.builder.DeclaredMethods
+        |> Seq.tryFind (fun method -> method.Name = "main")
+
+    let private genModule (moduleBuilder: ModuleBuilder) (modul: Mir.Module) : MethodInfo option =
+        let env = { typeBuilders = Dictionary<SymbolId, TypeBuilder>() }
 
         for typ in modul.types do
-            typ.builder <- modul.builder.DefineType(typ.name, TypeAttributes.Public)
-            typeBuilders.Add(typ.sym, typ.builder)
+            typ.builder <- moduleBuilder.DefineType(typ.name, TypeAttributes.Public)
+            env.typeBuilders.Add(typ.sym, typ.builder)
 
-        let resolveMirTypeInModule = resolveType typeBuilders
+        let mainInTypes =
+            modul.types
+            |> List.tryPick (fun typ -> genType env typ)
 
-        for typ in modul.types do
-            genType resolveMirTypeInModule typ
-        
         for method in modul.methods do
-            let methodArgTypes = method.args |> List.map resolveMirTypeInModule |> List.toArray
-            let methodRetType = resolveMirTypeInModule method.ret
-            method.builder <- builder.DefineGlobalMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
-            genMethod resolveMirTypeInModule method
+            let methodArgTypes = method.args |> List.map (resolveType env) |> List.toArray
+            let methodRetType = resolveType env method.ret
+            method.builder <- moduleBuilder.DefineGlobalMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
+            genMethod env method
 
-        builder.CreateGlobalFunctions() |> ignore
-        
-    member this.GenAssembly (assembly: Mir.Assembly, filePath: string)  =
-        assembly.builder <- System.Reflection.Emit.PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
-        for modul in assembly.modules do
-            let moduleBuilder = assembly.builder.DefineDynamicModule(modul.name)
-            genModule moduleBuilder modul
+        moduleBuilder.CreateGlobalFunctions() |> ignore
 
-            // main関数を見つけたら、エントリポイントに指定するために保存しておく
-            match moduleBuilder.GetMethod("main") with
-            | null -> ()
-            | mm -> mainMethod <- Some mm
+        match moduleBuilder.GetMethod("main") with
+        | null -> mainInTypes
+        | methodInfo -> Some methodInfo
 
-        // ターゲットフレームワークを指定するために、TargetFrameworkAttributeをアセンブリに追加する
+    let rec genAssembly (assembly: Mir.Assembly, filePath: string) =
+        assembly.builder <- PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
+
+        let mainMethod =
+            assembly.modules
+            |> List.fold (fun foundMain modul ->
+                let moduleBuilder = assembly.builder.DefineDynamicModule(modul.name)
+                let moduleMain = genModule moduleBuilder modul
+
+                match foundMain with
+                | Some _ -> foundMain
+                | None -> moduleMain) None
+
         let tfaCtor = typeof<TargetFrameworkAttribute>.GetConstructor([| typeof<string> |])
         let tfa = CustomAttributeBuilder(tfaCtor, [| ".NETCoreApp,Version=v10.0" |])
         assembly.builder.SetCustomAttribute(tfa)
 
-        // EntryPointを指定してビルドするために、ILとフィールドデータを手動で生成してPEファイルを作成する
         let mutable ilStream = BlobBuilder()
         let mutable fieldData = BlobBuilder()
         let metadataBuilder = assembly.builder.GenerateMetadata(&ilStream, &fieldData)
 
         let peBuilder =
-            match mainMethod with 
-            | Some m -> ManagedPEBuilder(
-                header = PEHeaderBuilder.CreateExecutableHeader(),
-                metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
-                ilStream = ilStream,
-                mappedFieldData = fieldData,
-                entryPoint = MetadataTokens.MethodDefinitionHandle(m.MetadataToken))
-            | _ -> ManagedPEBuilder(
-                header = PEHeaderBuilder.CreateExecutableHeader(),
-                metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
-                ilStream = ilStream,
-                mappedFieldData = fieldData)
+            match mainMethod with
+            | Some methodInfo ->
+                ManagedPEBuilder(
+                    header = PEHeaderBuilder.CreateExecutableHeader(),
+                    metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
+                    ilStream = ilStream,
+                    mappedFieldData = fieldData,
+                    entryPoint = MetadataTokens.MethodDefinitionHandle(methodInfo.MetadataToken))
+            | None ->
+                ManagedPEBuilder(
+                    header = PEHeaderBuilder.CreateExecutableHeader(),
+                    metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
+                    ilStream = ilStream,
+                    mappedFieldData = fieldData)
 
         let peBlob = BlobBuilder()
         peBuilder.Serialize(peBlob) |> ignore
 
         use fs = new FileStream(filePath, FileMode.Create, FileAccess.Write)
-
         peBlob.WriteContentTo(fs)
 
-        // dotnetコマンドで実行するためのランタイム構成ファイルを生成する
-        this.GenRuntimeConfig(filePath)
+        genRuntimeConfig filePath
 
-    member this.GenRuntimeConfig (assemblyPath: string) =
+    and genRuntimeConfig (assemblyPath: string) =
         let runtimeConfig = """{
   "runtimeOptions": {
     "tfm": "net10.0",
