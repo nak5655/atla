@@ -56,11 +56,10 @@ module Analyze =
         member this.declareSystemType (classPath: string) : SymbolId =
             let sid = symbolTable.NextId()
             let name = Array.last (classPath.Split('.'))
-            let tid = TypeId.Name(sid)
             let kind = SymbolKind.SystemType(System.Type.GetType(classPath))
-            let symInfo = SymbolInfo(name, tid, kind)
-            let sym = symbolTable.Add(sid, symInfo)
-            scope.DeclareType(name, sid)
+            let symInfo = SymbolInfo(name, TypeId.Name sid, kind)
+            symbolTable.Add(sid, symInfo)
+            scope.DeclareType(name, TypeId.Name sid)
             sid
 
         member this.resolveSymType (sym: SymbolId) : TypeId =
@@ -276,7 +275,16 @@ module Analyze =
         Hir.Method(sym, body, tid, fnDecl.span)
 
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Hir.Module =
-        let moduleScope = Scope(Some (Scope.GlobalScope()))
+        let moduleScope = Scope(None)
+        moduleScope.DeclareType("Unit", TypeId.Unit)
+        moduleScope.DeclareType("Bool", TypeId.Bool)
+        moduleScope.DeclareType("Int", TypeId.Int)
+        moduleScope.DeclareType("Float", TypeId.Float)
+        moduleScope.DeclareType("String", TypeId.String)
+
+        symbolTable.BuiltinOperators
+        |> List.iter (fun (name, sid) -> moduleScope.DeclareVar(name, sid))
+
         let env = Env(symbolTable, typeSubst, moduleScope)
 
         let fields = List<Hir.Field>()
