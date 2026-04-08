@@ -1,9 +1,9 @@
 namespace Atla.Compiler.Tests.Lowering
 
 open System
+open System.IO
 open Xunit
 open Atla.Compiler
-
 
 module LoweringTests =
     [<Fact>]
@@ -14,7 +14,11 @@ import System.Console
 fn main: () = do
     Console.WriteLine "Hello, World!"
 """
-        let res = Compiler.compile("HelloWorld", program, "files")
+
+        let outDir = "files"
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile("HelloWorld", program.Trim(), outDir)
         Assert.True(res.IsOk)
 
     [<Fact>]
@@ -33,5 +37,9 @@ fn main: () = do
     let n = Int32.Parse (Console.ReadLine ())
     Console.WriteLine (fibonacci n)
 """
-        let res = Compiler.compile("Fibonacci", program, "files")
+
+        let outDir = "files"
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile("Fibonacci", program, outDir)
         Assert.True(res.IsOk)

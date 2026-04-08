@@ -47,8 +47,7 @@ module GenTests =
         Gen.genAssembly(assembly, asmPath)
 
         let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
-        let globalType = loaded.GetType("<Module>")
-        let useFoo = globalType.GetMethod("useFoo", BindingFlags.Public ||| BindingFlags.Static)
+        let useFoo = loaded.ManifestModule.GetMethods() |> Array.find (fun m -> m.Name = "useFoo")
 
         Assert.NotNull(useFoo)
         Assert.Equal(1, useFoo.GetParameters().Length)

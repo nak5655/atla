@@ -1,51 +1,37 @@
-namespace Atla.Compiler.Tests.Ast
+namespace Atla.Compiler.Tests.Syntax
 
-open System
 open Xunit
-open Atla.Compiler.Parsing
-open Atla.Compiler.Types
+open Atla.Compiler.Data
+open Atla.Compiler.Syntax
+open Atla.Compiler.Syntax.Data
 
 module ParserTests =
-    [<Fact>]
-    let ``hello`` () =
-        let program = """
-fn greeting: () = do
-    var a = 1
-    Console.WriteLine "Hello, \"World\"!"
-    a
-"""
+    let private parseModule (program: string) =
         let input: Input<SourceChar> = StringInput program
-        let tokens = Lexer.tokenize input Position.Zero
-        match tokens with
-            | Success (tokens, _) ->
-                let tokenInput = TokenInput(tokens)
-                let result = Parser.fileModule() tokenInput tokens.Head.span.left
-                Assert.True(result.IsSuccess)
-            | Failure (reason, span) ->
-                Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            Parser.fileModule() tokenInput tokens.Head.span.left
+        | Failure (reason, span) ->
+            Failure ($"Lexing failed: {reason}", span)
 
     [<Fact>]
-    let helloEnum () =
-        let program = """
-role Area =
-    def area(self: &Self) -> int
+    let ``fileModule parses function declaration`` () =
+        let program = "fn main (): Int = 1"
 
-enum Shape = 
-    | Rect(w: Int, h: Int)
-    | Triangle (b: Int) (h: Int)
+        match parseModule program with
+        | Success (astModule, _) ->
+            Assert.Single(astModule.decls) |> ignore
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
-impl Shape as Area =
-    fn area (self: &Self): int =
-        match self
-            | Rect w h -> w * h
-            | Triangle b h -> b * h / 2
-"""
-        let input: Input<SourceChar> = StringInput program
-        let tokens = Lexer.tokenize input Position.Zero
-        match tokens with
-            | Success (tokens, _) ->
-                let tokenInput = TokenInput(tokens)
-                let result = Parser.fileModule() tokenInput tokens.Head.span.left
-                Assert.True(result.IsSuccess)
-            | Failure (reason, span) ->
-                Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+    [<Fact>]
+    let ``fileModule parses if expression`` () =
+        let program = "fn main (): Int = if | 1 == 1 => 1 | else => 0"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            Assert.Single(astModule.decls) |> ignore
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

@@ -11,6 +11,9 @@ module LayoutTests =
     let ``layoutAssembly emits RetValue for non-unit method`` () =
         let span = { left = Position.Zero; right = Position.Zero }
         let methodSym = SymbolId 0
+        let scope = Scope(None)
+        scope.DeclareVar("main", methodSym)
+
         let hirMethod =
             Hir.Method(
                 methodSym,
@@ -18,7 +21,7 @@ module LayoutTests =
                 TypeId.Fn([], TypeId.Int),
                 span)
 
-        let hirModule = Hir.Module("Main", [], [], [ hirMethod ], Scope.GlobalScope())
+        let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
         let hirAssembly = Hir.Assembly("ignored", [ hirModule ])
 
         let mirAssembly = Layout.layoutAssembly("TestAsm", hirAssembly)
