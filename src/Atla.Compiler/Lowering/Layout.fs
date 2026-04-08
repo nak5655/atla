@@ -9,11 +9,11 @@ module Layout =
         res: Mir.Value option
     }
 
-    let private declareTemp (frame: Frame) : Mir.Reg =
+    let private declareTemp (frame: Mir.Frame) : Mir.Reg =
         let sid = SymbolId(frame.locs.Count + frame.args.Count)
         frame.addLoc sid
 
-    let rec private layoutExpr (frame: Frame) (expr: Hir.Expr) : KNormal =
+    let rec private layoutExpr (frame: Mir.Frame) (expr: Hir.Expr) : KNormal =
         match expr with
         | Hir.Expr.Unit _ -> { ins = []; res = None }
         | Hir.Expr.Int (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) }
@@ -120,7 +120,7 @@ module Layout =
         | Hir.Expr.Lambda _ ->
             failwith "Lambda lowering is not implemented"
 
-    and private layoutStmt (frame: Frame) (stmt: Hir.Stmt) : Mir.Ins list =
+    and private layoutStmt (frame: Mir.Frame) (stmt: Hir.Stmt) : Mir.Ins list =
         match stmt with
         | Hir.Stmt.Let (sym, _, value, _) ->
             let valueKn = layoutExpr frame value
@@ -140,7 +140,7 @@ module Layout =
             failwithf "Cannot lower erroneous statement: %s" message
 
     let private layoutMethod (hirMethod: Hir.Method) : Mir.Method =
-        let frame = Frame()
+        let frame = Mir.Frame()
         let bodyKn = layoutExpr frame hirMethod.body
         let body =
             match hirMethod.typ with
@@ -152,7 +152,7 @@ module Layout =
             | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
 
         match hirMethod.typ with
-        | TypeId.Fn (args, ret) -> Mir.Method(hirMethod.sym, args, ret, body, frame :> obj)
+        | TypeId.Fn (args, ret) -> Mir.Method(hirMethod.sym, args, ret, body, frame)
         | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
 
     let private layoutType (hirType: Hir.Type) : Mir.Type =

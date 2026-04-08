@@ -91,10 +91,7 @@ type Gen() =
 
     let genConstructor (ctor: Mir.Constructor) =
         let gen = ctor.builder.GetILGenerator()
-        let frame =
-            match ctor.frame with
-            | :? Frame as f -> f
-            | _ -> failwith "Invalid constructor frame payload"
+        let frame = ctor.frame
 
         for KeyValue(_, reg) in frame.locs do
             match reg with
@@ -106,10 +103,7 @@ type Gen() =
 
     let genMethod (method: Mir.Method) =
         let gen = method.builder.GetILGenerator()
-        let frame =
-            match method.frame with
-            | :? Frame as f -> f
-            | _ -> failwith "Invalid method frame payload"
+        let frame = method.frame
 
         for KeyValue(_, reg) in frame.locs do
             match reg with
