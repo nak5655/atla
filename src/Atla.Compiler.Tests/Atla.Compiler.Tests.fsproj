@@ -26,6 +26,7 @@
     <Folder Include="Lowering\Gen\" />
     <Compile Include="lowering\gen\GenTests.fs" />
     <Compile Include="lowering\LoweringTests.fs" />
+    <Compile Include="Lowering\LayoutTests.fs" />
     <Folder Include="Parsing\" />
   </ItemGroup>
 
