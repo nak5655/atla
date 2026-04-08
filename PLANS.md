@@ -42,3 +42,9 @@
 - [x] 既存コンパイラAPI（`Syntax` / `Semantics` / `Lowering`）と不整合な旧テストを洗い出す。
 - [x] `Parsing` / `Lowering.Desugar` / `Lowering.Layout` テストを現行APIに合わせて書き直す。
 - [x] テストプロジェクト全体を実行し、ビルドエラーが解消されていることを確認する。
+
+## 2026-04-08 LoweringTests 文字列互換修正
+
+- [x] `LoweringTests` の hello world / fibonacci プログラム文字列を元の内容に戻す。
+- [x] 文字列は変更せず、テスト実行経路のみを調整して現行実装で安定して検証できるようにする。
+- [x] テストスイートを再実行してエラー解消を確認する。
