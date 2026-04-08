@@ -1,33 +1,36 @@
-namespace Atla.Compiler.Tests.Lowering.Desugar
+namespace Atla.Compiler.Tests.Lowering
 
-open System
 open Xunit
-open Atla.Compiler.Ast
-open Atla.Compiler.Types
-open Atla.Compiler.Parsing
-open Atla.Compiler.Hir
+open Atla.Compiler.Data
+open Atla.Compiler.Syntax
+open Atla.Compiler.Syntax.Data
+open Atla.Compiler.Semantics
+open Atla.Compiler.Semantics.Data
 open Atla.Compiler.Lowering
 
 module DesugarTests =
     [<Fact>]
-    let ``helloDesugar`` () =
+    let ``semantic analysis and lowering handle do block`` () =
         let program = """
-import System.Console
-
-def () main: () = do
-    Console.WriteLine "Hello, World!"
+fn main (): Int = do
+    let value = 1
+    value
 """
+
         let input: Input<SourceChar> = StringInput program
-        let tokens = Lexer.tokenize input Position.Zero
-        match tokens with
+
+        match Lexer.tokenize input Position.Zero with
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
-            let result = Parser.fileModule() tokenInput tokens.Head.span.left
-            match result with
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
             | Success (moduleAst, _) ->
-                let hir = Semant.analyzeModule("main", moduleAst, Scope.GlobalScope())
-                let globalScope = Scope.GlobalScope ()
-                ()
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                let hirModule = Analyze.analyzeModule(symbolTable, subst, "main", moduleAst)
+                let mirAsm = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+
+                Assert.Single(mirAsm.modules) |> ignore
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->

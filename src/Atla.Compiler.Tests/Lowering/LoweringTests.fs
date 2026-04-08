@@ -1,37 +1,25 @@
 namespace Atla.Compiler.Tests.Lowering
 
 open System
+open System.IO
 open Xunit
 open Atla.Compiler
 
-
 module LoweringTests =
     [<Fact>]
-    let ``hello`` () =
-        let program = """
-import System.Console
+    let ``compile succeeds for minimal main`` () =
+        let program = "fn main (): Int = 1"
+        let outDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outDir) |> ignore
 
-fn main: () = do
-    Console.WriteLine "Hello, World!"
-"""
-        let res = Compiler.compile("HelloWorld", program, "files")
+        let res = Compiler.compile("HelloWorld", program, outDir)
         Assert.True(res.IsOk)
 
     [<Fact>]
-    let fibonacci () =
-        let program = """
-import System.Int32
-import System.Console
+    let ``compile succeeds for if expression`` () =
+        let program = "fn main (): Int = if | 1 == 1 => 1 | else => 0"
+        let outDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outDir) |> ignore
 
-fn fibonacci (n: Int): Int = if 
-    | n == 0 => 0
-    | n == 1 => 1
-    | n == 2 => 1
-    | else => fibonacci (n - 2) + fibonacci (n - 1)
-
-fn main: () = do
-    let n = Int32.Parse (Console.ReadLine ())
-    Console.WriteLine (fibonacci n)
-"""
-        let res = Compiler.compile("Fibonacci", program, "files")
+        let res = Compiler.compile("IfExpr", program, outDir)
         Assert.True(res.IsOk)

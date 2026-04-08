@@ -1,14 +1,26 @@
-namespace Atla.Compiler.Tests.Ast
+namespace Atla.Compiler.Tests.Syntax
 
-open System
 open Xunit
-open Atla.Compiler.Parsing
-open Atla.Compiler.Types
+open Atla.Compiler.Data
+open Atla.Compiler.Syntax
+open Atla.Compiler.Syntax.Data
 
 module LexerTests =
     [<Fact>]
-    let ``hello`` () =
-        let program = """let greeting = " hello !";var  a=-1-0.2 """
+    let ``tokenize parses keywords and literals`` () =
+        let program = "let answer = 42"
         let input: Input<SourceChar> = StringInput program
-        let result = Lexer.tokenize input Position.Zero
-        Assert.NotNull(Lexer.keywords)
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            Assert.NotEmpty(tokens)
+            Assert.Contains(tokens, fun token ->
+                match token with
+                | :? Token.Keyword as kw -> kw.str = "let"
+                | _ -> false)
+            Assert.Contains(tokens, fun token ->
+                match token with
+                | :? Token.Int as intToken -> intToken.value = 42
+                | _ -> false)
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
