@@ -38,6 +38,20 @@ type SymbolInfo(name: string, typ: TypeId, kind: SymbolKind) =
 type SymbolTable() =
     let _table = Dictionary<SymbolId, SymbolInfo>()
 
+    let addBuiltinOperator (name: string) (typ: TypeId) (op: Builtins.Operators) : SymbolId =
+        let sid = SymbolId(_table.Count)
+        _table.Add(sid, SymbolInfo(name, typ, SymbolKind.BuiltinOperator op))
+        sid
+
+    let builtinOperators : (string * SymbolId) list =
+        [ ("+", addBuiltinOperator "+" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpAdd)
+          ("-", addBuiltinOperator "-" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpSub)
+          ("*", addBuiltinOperator "*" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpMul)
+          ("/", addBuiltinOperator "/" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpDiv)
+          ("==", addBuiltinOperator "==" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpEq) ]
+
+    member this.BuiltinOperators = builtinOperators
+
     member this.NextId(): SymbolId =
         SymbolId(_table.Count)
 
