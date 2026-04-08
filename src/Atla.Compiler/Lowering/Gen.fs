@@ -50,11 +50,11 @@ module Gen =
         // レジスタ値のロード
         | Mir.Value.RegVal reg ->
             match reg with
-            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Ldloc, index)
-            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Ldarg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Ldloc, index) // TODO Ldloc_0, Ldloc_1, Ldloc_2, Ldloc_3 を使う
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Ldarg, index) // TODO Ldarg_0, Ldarg_1, Ldarg_2, Ldarg_3 を使う
         // this経由でフィールドをロード
         | Mir.Value.FieldVal field ->
-            genValue gen (Mir.Value.RegVal(Mir.Reg.Arg 0))
+            genValue gen (Mir.Value.RegVal(Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0
             gen.Emit(OpCodes.Ldfld, field)
 
     // MIR命令をIL命令列へ変換する
@@ -100,19 +100,23 @@ module Gen =
             | Choice2Of2 ci -> gen.Emit(OpCodes.Call, ci)
         // ラベル定義とジャンプ
         | Mir.Ins.MarkLabel label ->
+            // ジャンプ距離を計算するためにオフセットを保持しておく
             label.ilOffset <- gen.ILOffset
             gen.MarkLabel(label.get(gen))
         | Mir.Ins.Jump label ->
+            // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Br_S else OpCodes.Br
             gen.Emit(op, label.get(gen))
         | Mir.Ins.JumpTrue (cond, label) ->
             genValue gen cond
+            // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brtrue_S else OpCodes.Brtrue
             gen.Emit(op, label.get(gen))
         | Mir.Ins.JumpFalse (cond, label) ->
             genValue gen cond
+            // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brfalse_S else OpCodes.Brfalse
             gen.Emit(op, label.get(gen))
