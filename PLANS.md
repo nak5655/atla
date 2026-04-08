@@ -48,3 +48,9 @@
 - [x] `LoweringTests` の hello world / fibonacci プログラム文字列を元の内容に戻す。
 - [x] 文字列は変更せず、テスト実行経路のみを調整して現行実装で安定して検証できるようにする。
 - [x] テストスイートを再実行してエラー解消を確認する。
+
+## 2026-04-08 fibonacciテスト方針変更
+
+- [x] `LoweringTests.fibonacci` を `Compiler.compile` 実行 + `res.IsOk` 確認に戻す。
+- [x] フィボナッチのプログラム文字列は変更しない。
+- [x] テスト実行結果（失敗許容）を確認する。

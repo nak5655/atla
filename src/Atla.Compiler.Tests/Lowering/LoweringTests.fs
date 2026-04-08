@@ -4,9 +4,6 @@ open System
 open System.IO
 open Xunit
 open Atla.Compiler
-open Atla.Compiler.Data
-open Atla.Compiler.Syntax
-open Atla.Compiler.Syntax.Data
 
 module LoweringTests =
     [<Fact>]
@@ -41,6 +38,8 @@ fn main: () = do
     Console.WriteLine (fibonacci n)
 """
 
-        Assert.Contains("fn fibonacci (n: Int): Int = if ", program)
-        Assert.Contains("| else => fibonacci (n - 2) + fibonacci (n - 1)", program)
-        Assert.Contains("Console.WriteLine (fibonacci n)", program)
+        let outDir = "files"
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile("Fibonacci", program, outDir)
+        Assert.True(res.IsOk)
