@@ -152,7 +152,7 @@ module Layout =
             | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
 
         match hirMethod.typ with
-        | TypeId.Fn (args, ret) -> Mir.Method(hirMethod.sym, args, ret, body)
+        | TypeId.Fn (args, ret) -> Mir.Method(hirMethod.sym, args, ret, body, frame :> obj)
         | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
 
     let private layoutType (hirType: Hir.Type) : Mir.Type =

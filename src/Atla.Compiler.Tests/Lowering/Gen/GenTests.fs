@@ -20,7 +20,7 @@ module GenTests =
                 Mir.Method("main", [], typeof<Void>, [
                     Mir.Ins.Call(Choice1Of2 (typeof<Console>.GetMethod("WriteLine", [| typeof<string> |])), [Mir.Value.ImmVal(Mir.Imm.String("Hello, World!"))])
                     Mir.Ins.Ret
-                ], Mir.Frame())
+                ], Frame() :> obj)
             ])
         ])
 

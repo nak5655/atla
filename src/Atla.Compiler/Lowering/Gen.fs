@@ -91,18 +91,30 @@ type Gen() =
 
     let genConstructor (ctor: Mir.Constructor) =
         let gen = ctor.builder.GetILGenerator()
+        let frame =
+            match ctor.frame with
+            | :? Frame as f -> f
+            | _ -> failwith "Invalid constructor frame payload"
 
-        for typ in ctor.frame.locs do
-            gen.DeclareLocal(typ) |> ignore
+        for KeyValue(_, reg) in frame.locs do
+            match reg with
+            | Mir.Reg.Loc _ -> gen.DeclareLocal(typeof<obj>) |> ignore
+            | Mir.Reg.Arg _ -> ()
 
         for ins in ctor.body do
             genIns gen ins
 
     let genMethod (method: Mir.Method) =
         let gen = method.builder.GetILGenerator()
-        
-        for typ in method.frame.locs do
-            gen.DeclareLocal(typ) |> ignore
+        let frame =
+            match method.frame with
+            | :? Frame as f -> f
+            | _ -> failwith "Invalid method frame payload"
+
+        for KeyValue(_, reg) in frame.locs do
+            match reg with
+            | Mir.Reg.Loc _ -> gen.DeclareLocal(typeof<obj>) |> ignore
+            | Mir.Reg.Arg _ -> ()
 
         for ins in method.body do
             genIns gen ins

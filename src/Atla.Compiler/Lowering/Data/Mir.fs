@@ -111,20 +111,22 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Constructor(args: TypeId list, body: Ins list) =
+    type Constructor(args: TypeId list, body: Ins list, frame: obj) =
         let mutable _builder: ConstructorBuilder option = None
         member this.args = args
         member this.body = body
+        member this.frame = frame
         member this.builder
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Method(sym: SymbolId, args: TypeId list, ret: TypeId, body: Ins list) =
+    type Method(sym: SymbolId, args: TypeId list, ret: TypeId, body: Ins list, frame: obj) =
         let mutable _builder: MethodBuilder option = None
         member this.sym = sym
         member this.args = args
         member this.ret = ret
         member this.body = body
+        member this.frame = frame
         member this.builder
             with get() = _builder.Value
             and set(v) = _builder <- Some v
