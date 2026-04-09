@@ -1,5 +1,11 @@
 # Plan
 
+## 2026-04-09 HIR getErrors メンバ追加
+
+- [x] `Hir` の各型（`Expr`/`Stmt`/`Field`/`Method`/`Type`/`Module`/`Assembly`）に `getErrors` メンバを追加し、再帰的に `Error` を収集する。
+- [x] `Analyze.collectExprErrors` を削除し、`Hir.Module.getErrors` を使って診断収集する。
+- [x] 対象テストを再実行して変更を確認する。
+
 ## 2026-04-09 Error.toString 追加
 
 - [x] `Semantics.Data.Error` に `toString` 関数を追加する。
