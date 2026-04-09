@@ -20,8 +20,8 @@ type SymbolKind =
         | Constructor ci -> sprintf "Constructor(%A)" ci
         | BuiltinOperator bm -> sprintf "BuiltinOperator(%A)" bm
 
-type SymbolInfo(name: string, typ: TypeId, kind: SymbolKind) =
-    let mutable _typ = typ
+type SymbolInfo(name: string, tid: TypeId, kind: SymbolKind) =
+    let mutable _typ = tid
     let mutable _kind = kind
 
     member this.name = name
@@ -33,14 +33,14 @@ type SymbolInfo(name: string, typ: TypeId, kind: SymbolKind) =
         and set(v) = _kind <- v
         
     override this.ToString(): string =
-        sprintf "SymbolInfo(name=%s, typ=%A, info=%A)" name typ kind
+        sprintf "SymbolInfo(name=%s, typ=%A, info=%A)" name tid kind
         
 type SymbolTable() =
     let _table = Dictionary<SymbolId, SymbolInfo>()
 
-    let addBuiltinOperator (name: string) (typ: TypeId) (op: Builtins.Operators) : SymbolId =
+    let addBuiltinOperator (name: string) (tid: TypeId) (op: Builtins.Operators) : SymbolId =
         let sid = SymbolId(_table.Count)
-        _table.Add(sid, SymbolInfo(name, typ, SymbolKind.BuiltinOperator op))
+        _table.Add(sid, SymbolInfo(name, tid, SymbolKind.BuiltinOperator op))
         sid
 
     let builtinOperators : (string * SymbolId) list =

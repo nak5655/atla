@@ -54,3 +54,14 @@
 - [x] `LoweringTests.fibonacci` を `Compiler.compile` 実行 + `res.IsOk` 確認に戻す。
 - [x] フィボナッチのプログラム文字列は変更しない。
 - [x] テスト実行結果（失敗許容）を確認する。
+
+## 2026-04-09 SymbolId/TypeId 変数名統一
+
+- [x] `TypeId.Name` のラベル名 `symbolId` を `sid` に変更する。
+- [x] 関連コードのビルド/テストを実行し、既存失敗（`LoweringTests.fibonacci`）を確認する。
+
+## 2026-04-09 SymbolId/TypeId 命名をプロジェクト全体で統一
+
+- [x] `SymbolId` 型の変数・引数名を `sid` に統一する。
+- [x] `TypeId` 型の変数・引数名を `tid` に統一する。
+- [x] テストを実行し、既存失敗（`LoweringTests.fibonacci`）以外の回帰がないことを確認する。

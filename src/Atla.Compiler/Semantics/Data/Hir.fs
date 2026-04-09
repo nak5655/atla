@@ -4,9 +4,9 @@ open System.Reflection
 open Atla.Compiler.Data
 
 module Hir =
-    type Arg(name: string, typ: TypeId, span: Span) =
+    type Arg(name: string, tid: TypeId, span: Span) =
         member this.name = name
-        member this.typ = typ
+        member this.typ = tid
         member this.span = span
 
     type Callable =
@@ -27,12 +27,12 @@ module Hir =
         | Int of value: int * span: Span
         | Float of value: float * span: Span
         | String of value: string * span: Span
-        | Id of sym: SymbolId * typ: TypeId * span: Span
-        | Call of func: Callable * instance: Expr option * args: Expr list * typ: TypeId * span: Span
-        | Lambda of args: Arg list * ret: TypeId * body: Expr * typ: TypeId * span: Span
-        | MemberAccess of mem: Member * instance: Expr option * typ: TypeId * span: Span
-        | Block of stmts: Stmt list * expr: Expr * typ: TypeId * span: Span
-        | If of cond: Expr * thenBranch: Expr * elseBranch: Expr * typ: TypeId * span: Span
+        | Id of sid: SymbolId * tid: TypeId * span: Span
+        | Call of func: Callable * instance: Expr option * args: Expr list * tid: TypeId * span: Span
+        | Lambda of args: Arg list * ret: TypeId * body: Expr * tid: TypeId * span: Span
+        | MemberAccess of mem: Member * instance: Expr option * tid: TypeId * span: Span
+        | Block of stmts: Stmt list * expr: Expr * tid: TypeId * span: Span
+        | If of cond: Expr * thenBranch: Expr * elseBranch: Expr * tid: TypeId * span: Span
         | ExprError of message: string * errTyp: TypeId * span: Span
 
         member this.typ =
@@ -64,25 +64,25 @@ module Hir =
             | ExprError (_, _, span) -> span
 
     and Stmt =
-        | Let of sym: SymbolId * isMutable: bool * value: Expr * span: Span
-        | Assign of sym: SymbolId * value: Expr * span: Span
+        | Let of sid: SymbolId * isMutable: bool * value: Expr * span: Span
+        | Assign of sid: SymbolId * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
         | ErrorStmt of message: string * span: Span
 
-    type Field(sym: SymbolId, typ: TypeId, body: Expr, span: Span) =
-        member this.sym = sym
-        member this.typ = typ
+    type Field(sid: SymbolId, tid: TypeId, body: Expr, span: Span) =
+        member this.sym = sid
+        member this.typ = tid
         member this.body = body
         member this.span = span
 
-    type Method(sym: SymbolId, body: Expr, typ: TypeId, span: Span) =
-        member this.sym = sym
+    type Method(sid: SymbolId, body: Expr, tid: TypeId, span: Span) =
+        member this.sym = sid
         member this.body = body
-        member this.typ = typ
+        member this.typ = tid
         member this.span = span
 
-    type Type(sym: SymbolId, fields: Field list) =
-        member this.sym = sym
+    type Type(sid: SymbolId, fields: Field list) =
+        member this.sym = sid
         member this.fields = fields
 
     type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope) =

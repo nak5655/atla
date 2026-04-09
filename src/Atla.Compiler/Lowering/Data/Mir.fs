@@ -37,19 +37,19 @@ module Mir =
         member this.args = _args
         member this.locs = _locs
 
-        member this.addArg(sym: SymbolId): Reg =
+        member this.addArg(sid: SymbolId): Reg =
             let reg = Reg.Arg(_args.Count)
-            _args.Add(sym, reg)
+            _args.Add(sid, reg)
             reg
 
-        member this.addLoc(sym: SymbolId): Reg =
+        member this.addLoc(sid: SymbolId): Reg =
             let reg = Reg.Loc(_locs.Count)
-            _locs.Add(sym, reg)
+            _locs.Add(sid, reg)
             reg
 
-        member this.get(sym: SymbolId): Reg option =
-            if _args.ContainsKey(sym) then Some _args.[sym]
-            elif _locs.ContainsKey(sym) then Some _locs.[sym]
+        member this.get(sid: SymbolId): Reg option =
+            if _args.ContainsKey(sid) then Some _args.[sid]
+            elif _locs.ContainsKey(sid) then Some _locs.[sid]
             else None
 
     // Values in MIR
@@ -124,10 +124,10 @@ module Mir =
             | Try(body, finallyBody) -> sprintf "Try(body=%d, finally=%d)" (List.length body) (List.length finallyBody)
 
     // Convenience wrapper for fields in generated types
-    type Field(sym: SymbolId, typ: TypeId) =
+    type Field(sid: SymbolId, tid: TypeId) =
         let mutable _builder: FieldBuilder option = None
-        member this.sym = sym
-        member this.typ = typ
+        member this.sym = sid
+        member this.typ = tid
         member this.builder
             with get() = _builder.Value
             and set(v) = _builder <- Some v
@@ -141,10 +141,10 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Method(name: string, sym: SymbolId, args: TypeId list, ret: TypeId, body: Ins list, frame: Frame) =
+    type Method(name: string, sid: SymbolId, args: TypeId list, ret: TypeId, body: Ins list, frame: Frame) =
         let mutable _builder: MethodBuilder option = None
         member this.name = name
-        member this.sym = sym
+        member this.sym = sid
         member this.args = args
         member this.ret = ret
         member this.body = body
@@ -153,10 +153,10 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Type(name: string, sym: SymbolId, fields: Field list, ctors: Constructor list, methods: Method list) =
+    type Type(name: string, sid: SymbolId, fields: Field list, ctors: Constructor list, methods: Method list) =
         let mutable _builder: TypeBuilder option = None
         member this.name = name
-        member this.sym = sym
+        member this.sym = sid
         member this.fields = fields
         member this.ctors = ctors
         member this.methods = methods

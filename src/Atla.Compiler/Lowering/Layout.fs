@@ -19,10 +19,10 @@ module Layout =
         | Hir.Expr.Int (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) }
         | Hir.Expr.Float (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) }
         | Hir.Expr.String (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) }
-        | Hir.Expr.Id (sym, _, _) ->
-            match frame.get sym with
+        | Hir.Expr.Id (sid, _, _) ->
+            match frame.get sid with
             | Some reg -> { ins = []; res = Some(Mir.Value.RegVal reg) }
-            | None -> failwithf "Undefined variable: %A" sym
+            | None -> failwithf "Undefined variable: %A" sid
         | Hir.Expr.MemberAccess (mem, _, _, _) ->
             match mem with
             | Hir.Member.NativeField fi -> { ins = []; res = Some(Mir.Value.FieldVal fi) }
@@ -31,7 +31,7 @@ module Layout =
                 match pi.GetMethod with
                 | null -> failwithf "Property has no getter: %s" pi.Name
                 | getter -> { ins = []; res = Some(Mir.Value.MethodVal getter) }
-        | Hir.Expr.Call (func, _, args, typ, _) ->
+        | Hir.Expr.Call (func, _, args, tid, _) ->
             let argKn = args |> List.map (layoutExpr frame)
             let argIns = argKn |> List.collect (fun k -> k.ins)
             let argValues =
@@ -42,7 +42,7 @@ module Layout =
                     | None -> failwith "Argument expression did not produce a value")
 
             let emitCall (mi: System.Reflection.MethodInfo) =
-                match typ with
+                match tid with
                 | TypeId.Unit ->
                     { ins = argIns @ [ Mir.Ins.Call(Choice1Of2 mi, argValues) ]; res = None }
                 | _ ->
@@ -76,12 +76,12 @@ module Layout =
                     | Builtins.OpDiv -> Mir.OpCode.Div
                     | Builtins.OpEq -> Mir.OpCode.Eq
                 { ins = argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) }
-            | Hir.Callable.Fn sym -> failwithf "Function calls by symbol are not implemented: %A" sym
+            | Hir.Callable.Fn sid -> failwithf "Function calls by symbol are not implemented: %A" sid
         | Hir.Expr.Block (stmts, expr, _, _) ->
             let stmtIns = stmts |> List.collect (layoutStmt frame)
             let exprKn = layoutExpr frame expr
             { ins = stmtIns @ exprKn.ins; res = exprKn.res }
-        | Hir.Expr.If (cond, thenBranch, elseBranch, typ, _) ->
+        | Hir.Expr.If (cond, thenBranch, elseBranch, tid, _) ->
             let condKn = layoutExpr frame cond
             let thenKn = layoutExpr frame thenBranch
             let elseKn = layoutExpr frame elseBranch
@@ -89,7 +89,7 @@ module Layout =
             let elseLabel = Mir.Label()
             let endLabel = Mir.Label()
 
-            match typ with
+            match tid with
             | TypeId.Unit ->
                 {
                     ins =
@@ -122,18 +122,18 @@ module Layout =
 
     and private layoutStmt (frame: Mir.Frame) (stmt: Hir.Stmt) : Mir.Ins list =
         match stmt with
-        | Hir.Stmt.Let (sym, _, value, _) ->
+        | Hir.Stmt.Let (sid, _, value, _) ->
             let valueKn = layoutExpr frame value
-            let dst = frame.addLoc sym
+            let dst = frame.addLoc sid
             match valueKn.res with
             | Some v -> valueKn.ins @ [ Mir.Ins.Assign(dst, v) ]
             | None -> valueKn.ins
-        | Hir.Stmt.Assign (sym, value, _) ->
+        | Hir.Stmt.Assign (sid, value, _) ->
             let valueKn = layoutExpr frame value
-            match frame.get sym, valueKn.res with
+            match frame.get sid, valueKn.res with
             | Some dst, Some v -> valueKn.ins @ [ Mir.Ins.Assign(dst, v) ]
             | Some _, None -> valueKn.ins
-            | None, _ -> failwithf "Undefined variable in assignment: %A" sym
+            | None, _ -> failwithf "Undefined variable in assignment: %A" sid
         | Hir.Stmt.ExprStmt (expr, _) ->
             (layoutExpr frame expr).ins
         | Hir.Stmt.ErrorStmt (message, _) ->
@@ -160,19 +160,19 @@ module Layout =
         Mir.Type(typeName, hirType.sym, fields, [], [])
 
     let private layoutModule (hirModule: Hir.Module) : Mir.Module =
-        let resolveTypeName (sym: SymbolId) =
+        let resolveTypeName (sid: SymbolId) =
             hirModule.scope.types
-            |> Seq.tryPick (fun (KeyValue(name, typ)) ->
-                match typ with
-                | TypeId.Name tid when obj.ReferenceEquals(tid, sym) -> Some name
+            |> Seq.tryPick (fun (KeyValue(name, tid)) ->
+                match tid with
+                | TypeId.Name tid when obj.ReferenceEquals(tid, sid) -> Some name
                 | _ -> None)
-            |> Option.defaultValue (sprintf "type_%d" sym.id)
+            |> Option.defaultValue (sprintf "type_%d" sid.id)
 
-        let resolveMethodName (sym: SymbolId) =
+        let resolveMethodName (sid: SymbolId) =
             hirModule.scope.vars
-            |> Seq.tryPick (fun (KeyValue(name, sid)) ->
-                if obj.ReferenceEquals(sid, sym) then Some name else None)
-            |> Option.defaultValue (sprintf "fn_%d" sym.id)
+            |> Seq.tryPick (fun (KeyValue(name, symSid)) ->
+                if obj.ReferenceEquals(symSid, sid) then Some name else None)
+            |> Option.defaultValue (sprintf "fn_%d" sid.id)
 
         let types =
             hirModule.types

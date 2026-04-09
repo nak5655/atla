@@ -17,7 +17,7 @@ type TypeId =
     | Int
     | Float
     | String
-    | Name of symbolId: SymbolId // TODO: App of SymbolId * TypeId list // 型コンストラクタ適用
+    | Name of sid: SymbolId // TODO: App of SymbolId * TypeId list // 型コンストラクタ適用
     | Fn of args: TypeId list * ret: TypeId
     | Meta of TypeMeta
     | Native of System.Type
@@ -37,8 +37,8 @@ module TypeId =
 type TypeSubst = Dictionary<TypeMeta, TypeId>
 
 module Type =
-    let rec occurs (subst: TypeSubst) (m: TypeMeta) (t: TypeId) : bool =
-        match t with
+    let rec occurs (subst: TypeSubst) (m: TypeMeta) (tid: TypeId) : bool =
+        match tid with
         | Meta m2 when m = m2 -> true
         | Meta m2 ->
             match subst.TryGetValue(m2) with
@@ -47,8 +47,8 @@ module Type =
         | Fn (args, ret) -> List.exists (occurs subst m) args || occurs subst m ret
         | _ -> false
 
-    let rec canUnify (subst: TypeSubst) (a: TypeId) (b: TypeId) : bool =
-        match a, b with
+    let rec canUnify (subst: TypeSubst) (tid1: TypeId) (tid2: TypeId) : bool =
+        match tid1, tid2 with
         | Unit, Unit -> true
         | Bool, Bool -> true
         | Int, Int -> true
@@ -60,25 +60,25 @@ module Type =
                 false
              else
                 (List.zip args1 args2) |> List.forall (fun (a1, a2) -> canUnify subst a1 a2) && (canUnify subst ret1 ret2)
-        | Meta a, b -> 
-            match subst.TryGetValue(a) with
-            | true, a' -> canUnify subst a' b
+        | Meta m, tid ->
+            match subst.TryGetValue(m) with
+            | true, resolvedTid -> canUnify subst resolvedTid tid
             | false, _ -> true // まだ型変数が具体的な型に置き換えられていない場合は、どの型とも単一化可能とする
-        | a, Meta b -> canUnify subst (Meta b) a
+        | tid, Meta m -> canUnify subst (Meta m) tid
         | _ -> false
 
-    let rec resolve (subst: TypeSubst) (t: TypeId) : TypeId =
-        match t with
+    let rec resolve (subst: TypeSubst) (tid: TypeId) : TypeId =
+        match tid with
         | Meta m ->
             match subst.TryGetValue(m) with
             | true, t' -> resolve subst t'
-            | false, _ -> t
+            | false, _ -> tid
         | Fn (args, ret) -> Fn (List.map (resolve subst) args, resolve subst ret)
-        | _ -> t
+        | _ -> tid
 
     // 単一化
-    let rec unify (subst: TypeSubst) (a: TypeId) (b: TypeId) : TypeId =
-        match a, b with
+    let rec unify (subst: TypeSubst) (tid1: TypeId) (tid2: TypeId) : TypeId =
+        match tid1, tid2 with
         | Unit, Unit -> Unit
         | Bool, Bool -> Bool
         | Int, Int -> Int
@@ -92,18 +92,18 @@ module Type =
                 let args = List.zip args1 args2 |> List.map (fun (a1, a2) -> unify subst a1 a2)
                 let ret = unify subst ret1 ret2
                 Fn (args, ret)
-        | Meta m, t
-        | t, Meta m ->
-            let t = resolve subst t
-            if occurs subst m t then
+        | Meta m, tid
+        | tid, Meta m ->
+            let resolvedTid = resolve subst tid
+            if occurs subst m resolvedTid then
                 failwith "Occurs check failed"
-            subst.[m] <- t
-            t
+            subst.[m] <- resolvedTid
+            resolvedTid
 
         | _ -> failwith "Cannot unify types"
 
-    let rec hasError (subst: TypeSubst) (t: TypeId) : bool =
-        match t with
+    let rec hasError (subst: TypeSubst) (tid: TypeId) : bool =
+        match tid with
         | Error _ -> true
         | Fn (args, ret) -> List.exists (hasError subst) args || hasError subst ret
         | Meta m ->

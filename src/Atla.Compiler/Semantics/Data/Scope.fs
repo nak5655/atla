@@ -11,27 +11,27 @@ type Scope(parent: Scope option) =
     member this.vars = _vars
     member this.types = _types
 
-    member this.DeclareVar(name: string, symbol: SymbolId) =
-        _vars.Add(name, symbol)
+    member this.DeclareVar(name: string, sid: SymbolId) =
+        _vars.Add(name, sid)
 
-    member this.ResolveVar(name: string, _typ: TypeId) : SymbolId list =
-        let mutable sym = Unchecked.defaultof<SymbolId>
+    member this.ResolveVar(name: string, _tid: TypeId) : SymbolId list =
+        let mutable sid = Unchecked.defaultof<SymbolId>
 
-        if _vars.TryGetValue(name, &sym) then
-            [ sym ]
+        if _vars.TryGetValue(name, &sid) then
+            [ sid ]
         else
             match parent with
-            | Some parentScope -> parentScope.ResolveVar(name, _typ)
+            | Some parentScope -> parentScope.ResolveVar(name, _tid)
             | None -> []
 
-    member this.DeclareType(name: string, typ: TypeId) =
-        _types.Add(name, typ)
+    member this.DeclareType(name: string, tid: TypeId) =
+        _types.Add(name, tid)
 
     member this.ResolveType(id: string) : TypeId option =
-        let mutable typ = Unchecked.defaultof<TypeId>
+        let mutable tid = Unchecked.defaultof<TypeId>
 
-        if _types.TryGetValue(id, &typ) then
-            Some typ
+        if _types.TryGetValue(id, &tid) then
+            Some tid
         else
             match parent with
             | Some parentScope -> parentScope.ResolveType(id)

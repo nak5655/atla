@@ -28,9 +28,9 @@ module Analyze =
             | :? Ast.FnArg.Unit -> TypeId.Unit
             | _ -> failwith "Unsupported function argument type"
 
-        member this.declareLocal (name: string) (typ: TypeId) : SymbolId =
+        member this.declareLocal (name: string) (tid: TypeId) : SymbolId =
             let sid = symbolTable.NextId()
-            let symInfo = SymbolInfo(name, typ, SymbolKind.Local())
+            let symInfo = SymbolInfo(name, tid, SymbolKind.Local())
             symbolTable.Add(sid, symInfo)
             scope.DeclareVar(name, sid)
             sid
@@ -43,15 +43,15 @@ module Analyze =
             scope.DeclareVar(name, sid)
             sid
             
-        member this.declareArg (name: string) (typ: TypeId) : SymbolId =
+        member this.declareArg (name: string) (tid: TypeId) : SymbolId =
             let sid = symbolTable.NextId()
-            let symInfo = SymbolInfo(name, typ, SymbolKind.Arg())
-            let sym = symbolTable.Add(sid, symInfo)
+            let symInfo = SymbolInfo(name, tid, SymbolKind.Arg())
+            symbolTable.Add(sid, symInfo)
             scope.DeclareVar(name, sid)
             sid
 
-        member this.resolveVar (name: string) (expected: TypeId) : SymbolId list =
-            scope.ResolveVar(name, expected)
+        member this.resolveVar (name: string) (tid: TypeId) : SymbolId list =
+            scope.ResolveVar(name, tid)
 
         member this.declareSystemType (classPath: string) : SymbolId =
             let sid = symbolTable.NextId()
@@ -62,40 +62,40 @@ module Analyze =
             scope.DeclareType(name, TypeId.Name sid)
             sid
 
-        member this.resolveSymType (sym: SymbolId) : TypeId =
-            match symbolTable.Get(sym) with
+        member this.resolveSymType (sid: SymbolId) : TypeId =
+            match symbolTable.Get(sid) with
             | Some(symInfo) -> symInfo.typ
-            | _ -> TypeId.Error (sprintf "Undefined symbol '%A'" sym)
+            | _ -> TypeId.Error (sprintf "Undefined symbol '%A'" sid)
 
-        member this.resolveSym(sym: SymbolId) : SymbolInfo option =
-            symbolTable.Get(sym)
+        member this.resolveSym(sid: SymbolId) : SymbolInfo option =
+            symbolTable.Get(sid)
 
-        member this.unifyTypes (t1: TypeId) (t2: TypeId) : unit =
-            Type.unify typSubst t1 t2 |> ignore
+        member this.unifyTypes (tid1: TypeId) (tid2: TypeId) : unit =
+            Type.unify typSubst tid1 tid2 |> ignore
 
         member this.resolveTyp (tid: TypeId) : SymbolInfo option =
             match Type.resolve typSubst tid with
-            | TypeId.Name sym -> 
-                match symbolTable.Get(sym) with
+            | TypeId.Name sid ->
+                match symbolTable.Get(sid) with
                 | Some symInfo -> Some symInfo
                 | None -> None
             | _ -> None
 
-        member this.resolveNativeMember (memberInfos: MemberInfo list) (typ: TypeId) : (MemberInfo * TypeId) list =
+        member this.resolveNativeMember (memberInfos: MemberInfo list) (tid: TypeId) : (MemberInfo * TypeId) list =
             let result = List<MemberInfo * TypeId>()
             for memberInfo in memberInfos do
                 match memberInfo with
                 | :? MethodInfo as methodInfo ->
                     let methodType = TypeId.Fn([for p in methodInfo.GetParameters() -> TypeId.fromSystemType p.ParameterType], TypeId.fromSystemType methodInfo.ReturnType)
-                    if Type.canUnify typSubst methodType typ then
+                    if Type.canUnify typSubst methodType tid then
                         result.Add(memberInfo, methodType)
                 | :? FieldInfo as fieldInfo ->
                     let fieldType = TypeId.fromSystemType fieldInfo.FieldType
-                    if Type.canUnify typSubst fieldType typ then
+                    if Type.canUnify typSubst fieldType tid then
                         result.Add(memberInfo, fieldType)
                 | :? PropertyInfo as propertyInfo ->
                     let propertyType = TypeId.fromSystemType propertyInfo.PropertyType
-                    if Type.canUnify typSubst propertyType typ then
+                    if Type.canUnify typSubst propertyType tid then
                         result.Add(memberInfo, propertyType)
                 | _ -> ()
             
@@ -106,10 +106,10 @@ module Analyze =
             Env(this.symbolTable, this.typSubst, blockScope)
 
     // 式を名前解決したあと、関数として意味解析を行う
-    let rec analyzeExprAsCallable (env:Env) (expr: Ast.Expr) (expected: TypeId): Hir.Callable option =
-        match analyzeExpr env expr expected with
-        | Hir.Expr.Id (sym, typ, _) ->
-            match env.resolveSym sym with
+    let rec analyzeExprAsCallable (env:Env) (expr: Ast.Expr) (tid: TypeId): Hir.Callable option =
+        match analyzeExpr env expr tid with
+        | Hir.Expr.Id (sid, _tid, _) ->
+            match env.resolveSym sid with
             | Some symInfo ->
                 match symInfo.kind with
                 | SymbolKind.NativeMethod methodInfos -> Some (Hir.Callable.NativeMethodGroup methodInfos)
@@ -118,7 +118,7 @@ module Analyze =
                 | SymbolKind.Local ()
                 | SymbolKind.Arg () ->
                     match Type.resolve env.typSubst symInfo.typ with
-                    | TypeId.Fn _ -> Some (Hir.Callable.Fn sym)
+                    | TypeId.Fn _ -> Some (Hir.Callable.Fn sid)
                     | _ -> None
                 | _ -> None
             | None -> None
@@ -128,49 +128,49 @@ module Analyze =
             | _ -> None
         | _ -> None
 
-    and analyzeExpr (env: Env) (expr: Ast.Expr) (expected: TypeId) : Hir.Expr =
+    and analyzeExpr (env: Env) (expr: Ast.Expr) (tid: TypeId) : Hir.Expr =
         match expr with
         | :? Ast.Expr.Unit as unitExpr ->
-            env.unifyTypes expected TypeId.Unit
+            env.unifyTypes tid TypeId.Unit
             Hir.Expr.Unit(unitExpr.span)
         | :? Ast.Expr.Int as intExpr ->
-            env.unifyTypes expected TypeId.Int
+            env.unifyTypes tid TypeId.Int
             Hir.Expr.Int(intExpr.value, intExpr.span)
         | :? Ast.Expr.Float as floatExpr ->
-            env.unifyTypes expected TypeId.Float
+            env.unifyTypes tid TypeId.Float
             Hir.Expr.Float(floatExpr.value, floatExpr.span)
         | :? Ast.Expr.String as stringExpr ->
-            env.unifyTypes expected TypeId.String
+            env.unifyTypes tid TypeId.String
             Hir.Expr.String(stringExpr.value, stringExpr.span)
         | :? Ast.Expr.Id as idExpr ->
-            match env.resolveVar idExpr.name expected with
-            | [sym] ->
-                env.unifyTypes expected (env.resolveSymType sym)
-                Hir.Expr.Id(sym, env.resolveSymType sym, idExpr.span)
-            | [] -> Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" idExpr.name idExpr.span, expected, idExpr.span)
-            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s' at %A" idExpr.name idExpr.span, expected, idExpr.span)
+            match env.resolveVar idExpr.name tid with
+            | [sid] ->
+                env.unifyTypes tid (env.resolveSymType sid)
+                Hir.Expr.Id(sid, env.resolveSymType sid, idExpr.span)
+            | [] -> Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" idExpr.name idExpr.span, tid, idExpr.span)
+            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s' at %A" idExpr.name idExpr.span, tid, idExpr.span)
         | :? Ast.Expr.Block as blockExpr ->
             let blockEnv = env.sub()
             let stmts = blockExpr.stmts |> List.map (analyzeStmt blockEnv)
             match List.last stmts with
             | Hir.Stmt.ExprStmt (expr, _) ->
-                env.unifyTypes expected expr.typ
-                Hir.Expr.Block(stmts, expr, expected, blockExpr.span)
+                env.unifyTypes tid expr.typ
+                Hir.Expr.Block(stmts, expr, tid, blockExpr.span)
             | _ ->
                 // ブロックの最後が式でない場合は、ブロック全体の値はUnitとする
                 let unitExpr = Hir.Expr.Unit ({left = blockExpr.span.right; right = blockExpr.span.right})
-                Hir.Expr.Block(stmts, unitExpr, expected, blockExpr.span)
+                Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
             // 引数の名前解析と型推論を行いながら、Applyに畳み込む
             let args = applyExpr.args |> List.map (fun arg ->
                 analyzeExpr env arg (TypeId.freshMeta()))
             // 引数の型から、関数本体の名前解析と型推論を行う
-            let funcType = args |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, expected)
+            let funcType = args |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, tid)
             let callable = analyzeExprAsCallable env applyExpr.func funcType
             match callable with
             | Some callable ->
-                Hir.Expr.Call(callable, None, args, expected, applyExpr.span)
-            | _ -> Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, expected, applyExpr.span)
+                Hir.Expr.Call(callable, None, args, tid, applyExpr.span)
+            | _ -> Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
         | :? Ast.Expr.MemberAccess as memberAccessExpr ->
             // まずレシーバーの式を解析して型を推論する
             let receiver = analyzeExpr env memberAccessExpr.receiver (TypeId.freshMeta())
@@ -181,7 +181,7 @@ module Analyze =
                 | SymbolKind.SystemType sysType ->
                     // System.Typeのstaticメンバーアクセスをサポートする
                     let methodInfos = sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static) |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName) |> Seq.toList
-                    match env.resolveNativeMember methodInfos expected with
+                    match env.resolveNativeMember methodInfos tid with
                     | [memberInfo, tid] ->
                         match memberInfo with
                         | :? MethodInfo as methodInfo ->
@@ -190,20 +190,20 @@ module Analyze =
                             Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, tid, memberAccessExpr.span)
                         | :? PropertyInfo as propertyInfo ->
                             Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, tid, memberAccessExpr.span)
-                        | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span, expected, memberAccessExpr.span)
-                    | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, expected, memberAccessExpr.span)
-                    | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, expected, memberAccessExpr.span)
-                | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, expected, memberAccessExpr.span)
-            | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, expected, memberAccessExpr.span)
+                        | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span, tid, memberAccessExpr.span)
+                    | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
+                    | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
+                | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, tid, memberAccessExpr.span)
+            | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, tid, memberAccessExpr.span)
         | :? Ast.Expr.If as ifExpr ->
             let rec analyzeIfBranches (branches: Ast.IfBranch list) : Hir.Expr =
                 match List.head branches with
                 | :? Ast.IfBranch.Then as thenBranch ->
                     let cond = analyzeExpr env thenBranch.cond TypeId.Bool
-                    let body = analyzeExpr env thenBranch.body expected
-                    Hir.Expr.If(cond, body, analyzeIfBranches (List.tail branches), expected, { left = thenBranch.span.left; right = (List.last branches).span.right })
+                    let body = analyzeExpr env thenBranch.body tid
+                    Hir.Expr.If(cond, body, analyzeIfBranches (List.tail branches), tid, { left = thenBranch.span.left; right = (List.last branches).span.right })
                 | :? Ast.IfBranch.Else as elseBranch ->
-                    analyzeExpr env elseBranch.body expected
+                    analyzeExpr env elseBranch.body tid
                 | _ -> failwith "Unsupported if branch type"
             analyzeIfBranches ifExpr.branches
         | _ -> failwith "Unsupported expression type"
@@ -215,24 +215,24 @@ module Analyze =
             let tid = TypeId.freshMeta ()
             let rhs = analyzeExpr env letStmt.value tid
             // ローカル変数として宣言する
-            let sym = env.declareLocal letStmt.name tid
-            Hir.Stmt.Let(sym, false, rhs, letStmt.span)
+            let sid = env.declareLocal letStmt.name tid
+            Hir.Stmt.Let(sid, false, rhs, letStmt.span)
         | :? Ast.Stmt.Var as varStmt ->
             // 先に右辺を解析して型を推論する
             let tid = TypeId.freshMeta ()
             let rhs = analyzeExpr env varStmt.value tid
             // ミュータブルなローカル変数として宣言する
-            let sym = env.declareLocal varStmt.name tid
-            Hir.Stmt.Let(sym, true, rhs, varStmt.span)
+            let sid = env.declareLocal varStmt.name tid
+            Hir.Stmt.Let(sid, true, rhs, varStmt.span)
         | :? Ast.Stmt.Assign as assignStmt ->
             // 先に右辺を解析して型を推論する
             let tid = TypeId.freshMeta ()
             let rhs = analyzeExpr env assignStmt.value tid
             // シンボルテーブルで代入先を解決する
             match env.resolveVar assignStmt.name rhs.typ with
-            | [sym] ->
+            | [sid] ->
                 // 代入先が見つかった場合は、Assignステートメントを生成する
-                Hir.Stmt.Assign(sym, rhs, assignStmt.span)
+                Hir.Stmt.Assign(sid, rhs, assignStmt.span)
             | [] ->
                 // 代入先が見つからない場合は、エラーを生成する
                 Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" assignStmt.name assignStmt.span, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
@@ -268,11 +268,11 @@ module Analyze =
         let tid = TypeId.Fn(argTypes, retType)
 
         // 関数のシンボルを定義する
-        let sym = env.declareLocal fnDecl.name tid
+        let sid = env.declareLocal fnDecl.name tid
         // 関数本体を解析する
         let body = analyzeExpr bodyEnv fnDecl.body retType
 
-        Hir.Method(sym, body, tid, fnDecl.span)
+        Hir.Method(sid, body, tid, fnDecl.span)
 
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Hir.Module =
         let moduleScope = Scope(None)
