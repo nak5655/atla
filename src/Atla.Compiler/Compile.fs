@@ -30,7 +30,10 @@ module Compiler =
                     Gen.genAssembly(mir, Path.Join(outDir, sprintf "%s.dll" asmName))
                     Ok ()
                 | Result.Error diagnostics ->
-                    let message = String.concat "; " diagnostics
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> $"{err.message} at {err.span}")
+                        |> String.concat "; "
                     Result.Error $"Semantic analysis failed: {message}"
             | Failure (reason, span) ->
                 Result.Error $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}"

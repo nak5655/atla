@@ -325,10 +325,10 @@ module Analyze =
 
         Hir.Method(sid, body, tid, fnDecl.span)
 
-    let private collectExprErrors (expr: Hir.Expr) : string list =
-        let rec loopExpr (acc: string list) (expr: Hir.Expr) : string list =
+    let private collectExprErrors (expr: Hir.Expr) : Error list =
+        let rec loopExpr (acc: Error list) (expr: Hir.Expr) : Error list =
             match expr with
-            | Hir.Expr.ExprError (message, _, _) -> message :: acc
+            | Hir.Expr.ExprError (message, _, span) -> Error(message, span) :: acc
             | Hir.Expr.Block (stmts, body, _, _) ->
                 let accFromStmts = stmts |> List.fold loopStmt acc
                 loopExpr accFromStmts body
@@ -350,16 +350,16 @@ module Analyze =
                 | None -> acc
             | _ -> acc
 
-        and loopStmt (acc: string list) (stmt: Hir.Stmt) : string list =
+        and loopStmt (acc: Error list) (stmt: Hir.Stmt) : Error list =
             match stmt with
-            | Hir.Stmt.ErrorStmt (message, _) -> message :: acc
+            | Hir.Stmt.ErrorStmt (message, span) -> Error(message, span) :: acc
             | Hir.Stmt.Let (_, _, value, _)
             | Hir.Stmt.Assign (_, value, _)
             | Hir.Stmt.ExprStmt (value, _) -> loopExpr acc value
 
         loopExpr [] expr |> List.rev
 
-    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Result<Hir.Module, string list> =
+    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Result<Hir.Module, Error list> =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
         moduleScope.DeclareType("Bool", TypeId.Bool)

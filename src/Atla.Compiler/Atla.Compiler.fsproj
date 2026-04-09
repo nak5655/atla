@@ -22,6 +22,7 @@
     <Compile Include="Semantics\Data\Type.fs" />
     <Compile Include="Semantics\Data\SymbolInfo.fs" />
     <Compile Include="Semantics\Data\Scope.fs" />
+    <Compile Include="Semantics\Data\Error.fs" />
     <Compile Include="Semantics\Data\Hir.fs" />
     <Compile Include="Semantics\Analyze.fs" />
     <Compile Include="Lowering\Data\Mir.fs" />

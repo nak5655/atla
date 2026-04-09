@@ -25,7 +25,10 @@ module AnalyzeTests =
             | Hir.Expr.Id (_, typ, _) -> Assert.Equal(TypeId.Int, Type.resolve subst typ)
             | other -> Assert.True(false, $"expected Hir.Expr.Id but got {other}")
         | Result.Error diagnostics ->
-            let message = String.concat "; " diagnostics
+            let message =
+                diagnostics
+                |> List.map (fun err -> $"{err.message} at {err.span}")
+                |> String.concat "; "
             Assert.True(false, $"semantic analysis failed: {message}")
 
     [<Fact>]
@@ -51,5 +54,8 @@ module AnalyzeTests =
 
             Assert.False(hasError, "HIR に ExprError/ErrorStmt が残っています。")
         | Result.Error diagnostics ->
-            let message = String.concat "; " diagnostics
+            let message =
+                diagnostics
+                |> List.map (fun err -> $"{err.message} at {err.span}")
+                |> String.concat "; "
             Assert.True(false, $"semantic analysis failed: {message}")

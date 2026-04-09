@@ -32,7 +32,10 @@ fn main (): Int = do
                     let mirAsm = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
                     Assert.Single(mirAsm.modules) |> ignore
                 | Result.Error diagnostics ->
-                    let message = String.concat "; " diagnostics
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> $"{err.message} at {err.span}")
+                        |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

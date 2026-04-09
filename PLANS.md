@@ -1,5 +1,11 @@
 # Plan
 
+## 2026-04-09 Semantics.Data.Error 型導入
+
+- [x] `Semantics.Data` 名前空間に `Error` 型（`string` と `Span` を保持）を追加する。
+- [x] HIR から収集する診断型を `string` から `Error` に置き換える。
+- [x] `Analyze.analyzeModule` 利用側（`Compile` とテスト）を新しい `Error` 型に追従させ、対象テストを実行する。
+
 ## 2026-04-09 AnalyzeTestsでAST直接構築へ修正
 
 - [x] `AnalyzeTests.ast to hir should not keep error nodes` から `Lexer` / `Parser` 依存を外す。
