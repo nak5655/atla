@@ -166,7 +166,8 @@ module Analyze =
             match List.last stmts with
             | Hir.Stmt.ExprStmt (expr, _) ->
                 env.unifyTypes tid expr.typ
-                Hir.Expr.Block(stmts, expr, tid, blockExpr.span)
+                let leadingStmts = stmts |> List.take (stmts.Length - 1)
+                Hir.Expr.Block(leadingStmts, expr, tid, blockExpr.span)
             | _ ->
                 // ブロックの最後が式でない場合は、ブロック全体の値はUnitとする
                 let unitExpr = Hir.Expr.Unit ({left = blockExpr.span.right; right = blockExpr.span.right})
@@ -179,36 +180,79 @@ module Analyze =
             let funcType = args |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, tid)
             let callable = analyzeExprAsCallable env applyExpr.func funcType
             match callable with
-            | Some callable ->
-                Hir.Expr.Call(callable, None, args, tid, applyExpr.span)
-            | _ -> Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
+            | Some resolvedCallable ->
+                Hir.Expr.Call(resolvedCallable, None, args, tid, applyExpr.span)
+            | None ->
+                // `f ()` の形式を0引数呼び出しとして解釈できる場合はフォールバックする
+                match args with
+                | [Hir.Expr.Unit _] ->
+                    let zeroArgFuncType = TypeId.Fn([], tid)
+                    match analyzeExprAsCallable env applyExpr.func zeroArgFuncType with
+                    | Some resolvedCallable ->
+                        Hir.Expr.Call(resolvedCallable, None, [], tid, applyExpr.span)
+                    | None ->
+                        Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
+                | _ ->
+                    Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
         | :? Ast.Expr.MemberAccess as memberAccessExpr ->
-            // まずレシーバーの式を解析して型を推論する
-            let receiver = analyzeExpr env memberAccessExpr.receiver (TypeId.freshMeta())
-            // レシーバーの型から、メンバーアクセスの名前解決と型推論を行う
-            match env.resolveTyp receiver.typ with
-            | Some symInfo ->
-                match symInfo.kind with
-                | SymbolKind.SystemType sysType ->
-                    if obj.ReferenceEquals(sysType, null) then
+            let resolveMemberFromSystemType (sysType: System.Type) =
+                let memberInfos =
+                    sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static)
+                    |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
+                    |> Seq.toList
+
+                match env.resolveNativeMember memberInfos tid with
+                | [memberInfo, resolvedTid] ->
+                    match memberInfo with
+                    | :? MethodInfo as methodInfo ->
+                        Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, resolvedTid, memberAccessExpr.span)
+                    | :? FieldInfo as fieldInfo ->
+                        Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, resolvedTid, memberAccessExpr.span)
+                    | :? PropertyInfo as propertyInfo ->
+                        Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, resolvedTid, memberAccessExpr.span)
+                    | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span, tid, memberAccessExpr.span)
+                | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
+                | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
+
+            // TypeName.Member を static member として優先解決する
+            match memberAccessExpr.receiver with
+            | :? Ast.Expr.Id as receiverId ->
+                match env.scope.ResolveType(receiverId.name) with
+                | Some (TypeId.Name sid) ->
+                    match env.resolveSym sid with
+                    | Some symInfo ->
+                        match symInfo.kind with
+                        | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) ->
+                            resolveMemberFromSystemType sysType
+                        | SymbolKind.SystemType _ ->
+                            Hir.Expr.ExprError(sprintf "System type '%s' could not be loaded at %A" receiverId.name memberAccessExpr.span, tid, memberAccessExpr.span)
+                        | _ ->
+                            Hir.Expr.ExprError(sprintf "Type '%s' is not a system type at %A" receiverId.name memberAccessExpr.span, tid, memberAccessExpr.span)
+                    | None ->
+                        Hir.Expr.ExprError(sprintf "Undefined type symbol '%s' at %A" receiverId.name memberAccessExpr.span, tid, memberAccessExpr.span)
+                | _ ->
+                    let receiver = analyzeExpr env memberAccessExpr.receiver (TypeId.freshMeta())
+                    match env.resolveTyp receiver.typ with
+                    | Some symInfo ->
+                        match symInfo.kind with
+                        | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) ->
+                            resolveMemberFromSystemType sysType
+                        | SymbolKind.SystemType _ ->
+                            Hir.Expr.ExprError(sprintf "System type '%A' could not be loaded at %A" symInfo.name memberAccessExpr.span, tid, memberAccessExpr.span)
+                        | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, tid, memberAccessExpr.span)
+                    | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, tid, memberAccessExpr.span)
+            | _ ->
+                let receiver = analyzeExpr env memberAccessExpr.receiver (TypeId.freshMeta())
+                // レシーバーの型から、メンバーアクセスの名前解決と型推論を行う
+                match env.resolveTyp receiver.typ with
+                | Some symInfo ->
+                    match symInfo.kind with
+                    | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) ->
+                        resolveMemberFromSystemType sysType
+                    | SymbolKind.SystemType _ ->
                         Hir.Expr.ExprError(sprintf "System type '%A' could not be loaded at %A" symInfo.name memberAccessExpr.span, tid, memberAccessExpr.span)
-                    else
-                    // System.Typeのstaticメンバーアクセスをサポートする
-                        let methodInfos = sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static) |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName) |> Seq.toList
-                        match env.resolveNativeMember methodInfos tid with
-                        | [memberInfo, tid] ->
-                            match memberInfo with
-                            | :? MethodInfo as methodInfo ->
-                                Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, tid, memberAccessExpr.span)
-                            | :? FieldInfo as fieldInfo ->
-                                Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, tid, memberAccessExpr.span)
-                            | :? PropertyInfo as propertyInfo ->
-                                Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, tid, memberAccessExpr.span)
-                            | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span, tid, memberAccessExpr.span)
-                        | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
-                        | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
-                | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, tid, memberAccessExpr.span)
-            | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, tid, memberAccessExpr.span)
+                    | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, tid, memberAccessExpr.span)
+                | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, tid, memberAccessExpr.span)
         | :? Ast.Expr.StaticAccess as staticAccessExpr ->
             match env.scope.ResolveType(staticAccessExpr.typeName) with
             | Some(TypeId.Name sid) ->

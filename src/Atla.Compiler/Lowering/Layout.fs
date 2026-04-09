@@ -22,7 +22,9 @@ module Layout =
         | Hir.Expr.Id (sid, _, _) ->
             match frame.get sid with
             | Some reg -> { ins = []; res = Some(Mir.Value.RegVal reg) }
-            | None -> failwithf "Undefined variable: %A" sid
+            | None ->
+                let argReg = frame.addArg sid
+                { ins = []; res = Some(Mir.Value.RegVal argReg) }
         | Hir.Expr.MemberAccess (mem, _, _, _) ->
             match mem with
             | Hir.Member.NativeField fi -> { ins = []; res = Some(Mir.Value.FieldVal fi) }
@@ -42,8 +44,10 @@ module Layout =
                     | None -> failwith "Argument expression did not produce a value")
 
             let emitCall (mi: System.Reflection.MethodInfo) =
-                match tid with
-                | TypeId.Unit ->
+                let returnsUnit = (mi.ReturnType = typeof<System.Void>)
+                match tid, returnsUnit with
+                | _, true
+                | TypeId.Unit, _ ->
                     { ins = argIns @ [ Mir.Ins.Call(Choice1Of2 mi, argValues) ]; res = None }
                 | _ ->
                     let dst = declareTemp frame
@@ -76,7 +80,13 @@ module Layout =
                     | Builtins.OpDiv -> Mir.OpCode.Div
                     | Builtins.OpEq -> Mir.OpCode.Eq
                 { ins = argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) }
-            | Hir.Callable.Fn sid -> failwithf "Function calls by symbol are not implemented: %A" sid
+            | Hir.Callable.Fn sid ->
+                match tid with
+                | TypeId.Unit ->
+                    { ins = argIns @ [ Mir.Ins.CallSym(sid, argValues) ]; res = None }
+                | _ ->
+                    let dst = declareTemp frame
+                    { ins = argIns @ [ Mir.Ins.CallAssignSym(dst, sid, argValues) ]; res = Some(Mir.Value.RegVal dst) }
         | Hir.Expr.Block (stmts, expr, _, _) ->
             let stmtIns = stmts |> List.collect (layoutStmt frame)
             let exprKn = layoutExpr frame expr
@@ -164,14 +174,14 @@ module Layout =
             hirModule.scope.types
             |> Seq.tryPick (fun (KeyValue(name, tid)) ->
                 match tid with
-                | TypeId.Name tid when obj.ReferenceEquals(tid, sid) -> Some name
+                | TypeId.Name tid when tid.id = sid.id -> Some name
                 | _ -> None)
             |> Option.defaultValue (sprintf "type_%d" sid.id)
 
         let resolveMethodName (sid: SymbolId) =
             hirModule.scope.vars
             |> Seq.tryPick (fun (KeyValue(name, symSid)) ->
-                if obj.ReferenceEquals(symSid, sid) then Some name else None)
+                if symSid.id = sid.id then Some name else None)
             |> Option.defaultValue (sprintf "fn_%d" sid.id)
 
         let types =

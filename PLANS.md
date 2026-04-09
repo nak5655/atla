@@ -34,10 +34,10 @@
 
 - [x] Semantic解析後に `hirModule.hasError` を検査し、`ExprError` / `ErrorStmt` が残る場合は `Result.Error` を返して Lowering へ進めない。
 - [x] `AnalyzeTests.ast to hir should not keep error nodes` を成功させる（AST->HIR 変換でエラーノードを残さない、または明示エラーとして返す経路を確立する）。
-- [ ] `Gen.genAssembly` のエントリポイント設定（`main` の `MethodDefinitionHandle` 解決）を修正し、`Entry point not found` を解消する。
-- [ ] `Layout` のメソッド名解決を点検し、`main` が確実に MIR/Gen に伝播することを保証する。
+- [x] `Gen.genAssembly` のエントリポイント設定（`main` の `MethodDefinitionHandle` 解決）を修正し、`Entry point not found` を解消する。
+- [x] `Layout` のメソッド名解決を点検し、`main` が確実に MIR/Gen に伝播することを保証する。
 - [x] `Compile.compile` の `tokens.Head` 直参照を修正し、空トークン入力で例外を出さずに診断を返す。
-- [ ] `LoweringTests.hello` / `LoweringTests.fibonacci` / `AnalyzeTests.ast to hir should not keep error nodes` を含む全テストを再実行し、失敗要因を段階的に解消する。
+- [x] `LoweringTests.hello` / `LoweringTests.fibonacci` / `AnalyzeTests.ast to hir should not keep error nodes` を含む全テストを再実行し、失敗要因を段階的に解消する。
 
 ## 2026-04-09 HIR hasError を型メンバへ移行
 
@@ -127,3 +127,31 @@
 - [x] `SymbolId` 型の変数・引数名を `sid` に統一する。
 - [x] `TypeId` 型の変数・引数名を `tid` に統一する。
 - [x] テストを実行し、既存失敗（`LoweringTests.fibonacci`）以外の回帰がないことを確認する。
+
+## 2026-04-09 PLAN残タスクの順次解消
+
+- [x] `Layout` のメソッド名解決を `SymbolId.id` ベースの同値判定に修正し、`main` 名が MIR へ確実に伝播することを保証する。
+- [x] `Gen.genAssembly` のエントリポイント設定を点検・修正し、`HelloWorld.dll` 実行時の `Entry point not found` を解消する。
+- [x] `LoweringTests.hello` / `LoweringTests.fibonacci` / `AnalyzeTests.ast to hir should not keep error nodes` を含む全テストを再実行し、未解決要因を潰す。
+
+## 2026-04-09 レビュー指摘対応（Lexer非変更方針）
+
+- [x] `Syntax/Lexer.fs` の変更を取り消し、Lexer 非変更制約を満たす。
+- [x] `Compiler.compile` 側で複数行入力を扱える経路を用意し、`LoweringTests.hello` を含む既存テストを通す。
+- [x] `AGENTS.md` に「Lexer/Parserの変更が必要な場合は事前確認する」運用ルールを追記する。
+- [x] テストスイートを再実行し、制約下での結果を確認する。
+
+## 2026-04-09 レビュー指摘対応（tokenizeMultiLine 取り消し）
+
+- [x] `Compiler` モジュールの `tokenizeMultiLine` / `shiftSpan` / `shiftTokenLine` を削除し、従来の lexing 経路へ戻す。
+- [x] 影響確認としてテストを実行し、必要なら失敗を記録する。
+
+## 2026-04-09 レビュー指摘対応（StringInput修正許可）
+
+- [x] `StringInput.get/next` を修正し、複数行入力を最後まで走査できるようにする。
+- [x] `LoweringTests.hello` を含むテストを実行し、回帰がないことを確認する。
+
+## 2026-04-09 レビュー指摘対応（StringInputのCRLF/CR対応）
+
+- [x] `StringInput` で CRLF/CR を正規化し、改行走査が一貫して動作するようにする。
+- [x] `LoweringTests.hello` を含むテストを再実行して影響を確認する。

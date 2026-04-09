@@ -15,7 +15,8 @@ open System.Collections.Generic
 module Gen =
     // Genモジュール内で共有する生成コンテキスト
     type Env =
-        { typeBuilders: Dictionary<SymbolId, TypeBuilder> }
+        { typeBuilders: Dictionary<SymbolId, TypeBuilder>
+          methodBuilders: Dictionary<SymbolId, MethodInfo> }
 
     // MIRのTypeIdをCIL生成用のSystem.Typeへ解決する
     let private resolveType (env: Env) (tid: TypeId) : Type =
@@ -58,7 +59,7 @@ module Gen =
             gen.Emit(OpCodes.Ldfld, field)
 
     // MIR命令をIL命令列へ変換する
-    let private genIns (gen: ILGenerator) (ins: Mir.Ins) =
+    let private genIns (env: Env) (gen: ILGenerator) (ins: Mir.Ins) =
         match ins with
         // 単純代入
         | Mir.Ins.Assign (reg, value) ->
@@ -98,6 +99,35 @@ module Gen =
             match method with
             | Choice1Of2 mi -> gen.Emit(OpCodes.Call, mi)
             | Choice2Of2 ci -> gen.Emit(OpCodes.Call, ci)
+        | Mir.Ins.CallSym (sid, args) ->
+            for arg in args do
+                genValue gen arg
+            match env.methodBuilders.TryGetValue(sid) with
+            | true, methodInfo -> gen.Emit(OpCodes.Call, methodInfo)
+            | false, _ -> failwithf "Unknown method symbol: %A" sid
+        | Mir.Ins.CallAssign (dst, method, args) ->
+            for arg in args do
+                genValue gen arg
+            gen.Emit(OpCodes.Call, method)
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        | Mir.Ins.CallAssignSym (dst, sid, args) ->
+            for arg in args do
+                genValue gen arg
+            match env.methodBuilders.TryGetValue(sid) with
+            | true, methodInfo -> gen.Emit(OpCodes.Call, methodInfo)
+            | false, _ -> failwithf "Unknown method symbol: %A" sid
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        | Mir.Ins.New (dst, ctor, args) ->
+            for arg in args do
+                genValue gen arg
+            gen.Emit(OpCodes.Newobj, ctor)
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         // ラベル定義とジャンプ
         | Mir.Ins.MarkLabel label ->
             // ジャンプ距離を計算するためにオフセットを保持しておく
@@ -135,7 +165,7 @@ module Gen =
 
         // 本体命令を順に生成
         for ins in ctor.body do
-            genIns gen ins
+            genIns _env gen ins
 
     // メソッド本体を生成する
     let private genMethod (_env: Env) (method: Mir.Method) =
@@ -149,7 +179,7 @@ module Gen =
 
         // 本体命令を順に生成
         for ins in method.body do
-            genIns gen ins
+            genIns _env gen ins
 
     // 型メンバー（フィールド/コンストラクタ/メソッド）を生成し、mainメソッドがあれば返す
     let private genType (env: Env) (typ: Mir.Type) : MethodInfo option =
@@ -181,7 +211,9 @@ module Gen =
     // モジュール単位で型とグローバル関数を生成し、mainメソッドを返す
     let private genModule (moduleBuilder: ModuleBuilder) (modul: Mir.Module) : MethodInfo option =
         // モジュール内型解決テーブルを初期化
-        let env = { typeBuilders = Dictionary<SymbolId, TypeBuilder>() }
+        let env =
+            { typeBuilders = Dictionary<SymbolId, TypeBuilder>()
+              methodBuilders = Dictionary<SymbolId, MethodInfo>() }
 
         // 型を先に宣言してTypeId.Name解決を可能にする
         for typ in modul.types do
@@ -193,18 +225,26 @@ module Gen =
             modul.types
             |> List.tryPick (fun typ -> genType env typ)
 
-        // グローバルメソッド生成
+        // モジュール直下メソッドは静的ヘルパー型へ生成する
+        let globalsTypeBuilder =
+            moduleBuilder.DefineType(
+                $"{modul.name}.Globals",
+                TypeAttributes.Public ||| TypeAttributes.Abstract ||| TypeAttributes.Sealed)
+
         for method in modul.methods do
             let methodArgTypes = method.args |> List.map (resolveType env) |> List.toArray
             let methodRetType = resolveType env method.ret
-            method.builder <- moduleBuilder.DefineGlobalMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
+            method.builder <- globalsTypeBuilder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
+            env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
+
+        for method in modul.methods do
             genMethod env method
 
-        // グローバル関数確定
-        moduleBuilder.CreateGlobalFunctions() |> ignore
+        let globalsType = globalsTypeBuilder.CreateType()
+        let mainInGlobals = globalsType.GetMethod("main", BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static)
 
-        // <Module>.main を優先し、なければ型内mainを返す
-        match moduleBuilder.GetMethod("main") with
+        // モジュールメソッドmainを優先し、なければ型内mainを返す
+        match mainInGlobals with
         | null -> mainInTypes
         | methodInfo -> Some methodInfo
 
@@ -243,7 +283,7 @@ module Gen =
                     metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
                     ilStream = ilStream,
                     mappedFieldData = fieldData,
-                    entryPoint = MetadataTokens.MethodDefinitionHandle(methodInfo.MetadataToken))
+                    entryPoint = MetadataTokens.MethodDefinitionHandle(methodInfo.MetadataToken &&& 0x00FFFFFF))
             | None ->
                 ManagedPEBuilder(
                     header = PEHeaderBuilder.CreateExecutableHeader(),
