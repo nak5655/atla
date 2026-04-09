@@ -5,7 +5,8 @@ open Atla.Compiler.Syntax.Data
 open Atla.Compiler.Syntax.Combinators
 
 type StringInput(s: string) =
-    let lines = s.Split('\n')
+    let normalized = s.Replace("\r\n", "\n").Replace('\r', '\n')
+    let lines = normalized.Split('\n')
     interface Input<SourceChar> with
         member _.get (arg: Position): SourceChar option =
             if arg.Line < lines.Length then

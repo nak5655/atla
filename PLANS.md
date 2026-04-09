@@ -150,3 +150,8 @@
 
 - [x] `StringInput.get/next` を修正し、複数行入力を最後まで走査できるようにする。
 - [x] `LoweringTests.hello` を含むテストを実行し、回帰がないことを確認する。
+
+## 2026-04-09 レビュー指摘対応（StringInputのCRLF/CR対応）
+
+- [x] `StringInput` で CRLF/CR を正規化し、改行走査が一貫して動作するようにする。
+- [x] `LoweringTests.hello` を含むテストを再実行して影響を確認する。
