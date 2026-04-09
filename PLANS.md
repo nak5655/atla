@@ -1,5 +1,11 @@
 # Plan
 
+## 2026-04-09 AnalyzeTests入力のhello相当化
+
+- [x] `AnalyzeTests.ast to hir should not keep error nodes` のASTを `LoweringTests.hello` 相当（`import System.Console` と `Console.WriteLine "Hello, World!"` を含む）に変更する。
+- [x] `AnalyzeTests` で `Result.Error` が返った場合は明示的にテスト失敗にする。
+- [x] `AnalyzeTests` を実行して期待通り通過することを確認する。
+
 ## 2026-04-09 helloテスト通過に向けた再整理（HIRエラー残存失敗を考慮）
 
 - [x] Semantic解析後に `hirModule.hasError` を検査し、`ExprError` / `ErrorStmt` が残る場合は `Result.Error` を返して Lowering へ進めない。
