@@ -1,5 +1,11 @@
 # Plan
 
+## 2026-04-09 AnalyzeTestsでAST直接構築へ修正
+
+- [x] `AnalyzeTests.ast to hir should not keep error nodes` から `Lexer` / `Parser` 依存を外す。
+- [x] `LoweringTests.hello` 相当のAST（`Import System.Console` と `main` 内 `Console.WriteLine "Hello, World!"`）をテスト内で直接構築する。
+- [x] `Result.Error` の場合に明示的に失敗するアサーションを維持し、`AnalyzeTests` を再実行して通過を確認する。
+
 ## 2026-04-09 AnalyzeTests入力のhello相当化
 
 - [x] `AnalyzeTests.ast to hir should not keep error nodes` のASTを `LoweringTests.hello` 相当（`import System.Console` と `Console.WriteLine "Hello, World!"` を含む）に変更する。
