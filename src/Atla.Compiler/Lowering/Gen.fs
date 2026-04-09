@@ -18,8 +18,8 @@ module Gen =
         { typeBuilders: Dictionary<SymbolId, TypeBuilder> }
 
     // MIRのTypeIdをCIL生成用のSystem.Typeへ解決する
-    let private resolveType (env: Env) (typ: TypeId) : Type =
-        match typ with
+    let private resolveType (env: Env) (tid: TypeId) : Type =
+        match tid with
         // プリミティブ型
         | TypeId.Unit -> typeof<Void>
         | TypeId.Bool -> typeof<bool>
@@ -28,13 +28,13 @@ module Gen =
         | TypeId.String -> typeof<string>
         | TypeId.Native t -> t
         // モジュール内で事前定義したTypeBuilderをSystem.Typeとして扱う
-        | TypeId.Name sym ->
-            match env.typeBuilders.TryGetValue(sym) with
+        | TypeId.Name sid ->
+            match env.typeBuilders.TryGetValue(sid) with
             | true, builder -> builder :> Type
-            | false, _ -> failwithf "Unknown type symbol: %A" sym
+            | false, _ -> failwithf "Unknown type symbol: %A" sid
         // CILメンバーシグネチャに載せられない型は明示的に失敗
-        | TypeId.Fn _ -> failwithf "Function type is not supported for CIL member signatures: %A" typ
-        | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" typ
+        | TypeId.Fn _ -> failwithf "Function type is not supported for CIL member signatures: %A" tid
+        | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" tid
         | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
 
     // MIRの値をILスタックへ積む
