@@ -1,6 +1,7 @@
 namespace Atla.Compiler.Tests.Lowering
 
 open System
+open System.Diagnostics
 open System.IO
 open Xunit
 open Atla.Compiler
@@ -15,11 +16,32 @@ fn main: () = do
     Console.WriteLine "Hello, World!"
 """
 
-        let outDir = "files"
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("HelloWorld", program.Trim(), outDir)
         Assert.True(res.IsOk)
+
+        let dllPath = Path.Join(outDir, "HelloWorld.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("Hello, World!", stdout.Trim())
 
     [<Fact>]
     let fibonacci () =
