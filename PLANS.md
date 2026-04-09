@@ -1,5 +1,31 @@
 # Plan
 
+## 2026-04-09 helloテスト通過に向けた再整理（HIRエラー残存失敗を考慮）
+
+- [ ] Semantic解析後に `hirModule.hasError` を検査し、`ExprError` / `ErrorStmt` が残る場合は `Result.Error` を返して Lowering へ進めない。
+- [ ] `AnalyzeTests.ast to hir should not keep error nodes` を成功させる（AST->HIR 変換でエラーノードを残さない、または明示エラーとして返す経路を確立する）。
+- [ ] `Gen.genAssembly` のエントリポイント設定（`main` の `MethodDefinitionHandle` 解決）を修正し、`Entry point not found` を解消する。
+- [ ] `Layout` のメソッド名解決を点検し、`main` が確実に MIR/Gen に伝播することを保証する。
+- [ ] `Compile.compile` の `tokens.Head` 直参照を修正し、空トークン入力で例外を出さずに診断を返す。
+- [ ] `LoweringTests.hello` / `LoweringTests.fibonacci` / `AnalyzeTests.ast to hir should not keep error nodes` を含む全テストを再実行し、失敗要因を段階的に解消する。
+
+## 2026-04-09 HIR hasError を型メンバへ移行
+
+- [x] `Hir` の各型（`Expr`/`Stmt`/`Field`/`Method`/`Type`/`Module`/`Assembly`）に `hasError` メンバを定義する。
+- [x] `hasError` は HIR ツリーを再帰的に走査する実装にする。
+- [x] テスト側は型メンバ `hasError` を呼ぶように更新し、全体テストを再実行する。
+
+## 2026-04-09 HIR hasError 関数の本体移管
+
+- [x] `Hir` モジュール内の各型に対して `hasError` 判定関数を追加する。
+- [x] `AnalyzeTests` のローカルヘルパーを削除し、`Hir.hasError` を利用するように変更する。
+- [x] テストスイートを実行し、追加テストが現状失敗することを含む現在の失敗状況を確認する。
+
+## 2026-04-09 HIRエラー残存検知テスト追加
+
+- [x] AST から HIR への変換結果に `Hir.Expr.ExprError` / `Hir.Stmt.ErrorStmt` が残っていないことを検査するテストケースを追加する。
+- [x] 現状実装で当該テストが失敗すること（回帰検知の起点になること）を確認する。
+
 ## 2026-04-09 helloテストの実行検証化
 
 - [x] `LoweringTests.hello` の現状を確認し、コンパイル成功判定のみになっている箇所を特定する。

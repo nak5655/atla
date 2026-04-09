@@ -63,27 +63,52 @@ module Hir =
             | If (_, _, _, _, span) -> span
             | ExprError (_, _, span) -> span
 
+        member this.hasError =
+            match this with
+            | ExprError _ -> true
+            | Block (stmts, body, _, _) ->
+                (stmts |> List.exists (fun stmt -> stmt.hasError)) || body.hasError
+            | If (cond, thenBranch, elseBranch, _, _) ->
+                cond.hasError || thenBranch.hasError || elseBranch.hasError
+            | Call (_, instance, args, _, _) ->
+                (instance |> Option.exists (fun expr -> expr.hasError))
+                || (args |> List.exists (fun expr -> expr.hasError))
+            | Lambda (_, _, body, _, _) -> body.hasError
+            | MemberAccess (_, instance, _, _) ->
+                instance |> Option.exists (fun expr -> expr.hasError)
+            | _ -> false
+
     and Stmt =
         | Let of sid: SymbolId * isMutable: bool * value: Expr * span: Span
         | Assign of sid: SymbolId * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
         | ErrorStmt of message: string * span: Span
 
+        member this.hasError =
+            match this with
+            | ErrorStmt _ -> true
+            | Let (_, _, value, _)
+            | Assign (_, value, _)
+            | ExprStmt (value, _) -> value.hasError
+
     type Field(sid: SymbolId, tid: TypeId, body: Expr, span: Span) =
         member this.sym = sid
         member this.typ = tid
         member this.body = body
         member this.span = span
+        member this.hasError = body.hasError
 
     type Method(sid: SymbolId, body: Expr, tid: TypeId, span: Span) =
         member this.sym = sid
         member this.body = body
         member this.typ = tid
         member this.span = span
+        member this.hasError = body.hasError
 
     type Type(sid: SymbolId, fields: Field list) =
         member this.sym = sid
         member this.fields = fields
+        member this.hasError = fields |> List.exists (fun field -> field.hasError)
 
     type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope) =
         member this.name = name
@@ -91,7 +116,12 @@ module Hir =
         member this.fields = fields
         member this.methods = methods
         member this.scope = scope
+        member this.hasError =
+            (fields |> List.exists (fun field -> field.hasError))
+            || (methods |> List.exists (fun method -> method.hasError))
+            || (types |> List.exists (fun typ -> typ.hasError))
 
     type Assembly(name: string, modules: Module list) =
         member this.name = name
         member this.modules = modules
+        member this.hasError = modules |> List.exists (fun modul -> modul.hasError)
