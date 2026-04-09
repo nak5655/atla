@@ -1,12 +1,42 @@
 # Plan
 
+## 2026-04-09 HIR getErrors メンバ追加
+
+- [x] `Hir` の各型（`Expr`/`Stmt`/`Field`/`Method`/`Type`/`Module`/`Assembly`）に `getErrors` メンバを追加し、再帰的に `Error` を収集する。
+- [x] `Analyze.collectExprErrors` を削除し、`Hir.Module.getErrors` を使って診断収集する。
+- [x] 対象テストを再実行して変更を確認する。
+
+## 2026-04-09 Error.toString 追加
+
+- [x] `Semantics.Data.Error` に `toString` 関数を追加する。
+- [x] `Compile` とテストのエラー文字列化を `Error.toString` 呼び出しへ置き換える。
+- [x] 対象テストを実行して変更を確認する。
+
+## 2026-04-09 Semantics.Data.Error 型導入
+
+- [x] `Semantics.Data` 名前空間に `Error` 型（`string` と `Span` を保持）を追加する。
+- [x] HIR から収集する診断型を `string` から `Error` に置き換える。
+- [x] `Analyze.analyzeModule` 利用側（`Compile` とテスト）を新しい `Error` 型に追従させ、対象テストを実行する。
+
+## 2026-04-09 AnalyzeTestsでAST直接構築へ修正
+
+- [x] `AnalyzeTests.ast to hir should not keep error nodes` から `Lexer` / `Parser` 依存を外す。
+- [x] `LoweringTests.hello` 相当のAST（`Import System.Console` と `main` 内 `Console.WriteLine "Hello, World!"`）をテスト内で直接構築する。
+- [x] `Result.Error` の場合に明示的に失敗するアサーションを維持し、`AnalyzeTests` を再実行して通過を確認する。
+
+## 2026-04-09 AnalyzeTests入力のhello相当化
+
+- [x] `AnalyzeTests.ast to hir should not keep error nodes` のASTを `LoweringTests.hello` 相当（`import System.Console` と `Console.WriteLine "Hello, World!"` を含む）に変更する。
+- [x] `AnalyzeTests` で `Result.Error` が返った場合は明示的にテスト失敗にする。
+- [x] `AnalyzeTests` を実行して期待通り通過することを確認する。
+
 ## 2026-04-09 helloテスト通過に向けた再整理（HIRエラー残存失敗を考慮）
 
-- [ ] Semantic解析後に `hirModule.hasError` を検査し、`ExprError` / `ErrorStmt` が残る場合は `Result.Error` を返して Lowering へ進めない。
-- [ ] `AnalyzeTests.ast to hir should not keep error nodes` を成功させる（AST->HIR 変換でエラーノードを残さない、または明示エラーとして返す経路を確立する）。
+- [x] Semantic解析後に `hirModule.hasError` を検査し、`ExprError` / `ErrorStmt` が残る場合は `Result.Error` を返して Lowering へ進めない。
+- [x] `AnalyzeTests.ast to hir should not keep error nodes` を成功させる（AST->HIR 変換でエラーノードを残さない、または明示エラーとして返す経路を確立する）。
 - [ ] `Gen.genAssembly` のエントリポイント設定（`main` の `MethodDefinitionHandle` 解決）を修正し、`Entry point not found` を解消する。
 - [ ] `Layout` のメソッド名解決を点検し、`main` が確実に MIR/Gen に伝播することを保証する。
-- [ ] `Compile.compile` の `tokens.Head` 直参照を修正し、空トークン入力で例外を出さずに診断を返す。
+- [x] `Compile.compile` の `tokens.Head` 直参照を修正し、空トークン入力で例外を出さずに診断を返す。
 - [ ] `LoweringTests.hello` / `LoweringTests.fibonacci` / `AnalyzeTests.ast to hir should not keep error nodes` を含む全テストを再実行し、失敗要因を段階的に解消する。
 
 ## 2026-04-09 HIR hasError を型メンバへ移行

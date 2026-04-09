@@ -6,6 +6,16 @@ open Atla.Compiler.Syntax.Data
 open Atla.Compiler.Semantics.Data
 
 module Analyze =
+    let private tryResolveSystemType (classPath: string) : System.Type option =
+        match System.Type.GetType(classPath) with
+        | null ->
+            System.AppDomain.CurrentDomain.GetAssemblies()
+            |> Seq.tryPick (fun asm ->
+                match asm.GetType(classPath, false) with
+                | null -> None
+                | t -> Some t)
+        | t -> Some t
+
     type Env(symbolTable: SymbolTable, typSubst: TypeSubst, scope: Scope) =
         member this.symbolTable = symbolTable
         member this.typSubst = typSubst
@@ -56,7 +66,8 @@ module Analyze =
         member this.declareSystemType (classPath: string) : SymbolId =
             let sid = symbolTable.NextId()
             let name = Array.last (classPath.Split('.'))
-            let kind = SymbolKind.SystemType(System.Type.GetType(classPath))
+            let resolvedType = tryResolveSystemType classPath |> Option.toObj
+            let kind = SymbolKind.SystemType(resolvedType)
             let symInfo = SymbolInfo(name, TypeId.Name sid, kind)
             symbolTable.Add(sid, symInfo)
             scope.DeclareType(name, TypeId.Name sid)
@@ -179,22 +190,62 @@ module Analyze =
             | Some symInfo ->
                 match symInfo.kind with
                 | SymbolKind.SystemType sysType ->
+                    if obj.ReferenceEquals(sysType, null) then
+                        Hir.Expr.ExprError(sprintf "System type '%A' could not be loaded at %A" symInfo.name memberAccessExpr.span, tid, memberAccessExpr.span)
+                    else
                     // System.Typeのstaticメンバーアクセスをサポートする
-                    let methodInfos = sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static) |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName) |> Seq.toList
-                    match env.resolveNativeMember methodInfos tid with
-                    | [memberInfo, tid] ->
-                        match memberInfo with
-                        | :? MethodInfo as methodInfo ->
-                            Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, tid, memberAccessExpr.span)
-                        | :? FieldInfo as fieldInfo ->
-                            Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, tid, memberAccessExpr.span)
-                        | :? PropertyInfo as propertyInfo ->
-                            Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, tid, memberAccessExpr.span)
-                        | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span, tid, memberAccessExpr.span)
-                    | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
-                    | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
+                        let methodInfos = sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static) |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName) |> Seq.toList
+                        match env.resolveNativeMember methodInfos tid with
+                        | [memberInfo, tid] ->
+                            match memberInfo with
+                            | :? MethodInfo as methodInfo ->
+                                Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, tid, memberAccessExpr.span)
+                            | :? FieldInfo as fieldInfo ->
+                                Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, tid, memberAccessExpr.span)
+                            | :? PropertyInfo as propertyInfo ->
+                                Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, tid, memberAccessExpr.span)
+                            | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span, tid, memberAccessExpr.span)
+                        | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
+                        | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
                 | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, tid, memberAccessExpr.span)
             | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, tid, memberAccessExpr.span)
+        | :? Ast.Expr.StaticAccess as staticAccessExpr ->
+            match env.scope.ResolveType(staticAccessExpr.typeName) with
+            | Some(TypeId.Name sid) ->
+                match env.resolveSym sid with
+                | Some symInfo ->
+                    match symInfo.kind with
+                    | SymbolKind.SystemType sysType ->
+                        if obj.ReferenceEquals(sysType, null) then
+                            Hir.Expr.ExprError(sprintf "System type '%s' could not be loaded at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
+                        else
+                            let memberInfos =
+                                sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static)
+                                |> Seq.filter (fun m -> m.Name = staticAccessExpr.memberName)
+                                |> Seq.toList
+                            match env.resolveNativeMember memberInfos tid with
+                            | [memberInfo, memberType] ->
+                                match memberInfo with
+                                | :? MethodInfo as methodInfo ->
+                                    Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, memberType, staticAccessExpr.span)
+                                | :? FieldInfo as fieldInfo ->
+                                    Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, memberType, staticAccessExpr.span)
+                                | :? PropertyInfo as propertyInfo ->
+                                    Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, memberType, staticAccessExpr.span)
+                                | _ ->
+                                    Hir.Expr.ExprError(sprintf "Unsupported member type for '%s.%s' at %A" staticAccessExpr.typeName staticAccessExpr.memberName staticAccessExpr.span, tid, staticAccessExpr.span)
+                            | [] ->
+                                Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%s' at %A" staticAccessExpr.memberName staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
+                            | _ ->
+                                Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%s' at %A" staticAccessExpr.memberName staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
+                    | _ ->
+                        Hir.Expr.ExprError(sprintf "Type '%s' is not a system type at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
+                | None ->
+                    Hir.Expr.ExprError(sprintf "Undefined type symbol '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
+            | Some _ ->
+                Hir.Expr.ExprError(sprintf "Unsupported type id for '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
+            | None ->
+                Hir.Expr.ExprError(sprintf "Undefined type '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
         | :? Ast.Expr.If as ifExpr ->
             let rec analyzeIfBranches (branches: Ast.IfBranch list) : Hir.Expr =
                 match List.head branches with
@@ -274,7 +325,7 @@ module Analyze =
 
         Hir.Method(sid, body, tid, fnDecl.span)
 
-    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Hir.Module =
+    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Result<Hir.Module, Error list> =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
         moduleScope.DeclareType("Bool", TypeId.Bool)
@@ -298,4 +349,9 @@ module Analyze =
                 methods.Add(analyzeMethod env fnDecl)
             | _ -> failwith "Unsupported declaration type in module"
 
-        Hir.Module(moduleName, types |> Seq.toList, fields |> Seq.toList, methods |> Seq.toList, moduleScope)
+        let hirModule = Hir.Module(moduleName, types |> Seq.toList, fields |> Seq.toList, methods |> Seq.toList, moduleScope)
+        let diagnostics = hirModule.getErrors
+
+        match diagnostics with
+        | [] -> Result.Ok hirModule
+        | _ -> Result.Error diagnostics

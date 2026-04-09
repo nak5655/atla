@@ -64,19 +64,27 @@ module Hir =
             | ExprError (_, _, span) -> span
 
         member this.hasError =
+            this.getErrors |> List.isEmpty |> not
+
+        member this.getErrors : Error list =
             match this with
-            | ExprError _ -> true
+            | ExprError (message, _, span) -> [ Error(message, span) ]
             | Block (stmts, body, _, _) ->
-                (stmts |> List.exists (fun stmt -> stmt.hasError)) || body.hasError
+                (stmts |> List.collect (fun stmt -> stmt.getErrors)) @ body.getErrors
             | If (cond, thenBranch, elseBranch, _, _) ->
-                cond.hasError || thenBranch.hasError || elseBranch.hasError
+                cond.getErrors @ thenBranch.getErrors @ elseBranch.getErrors
             | Call (_, instance, args, _, _) ->
-                (instance |> Option.exists (fun expr -> expr.hasError))
-                || (args |> List.exists (fun expr -> expr.hasError))
-            | Lambda (_, _, body, _, _) -> body.hasError
+                let instanceErrors =
+                    instance
+                    |> Option.map (fun expr -> expr.getErrors)
+                    |> Option.defaultValue []
+                instanceErrors @ (args |> List.collect (fun expr -> expr.getErrors))
+            | Lambda (_, _, body, _, _) -> body.getErrors
             | MemberAccess (_, instance, _, _) ->
-                instance |> Option.exists (fun expr -> expr.hasError)
-            | _ -> false
+                instance
+                |> Option.map (fun expr -> expr.getErrors)
+                |> Option.defaultValue []
+            | _ -> []
 
     and Stmt =
         | Let of sid: SymbolId * isMutable: bool * value: Expr * span: Span
@@ -85,11 +93,14 @@ module Hir =
         | ErrorStmt of message: string * span: Span
 
         member this.hasError =
+            this.getErrors |> List.isEmpty |> not
+
+        member this.getErrors : Error list =
             match this with
-            | ErrorStmt _ -> true
+            | ErrorStmt (message, span) -> [ Error(message, span) ]
             | Let (_, _, value, _)
             | Assign (_, value, _)
-            | ExprStmt (value, _) -> value.hasError
+            | ExprStmt (value, _) -> value.getErrors
 
     type Field(sid: SymbolId, tid: TypeId, body: Expr, span: Span) =
         member this.sym = sid
@@ -97,6 +108,7 @@ module Hir =
         member this.body = body
         member this.span = span
         member this.hasError = body.hasError
+        member this.getErrors = body.getErrors
 
     type Method(sid: SymbolId, body: Expr, tid: TypeId, span: Span) =
         member this.sym = sid
@@ -104,11 +116,13 @@ module Hir =
         member this.typ = tid
         member this.span = span
         member this.hasError = body.hasError
+        member this.getErrors = body.getErrors
 
     type Type(sid: SymbolId, fields: Field list) =
         member this.sym = sid
         member this.fields = fields
         member this.hasError = fields |> List.exists (fun field -> field.hasError)
+        member this.getErrors = fields |> List.collect (fun field -> field.getErrors)
 
     type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope) =
         member this.name = name
@@ -120,8 +134,13 @@ module Hir =
             (fields |> List.exists (fun field -> field.hasError))
             || (methods |> List.exists (fun method -> method.hasError))
             || (types |> List.exists (fun typ -> typ.hasError))
+        member this.getErrors =
+            (fields |> List.collect (fun field -> field.getErrors))
+            @ (methods |> List.collect (fun method -> method.getErrors))
+            @ (types |> List.collect (fun typ -> typ.getErrors))
 
     type Assembly(name: string, modules: Module list) =
         member this.name = name
         member this.modules = modules
         member this.hasError = modules |> List.exists (fun modul -> modul.hasError)
+        member this.getErrors = modules |> List.collect (fun modul -> modul.getErrors)
