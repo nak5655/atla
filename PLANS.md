@@ -1,5 +1,11 @@
 # Plan
 
+## 2026-04-09 Error.toString 追加
+
+- [x] `Semantics.Data.Error` に `toString` 関数を追加する。
+- [x] `Compile` とテストのエラー文字列化を `Error.toString` 呼び出しへ置き換える。
+- [x] 対象テストを実行して変更を確認する。
+
 ## 2026-04-09 Semantics.Data.Error 型導入
 
 - [x] `Semantics.Data` 名前空間に `Error` 型（`string` と `Span` を保持）を追加する。

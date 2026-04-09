@@ -34,7 +34,7 @@ fn main (): Int = do
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics
-                        |> List.map (fun err -> $"{err.message} at {err.span}")
+                        |> List.map (fun err -> err.toString())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
