@@ -19,11 +19,14 @@ module AnalyzeTests =
 
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
-        let hirModule = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
-
-        match hirModule.methods.Head.body with
-        | Hir.Expr.Id (_, typ, _) -> Assert.Equal(TypeId.Int, Type.resolve subst typ)
-        | other -> Assert.True(false, $"expected Hir.Expr.Id but got {other}")
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok hirModule ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Id (_, typ, _) -> Assert.Equal(TypeId.Int, Type.resolve subst typ)
+            | other -> Assert.True(false, $"expected Hir.Expr.Id but got {other}")
+        | Result.Error diagnostics ->
+            let message = String.concat "; " diagnostics
+            Assert.True(false, $"semantic analysis failed: {message}")
 
     [<Fact>]
     let ``ast to hir should not keep error nodes`` () =
@@ -35,10 +38,12 @@ module AnalyzeTests =
 
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
-        let hirModule = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok hirModule ->
+            let hasError =
+                hirModule.methods
+                |> List.exists (fun m -> m.hasError)
 
-        let hasError =
-            hirModule.methods
-            |> List.exists (fun m -> m.hasError)
-
-        Assert.False(hasError, "HIR に ExprError/ErrorStmt が残っています。")
+            Assert.False(hasError, "HIR に ExprError/ErrorStmt が残っています。")
+        | Result.Error diagnostics ->
+            Assert.NotEmpty(diagnostics)

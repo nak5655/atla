@@ -274,7 +274,41 @@ module Analyze =
 
         Hir.Method(sid, body, tid, fnDecl.span)
 
-    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Hir.Module =
+    let private collectExprErrors (expr: Hir.Expr) : string list =
+        let rec loopExpr (acc: string list) (expr: Hir.Expr) : string list =
+            match expr with
+            | Hir.Expr.ExprError (message, _, _) -> message :: acc
+            | Hir.Expr.Block (stmts, body, _, _) ->
+                let accFromStmts = stmts |> List.fold loopStmt acc
+                loopExpr accFromStmts body
+            | Hir.Expr.If (cond, thenBranch, elseBranch, _, _) ->
+                let accWithCond = loopExpr acc cond
+                let accWithThen = loopExpr accWithCond thenBranch
+                loopExpr accWithThen elseBranch
+            | Hir.Expr.Call (_, instance, args, _, _) ->
+                let accWithInstance =
+                    match instance with
+                    | Some inst -> loopExpr acc inst
+                    | None -> acc
+                args |> List.fold loopExpr accWithInstance
+            | Hir.Expr.Lambda (_, _, body, _, _) ->
+                loopExpr acc body
+            | Hir.Expr.MemberAccess (_, instance, _, _) ->
+                match instance with
+                | Some inst -> loopExpr acc inst
+                | None -> acc
+            | _ -> acc
+
+        and loopStmt (acc: string list) (stmt: Hir.Stmt) : string list =
+            match stmt with
+            | Hir.Stmt.ErrorStmt (message, _) -> message :: acc
+            | Hir.Stmt.Let (_, _, value, _)
+            | Hir.Stmt.Assign (_, value, _)
+            | Hir.Stmt.ExprStmt (value, _) -> loopExpr acc value
+
+        loopExpr [] expr |> List.rev
+
+    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Result<Hir.Module, string list> =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
         moduleScope.DeclareType("Bool", TypeId.Bool)
@@ -298,4 +332,11 @@ module Analyze =
                 methods.Add(analyzeMethod env fnDecl)
             | _ -> failwith "Unsupported declaration type in module"
 
-        Hir.Module(moduleName, types |> Seq.toList, fields |> Seq.toList, methods |> Seq.toList, moduleScope)
+        let hirModule = Hir.Module(moduleName, types |> Seq.toList, fields |> Seq.toList, methods |> Seq.toList, moduleScope)
+        let diagnostics =
+            hirModule.methods
+            |> List.collect (fun m -> collectExprErrors m.body)
+
+        match diagnostics with
+        | [] -> Result.Ok hirModule
+        | _ -> Result.Error diagnostics

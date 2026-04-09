@@ -27,10 +27,13 @@ fn main (): Int = do
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
-                let hirModule = Analyze.analyzeModule(symbolTable, subst, "main", moduleAst)
-                let mirAsm = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
-
-                Assert.Single(mirAsm.modules) |> ignore
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let mirAsm = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    Assert.Single(mirAsm.modules) |> ignore
+                | Result.Error diagnostics ->
+                    let message = String.concat "; " diagnostics
+                    Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
