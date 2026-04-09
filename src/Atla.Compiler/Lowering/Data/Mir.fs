@@ -98,7 +98,9 @@ module Mir =
         | AssignField of inst: Reg * field: FieldInfo * value: Value
         | TAC of dest: Reg * lhs: Value * op: OpCode * rhs: Value
         | Call of method: Choice<MethodInfo, ConstructorInfo> * args: Value list
+        | CallSym of sid: SymbolId * args: Value list
         | CallAssign of dst: Reg * method: MethodInfo * args: Value list
+        | CallAssignSym of dst: Reg * sid: SymbolId * args: Value list
         | New of dst: Reg * ctor: ConstructorInfo * args: Value list
         | Ret
         | RetValue of value: Value
@@ -113,7 +115,9 @@ module Mir =
             | AssignField(inst, field, value) -> sprintf "%A.%s = %s" inst field.Name (value.ToString())
             | TAC(dest, lhs, op, rhs) -> sprintf "%A = %s %A %s" dest (lhs.ToString()) op (rhs.ToString())
             | Call(method, args) -> sprintf "%A(%s)" method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | CallSym(sid, args) -> sprintf "call sid=%d (%s)" sid.id (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssign(dst, method, args) -> sprintf "%A = %A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | CallAssignSym(dst, sid, args) -> sprintf "%A = sid:%d(%s)" dst sid.id (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | New(dst, ctor, args) -> sprintf "%A = %A(%s)" dst ctor (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | Ret -> "Ret"
             | RetValue v -> sprintf "return %s" (v.ToString())

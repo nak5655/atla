@@ -193,6 +193,10 @@ if not found then failwith "name missing"
 ### BAD
 - Commit includes implementation only with no plan or tests.
 
+### Lexer / Parser change control
+- If a fix appears to require changes to `Syntax/Lexer.fs` or `Syntax/Parser.fs`, you MUST ask for explicit confirmation before making those changes.
+- Without explicit confirmation, prefer alternatives in other layers (e.g., compile pipeline normalization, tests, or diagnostics improvements).
+
 ## 11. Testing Policy
 - Every transformation MUST have unit tests.
 - Edge cases MUST be covered for each phase boundary.

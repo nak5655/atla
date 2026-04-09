@@ -13,12 +13,14 @@ type StringInput(s: string) =
                 if arg.Column < line.Length then
                     let c = line.[arg.Column]
                     Some { char = c; span = { left = arg; right = arg.Advance(c); }}
+                elif arg.Column = line.Length && arg.Line < lines.Length - 1 then
+                    Some { char = '\n'; span = { left = arg; right = arg.Advance('\n'); }}
                 else None
             else None
 
         member _.next (arg: Position): Position =
             let line = lines.[arg.Line]
-            if arg.Column < line.Length - 1 then
+            if arg.Column < line.Length then
                 { arg with Column = arg.Column + 1 }
             else
                 { Line = arg.Line + 1; Column = 0 }
