@@ -155,3 +155,21 @@
 
 - [x] `StringInput` で CRLF/CR を正規化し、改行走査が一貫して動作するようにする。
 - [x] `LoweringTests.hello` を含むテストを再実行して影響を確認する。
+
+## 2026-04-10 Analyze分割（意味解析/型推論）段階的移行
+
+- [x] `Semantics.Analyze` の責務を棚卸しし、名前解決（意味解析）と型推論の境界をドキュメント化する。
+- [x] 既存 `Analyze.analyzeModule` の外部APIを維持したまま、内部処理を `resolveModule` と `inferModule` に分離する。
+- [ ] 中間表現（仮称 `ResolvedAst`）を導入し、識別子解決済みだが型未確定の状態を明示する。
+- [ ] `Env` を責務別（`ResolveEnv` / `InferEnv`）に分割し、`Scope` と `TypeSubst` の依存を分離する。
+- [ ] `failwith` による制御フローを段階的に `Result<_, Error list>` へ置換する。
+- [ ] フェーズ境界ごとのテスト（Resolve/Infer）を追加し、既存 `AnalyzeTests` と合わせて回帰を防止する。
+- [ ] 上記変更後にテストスイートを実行し、決定性・診断品質・既存Lowering経路への影響を確認する。
+
+## 2026-04-10 Resolve/Infer モジュール分離
+
+- [x] 名前解決に関する関数を `Semantics.Resolve` へ移動し、モジュールスコープ初期化・import解決・関数宣言収集を担わせる。
+- [x] 型推論に関する関数を `Semantics.Infer` へ移動し、式/文/メソッド解析と HIR 生成を担わせる。
+- [x] `Semantics.Analyze.analyzeModule` の外部APIを維持しつつ、`Resolve.resolveModule` と `Infer.inferModule` を接続する。
+- [x] コンパイル順序を保つため `.fsproj` の `Compile Include` を更新する。
+- [x] テストスイートを実行して回帰がないことを確認する。
