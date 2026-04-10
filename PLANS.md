@@ -314,3 +314,9 @@
 - [x] `Semantics/Analyze.fs` と `Lowering/Layout.fs` の重複変換ロジックを新APIへ置換する。
 - [x] `Lowering/Gen.fs` の `TypeId.Name` 解決も新APIへ寄せる。
 - [x] 関連テスト（最低: parser + fizzbuzz lowering）を実行して結果を確認する（parserは成功、fizzbuzz lowering は exit code 134 で失敗）。
+
+## 2026-04-10 タスク5: Loweringの整合性確認
+
+- [x] `for` 文を含むプログラムで、AST -> Semantic -> HIR -> MIR の連結が成立することをテストで検証する。
+- [x] 生成されたMIRに `MoveNext` / `Current` とループ制御命令（ラベル/ジャンプ）が含まれることを確認する。
+- [x] 追加テストを実行して結果を確認する。
