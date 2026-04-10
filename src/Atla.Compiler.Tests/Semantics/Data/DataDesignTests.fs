@@ -1,4 +1,4 @@
-namespace Atla.Compiler.Tests.Semantics
+namespace Atla.Compiler.Tests.Semantics.Data
 
 open Xunit
 open Atla.Compiler.Semantics.Data

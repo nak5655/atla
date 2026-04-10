@@ -1,5 +1,17 @@
 # Plan
 
+## 2026-04-10 DesugarTests の AnalyzeTests への移動
+
+- [x] `Lowering/Desugar/DesugarTests.fs` の do block テストを `Semantics/AnalyzeTests.fs` へ移動する。
+- [x] テストプロジェクトの `Compile Include` から旧 `Lowering/Desugar/DesugarTests.fs` を削除する。
+- [x] フルテストスイートを実行し、移動後の回帰がないことを確認する。
+
+## 2026-04-10 Testsプロジェクト構成のソース準拠化
+
+- [x] テストディレクトリ名をソース構成（`Syntax` / `Semantics/Data`）に合わせて再配置する。
+- [x] `Atla.Compiler.Tests.fsproj` の `Compile Include` を新しいディレクトリ構成順へ更新する。
+- [x] フルテストスイートを実行して構成変更のみで回帰がないことを確認する。
+
 ## 2026-04-10 Symbol/Type 解決基盤の改善（レビュー対応）
 
 - [x] `SymbolId` を値等価で扱える表現へ変更し、辞書キーとして安定動作させる。

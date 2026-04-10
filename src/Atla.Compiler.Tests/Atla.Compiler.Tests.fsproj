@@ -6,10 +6,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Parsing\LexerTests.fs" />
-    <Compile Include="Parsing\ParserTests.fs" />
-    <Compile Include="Semantics\DataDesignTests.fs" />
+    <Compile Include="Syntax\LexerTests.fs" />
+    <Compile Include="Syntax\ParserTests.fs" />
+    <Compile Include="Semantics\Data\DataDesignTests.fs" />
     <Compile Include="Semantics\AnalyzeTests.fs" />
+    <Compile Include="Lowering\Gen\GenTests.fs" />
+    <Compile Include="Lowering\LayoutTests.fs" />
+    <Compile Include="Lowering\LoweringTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -21,15 +24,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Atla.Compiler\Atla.Compiler.fsproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Include="Lowering\Desugar\DesugarTests.fs" />
-    <Folder Include="Lowering\Gen\" />
-    <Compile Include="Lowering\Gen\GenTests.fs" />
-    <Compile Include="Lowering\LoweringTests.fs" />
-    <Compile Include="Lowering\LayoutTests.fs" />
-    <Folder Include="Parsing\" />
   </ItemGroup>
 
 </Project>
