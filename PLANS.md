@@ -173,3 +173,29 @@
 - [x] `Semantics.Analyze.analyzeModule` の外部APIを維持しつつ、`Resolve.resolveModule` と `Infer.inferModule` を接続する。
 - [x] コンパイル順序を保つため `.fsproj` の `Compile Include` を更新する。
 - [x] テストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-10 Infer.analyze系のAnalyzeモジュール移管
+
+- [x] `Semantics.Infer` にあるモジュール単位解析関数を `Semantics.Analyze` へ移動し、役割境界を明確化する。
+- [x] `Analyze.analyzeModule` から Infer の式/文解析ロジックを呼び出す構成へ更新する。
+- [x] テストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-10 Analyze/Resolve/Infer 責務再分離（再修正）
+
+- [x] `Analyze` を AST→（型未確定）HIR 変換の責務に限定し、AST依存ロジックを `Infer` から移管する。
+- [x] `Resolve` は名前解決（`SymbolTable`/`Scope` 構築）責務のみを持つことをコード上で維持・確認する。
+- [x] `Infer` を「型未確定HIRを受けてTyped HIRを返す」APIに変更する。
+- [x] 上記設計を `doc` 配下に設計資料として追加する。
+- [x] テストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-10 Analyze.Env の NameEnv / TypeEnv 分割
+
+- [x] `Analyze.Env` を `NameEnv`（名前解決・Symbol操作）と `TypeEnv`（型制約・型解決）へ分割する。
+- [x] `Analyze` 内の式/文/メソッド解析ロジックを新しい環境型に追従させる。
+- [x] テストを実行して回帰がないことを確認する。
+
+## 2026-04-10 Analyze エラー生成共通化とResult化
+
+- [x] `Analyze` にエラー生成ヘルパー関数を追加し、重複する `Hir.Expr.ExprError` 生成を共通化する。
+- [x] `MemberAccess` と `StaticAccess` の解析ロジックを `Result` ベースに切り替える。
+- [x] テストを実行して回帰がないことを確認する。
