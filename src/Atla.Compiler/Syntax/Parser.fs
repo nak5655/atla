@@ -42,6 +42,18 @@ type BlockInput (tokenInput: Input<Token>, offsideLine: Position) =
             else
                 tokenInput.next arg
 
+type LineInput (tokenInput: Input<Token>, line: int) =
+    interface Input<Token> with
+        member _.get (arg: Position): Token option =
+            if arg.Line > line then None
+            else tokenInput.get arg
+
+        member _.next (arg: Position): Position =
+            if arg.Line > line then
+                { Line = arg.Line; Column = arg.Column + 1 }
+            else
+                tokenInput.next arg
+
 module Parser =
     let asToken<'T when 'T :> Token> (p: PackratParser<Token, 'T>) : PackratParser<Token, Token> =
         p |>> fun t -> t :> Token
@@ -167,9 +179,42 @@ module Parser =
     and returnStmt (): PackratParser<Token, Ast.Stmt> =
         keyword "return" &> expr() |>> fun e -> Ast.Stmt.Return (e, e.span)
 
+    and forStmt (): PackratParser<Token, Ast.Stmt> =
+        Delay (fun () -> fun input pos ->
+            match (keyword "for") input pos with
+            | Success (forKw, afterForPos) ->
+                let bodyInput = BlockInput(input, forKw.span.left) :> Input<Token>
+
+                match tid bodyInput afterForPos with
+                | Success (id, afterIdPos) ->
+                    match (keyword "in") bodyInput afterIdPos with
+                    | Success (_, afterInPos) ->
+                        let iterableInput = LineInput(bodyInput, forKw.span.left.Line) :> Input<Token>
+
+                        match expr () iterableInput afterInPos with
+                        | Success (iterable, afterIterablePos) ->
+                            let bodyStartPos =
+                                match (keyword "=>") bodyInput afterIterablePos with
+                                | Success (_, afterArrowPos) -> afterArrowPos
+                                | Failure _ -> afterIterablePos
+
+                            match Many1 (stmt ()) bodyInput bodyStartPos with
+                            | Success (bodyStmts, nextPos) ->
+                                Success (Ast.Stmt.For(id.str, iterable, bodyStmts, { left = id.span.left; right = (List.last bodyStmts).span.right }) :> Ast.Stmt, nextPos)
+                            | Failure (msg, span) ->
+                                Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, bodyStartPos)
+                        | Failure (msg, span) ->
+                            Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, afterInPos)
+                    | Failure (msg, span) ->
+                        Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, afterIdPos)
+                | Failure (msg, span) ->
+                    Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, afterForPos)
+            | Failure (reason, span) -> Failure (reason, span)
+        )
+
     and stmt (): PackratParser<Token, Ast.Stmt> =
         Delay (fun () -> 
-            letStmt() <|> varStmt() <|> assignStmt() <|> exprStmt()
+            letStmt() <|> varStmt() <|> returnStmt() <|> forStmt() <|> assignStmt() <|> exprStmt()
         )
 
     and typeExprUnit (): PackratParser<Token, Ast.TypeExpr> =
@@ -223,11 +268,17 @@ module Parser =
     and fnArg (): PackratParser<Token, Ast.FnArg> =
         Delay (fun () ->
             fnArgUnit () <|> fnArgNamed ()
-        )    
+        )
+
+    and fnBodyExpr (): PackratParser<Token, Ast.Expr> =
+        Delay (fun () ->
+            (expr ())
+            <|> (stmt () |>> fun singleStmt -> Ast.Expr.Block([singleStmt], { left = singleStmt.span.left; right = singleStmt.span.right }) :> Ast.Expr)
+        )
 
     and fnDecl (): PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            block (asToken (keyword "fn")) (Once (tid <&> Many (fnArg ()) <& delim ':' <&> typeExpr () <& symbol "=" <&> expr () |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+            block (asToken (keyword "fn")) (Once (tid <&> Many (fnArg ()) <& delim ':' <&> typeExpr () <& symbol "=" <&> fnBodyExpr () |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
         )
 
     and decl (): PackratParser<Token, Ast.Decl> =
@@ -240,4 +291,3 @@ module Parser =
         Delay (fun () ->
             Many (decl ()) |>> fun (decls) -> Ast.Module (decls)
         )
-

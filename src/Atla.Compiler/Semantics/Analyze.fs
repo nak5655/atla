@@ -295,6 +295,8 @@ module Analyze =
         | :? Ast.Stmt.ExprStmt as exprStmt ->
             let expr = analyzeExpr nameEnv typeEnv exprStmt.expr (typeEnv.freshMeta ())
             Hir.Stmt.ExprStmt(expr, exprStmt.span)
+        | :? Ast.Stmt.For as forStmt ->
+            Hir.Stmt.ExprStmt(Hir.Expr.Unit(forStmt.span), forStmt.span)
         | _ -> failwith "Unsupported statement type"
 
     let private analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =
