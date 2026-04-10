@@ -24,6 +24,8 @@
     <Compile Include="Semantics\Data\Scope.fs" />
     <Compile Include="Semantics\Data\Error.fs" />
     <Compile Include="Semantics\Data\Hir.fs" />
+    <Compile Include="Semantics\Resolve.fs" />
+    <Compile Include="Semantics\Infer.fs" />
     <Compile Include="Semantics\Analyze.fs" />
     <Compile Include="Lowering\Data\Mir.fs" />
     <Compile Include="Lowering\Layout.fs" />
