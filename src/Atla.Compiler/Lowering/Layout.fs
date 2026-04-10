@@ -9,9 +9,9 @@ module Layout =
         res: Mir.Value option
     }
 
-    let private declareTemp (frame: Mir.Frame) : Mir.Reg =
+    let private declareTemp (frame: Mir.Frame) (tid: TypeId) : Mir.Reg =
         let sid = SymbolId(frame.locs.Count + frame.args.Count)
-        frame.addLoc sid
+        frame.addLoc(sid, tid)
 
     let rec private layoutExpr (frame: Mir.Frame) (expr: Hir.Expr) : KNormal =
         match expr with
@@ -19,11 +19,11 @@ module Layout =
         | Hir.Expr.Int (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) }
         | Hir.Expr.Float (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) }
         | Hir.Expr.String (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) }
-        | Hir.Expr.Id (sid, _, _) ->
+        | Hir.Expr.Id (sid, tid, _) ->
             match frame.get sid with
             | Some reg -> { ins = []; res = Some(Mir.Value.RegVal reg) }
             | None ->
-                let argReg = frame.addArg sid
+                let argReg = frame.addArg(sid, tid)
                 { ins = []; res = Some(Mir.Value.RegVal argReg) }
         | Hir.Expr.MemberAccess (mem, _, _, _) ->
             match mem with
@@ -50,7 +50,7 @@ module Layout =
                 | TypeId.Unit, _ ->
                     { ins = argIns @ [ Mir.Ins.Call(Choice1Of2 mi, argValues) ]; res = None }
                 | _ ->
-                    let dst = declareTemp frame
+                    let dst = declareTemp frame tid
                     { ins = argIns @ [ Mir.Ins.CallAssign(dst, mi, argValues) ]; res = Some(Mir.Value.RegVal dst) }
 
             match func with
@@ -60,16 +60,16 @@ module Layout =
                 | Some mi -> emitCall mi
                 | None -> failwithf "No overload matched argument count %d" argValues.Length
             | Hir.Callable.NativeConstructor ctor ->
-                let dst = declareTemp frame
+                let dst = declareTemp frame tid
                 { ins = argIns @ [ Mir.Ins.New(dst, ctor, argValues) ]; res = Some(Mir.Value.RegVal dst) }
             | Hir.Callable.NativeConstructorGroup ctors ->
                 match ctors |> List.tryFind (fun c -> c.GetParameters().Length = argValues.Length) with
                 | Some ctor ->
-                    let dst = declareTemp frame
+                    let dst = declareTemp frame tid
                     { ins = argIns @ [ Mir.Ins.New(dst, ctor, argValues) ]; res = Some(Mir.Value.RegVal dst) }
                 | None -> failwithf "No constructor matched argument count %d" argValues.Length
             | Hir.Callable.BuiltinOperator op ->
-                let dst = declareTemp frame
+                let dst = declareTemp frame tid
                 let lhs = argValues |> List.tryItem 0 |> Option.defaultWith (fun () -> failwith "Missing lhs")
                 let rhs = argValues |> List.tryItem 1 |> Option.defaultWith (fun () -> failwith "Missing rhs")
                 let opcode =
@@ -85,7 +85,7 @@ module Layout =
                 | TypeId.Unit ->
                     { ins = argIns @ [ Mir.Ins.CallSym(sid, argValues) ]; res = None }
                 | _ ->
-                    let dst = declareTemp frame
+                    let dst = declareTemp frame tid
                     { ins = argIns @ [ Mir.Ins.CallAssignSym(dst, sid, argValues) ]; res = Some(Mir.Value.RegVal dst) }
         | Hir.Expr.Block (stmts, expr, _, _) ->
             let stmtIns = stmts |> List.collect (layoutStmt frame)
@@ -111,7 +111,7 @@ module Layout =
                     res = None
                 }
             | _ ->
-                let dst = declareTemp frame
+                let dst = declareTemp frame tid
                 {
                     ins =
                         condKn.ins
@@ -134,7 +134,7 @@ module Layout =
         match stmt with
         | Hir.Stmt.Let (sid, _, value, _) ->
             let valueKn = layoutExpr frame value
-            let dst = frame.addLoc sid
+            let dst = frame.addLoc(sid, value.typ)
             match valueKn.res with
             | Some v -> valueKn.ins @ [ Mir.Ins.Assign(dst, v) ]
             | None -> valueKn.ins

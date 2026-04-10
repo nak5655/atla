@@ -34,17 +34,23 @@ module Mir =
     type Frame() =
         let mutable _args: Dictionary<SymbolId, Reg> = Dictionary()
         let mutable _locs: Dictionary<SymbolId, Reg> = Dictionary()
+        let mutable _argTypes: Dictionary<SymbolId, TypeId> = Dictionary()
+        let mutable _locTypes: Dictionary<SymbolId, TypeId> = Dictionary()
         member this.args = _args
         member this.locs = _locs
+        member this.argTypes = _argTypes
+        member this.locTypes = _locTypes
 
-        member this.addArg(sid: SymbolId): Reg =
+        member this.addArg(sid: SymbolId, tid: TypeId): Reg =
             let reg = Reg.Arg(_args.Count)
             _args.Add(sid, reg)
+            _argTypes.Add(sid, tid)
             reg
 
-        member this.addLoc(sid: SymbolId): Reg =
+        member this.addLoc(sid: SymbolId, tid: TypeId): Reg =
             let reg = Reg.Loc(_locs.Count)
             _locs.Add(sid, reg)
+            _locTypes.Add(sid, tid)
             reg
 
         member this.get(sid: SymbolId): Reg option =

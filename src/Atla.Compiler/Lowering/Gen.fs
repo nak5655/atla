@@ -158,9 +158,19 @@ module Gen =
         let gen = ctor.builder.GetILGenerator()
 
         // ローカル変数スロットを確保
-        for KeyValue(_, reg) in ctor.frame.locs do
+        for KeyValue(sid, reg) in ctor.frame.locs do
             match reg with
-            | Mir.Reg.Loc _ -> gen.DeclareLocal(typeof<obj>) |> ignore
+            | Mir.Reg.Loc _ ->
+                let localType =
+                    match ctor.frame.locTypes.TryGetValue(sid) with
+                    | true, tid ->
+                        match tid with
+                        | TypeId.Meta _
+                        | TypeId.Fn _
+                        | TypeId.Error _ -> typeof<obj>
+                        | _ -> resolveType _env tid
+                    | false, _ -> typeof<obj>
+                gen.DeclareLocal(localType) |> ignore
             | Mir.Reg.Arg _ -> ()
 
         // 本体命令を順に生成
@@ -172,9 +182,19 @@ module Gen =
         let gen = method.builder.GetILGenerator()
 
         // ローカル変数スロットを確保
-        for KeyValue(_, reg) in method.frame.locs do
+        for KeyValue(sid, reg) in method.frame.locs do
             match reg with
-            | Mir.Reg.Loc _ -> gen.DeclareLocal(typeof<obj>) |> ignore
+            | Mir.Reg.Loc _ ->
+                let localType =
+                    match method.frame.locTypes.TryGetValue(sid) with
+                    | true, tid ->
+                        match tid with
+                        | TypeId.Meta _
+                        | TypeId.Fn _
+                        | TypeId.Error _ -> typeof<obj>
+                        | _ -> resolveType _env tid
+                    | false, _ -> typeof<obj>
+                gen.DeclareLocal(localType) |> ignore
             | Mir.Reg.Arg _ -> ()
 
         // 本体命令を順に生成
