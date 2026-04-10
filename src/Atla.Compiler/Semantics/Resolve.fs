@@ -32,8 +32,11 @@ module Resolve =
 
     let private resolveImport (symbolTable: SymbolTable) (scope: Scope) (importDecl: Ast.Decl.Import) : unit =
         let classPath = String.concat "." importDecl.path
+        let shortName = Array.last (classPath.Split('.'))
         // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
-        declareSystemType symbolTable scope classPath |> ignore
+        match scope.ResolveType(shortName) with
+        | Some _ -> ()
+        | None -> declareSystemType symbolTable scope classPath |> ignore
 
     let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : ResolvedModule =
         let moduleScope = Scope(None)
@@ -42,6 +45,7 @@ module Resolve =
         moduleScope.DeclareType("Int", TypeId.Int)
         moduleScope.DeclareType("Float", TypeId.Float)
         moduleScope.DeclareType("String", TypeId.String)
+        declareSystemType symbolTable moduleScope "System.Int32" |> ignore
 
         symbolTable.BuiltinOperators
         |> List.iter (fun (name, sid) -> moduleScope.DeclareVar(name, sid))

@@ -232,3 +232,64 @@
 - [x] コンパイル成功と生成DLL存在の検証は維持する。
 - [x] フルテストスイートを実行して回帰がないことを確認する。
 - [x] フィボナッチ実行時の `InvalidProgramException` を解消するため、MIRフレームのローカル/引数型情報をCILローカル宣言へ反映する。
+
+## 2026-04-10 FizzBuzzプログラムのコンパイルテスト追加
+
+- [x] `LoweringTests` に、指定されたFizzBuzzプログラムを `Compiler.compile` へ入力するテストを追加する。
+- [x] テストでコンパイル結果（`Result.IsOk`）と生成DLL存在を検証する。
+- [x] フルテストスイートを実行し、失敗を含む現状結果を確認する。
+
+## 2026-04-10 for文パース実装（AST構築まで）
+
+- [x] `Syntax/Parser.fs` に `for ... in ...` 文のパーサーを追加し、`Ast.Stmt.For` を構築する。
+- [x] `stmt` の分岐に `for` 文を組み込み、`do` ブロック内で `for` 文を解釈できるようにする。
+- [x] `ParserTests` に `for` 文がASTとして構築されることを検証するテストを追加する。
+- [x] テストスイートを実行し、現状結果を確認する。
+
+## 2026-04-10 for文の `=>` 構文対応（FizzBuzz修正版）
+
+- [x] `Syntax/Parser.fs` の `for` 文パースを `for ... in ... =>` 形式へ対応させる。
+- [x] `ParserTests` を修正版FizzBuzz構文に合わせて更新し、`Ast.Stmt.For` 構築を検証する。
+- [x] `LoweringTests` のFizzBuzzソースを修正版へ更新する。
+- [x] テストを実行してAST構築確認と現状結果を記録する。
+
+## 2026-04-10 LineInput削除（BlockInputへ統一）
+
+- [x] `Syntax/Parser.fs` の `LineInput` を削除し、同等の入力制御を `BlockInput` で実現する。
+- [x] `for` 文のiterable解析が行末までに制限されることを維持する。
+- [x] 関連テストを実行し、AST構築が維持されることを確認する。
+
+## 2026-04-10 LineInput削除変更の取り消し
+
+- [x] 直前の `LineInput` 削除変更を取り消し、`for` 文パーサーを直前安定状態へ戻す。
+- [x] 関連テストを実行し、取り消し後の挙動を確認する。
+
+## 2026-04-10 FizzBuzzテスト入力の更新（`for ... in ...` 形式）
+
+- [x] FizzBuzzテストのAtlaソースを指定された `for ... in ...`（`=>` なし）形式へ更新する。
+- [x] `for` 文パーサーを新しいテスト入力でも `Ast.Stmt.For` を構築できるように調整する。
+- [x] 関連テストを実行して結果を確認する。
+
+## 2026-04-10 FizzBuzzテスト通過のためのFor文意味解析実装
+
+- [x] `Semantics/Analyze.fs` に `Ast.Stmt.For` 分岐を追加し、`Unsupported statement type` 例外を解消する。
+- [x] `LoweringTests.fizzbuzz program compiles` を実行して通過を確認する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-10 直前変更の取り消し
+
+- [x] 直前コミット（FizzBuzz実行テスト対応）の変更を取り消す。
+- [x] テストを実行して取り消し後の状態を確認する。
+
+## 2026-04-10 FizzBuzzテストプログラムの入力版更新
+
+- [x] FizzBuzzテストプログラムを指定された `fizzbuzz (n: Int)` + `main` 入力受け取り構成へ変更する。
+- [x] `fn ... = for ...` 形式をパースできるようにパーサーを調整する。
+- [x] `Int32.Parse` を import なしでも解決できるよう、意味解析前の型解決スコープを調整する。
+- [x] テストを実行して変更後の状態を確認する。
+
+## 2026-04-10 FizzBuzz実行結果検証テスト化
+
+- [x] `LoweringTests.fizzbuzz program compiles` を、入力 `15` を与えて標準出力を検証するテストへ変更する。
+- [x] 期待される FizzBuzz 出力（1..15）をアサートする。
+- [x] テストスイートを実行し、現状結果（失敗許容）を確認する。
