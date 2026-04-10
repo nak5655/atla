@@ -90,6 +90,14 @@ module Analyze =
             | _ -> ()
         Seq.toList result
 
+    let private errorExpr (tid: TypeId) (span: Atla.Compiler.Data.Span) (message: string) : Hir.Expr =
+        Hir.Expr.ExprError(message, tid, span)
+
+    let private resultToExpr (tid: TypeId) (span: Atla.Compiler.Data.Span) (resolved: Result<Hir.Expr, string>) : Hir.Expr =
+        match resolved with
+        | Result.Ok expr -> expr
+        | Result.Error message -> errorExpr tid span message
+
     let rec private analyzeExprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Ast.Expr) (tid: TypeId): Hir.Callable option =
         match analyzeExpr nameEnv typeEnv expr tid with
         | Hir.Expr.Id (sid, _, _) ->
@@ -159,7 +167,7 @@ module Analyze =
                     | None -> Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
                 | _ -> Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
         | :? Ast.Expr.MemberAccess as memberAccessExpr ->
-            let resolveMemberFromSystemType (sysType: System.Type) =
+            let resolveMemberFromSystemTypeResult (sysType: System.Type) : Result<Hir.Expr, string> =
                 let memberInfos =
                     sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static)
                     |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
@@ -168,69 +176,76 @@ module Analyze =
                 match resolveNativeMember typeEnv memberInfos tid with
                 | [memberInfo, resolvedTid] ->
                     match memberInfo with
-                    | :? MethodInfo as methodInfo -> Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, resolvedTid, memberAccessExpr.span)
-                    | :? FieldInfo as fieldInfo -> Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, resolvedTid, memberAccessExpr.span)
-                    | :? PropertyInfo as propertyInfo -> Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, resolvedTid, memberAccessExpr.span)
-                    | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span, tid, memberAccessExpr.span)
-                | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
-                | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span, tid, memberAccessExpr.span)
+                    | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, resolvedTid, memberAccessExpr.span))
+                    | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, resolvedTid, memberAccessExpr.span))
+                    | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, resolvedTid, memberAccessExpr.span))
+                    | _ -> Result.Error (sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span)
+                | [] -> Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span)
+                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span)
 
-            match memberAccessExpr.receiver with
-            | :? Ast.Expr.Id as receiverId ->
-                match nameEnv.scope.ResolveType(receiverId.name) with
-                | Some (TypeId.Name sid) ->
-                    match nameEnv.resolveSym sid with
-                    | Some symInfo ->
-                        match symInfo.kind with
-                        | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemType sysType
-                        | SymbolKind.SystemType _ -> Hir.Expr.ExprError(sprintf "System type '%s' could not be loaded at %A" receiverId.name memberAccessExpr.span, tid, memberAccessExpr.span)
-                        | _ -> Hir.Expr.ExprError(sprintf "Type '%s' is not a system type at %A" receiverId.name memberAccessExpr.span, tid, memberAccessExpr.span)
-                    | None -> Hir.Expr.ExprError(sprintf "Undefined type symbol '%s' at %A" receiverId.name memberAccessExpr.span, tid, memberAccessExpr.span)
+            let resolveFromSymInfo (typeName: obj) (symInfo: SymbolInfo) : Result<Hir.Expr, string> =
+                match symInfo.kind with
+                | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) ->
+                    resolveMemberFromSystemTypeResult sysType
+                | SymbolKind.SystemType _ ->
+                    Result.Error (sprintf "System type '%A' could not be loaded at %A" typeName memberAccessExpr.span)
+                | _ ->
+                    Result.Error (sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span)
+
+            let resolvedMemberResult =
+                match memberAccessExpr.receiver with
+                | :? Ast.Expr.Id as receiverId ->
+                    match nameEnv.scope.ResolveType(receiverId.name) with
+                    | Some (TypeId.Name sid) ->
+                        match nameEnv.resolveSym sid with
+                        | Some symInfo ->
+                            match symInfo.kind with
+                            | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemTypeResult sysType
+                            | SymbolKind.SystemType _ -> Result.Error (sprintf "System type '%s' could not be loaded at %A" receiverId.name memberAccessExpr.span)
+                            | _ -> Result.Error (sprintf "Type '%s' is not a system type at %A" receiverId.name memberAccessExpr.span)
+                        | None -> Result.Error (sprintf "Undefined type symbol '%s' at %A" receiverId.name memberAccessExpr.span)
+                    | _ ->
+                        let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (TypeId.freshMeta())
+                        match resolveTyp nameEnv typeEnv receiver.typ with
+                        | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                        | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
                 | _ ->
                     let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (TypeId.freshMeta())
                     match resolveTyp nameEnv typeEnv receiver.typ with
+                    | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                    | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
+
+            resultToExpr tid memberAccessExpr.span resolvedMemberResult
+        | :? Ast.Expr.StaticAccess as staticAccessExpr ->
+            let resolvedStaticResult =
+                match nameEnv.scope.ResolveType(staticAccessExpr.typeName) with
+                | Some(TypeId.Name sid) ->
+                    match nameEnv.resolveSym sid with
                     | Some symInfo ->
                         match symInfo.kind with
-                        | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemType sysType
-                        | SymbolKind.SystemType _ -> Hir.Expr.ExprError(sprintf "System type '%A' could not be loaded at %A" symInfo.name memberAccessExpr.span, tid, memberAccessExpr.span)
-                        | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, tid, memberAccessExpr.span)
-                    | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, tid, memberAccessExpr.span)
-            | _ ->
-                let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (TypeId.freshMeta())
-                match resolveTyp nameEnv typeEnv receiver.typ with
-                | Some symInfo ->
-                    match symInfo.kind with
-                    | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemType sysType
-                    | SymbolKind.SystemType _ -> Hir.Expr.ExprError(sprintf "System type '%A' could not be loaded at %A" symInfo.name memberAccessExpr.span, tid, memberAccessExpr.span)
-                    | _ -> Hir.Expr.ExprError(sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span, tid, memberAccessExpr.span)
-                | None -> Hir.Expr.ExprError(sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span, tid, memberAccessExpr.span)
-        | :? Ast.Expr.StaticAccess as staticAccessExpr ->
-            match nameEnv.scope.ResolveType(staticAccessExpr.typeName) with
-            | Some(TypeId.Name sid) ->
-                match nameEnv.resolveSym sid with
-                | Some symInfo ->
-                    match symInfo.kind with
-                    | SymbolKind.SystemType sysType ->
-                        if obj.ReferenceEquals(sysType, null) then
-                            Hir.Expr.ExprError(sprintf "System type '%s' could not be loaded at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
-                        else
-                            let memberInfos =
-                                sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static)
-                                |> Seq.filter (fun m -> m.Name = staticAccessExpr.memberName)
-                                |> Seq.toList
-                            match resolveNativeMember typeEnv memberInfos tid with
-                            | [memberInfo, memberType] ->
-                                match memberInfo with
-                                | :? MethodInfo as methodInfo -> Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, memberType, staticAccessExpr.span)
-                                | :? FieldInfo as fieldInfo -> Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, memberType, staticAccessExpr.span)
-                                | :? PropertyInfo as propertyInfo -> Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, memberType, staticAccessExpr.span)
-                                | _ -> Hir.Expr.ExprError(sprintf "Unsupported member type for '%s.%s' at %A" staticAccessExpr.typeName staticAccessExpr.memberName staticAccessExpr.span, tid, staticAccessExpr.span)
-                            | [] -> Hir.Expr.ExprError(sprintf "Undefined member '%s' for type '%s' at %A" staticAccessExpr.memberName staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
-                            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous member '%s' for type '%s' at %A" staticAccessExpr.memberName staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
-                    | _ -> Hir.Expr.ExprError(sprintf "Type '%s' is not a system type at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
-                | None -> Hir.Expr.ExprError(sprintf "Undefined type symbol '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
-            | Some _ -> Hir.Expr.ExprError(sprintf "Unsupported type id for '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
-            | None -> Hir.Expr.ExprError(sprintf "Undefined type '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span, tid, staticAccessExpr.span)
+                        | SymbolKind.SystemType sysType ->
+                            if obj.ReferenceEquals(sysType, null) then
+                                Result.Error (sprintf "System type '%s' could not be loaded at %A" staticAccessExpr.typeName staticAccessExpr.span)
+                            else
+                                let memberInfos =
+                                    sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static)
+                                    |> Seq.filter (fun m -> m.Name = staticAccessExpr.memberName)
+                                    |> Seq.toList
+                                match resolveNativeMember typeEnv memberInfos tid with
+                                | [memberInfo, memberType] ->
+                                    match memberInfo with
+                                    | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, memberType, staticAccessExpr.span))
+                                    | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, memberType, staticAccessExpr.span))
+                                    | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, memberType, staticAccessExpr.span))
+                                    | _ -> Result.Error (sprintf "Unsupported member type for '%s.%s' at %A" staticAccessExpr.typeName staticAccessExpr.memberName staticAccessExpr.span)
+                                | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s' at %A" staticAccessExpr.memberName staticAccessExpr.typeName staticAccessExpr.span)
+                                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s' at %A" staticAccessExpr.memberName staticAccessExpr.typeName staticAccessExpr.span)
+                        | _ -> Result.Error (sprintf "Type '%s' is not a system type at %A" staticAccessExpr.typeName staticAccessExpr.span)
+                    | None -> Result.Error (sprintf "Undefined type symbol '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span)
+                | Some _ -> Result.Error (sprintf "Unsupported type id for '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span)
+                | None -> Result.Error (sprintf "Undefined type '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span)
+
+            resultToExpr tid staticAccessExpr.span resolvedStaticResult
         | :? Ast.Expr.If as ifExpr ->
             let rec analyzeIfBranches (branches: Ast.IfBranch list) : Hir.Expr =
                 match List.head branches with

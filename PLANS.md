@@ -193,3 +193,9 @@
 - [x] `Analyze.Env` を `NameEnv`（名前解決・Symbol操作）と `TypeEnv`（型制約・型解決）へ分割する。
 - [x] `Analyze` 内の式/文/メソッド解析ロジックを新しい環境型に追従させる。
 - [x] テストを実行して回帰がないことを確認する。
+
+## 2026-04-10 Analyze エラー生成共通化とResult化
+
+- [x] `Analyze` にエラー生成ヘルパー関数を追加し、重複する `Hir.Expr.ExprError` 生成を共通化する。
+- [x] `MemberAccess` と `StaticAccess` の解析ロジックを `Result` ベースに切り替える。
+- [x] テストを実行して回帰がないことを確認する。
