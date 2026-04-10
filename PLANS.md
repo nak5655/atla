@@ -293,3 +293,24 @@
 - [x] `LoweringTests.fizzbuzz program compiles` を、入力 `15` を与えて標準出力を検証するテストへ変更する。
 - [x] 期待される FizzBuzz 出力（1..15）をアサートする。
 - [x] テストスイートを実行し、現状結果（失敗許容）を確認する。
+
+## 2026-04-10 FizzBuzzテスト通過に向けた段階実行（タスク1-3）
+
+- [x] `PLANS.md` に段階実行タスク（1,2,3）を追記する。
+- [x] `LoweringTests.fizzbuzz program compiles` を単体実行し、現状の成否を確認する。
+- [x] `ParserTests.fileModule parses fizzbuzz for statement` を単体実行し、構文段階の成否を確認する。
+
+## 2026-04-10 FizzBuzzタスク4: 意味解析の穴埋め
+
+- [x] `Ast.Stmt.For` を意味解析で no-op にせず、iterable/ループ変数/本体を解析した HIR へ変換する。
+- [x] for文本体で参照されるループ変数（`i`）のシンボルと型を解決できるようにする。
+- [x] for文をMIRへレイアウトできるように lowering を拡張し、`MoveNext` / `Current` による反復を生成する。
+- [x] `LoweringTests.fizzbuzz program compiles` を再実行して結果を確認する（現状: 実行時 `NullReferenceException` で失敗）。
+
+## 2026-04-10 TypeId変換の案3（コンテキスト付き変換API）適用
+
+- [x] `TypeId` モジュールに、プリミティブ/Native向け `tryToRuntimeSystemType` を追加する。
+- [x] `TypeId.Name` 解決を注入できる `tryResolveToSystemType` を追加する。
+- [x] `Semantics/Analyze.fs` と `Lowering/Layout.fs` の重複変換ロジックを新APIへ置換する。
+- [x] `Lowering/Gen.fs` の `TypeId.Name` 解決も新APIへ寄せる。
+- [x] 関連テスト（最低: parser + fizzbuzz lowering）を実行して結果を確認する（parserは成功、fizzbuzz lowering は exit code 134 で失敗）。

@@ -10,7 +10,12 @@ module Layout =
     }
 
     let private declareTemp (frame: Mir.Frame) (tid: TypeId) : Mir.Reg =
-        let sid = SymbolId(frame.locs.Count + frame.args.Count)
+        let rec freshTempSid (candidate: int) : SymbolId =
+            let sid = SymbolId candidate
+            match frame.get sid with
+            | Some _ -> freshTempSid (candidate - 1)
+            | None -> sid
+        let sid = freshTempSid -1
         frame.addLoc(sid, tid)
 
     let rec private layoutExpr (frame: Mir.Frame) (expr: Hir.Expr) : KNormal =
@@ -78,6 +83,7 @@ module Layout =
                     | Builtins.OpSub -> Mir.OpCode.Sub
                     | Builtins.OpMul -> Mir.OpCode.Mul
                     | Builtins.OpDiv -> Mir.OpCode.Div
+                    | Builtins.OpMod -> Mir.OpCode.Mod
                     | Builtins.OpEq -> Mir.OpCode.Eq
                 { ins = argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) }
             | Hir.Callable.Fn sid ->
@@ -146,6 +152,62 @@ module Layout =
             | None, _ -> failwithf "Undefined variable in assignment: %A" sid
         | Hir.Stmt.ExprStmt (expr, _) ->
             (layoutExpr frame expr).ins
+        | Hir.Stmt.For (sid, tid, iterable, body, span) ->
+            let iterableKn = layoutExpr frame iterable
+            let iterReg = declareTemp frame iterable.typ
+            let iterAssignIns =
+                match iterableKn.res with
+                | Some value -> [ Mir.Ins.Assign(iterReg, value) ]
+                | None -> failwithf "For iterable expression did not produce a value at %A" span
+
+            let iterType =
+                match TypeId.tryToRuntimeSystemType iterable.typ with
+                | Some t -> t
+                | None -> failwithf "For iterable type is not a runtime type: %A at %A" iterable.typ span
+
+            let iterCandidateTypes = iterType :: (iterType.GetInterfaces() |> Array.toList)
+            let moveNextMethod =
+                iterCandidateTypes
+                |> List.tryPick (fun t ->
+                    t.GetMethods(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+                    |> Array.tryFind (fun methodInfo -> methodInfo.Name = "MoveNext" && methodInfo.GetParameters().Length = 0))
+                |> Option.toObj
+            let currentProperty =
+                iterCandidateTypes
+                |> List.tryPick (fun t ->
+                    t.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+                    |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current"))
+                |> Option.toObj
+            let currentGetter =
+                match currentProperty with
+                | null -> null
+                | propertyInfo -> propertyInfo.GetMethod
+
+            if obj.ReferenceEquals(moveNextMethod, null) then
+                failwithf "For iterable type '%A' does not define MoveNext() at %A" iterType span
+            elif obj.ReferenceEquals(currentGetter, null) then
+                failwithf "For iterable type '%A' does not define Current getter at %A" iterType span
+            else
+                let loopVarReg = frame.addLoc(sid, tid)
+                let condReg = declareTemp frame TypeId.Bool
+                let currentReg = declareTemp frame tid
+                let loopStart = Mir.Label()
+                let loopBody = Mir.Label()
+                let loopEnd = Mir.Label()
+                let bodyIns = body |> List.collect (layoutStmt frame)
+
+                iterableKn.ins
+                @ iterAssignIns
+                @ [ Mir.Ins.MarkLabel loopStart
+                    Mir.Ins.CallAssign(condReg, moveNextMethod, [ Mir.Value.RegVal iterReg ])
+                    Mir.Ins.JumpTrue(Mir.Value.RegVal condReg, loopBody)
+                    Mir.Ins.JumpFalse(Mir.Value.RegVal condReg, loopEnd)
+                    Mir.Ins.MarkLabel loopBody
+                    Mir.Ins.CallAssign(currentReg, currentGetter, [ Mir.Value.RegVal iterReg ])
+                    Mir.Ins.Assign(loopVarReg, Mir.Value.RegVal currentReg) ]
+                @ bodyIns
+                @ [ Mir.Ins.Jump loopStart
+                    Mir.Ins.MarkLabel loopEnd ]
         | Hir.Stmt.ErrorStmt (message, _) ->
             failwithf "Cannot lower erroneous statement: %s" message
 

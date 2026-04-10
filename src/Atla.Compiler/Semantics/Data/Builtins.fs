@@ -6,4 +6,5 @@ module Builtins =
         | OpSub
         | OpMul
         | OpDiv
+        | OpMod
         | OpEq

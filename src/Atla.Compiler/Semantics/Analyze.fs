@@ -168,19 +168,43 @@ module Analyze =
                 let unitExpr = Hir.Expr.Unit ({ left = blockExpr.span.right; right = blockExpr.span.right })
                 Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
-            let args = applyExpr.args |> List.map (fun arg -> analyzeExpr nameEnv typeEnv arg (typeEnv.freshMeta()))
+            let analyzedArgs = applyExpr.args |> List.map (fun arg -> analyzeExpr nameEnv typeEnv arg (typeEnv.freshMeta()))
+            let args =
+                match analyzedArgs with
+                | [Hir.Expr.Unit _] -> []
+                | _ -> analyzedArgs
             let funcType = args |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, tid)
             let callable = analyzeExprAsCallable nameEnv typeEnv applyExpr.func funcType
+            let instanceArgs =
+                match analyzeExpr nameEnv typeEnv applyExpr.func funcType with
+                | Hir.Expr.MemberAccess (_, Some instance, _, _) -> [ instance ]
+                | _ -> []
             match callable with
-            | Some resolvedCallable -> Hir.Expr.Call(resolvedCallable, None, args, tid, applyExpr.span)
+            | Some resolvedCallable ->
+                let allArgs = instanceArgs @ args
+                let resolvedCall =
+                    match resolvedCallable with
+                    | Hir.Callable.NativeMethodGroup methods ->
+                        match methods |> List.filter (fun methodInfo -> methodInfo.GetParameters().Length = allArgs.Length) with
+                        | [methodInfo] -> Some (Hir.Callable.NativeMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
+                        | _ -> None
+                    | Hir.Callable.NativeConstructorGroup ctors ->
+                        match ctors |> List.filter (fun ctorInfo -> ctorInfo.GetParameters().Length = allArgs.Length) with
+                        | [ctorInfo] -> Some (Hir.Callable.NativeConstructor ctorInfo, TypeId.fromSystemType ctorInfo.DeclaringType)
+                        | _ -> None
+                    | Hir.Callable.NativeMethod methodInfo -> Some (resolvedCallable, TypeId.fromSystemType methodInfo.ReturnType)
+                    | Hir.Callable.NativeConstructor ctorInfo -> Some (resolvedCallable, TypeId.fromSystemType ctorInfo.DeclaringType)
+                    | _ -> Some (resolvedCallable, tid)
+
+                match resolvedCall with
+                | Some (callableExpr, callRetType) ->
+                    match unifyOrError typeEnv tid callRetType applyExpr.span with
+                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, allArgs, callRetType, applyExpr.span)
+                    | Result.Error exprErr -> exprErr
+                | None ->
+                    Hir.Expr.ExprError(sprintf "No overload matched argument count %d at %A" allArgs.Length applyExpr.span, tid, applyExpr.span)
             | None ->
-                match args with
-                | [Hir.Expr.Unit _] ->
-                    let zeroArgFuncType = TypeId.Fn([], tid)
-                    match analyzeExprAsCallable nameEnv typeEnv applyExpr.func zeroArgFuncType with
-                    | Some resolvedCallable -> Hir.Expr.Call(resolvedCallable, None, [], tid, applyExpr.span)
-                    | None -> Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
-                | _ -> Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
+                Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
         | :? Ast.Expr.MemberAccess as memberAccessExpr ->
             let resolveMemberFromSystemTypeResult (sysType: System.Type) : Result<Hir.Expr, string> =
                 let memberInfos =
@@ -221,14 +245,64 @@ module Analyze =
                         | None -> Result.Error (sprintf "Undefined type symbol '%s' at %A" receiverId.name memberAccessExpr.span)
                     | _ ->
                         let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
+                        let receiverType = typeEnv.resolveType receiver.typ
+                        match TypeId.tryToRuntimeSystemType receiverType with
+                        | Some systemType ->
+                            let memberInfos =
+                                systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                                |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
+                                |> Seq.toList
+                            match resolveNativeMember typeEnv memberInfos tid with
+                            | [memberInfo, resolvedTid] ->
+                                match memberInfo with
+                                | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                                | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                                | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                                | _ -> Result.Error (sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span)
+                            | [] ->
+                                if systemType.IsValueType && memberAccessExpr.memberName = "ToString" then
+                                    let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
+                                    if obj.ReferenceEquals(convertMethod, null) then
+                                        Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                                    else
+                                        Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
+                                else
+                                    Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                            | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                        | None ->
+                            match resolveTyp nameEnv typeEnv receiver.typ with
+                            | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                            | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
+                | _ ->
+                    let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
+                    let receiverType = typeEnv.resolveType receiver.typ
+                    match TypeId.tryToRuntimeSystemType receiverType with
+                    | Some systemType ->
+                        let memberInfos =
+                            systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                            |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
+                            |> Seq.toList
+                        match resolveNativeMember typeEnv memberInfos tid with
+                        | [memberInfo, resolvedTid] ->
+                            match memberInfo with
+                            | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                            | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                            | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                            | _ -> Result.Error (sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span)
+                        | [] ->
+                            if systemType.IsValueType && memberAccessExpr.memberName = "ToString" then
+                                let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
+                                if obj.ReferenceEquals(convertMethod, null) then
+                                    Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                                else
+                                    Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
+                            else
+                                Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                        | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                    | None ->
                         match resolveTyp nameEnv typeEnv receiver.typ with
                         | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                         | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
-                | _ ->
-                    let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
-                    match resolveTyp nameEnv typeEnv receiver.typ with
-                    | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
-                    | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
 
             resultToExpr tid memberAccessExpr.span resolvedMemberResult
         | :? Ast.Expr.StaticAccess as staticAccessExpr ->
@@ -296,7 +370,37 @@ module Analyze =
             let expr = analyzeExpr nameEnv typeEnv exprStmt.expr (typeEnv.freshMeta ())
             Hir.Stmt.ExprStmt(expr, exprStmt.span)
         | :? Ast.Stmt.For as forStmt ->
-            Hir.Stmt.ExprStmt(Hir.Expr.Unit(forStmt.span), forStmt.span)
+            let iterable = analyzeExpr nameEnv typeEnv forStmt.iterable (typeEnv.freshMeta ())
+            let resolvedIterableType = typeEnv.resolveType iterable.typ
+            match TypeId.tryToRuntimeSystemType resolvedIterableType with
+            | None ->
+                Hir.Stmt.ErrorStmt(sprintf "For iterable is not a supported runtime type: %A at %A" resolvedIterableType forStmt.span, forStmt.span)
+            | Some iterableSystemType ->
+                let allTypes = iterableSystemType :: (iterableSystemType.GetInterfaces() |> Array.toList)
+                let moveNextMethod =
+                    allTypes
+                    |> List.tryPick (fun t ->
+                        t.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+                        |> Array.tryFind (fun methodInfo -> methodInfo.Name = "MoveNext" && methodInfo.GetParameters().Length = 0))
+                    |> Option.toObj
+                let currentProperty =
+                    allTypes
+                    |> List.tryPick (fun t ->
+                        t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+                        |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current"))
+                    |> Option.toObj
+
+                match moveNextMethod, currentProperty with
+                | null, _ ->
+                    Hir.Stmt.ErrorStmt(sprintf "For iterable type '%A' does not define instance method MoveNext() at %A" iterableSystemType forStmt.span, forStmt.span)
+                | _, null ->
+                    Hir.Stmt.ErrorStmt(sprintf "For iterable type '%A' does not define instance property Current at %A" iterableSystemType forStmt.span, forStmt.span)
+                | _, _ ->
+                    let loopNameEnv = nameEnv.sub()
+                    let itemType = TypeId.fromSystemType currentProperty.PropertyType
+                    let loopVarSid = loopNameEnv.declareLocal forStmt.varName itemType
+                    let bodyStmts = forStmt.body |> List.map (analyzeStmt loopNameEnv typeEnv)
+                    Hir.Stmt.For(loopVarSid, itemType, iterable, bodyStmts, forStmt.span)
         | _ -> failwith "Unsupported statement type"
 
     let private analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =

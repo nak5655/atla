@@ -35,6 +35,21 @@ module TypeId =
         elif t = typeof<string> then String
         else Native t
 
+    let tryToRuntimeSystemType (tid: TypeId) : System.Type option =
+        match tid with
+        | Unit -> Some typeof<unit>
+        | Bool -> Some typeof<bool>
+        | Int -> Some typeof<int>
+        | Float -> Some typeof<float>
+        | String -> Some typeof<string>
+        | Native t -> Some t
+        | _ -> None
+
+    let tryResolveToSystemType (resolveName: SymbolId -> System.Type option) (tid: TypeId) : System.Type option =
+        match tid with
+        | Name sid -> resolveName sid
+        | _ -> tryToRuntimeSystemType tid
+
 type TypeSubst = Dictionary<TypeMeta, TypeId>
 
 type UnifyError =

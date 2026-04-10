@@ -20,23 +20,21 @@ module Gen =
 
     // MIRのTypeIdをCIL生成用のSystem.Typeへ解決する
     let private resolveType (env: Env) (tid: TypeId) : Type =
-        match tid with
-        // プリミティブ型
-        | TypeId.Unit -> typeof<Void>
-        | TypeId.Bool -> typeof<bool>
-        | TypeId.Int -> typeof<int>
-        | TypeId.Float -> typeof<float>
-        | TypeId.String -> typeof<string>
-        | TypeId.Native t -> t
-        // モジュール内で事前定義したTypeBuilderをSystem.Typeとして扱う
-        | TypeId.Name sid ->
+        let resolveName (sid: SymbolId) : Type option =
             match env.typeBuilders.TryGetValue(sid) with
-            | true, builder -> builder :> Type
-            | false, _ -> failwithf "Unknown type symbol: %A" sid
-        // CILメンバーシグネチャに載せられない型は明示的に失敗
-        | TypeId.Fn _ -> failwithf "Function type is not supported for CIL member signatures: %A" tid
-        | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" tid
-        | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
+            | true, builder -> Some (builder :> Type)
+            | false, _ -> None
+
+        match TypeId.tryResolveToSystemType resolveName tid with
+        | Some resolvedType -> resolvedType
+        | None ->
+            match tid with
+            // CILメンバーシグネチャに載せられない型は明示的に失敗
+            | TypeId.Name sid -> failwithf "Unknown type symbol: %A" sid
+            | TypeId.Fn _ -> failwithf "Function type is not supported for CIL member signatures: %A" tid
+            | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" tid
+            | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
+            | _ -> failwithf "Unsupported type for CIL generation: %A" tid
 
     // MIRの値をILスタックへ積む
     let rec private genValue (gen: ILGenerator) (value: Mir.Value) =
@@ -60,6 +58,14 @@ module Gen =
 
     // MIR命令をIL命令列へ変換する
     let private genIns (env: Env) (gen: ILGenerator) (ins: Mir.Ins) =
+        let emitMethodCall (methodInfo: MethodInfo) =
+            if methodInfo.IsStatic then
+                gen.Emit(OpCodes.Call, methodInfo)
+            elif methodInfo.IsVirtual || methodInfo.DeclaringType.IsInterface then
+                gen.Emit(OpCodes.Callvirt, methodInfo)
+            else
+                gen.Emit(OpCodes.Call, methodInfo)
+
         match ins with
         // 単純代入
         | Mir.Ins.Assign (reg, value) ->
@@ -97,7 +103,7 @@ module Gen =
             for arg in args do
                 genValue gen arg
             match method with
-            | Choice1Of2 mi -> gen.Emit(OpCodes.Call, mi)
+            | Choice1Of2 mi -> emitMethodCall mi
             | Choice2Of2 ci -> gen.Emit(OpCodes.Call, ci)
         | Mir.Ins.CallSym (sid, args) ->
             for arg in args do
@@ -108,7 +114,7 @@ module Gen =
         | Mir.Ins.CallAssign (dst, method, args) ->
             for arg in args do
                 genValue gen arg
-            gen.Emit(OpCodes.Call, method)
+            emitMethodCall method
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
@@ -116,7 +122,7 @@ module Gen =
             for arg in args do
                 genValue gen arg
             match env.methodBuilders.TryGetValue(sid) with
-            | true, methodInfo -> gen.Emit(OpCodes.Call, methodInfo)
+            | true, methodInfo -> emitMethodCall methodInfo
             | false, _ -> failwithf "Unknown method symbol: %A" sid
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)

@@ -90,6 +90,7 @@ module Hir =
         | Let of sid: SymbolId * isMutable: bool * value: Expr * span: Span
         | Assign of sid: SymbolId * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
+        | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
         | ErrorStmt of message: string * span: Span
 
         member this.hasError =
@@ -101,6 +102,8 @@ module Hir =
             | Let (_, _, value, _)
             | Assign (_, value, _)
             | ExprStmt (value, _) -> value.getErrors
+            | For (_, _, iterable, body, _) ->
+                iterable.getErrors @ (body |> List.collect (fun stmt -> stmt.getErrors))
 
     type Field(sid: SymbolId, tid: TypeId, body: Expr, span: Span) =
         member this.sym = sid
