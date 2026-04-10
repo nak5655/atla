@@ -1,4 +1,8 @@
 namespace Atla.Compiler.Semantics.Data
 
-type SymbolId(id: int) = 
-    member this.id = id
+type SymbolId =
+    | SymbolId of int
+
+    member this.id =
+        let (SymbolId id) = this
+        id

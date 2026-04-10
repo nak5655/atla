@@ -1,5 +1,13 @@
 # Plan
 
+## 2026-04-10 Symbol/Type 解決基盤の改善（レビュー対応）
+
+- [x] `SymbolId` を値等価で扱える表現へ変更し、辞書キーとして安定動作させる。
+- [x] `Type.unify` の `failwith` を廃止し、`Result` ベースで失敗を返すように変更する。
+- [x] 型メタ変数の採番をグローバル状態から解析コンテキストローカルへ移す。
+- [x] `SymbolInfo` を不変データ化し、外部バインディング情報を `SymbolKind` から分離する。
+- [ ] `Scope.ResolveVar` の `tid` 未使用引数を解消する（利用または削除）。
+
 ## 2026-04-09 HIR getErrors メンバ追加
 
 - [x] `Hir` の各型（`Expr`/`Stmt`/`Field`/`Method`/`Type`/`Module`/`Assembly`）に `getErrors` メンバを追加し、再帰的に `Error` を収集する。

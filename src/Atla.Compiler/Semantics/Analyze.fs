@@ -27,14 +27,14 @@ module Analyze =
 
         member this.declareLocal (name: string) (tid: TypeId) : SymbolId =
             let sid = symbolTable.NextId()
-            let symInfo = SymbolInfo(name, tid, SymbolKind.Local())
+            let symInfo = { name = name; typ = tid; kind = SymbolKind.Local() }
             symbolTable.Add(sid, symInfo)
             scope.DeclareVar(name, sid)
             sid
 
         member this.declareArg (name: string) (tid: TypeId) : SymbolId =
             let sid = symbolTable.NextId()
-            let symInfo = SymbolInfo(name, tid, SymbolKind.Arg())
+            let symInfo = { name = name; typ = tid; kind = SymbolKind.Arg() }
             symbolTable.Add(sid, symInfo)
             scope.DeclareVar(name, sid)
             sid
@@ -54,17 +54,20 @@ module Analyze =
             let blockScope = Scope(Some this.scope)
             NameEnv(this.symbolTable, blockScope)
 
-    type TypeEnv(typSubst: TypeSubst) =
+    type TypeEnv(typSubst: TypeSubst, metaFactory: TypeMetaFactory) =
         member this.typSubst = typSubst
 
-        member this.unifyTypes (tid1: TypeId) (tid2: TypeId) : unit =
-            Type.unify typSubst tid1 tid2 |> ignore
+        member this.unifyTypes (tid1: TypeId) (tid2: TypeId) : Result<unit, UnifyError> =
+            Type.unify typSubst tid1 tid2 |> Result.map ignore
 
         member this.resolveType (tid: TypeId) : TypeId =
             Type.resolve typSubst tid
 
         member this.canUnify (tid1: TypeId) (tid2: TypeId) : bool =
             Type.canUnify typSubst tid1 tid2
+
+        member this.freshMeta() : TypeId =
+            TypeId.Meta(metaFactory.Fresh())
 
     let private resolveTyp (nameEnv: NameEnv) (typeEnv: TypeEnv) (tid: TypeId) : SymbolInfo option =
         match typeEnv.resolveType tid with
@@ -98,14 +101,19 @@ module Analyze =
         | Result.Ok expr -> expr
         | Result.Error message -> errorExpr tid span message
 
+    let private unifyOrError (typeEnv: TypeEnv) (expected: TypeId) (actual: TypeId) (span: Atla.Compiler.Data.Span) : Result<unit, Hir.Expr> =
+        match typeEnv.unifyTypes expected actual with
+        | Result.Ok _ -> Result.Ok ()
+        | Result.Error err -> Result.Error(errorExpr expected span (UnifyError.toMessage err))
+
     let rec private analyzeExprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Ast.Expr) (tid: TypeId): Hir.Callable option =
         match analyzeExpr nameEnv typeEnv expr tid with
         | Hir.Expr.Id (sid, _, _) ->
             match nameEnv.resolveSym sid with
             | Some symInfo ->
                 match symInfo.kind with
-                | SymbolKind.NativeMethod methodInfos -> Some (Hir.Callable.NativeMethodGroup methodInfos)
-                | SymbolKind.Constructor ctorInfos -> Some (Hir.Callable.NativeConstructorGroup ctorInfos)
+                | SymbolKind.External(ExternalBinding.NativeMethodGroup methodInfos) -> Some (Hir.Callable.NativeMethodGroup methodInfos)
+                | SymbolKind.External(ExternalBinding.ConstructorGroup ctorInfos) -> Some (Hir.Callable.NativeConstructorGroup ctorInfos)
                 | SymbolKind.BuiltinOperator op -> Some (Hir.Callable.BuiltinOperator op)
                 | SymbolKind.Local ()
                 | SymbolKind.Arg () ->
@@ -123,22 +131,27 @@ module Analyze =
     and private analyzeExpr (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Ast.Expr) (tid: TypeId) : Hir.Expr =
         match expr with
         | :? Ast.Expr.Unit as unitExpr ->
-            typeEnv.unifyTypes tid TypeId.Unit
-            Hir.Expr.Unit(unitExpr.span)
+            match unifyOrError typeEnv tid TypeId.Unit unitExpr.span with
+            | Result.Ok _ -> Hir.Expr.Unit(unitExpr.span)
+            | Result.Error exprErr -> exprErr
         | :? Ast.Expr.Int as intExpr ->
-            typeEnv.unifyTypes tid TypeId.Int
-            Hir.Expr.Int(intExpr.value, intExpr.span)
+            match unifyOrError typeEnv tid TypeId.Int intExpr.span with
+            | Result.Ok _ -> Hir.Expr.Int(intExpr.value, intExpr.span)
+            | Result.Error exprErr -> exprErr
         | :? Ast.Expr.Float as floatExpr ->
-            typeEnv.unifyTypes tid TypeId.Float
-            Hir.Expr.Float(floatExpr.value, floatExpr.span)
+            match unifyOrError typeEnv tid TypeId.Float floatExpr.span with
+            | Result.Ok _ -> Hir.Expr.Float(floatExpr.value, floatExpr.span)
+            | Result.Error exprErr -> exprErr
         | :? Ast.Expr.String as stringExpr ->
-            typeEnv.unifyTypes tid TypeId.String
-            Hir.Expr.String(stringExpr.value, stringExpr.span)
+            match unifyOrError typeEnv tid TypeId.String stringExpr.span with
+            | Result.Ok _ -> Hir.Expr.String(stringExpr.value, stringExpr.span)
+            | Result.Error exprErr -> exprErr
         | :? Ast.Expr.Id as idExpr ->
             match nameEnv.resolveVar idExpr.name tid with
             | [sid] ->
-                typeEnv.unifyTypes tid (nameEnv.resolveSymType sid)
-                Hir.Expr.Id(sid, nameEnv.resolveSymType sid, idExpr.span)
+                match unifyOrError typeEnv tid (nameEnv.resolveSymType sid) idExpr.span with
+                | Result.Ok _ -> Hir.Expr.Id(sid, nameEnv.resolveSymType sid, idExpr.span)
+                | Result.Error exprErr -> exprErr
             | [] -> Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" idExpr.name idExpr.span, tid, idExpr.span)
             | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s' at %A" idExpr.name idExpr.span, tid, idExpr.span)
         | :? Ast.Expr.Block as blockExpr ->
@@ -146,14 +159,16 @@ module Analyze =
             let stmts = blockExpr.stmts |> List.map (analyzeStmt blockNameEnv typeEnv)
             match List.last stmts with
             | Hir.Stmt.ExprStmt (expr, _) ->
-                typeEnv.unifyTypes tid expr.typ
-                let leadingStmts = stmts |> List.take (stmts.Length - 1)
-                Hir.Expr.Block(leadingStmts, expr, tid, blockExpr.span)
+                match unifyOrError typeEnv tid expr.typ blockExpr.span with
+                | Result.Ok _ ->
+                    let leadingStmts = stmts |> List.take (stmts.Length - 1)
+                    Hir.Expr.Block(leadingStmts, expr, tid, blockExpr.span)
+                | Result.Error exprErr -> exprErr
             | _ ->
                 let unitExpr = Hir.Expr.Unit ({ left = blockExpr.span.right; right = blockExpr.span.right })
                 Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
-            let args = applyExpr.args |> List.map (fun arg -> analyzeExpr nameEnv typeEnv arg (TypeId.freshMeta()))
+            let args = applyExpr.args |> List.map (fun arg -> analyzeExpr nameEnv typeEnv arg (typeEnv.freshMeta()))
             let funcType = args |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, tid)
             let callable = analyzeExprAsCallable nameEnv typeEnv applyExpr.func funcType
             match callable with
@@ -185,9 +200,9 @@ module Analyze =
 
             let resolveFromSymInfo (typeName: obj) (symInfo: SymbolInfo) : Result<Hir.Expr, string> =
                 match symInfo.kind with
-                | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) ->
+                | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) ->
                     resolveMemberFromSystemTypeResult sysType
-                | SymbolKind.SystemType _ ->
+                | SymbolKind.External(ExternalBinding.SystemTypeRef _) ->
                     Result.Error (sprintf "System type '%A' could not be loaded at %A" typeName memberAccessExpr.span)
                 | _ ->
                     Result.Error (sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span)
@@ -200,17 +215,17 @@ module Analyze =
                         match nameEnv.resolveSym sid with
                         | Some symInfo ->
                             match symInfo.kind with
-                            | SymbolKind.SystemType sysType when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemTypeResult sysType
-                            | SymbolKind.SystemType _ -> Result.Error (sprintf "System type '%s' could not be loaded at %A" receiverId.name memberAccessExpr.span)
+                            | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemTypeResult sysType
+                            | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Result.Error (sprintf "System type '%s' could not be loaded at %A" receiverId.name memberAccessExpr.span)
                             | _ -> Result.Error (sprintf "Type '%s' is not a system type at %A" receiverId.name memberAccessExpr.span)
                         | None -> Result.Error (sprintf "Undefined type symbol '%s' at %A" receiverId.name memberAccessExpr.span)
                     | _ ->
-                        let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (TypeId.freshMeta())
+                        let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                         match resolveTyp nameEnv typeEnv receiver.typ with
                         | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                         | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
                 | _ ->
-                    let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (TypeId.freshMeta())
+                    let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                     match resolveTyp nameEnv typeEnv receiver.typ with
                     | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                     | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
@@ -223,7 +238,7 @@ module Analyze =
                     match nameEnv.resolveSym sid with
                     | Some symInfo ->
                         match symInfo.kind with
-                        | SymbolKind.SystemType sysType ->
+                        | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) ->
                             if obj.ReferenceEquals(sysType, null) then
                                 Result.Error (sprintf "System type '%s' could not be loaded at %A" staticAccessExpr.typeName staticAccessExpr.span)
                             else
@@ -261,24 +276,24 @@ module Analyze =
     and private analyzeStmt (nameEnv: NameEnv) (typeEnv: TypeEnv) (stmt: Ast.Stmt) : Hir.Stmt =
         match stmt with
         | :? Ast.Stmt.Let as letStmt ->
-            let tid = TypeId.freshMeta ()
+            let tid = typeEnv.freshMeta ()
             let rhs = analyzeExpr nameEnv typeEnv letStmt.value tid
             let sid = nameEnv.declareLocal letStmt.name tid
             Hir.Stmt.Let(sid, false, rhs, letStmt.span)
         | :? Ast.Stmt.Var as varStmt ->
-            let tid = TypeId.freshMeta ()
+            let tid = typeEnv.freshMeta ()
             let rhs = analyzeExpr nameEnv typeEnv varStmt.value tid
             let sid = nameEnv.declareLocal varStmt.name tid
             Hir.Stmt.Let(sid, true, rhs, varStmt.span)
         | :? Ast.Stmt.Assign as assignStmt ->
-            let tid = TypeId.freshMeta ()
+            let tid = typeEnv.freshMeta ()
             let rhs = analyzeExpr nameEnv typeEnv assignStmt.value tid
             match nameEnv.resolveVar assignStmt.name rhs.typ with
             | [sid] -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)
             | [] -> Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" assignStmt.name assignStmt.span, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
             | _ -> failwith (sprintf "Ambiguous variable '%s' at %A" assignStmt.name assignStmt.span)
         | :? Ast.Stmt.ExprStmt as exprStmt ->
-            let expr = analyzeExpr nameEnv typeEnv exprStmt.expr (TypeId.freshMeta ())
+            let expr = analyzeExpr nameEnv typeEnv exprStmt.expr (typeEnv.freshMeta ())
             Hir.Stmt.ExprStmt(expr, exprStmt.span)
         | _ -> failwith "Unsupported statement type"
 
@@ -305,7 +320,7 @@ module Analyze =
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Result<Hir.Module, Error list> =
         let resolvedModule = Resolve.resolveModule (symbolTable, moduleName, moduleAst)
         let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope)
-        let typeEnv = TypeEnv(typeSubst)
+        let typeEnv = TypeEnv(typeSubst, TypeMetaFactory())
 
         let fields = List<Hir.Field>()
         let methods = List<Hir.Method>()
