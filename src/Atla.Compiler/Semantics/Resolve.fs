@@ -24,8 +24,8 @@ module Resolve =
         let sid = symbolTable.NextId()
         let name = Array.last (classPath.Split('.'))
         let resolvedType = tryResolveSystemType classPath |> Option.toObj
-        let kind = SymbolKind.SystemType(resolvedType)
-        let symInfo = SymbolInfo(name, TypeId.Name sid, kind)
+        let kind = SymbolKind.External(ExternalBinding.SystemTypeRef resolvedType)
+        let symInfo = { name = name; typ = TypeId.Name sid; kind = kind }
         symbolTable.Add(sid, symInfo)
         scope.DeclareType(name, TypeId.Name sid)
         sid

@@ -4,43 +4,38 @@ open System.Reflection
 open System.Collections.Generic
 
 // 名前解決の結果を表す型
+type ExternalBinding =
+    | NativeMethodGroup of MethodInfo list
+    | ConstructorGroup of ConstructorInfo list
+    | SystemTypeRef of System.Type
+
 type SymbolKind =
     | Arg of unit
     | Local of unit
-    | NativeMethod of MethodInfo list
-    | Constructor of ConstructorInfo list
     | BuiltinOperator of Builtins.Operators
-    | SystemType of System.Type
+    | External of ExternalBinding
 
     override this.ToString (): string = 
         match this with
         | Arg () -> "Arg"
         | Local fi -> sprintf "Local(%A)" fi
-        | NativeMethod mi -> sprintf "Method(%A)" mi
-        | Constructor ci -> sprintf "Constructor(%A)" ci
         | BuiltinOperator bm -> sprintf "BuiltinOperator(%A)" bm
+        | External ext -> sprintf "External(%A)" ext
 
-type SymbolInfo(name: string, tid: TypeId, kind: SymbolKind) =
-    let mutable _typ = tid
-    let mutable _kind = kind
+type SymbolInfo =
+    { name: string
+      typ: TypeId
+      kind: SymbolKind }
 
-    member this.name = name
-    member this.typ
-        with get() = _typ
-        and set(v) = _typ <- v
-    member this.kind
-        with get() = _kind
-        and set(v) = _kind <- v
-        
     override this.ToString(): string =
-        sprintf "SymbolInfo(name=%s, typ=%A, info=%A)" name tid kind
+        sprintf "SymbolInfo(name=%s, typ=%A, info=%A)" this.name this.typ this.kind
         
 type SymbolTable() =
     let _table = Dictionary<SymbolId, SymbolInfo>()
 
     let addBuiltinOperator (name: string) (tid: TypeId) (op: Builtins.Operators) : SymbolId =
         let sid = SymbolId(_table.Count)
-        _table.Add(sid, SymbolInfo(name, tid, SymbolKind.BuiltinOperator op))
+        _table.Add(sid, { name = name; typ = tid; kind = SymbolKind.BuiltinOperator op })
         sid
 
     let builtinOperators : (string * SymbolId) list =

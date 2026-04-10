@@ -4,11 +4,14 @@ open System.Collections.Generic
 
 type TypeMeta = TypeMeta of int
 
-module TypeMeta =
-    let mutable counter = 0
-    let fresh () =
-        let id = counter
-        counter <- counter + 1
+type TypeMetaFactory(start: int) =
+    let mutable nextId = start
+
+    new () = TypeMetaFactory(0)
+
+    member this.Fresh() =
+        let id = nextId
+        nextId <- nextId + 1
         TypeMeta id
 
 type TypeId =
@@ -24,8 +27,6 @@ type TypeId =
     | Error of message: string
 
 module TypeId =
-    let freshMeta () = Meta (TypeMeta.fresh())
-    
     let fromSystemType (t: System.Type) : TypeId =
         if t = typeof<unit> then Unit
         elif t = typeof<bool> then Bool
@@ -35,6 +36,21 @@ module TypeId =
         else Native t
 
 type TypeSubst = Dictionary<TypeMeta, TypeId>
+
+type UnifyError =
+    | DifferentFunctionArity of leftArity: int * rightArity: int
+    | OccursCheckFailed of meta: TypeMeta * actual: TypeId
+    | CannotUnify of left: TypeId * right: TypeId
+
+module UnifyError =
+    let toMessage (err: UnifyError) : string =
+        match err with
+        | DifferentFunctionArity (leftArity, rightArity) ->
+            sprintf "Cannot unify function types with different number of arguments: %d vs %d" leftArity rightArity
+        | OccursCheckFailed (meta, actual) ->
+            sprintf "Occurs check failed: %A occurs in %A" meta actual
+        | CannotUnify (left, right) ->
+            sprintf "Cannot unify types: %A and %A" left right
 
 module Type =
     let rec occurs (subst: TypeSubst) (m: TypeMeta) (tid: TypeId) : bool =
@@ -77,30 +93,43 @@ module Type =
         | _ -> tid
 
     // 単一化
-    let rec unify (subst: TypeSubst) (tid1: TypeId) (tid2: TypeId) : TypeId =
+    let rec unify (subst: TypeSubst) (tid1: TypeId) (tid2: TypeId) : Result<TypeId, UnifyError> =
         match tid1, tid2 with
-        | Unit, Unit -> Unit
-        | Bool, Bool -> Bool
-        | Int, Int -> Int
-        | Float, Float -> Float
-        | String, String -> String
-        | Name id1, Name id2 when id1 = id2 -> Name id1
+        | Unit, Unit -> Result.Ok Unit
+        | Bool, Bool -> Result.Ok Bool
+        | Int, Int -> Result.Ok Int
+        | Float, Float -> Result.Ok Float
+        | String, String -> Result.Ok String
+        | Name id1, Name id2 when id1 = id2 -> Result.Ok(Name id1)
         | Fn (args1, ret1), Fn (args2, ret2) ->
             if List.length args1 <> List.length args2 then
-                failwith "Cannot unify function types with different number of arguments"
+                Result.Error(DifferentFunctionArity(List.length args1, List.length args2))
             else
-                let args = List.zip args1 args2 |> List.map (fun (a1, a2) -> unify subst a1 a2)
-                let ret = unify subst ret1 ret2
-                Fn (args, ret)
+                let zippedArgs = List.zip args1 args2
+                let rec unifyArgs pairs acc =
+                    match pairs with
+                    | [] -> Result.Ok(List.rev acc)
+                    | (a1, a2) :: rest ->
+                        match unify subst a1 a2 with
+                        | Result.Ok arg -> unifyArgs rest (arg :: acc)
+                        | Result.Error err -> Result.Error err
+
+                match unifyArgs zippedArgs [] with
+                | Result.Error err -> Result.Error err
+                | Result.Ok args ->
+                    match unify subst ret1 ret2 with
+                    | Result.Ok ret -> Result.Ok(Fn(args, ret))
+                    | Result.Error err -> Result.Error err
         | Meta m, tid
         | tid, Meta m ->
             let resolvedTid = resolve subst tid
             if occurs subst m resolvedTid then
-                failwith "Occurs check failed"
-            subst.[m] <- resolvedTid
-            resolvedTid
+                Result.Error(OccursCheckFailed(m, resolvedTid))
+            else
+                subst.[m] <- resolvedTid
+                Result.Ok resolvedTid
 
-        | _ -> failwith "Cannot unify types"
+        | _ -> Result.Error(CannotUnify(tid1, tid2))
 
     let rec hasError (subst: TypeSubst) (tid: TypeId) : bool =
         match tid with
