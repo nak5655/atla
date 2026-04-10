@@ -44,6 +44,11 @@ module Infer =
             Hir.Stmt.Assign(sid, inferExpr typeSubst value, span)
         | Hir.Stmt.ExprStmt (expr, span) ->
             Hir.Stmt.ExprStmt(inferExpr typeSubst expr, span)
+        | Hir.Stmt.For (sid, tid, iterable, body, span) ->
+            let inferredTid = Type.resolve typeSubst tid
+            let inferredIterable = inferExpr typeSubst iterable
+            let inferredBody = body |> List.map (inferStmt typeSubst)
+            Hir.Stmt.For(sid, inferredTid, inferredIterable, inferredBody, span)
         | Hir.Stmt.ErrorStmt _ -> stmt
 
     let inferModule (typeSubst: TypeSubst, hirModule: Hir.Module) : Result<Hir.Module, Error list> =
