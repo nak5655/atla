@@ -101,10 +101,23 @@ module Analyze =
         | Result.Ok expr -> expr
         | Result.Error message -> errorExpr tid span message
 
+    let private isNativeVoid (typeEnv: TypeEnv) (tid: TypeId) : bool =
+        match typeEnv.resolveType tid with
+        | TypeId.Native runtimeType when runtimeType = typeof<System.Void> -> true
+        | _ -> false
+
+    let private isUnitContext (typeEnv: TypeEnv) (tid: TypeId) : bool =
+        match typeEnv.resolveType tid with
+        | TypeId.Unit -> true
+        | _ -> false
+
     let private unifyOrError (typeEnv: TypeEnv) (expected: TypeId) (actual: TypeId) (span: Atla.Compiler.Data.Span) : Result<unit, Hir.Expr> =
-        match typeEnv.unifyTypes expected actual with
-        | Result.Ok _ -> Result.Ok ()
-        | Result.Error err -> Result.Error(errorExpr expected span (UnifyError.toMessage err))
+        if isNativeVoid typeEnv actual && not (isUnitContext typeEnv expected) then
+            Result.Error(errorExpr expected span (UnifyError.toMessage (UnifyError.CannotUnify(expected, actual))))
+        else
+            match typeEnv.unifyTypes expected actual with
+            | Result.Ok _ -> Result.Ok ()
+            | Result.Error err -> Result.Error(errorExpr expected span (UnifyError.toMessage err))
 
     let rec private analyzeExprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Ast.Expr) (tid: TypeId): Hir.Callable option =
         match analyzeExpr nameEnv typeEnv expr tid with
@@ -367,7 +380,7 @@ module Analyze =
             | [] -> Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" assignStmt.name assignStmt.span, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
             | _ -> failwith (sprintf "Ambiguous variable '%s' at %A" assignStmt.name assignStmt.span)
         | :? Ast.Stmt.ExprStmt as exprStmt ->
-            let expr = analyzeExpr nameEnv typeEnv exprStmt.expr (typeEnv.freshMeta ())
+            let expr = analyzeExpr nameEnv typeEnv exprStmt.expr TypeId.Unit
             Hir.Stmt.ExprStmt(expr, exprStmt.span)
         | :? Ast.Stmt.For as forStmt ->
             let iterable = analyzeExpr nameEnv typeEnv forStmt.iterable (typeEnv.freshMeta ())
@@ -385,9 +398,16 @@ module Analyze =
                     |> Option.toObj
                 let currentProperty =
                     allTypes
-                    |> List.tryPick (fun t ->
+                    |> List.collect (fun t ->
                         t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
-                        |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current"))
+                        |> Array.filter (fun propertyInfo -> propertyInfo.Name = "Current")
+                        |> Array.toList)
+                    |> List.tryFind (fun propertyInfo -> propertyInfo.PropertyType <> typeof<obj>)
+                    |> Option.orElseWith (fun () ->
+                        allTypes
+                        |> List.tryPick (fun t ->
+                            t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+                            |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current")))
                     |> Option.toObj
 
                 match moveNextMethod, currentProperty with

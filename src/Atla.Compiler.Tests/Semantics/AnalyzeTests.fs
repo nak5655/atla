@@ -94,3 +94,77 @@ fn main (): Int = do
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``void call should not be used as value`` () =
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+        let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
+        let helloArg = Ast.Expr.String("Hello, World!", span) :> Ast.Expr
+        let callExpr = Ast.Expr.Apply(writeLineExpr, [ helloArg ], span) :> Ast.Expr
+        let letStmt = Ast.Stmt.Let("x", callExpr, span) :> Ast.Stmt
+        let valueStmt = Ast.Stmt.ExprStmt(Ast.Expr.Id("x", span) :> Ast.Expr, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ letStmt; valueStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok _ ->
+            Assert.True(false, "void 呼び出しの値文脈利用は失敗するべきです。")
+        | Result.Error diagnostics ->
+            Assert.NotEmpty(diagnostics)
+
+    [<Fact>]
+    let ``void call should not be passed as argument value`` () =
+        let span = Span.Empty
+        let importConsole = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let importInt32 = Ast.Decl.Import([ "System"; "Int32" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+
+        let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
+        let writeLineCall = Ast.Expr.Apply(writeLineExpr, [ Ast.Expr.String("x", span) :> Ast.Expr ], span) :> Ast.Expr
+        let parseExpr = Ast.Expr.StaticAccess("Int32", "Parse", span) :> Ast.Expr
+        let parseCall = Ast.Expr.Apply(parseExpr, [ writeLineCall ], span) :> Ast.Expr
+
+        let bodyStmt = Ast.Stmt.ExprStmt(parseCall, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ bodyStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ importConsole; importInt32; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok _ ->
+            Assert.True(false, "void 呼び出しを引数値として渡す場合は失敗するべきです。")
+        | Result.Error diagnostics ->
+            Assert.NotEmpty(diagnostics)
+
+    [<Fact>]
+    let ``void call should be allowed in expression statement`` () =
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+        let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
+        let callExpr = Ast.Expr.Apply(writeLineExpr, [ Ast.Expr.String("ok", span) :> Ast.Expr ], span) :> Ast.Expr
+        let bodyStmt = Ast.Stmt.ExprStmt(callExpr, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ bodyStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok hirModule ->
+            let hasError =
+                hirModule.methods
+                |> List.exists (fun m -> m.hasError)
+            Assert.False(hasError, "式文コンテキストでの void 呼び出しは許可されるべきです。")
+        | Result.Error diagnostics ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toString())
+                |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed unexpectedly: {message}")
