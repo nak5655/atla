@@ -174,9 +174,16 @@ module Layout =
                 |> Option.toObj
             let currentProperty =
                 iterCandidateTypes
-                |> List.tryPick (fun t ->
+                |> List.collect (fun t ->
                     t.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
-                    |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current"))
+                    |> Array.filter (fun propertyInfo -> propertyInfo.Name = "Current")
+                    |> Array.toList)
+                |> List.tryFind (fun propertyInfo -> propertyInfo.PropertyType <> typeof<obj>)
+                |> Option.orElseWith (fun () ->
+                    iterCandidateTypes
+                    |> List.tryPick (fun t ->
+                        t.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+                        |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current")))
                 |> Option.toObj
             let currentGetter =
                 match currentProperty with

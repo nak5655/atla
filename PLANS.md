@@ -1,5 +1,38 @@
 # Plan
 
+## 2026-04-11 Unit/Void 同値化（Semantic吸収 + Lowering整合）
+
+- [x] `Semantics` で `Unit` と `Native System.Void` を文脈付きで同値化し、`void` 呼び出しを文文脈で `Unit` として許可する。
+- [x] `Semantics` で `void` を値文脈（`let`/`var` 右辺など）として扱えないようにし、診断を返す。
+- [x] `Lowering/Gen` で `Unit` 返り値メソッドを CLR `void` シグネチャへ正規化し、entrypoint 実行制約を満たす。
+- [x] `AnalyzeTests` に `void` 値利用禁止の回帰テストを追加する。
+- [x] `doc` 配下に今回の Unit/Void 設計を文書化する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-11 Unit/Void フェーズ2（Semantic値文脈の厳密化）
+
+- [x] `Analyze.unifyOrError` で `Native System.Void` の許容文脈を `expected = Unit` のみに制限する。
+- [x] `let` / `var` / `assign` の個別 `void` 判定を削除し、型統一エラーへ一本化する。
+- [x] 既存の `void` 値利用禁止テストを新ルール（型不一致診断）に合わせて更新する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-11 Unit/Void フェーズ3（Loweringシグネチャ整合の検証強化）
+
+- [x] `Gen` で `TypeId.Unit` 戻り値メソッドが CLR `System.Void` になることを検証する回帰テストを追加する。
+- [x] `TypeId.Int` 戻り値が従来どおり `System.Int32` として生成されることを併せて確認する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-11 Unit/Void フェーズ4（境界ケースのテスト拡充）
+
+- [x] `void` 呼び出しが式文コンテキストでは許可されることを `AnalyzeTests` で追加検証する。
+- [x] `main: Int` の実行終了コードが戻り値と一致することを `LoweringTests` で追加検証する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-11 Unit/Void フェーズ5（完了確認とドキュメント整備）
+
+- [x] `unit-void-design.md` にフェーズ4/5の検証観点（実行終了コード・式文許可）を追記する。
+- [x] 追加テストを含めてフルテストスイートの通過を確認し、完了条件を満たす。
+
 ## 2026-04-10 DesugarTests の AnalyzeTests への移動
 
 - [x] `Lowering/Desugar/DesugarTests.fs` の do block テストを `Semantics/AnalyzeTests.fs` へ移動する。

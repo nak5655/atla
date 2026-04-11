@@ -55,16 +55,34 @@ module Gen =
         | Mir.Value.FieldVal field ->
             genValue gen (Mir.Value.RegVal(Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0
             gen.Emit(OpCodes.Ldfld, field)
+        | Mir.Value.MethodVal methodInfo ->
+            failwithf "Method value cannot be loaded directly: %A" methodInfo
 
     // MIR命令をIL命令列へ変換する
     let private genIns (env: Env) (gen: ILGenerator) (ins: Mir.Ins) =
         let emitMethodCall (methodInfo: MethodInfo) =
             if methodInfo.IsStatic then
                 gen.Emit(OpCodes.Call, methodInfo)
+            elif methodInfo.DeclaringType.IsValueType then
+                gen.Emit(OpCodes.Call, methodInfo)
             elif methodInfo.IsVirtual || methodInfo.DeclaringType.IsInterface then
                 gen.Emit(OpCodes.Callvirt, methodInfo)
             else
                 gen.Emit(OpCodes.Call, methodInfo)
+
+        let emitMethodArgs (methodInfo: MethodInfo) (args: Mir.Value list) =
+            match args with
+            | receiver :: rest when not methodInfo.IsStatic && methodInfo.DeclaringType.IsValueType ->
+                match receiver with
+                | Mir.Value.RegVal (Mir.Reg.Loc index) -> gen.Emit(OpCodes.Ldloca, index)
+                | Mir.Value.RegVal (Mir.Reg.Arg index) -> gen.Emit(OpCodes.Ldarga, index)
+                | _ -> genValue gen receiver
+
+                for arg in rest do
+                    genValue gen arg
+            | _ ->
+                for arg in args do
+                    genValue gen arg
 
         match ins with
         // 単純代入
@@ -100,11 +118,14 @@ module Gen =
             gen.Emit(OpCodes.Ret)
         // 関数/コンストラクタ呼び出し
         | Mir.Ins.Call (method, args) ->
-            for arg in args do
-                genValue gen arg
             match method with
-            | Choice1Of2 mi -> emitMethodCall mi
-            | Choice2Of2 ci -> gen.Emit(OpCodes.Call, ci)
+            | Choice1Of2 mi ->
+                emitMethodArgs mi args
+                emitMethodCall mi
+            | Choice2Of2 ci ->
+                for arg in args do
+                    genValue gen arg
+                gen.Emit(OpCodes.Call, ci)
         | Mir.Ins.CallSym (sid, args) ->
             for arg in args do
                 genValue gen arg
@@ -112,8 +133,7 @@ module Gen =
             | true, methodInfo -> gen.Emit(OpCodes.Call, methodInfo)
             | false, _ -> failwithf "Unknown method symbol: %A" sid
         | Mir.Ins.CallAssign (dst, method, args) ->
-            for arg in args do
-                genValue gen arg
+            emitMethodArgs method args
             emitMethodCall method
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
@@ -209,6 +229,11 @@ module Gen =
 
     // 型メンバー（フィールド/コンストラクタ/メソッド）を生成し、mainメソッドがあれば返す
     let private genType (env: Env) (typ: Mir.Type) : MethodInfo option =
+        let resolveMethodReturnType (tid: TypeId) : Type =
+            match tid with
+            | TypeId.Unit -> typeof<Void>
+            | _ -> resolveType env tid
+
         // フィールド定義
         for field in typ.fields do
             let fieldType = resolveType env field.typ
@@ -223,7 +248,7 @@ module Gen =
         // メソッド定義
         for method in typ.methods do
             let methodArgTypes = method.args |> List.map (resolveType env) |> List.toArray
-            let methodRetType = resolveType env method.ret
+            let methodRetType = resolveMethodReturnType method.ret
             method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
             genMethod env method
 
@@ -236,6 +261,11 @@ module Gen =
 
     // モジュール単位で型とグローバル関数を生成し、mainメソッドを返す
     let private genModule (moduleBuilder: ModuleBuilder) (modul: Mir.Module) : MethodInfo option =
+        let resolveMethodReturnType (env: Env) (tid: TypeId) : Type =
+            match tid with
+            | TypeId.Unit -> typeof<Void>
+            | _ -> resolveType env tid
+
         // モジュール内型解決テーブルを初期化
         let env =
             { typeBuilders = Dictionary<SymbolId, TypeBuilder>()
@@ -259,7 +289,7 @@ module Gen =
 
         for method in modul.methods do
             let methodArgTypes = method.args |> List.map (resolveType env) |> List.toArray
-            let methodRetType = resolveType env method.ret
+            let methodRetType = resolveMethodReturnType env method.ret
             method.builder <- globalsTypeBuilder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
             env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
 

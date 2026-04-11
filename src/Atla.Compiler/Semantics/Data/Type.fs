@@ -29,6 +29,7 @@ type TypeId =
 module TypeId =
     let fromSystemType (t: System.Type) : TypeId =
         if t = typeof<unit> then Unit
+        elif t = typeof<System.Void> then Native typeof<System.Void>
         elif t = typeof<bool> then Bool
         elif t = typeof<int> then Int
         elif t = typeof<float> then Float
@@ -81,6 +82,8 @@ module Type =
     let rec canUnify (subst: TypeSubst) (tid1: TypeId) (tid2: TypeId) : bool =
         match tid1, tid2 with
         | Unit, Unit -> true
+        | Unit, Native t
+        | Native t, Unit when t = typeof<System.Void> -> true
         | Bool, Bool -> true
         | Int, Int -> true
         | Float, Float -> true
@@ -111,6 +114,8 @@ module Type =
     let rec unify (subst: TypeSubst) (tid1: TypeId) (tid2: TypeId) : Result<TypeId, UnifyError> =
         match tid1, tid2 with
         | Unit, Unit -> Result.Ok Unit
+        | Unit, Native t
+        | Native t, Unit when t = typeof<System.Void> -> Result.Ok Unit
         | Bool, Bool -> Result.Ok Bool
         | Int, Int -> Result.Ok Int
         | Float, Float -> Result.Ok Float

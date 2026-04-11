@@ -55,3 +55,50 @@ module GenTests =
         Assert.NotNull(useFoo)
         Assert.Equal(1, useFoo.GetParameters().Length)
         Assert.Equal("Foo", useFoo.GetParameters().[0].ParameterType.Name)
+
+    [<Fact>]
+    let ``GenAssembly maps Unit return to CLR Void and preserves Int return`` () =
+        let mainSym = SymbolId 201
+        let intSym = SymbolId 202
+
+        let unitMainMethod =
+            Mir.Method(
+                "main",
+                mainSym,
+                [],
+                TypeId.Unit,
+                [ Mir.Ins.Ret ],
+                Mir.Frame())
+
+        let intMethod =
+            Mir.Method(
+                "answer",
+                intSym,
+                [],
+                TypeId.Int,
+                [ Mir.Ins.RetValue(Mir.Value.ImmVal(Mir.Imm.Int 42)) ],
+                Mir.Frame())
+
+        let assembly =
+            Mir.Assembly(
+                "GenUnitVoidReturn",
+                [ Mir.Module("MainModule", [], [ unitMainMethod; intMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-unit-void-return.dll")
+        Gen.genAssembly(assembly, asmPath)
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        let globalsType = loaded.GetType("MainModule.Globals")
+
+        Assert.NotNull(globalsType)
+
+        let main = globalsType.GetMethod("main", BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static)
+        let answer = globalsType.GetMethod("answer", BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static)
+
+        Assert.NotNull(main)
+        Assert.NotNull(answer)
+        Assert.Equal(typeof<Void>, main.ReturnType)
+        Assert.Equal(typeof<int>, answer.ReturnType)
