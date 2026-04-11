@@ -1,5 +1,12 @@
 # Plan
 
+## 2026-04-11 組み込み `range` 廃止と `Enumerable.Range` 利用への移行
+
+- [x] `Semantics/Resolve.fs` から組み込み `range` 登録を削除する。
+- [x] `Parser`/`Semantic`/`Lowering` テストとサンプルコードを `Enumerable.Range` 呼び出しへ更新する。
+- [x] 関連ドキュメント（semantic-phase-design）を現行仕様に合わせて更新する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+
 ## 2026-04-11 nullary関数呼び出し `()` の解決修正
 
 - [x] `Semantics/Analyze.fs` の関数適用解析で、`f ()` を 0 引数呼び出しとして正規化した型解決を行う。

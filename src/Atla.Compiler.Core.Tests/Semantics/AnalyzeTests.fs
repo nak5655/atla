@@ -206,12 +206,14 @@ fn main: () = greet ()
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``for statement accepts range builtin enumerable`` () =
+    let ``for statement accepts Enumerable.Range enumerable`` () =
         let program = """
 import System.Console
 
+import System.Linq.Enumerable
+
 fn main: () = do
-    for i in range 1 20
+    for i in Enumerable.Range 1 20
         Console.WriteLine i
 """
 
@@ -228,7 +230,7 @@ fn main: () = do
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | Result.Ok hirModule ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
-                    Assert.False(hasError, "range 組み込みによる for 解析に失敗しています。")
+                    Assert.False(hasError, "Enumerable.Range による for 解析に失敗しています。")
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics

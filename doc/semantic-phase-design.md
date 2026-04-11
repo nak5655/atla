@@ -60,11 +60,11 @@
 - 境界が明確なため回帰時の原因特定が容易
 - `Resolve` / `Analyze` / `Infer` の独立改善が可能
 
-## 組み込み `range` の扱い
+## `Enumerable.Range` の扱い
 
-- `Resolve` は組み込み関数 `range` を `System.Linq.Enumerable.Range(int, int)` にバインドして `Scope` へ登録する。
+- `Resolve` は組み込み関数を追加せず、`import System.Linq.Enumerable` を通じた通常の静的メソッド解決を利用する。
 - `Analyze` の `for` 文解析は、`MoveNext`/`Current` を直接持つ反復子だけでなく、`GetEnumerator()` を持つ `IEnumerable` も受理し、必要に応じて `GetEnumerator()` 呼び出しを HIR に明示化する。
-- これにより `for i in range 1 20` のような書き方でも、Lowering には常に反復子形（`MoveNext`/`Current`）が渡る。
+- これにより `for i in Enumerable.Range 1 20` のような書き方でも、Lowering には常に反復子形（`MoveNext`/`Current`）が渡る。
 
 ## ネイティブメソッド呼び出し（optional 引数）の扱い
 
