@@ -1,5 +1,12 @@
 # Plan
 
+## 2026-04-11 組み込み関数 range 追加
+
+- [x] `Semantics/Resolve.fs` に組み込み `range` を追加し、`System.Linq.Enumerable.Range(int, int)` へ解決できるようにする。
+- [x] `Semantics/Analyze.fs` の `for` 解析を拡張し、`IEnumerable` 入力時に `GetEnumerator()` を自動適用して `for i in range 1 20` を受理できるようにする。
+- [x] `Parser`/`Semantic`/`Lowering` テストを `range` 利用形へ更新・追加し、回帰を防止する。
+- [x] フルテストスイートを実行して変更の妥当性を確認する。
+
 ## 2026-04-11 Atla.Cli 実行ファイル名変更（atla.exe）
 
 - [x] `Atla.Cli` の出力アセンブリ名を `atla` に固定し、実行ファイル名を `atla.exe` とする。

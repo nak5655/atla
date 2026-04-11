@@ -93,6 +93,42 @@ module Analyze =
             | _ -> ()
         Seq.toList result
 
+    type private EnumeratorMembers =
+        { iteratorType: System.Type
+          moveNext: MethodInfo
+          current: PropertyInfo }
+
+    let private tryResolveEnumeratorMembers (iterableSystemType: System.Type) : EnumeratorMembers option =
+        let allTypes = iterableSystemType :: (iterableSystemType.GetInterfaces() |> Array.toList)
+        let moveNextMethod =
+            allTypes
+            |> List.tryPick (fun t ->
+                t.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+                |> Array.tryFind (fun methodInfo -> methodInfo.Name = "MoveNext" && methodInfo.GetParameters().Length = 0))
+        let currentProperty =
+            allTypes
+            |> List.collect (fun t ->
+                t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+                |> Array.filter (fun propertyInfo -> propertyInfo.Name = "Current")
+                |> Array.toList)
+            |> List.tryFind (fun propertyInfo -> propertyInfo.PropertyType <> typeof<obj>)
+            |> Option.orElseWith (fun () ->
+                allTypes
+                |> List.tryPick (fun t ->
+                    t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+                    |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current")))
+
+        match moveNextMethod, currentProperty with
+        | Some moveNext, Some current ->
+            Some { iteratorType = iterableSystemType; moveNext = moveNext; current = current }
+        | _ -> None
+
+    let private tryGetEnumerator (iterableSystemType: System.Type) : MethodInfo option =
+        (iterableSystemType :: (iterableSystemType.GetInterfaces() |> Array.toList))
+        |> List.tryPick (fun t ->
+            t.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+            |> Array.tryFind (fun methodInfo -> methodInfo.Name = "GetEnumerator" && methodInfo.GetParameters().Length = 0))
+
     let private errorExpr (tid: TypeId) (span: Atla.Compiler.Core.Data.Span) (message: string) : Hir.Expr =
         Hir.Expr.ExprError(message, tid, span)
 
@@ -389,38 +425,34 @@ module Analyze =
             | None ->
                 Hir.Stmt.ErrorStmt(sprintf "For iterable is not a supported runtime type: %A at %A" resolvedIterableType forStmt.span, forStmt.span)
             | Some iterableSystemType ->
-                let allTypes = iterableSystemType :: (iterableSystemType.GetInterfaces() |> Array.toList)
-                let moveNextMethod =
-                    allTypes
-                    |> List.tryPick (fun t ->
-                        t.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
-                        |> Array.tryFind (fun methodInfo -> methodInfo.Name = "MoveNext" && methodInfo.GetParameters().Length = 0))
-                    |> Option.toObj
-                let currentProperty =
-                    allTypes
-                    |> List.collect (fun t ->
-                        t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
-                        |> Array.filter (fun propertyInfo -> propertyInfo.Name = "Current")
-                        |> Array.toList)
-                    |> List.tryFind (fun propertyInfo -> propertyInfo.PropertyType <> typeof<obj>)
-                    |> Option.orElseWith (fun () ->
-                        allTypes
-                        |> List.tryPick (fun t ->
-                            t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
-                            |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current")))
-                    |> Option.toObj
+                let iteratorResolution =
+                    match tryResolveEnumeratorMembers iterableSystemType with
+                    | Some members -> Some(iterable, members)
+                    | None ->
+                        match tryGetEnumerator iterableSystemType with
+                        | Some getEnumeratorMethod ->
+                            let iteratorType = getEnumeratorMethod.ReturnType
+                            tryResolveEnumeratorMembers iteratorType
+                            |> Option.map (fun members ->
+                                let getEnumeratorExpr =
+                                    Hir.Expr.Call(
+                                        Hir.Callable.NativeMethod getEnumeratorMethod,
+                                        None,
+                                        [ iterable ],
+                                        TypeId.fromSystemType iteratorType,
+                                        forStmt.span)
+                                getEnumeratorExpr, members)
+                        | None -> None
 
-                match moveNextMethod, currentProperty with
-                | null, _ ->
-                    Hir.Stmt.ErrorStmt(sprintf "For iterable type '%A' does not define instance method MoveNext() at %A" iterableSystemType forStmt.span, forStmt.span)
-                | _, null ->
-                    Hir.Stmt.ErrorStmt(sprintf "For iterable type '%A' does not define instance property Current at %A" iterableSystemType forStmt.span, forStmt.span)
-                | _, _ ->
+                match iteratorResolution with
+                | Some (resolvedIteratorExpr, resolvedIteratorType) ->
                     let loopNameEnv = nameEnv.sub()
-                    let itemType = TypeId.fromSystemType currentProperty.PropertyType
+                    let itemType = TypeId.fromSystemType resolvedIteratorType.current.PropertyType
                     let loopVarSid = loopNameEnv.declareLocal forStmt.varName itemType
                     let bodyStmts = forStmt.body |> List.map (analyzeStmt loopNameEnv typeEnv)
-                    Hir.Stmt.For(loopVarSid, itemType, iterable, bodyStmts, forStmt.span)
+                    Hir.Stmt.For(loopVarSid, itemType, resolvedIteratorExpr, bodyStmts, forStmt.span)
+                | None ->
+                    Hir.Stmt.ErrorStmt(sprintf "For iterable type '%A' does not define MoveNext/Current or GetEnumerator() at %A" iterableSystemType forStmt.span, forStmt.span)
         | _ -> failwith "Unsupported statement type"
 
     let private analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =

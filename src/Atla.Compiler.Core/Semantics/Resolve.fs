@@ -38,6 +38,29 @@ module Resolve =
         | Some _ -> ()
         | None -> declareSystemType symbolTable scope classPath |> ignore
 
+    let private declareBuiltinRange (symbolTable: SymbolTable) (scope: Scope) : unit =
+        let sid = symbolTable.NextId()
+        let rangeMethod =
+            typeof<System.Linq.Enumerable>.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
+            |> Seq.filter (fun m -> m.Name = "Range")
+            |> Seq.filter (fun m ->
+                let ps = m.GetParameters()
+                ps.Length = 2
+                && ps.[0].ParameterType = typeof<int>
+                && ps.[1].ParameterType = typeof<int>)
+            |> Seq.tryHead
+            |> Option.toObj
+
+        if obj.ReferenceEquals(rangeMethod, null) then
+            failwith "System.Linq.Enumerable.Range(int, int) was not found"
+
+        let symInfo =
+            { name = "range"
+              typ = TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.fromSystemType rangeMethod.ReturnType)
+              kind = SymbolKind.External(ExternalBinding.NativeMethodGroup [ rangeMethod ]) }
+        symbolTable.Add(sid, symInfo)
+        scope.DeclareVar("range", sid)
+
     let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : ResolvedModule =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
@@ -49,6 +72,7 @@ module Resolve =
 
         symbolTable.BuiltinOperators
         |> List.iter (fun (name, sid) -> moduleScope.DeclareVar(name, sid))
+        declareBuiltinRange symbolTable moduleScope
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
 

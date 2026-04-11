@@ -49,10 +49,8 @@ fn main: () = do
         let program = """
 import System.Array
 import System.Console
-import System.Linq.Enumerable
-
 fn fizzbuzz (n: Int): () =
-    for i in (Enumerable.Range 1 n).GetEnumerator()
+    for i in range 1 n
         Console.WriteLine if
             | i % 15 == 0 => "FizzBuzz"
             | i % 5 == 0 => "Buzz"
