@@ -1,5 +1,12 @@
 # Plan
 
+## 2026-04-11 nullary関数呼び出し `()` の解決修正
+
+- [x] `Semantics/Analyze.fs` の関数適用解析で、`f ()` を 0 引数呼び出しとして正規化した型解決を行う。
+- [x] `Semantics` テストに `fn main: () = greet ()` 相当の回帰ケースを追加する。
+- [x] `Lowering` テストにユーザー報告コード相当のコンパイル/実行ケースを追加する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+
 ## 2026-04-11 組み込み関数 range 追加
 
 - [x] `Semantics/Resolve.fs` に組み込み `range` を追加し、`System.Linq.Enumerable.Range(int, int)` へ解決できるようにする。

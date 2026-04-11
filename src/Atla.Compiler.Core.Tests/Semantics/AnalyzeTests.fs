@@ -169,6 +169,42 @@ fn main (): Int = do
                 |> String.concat "; "
             Assert.True(false, $"semantic analysis failed unexpectedly: {message}")
 
+
+    [<Fact>]
+    let ``nullary function call with unit argument syntax should be allowed`` () =
+        let program = """
+import System.Console
+
+fn greet (): () = Console.WriteLine "hello!"
+
+fn main: () = greet ()
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "`greet ()` の0引数呼び出し解析に失敗しています。")
+                | Result.Error diagnostics ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toString())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
     [<Fact>]
     let ``for statement accepts range builtin enumerable`` () =
         let program = """
