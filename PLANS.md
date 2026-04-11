@@ -390,3 +390,10 @@
 - [x] `for` 文を含むプログラムで、AST -> Semantic -> HIR -> MIR の連結が成立することをテストで検証する。
 - [x] 生成されたMIRに `MoveNext` / `Current` とループ制御命令（ラベル/ジャンプ）が含まれることを確認する。
 - [x] 追加テストを実行して結果を確認する。
+
+## 2026-04-11 `Console.ReadLine ()` 呼び出し解決の修正
+
+- [x] `Semantics/Analyze.fs` の呼び出し可能式解析で、`Console.ReadLine ()` のような static member 呼び出しを `Hir.Callable.NativeMethod` として解決できるようにする。
+- [x] `Semantics` テストに `Console.ReadLine ()` を含む回帰ケースを追加する。
+- [x] `Lowering` テストにユーザー報告コード相当のコンパイル成功ケースを追加する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。

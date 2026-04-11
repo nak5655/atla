@@ -75,23 +75,43 @@ module Analyze =
         | _ -> None
 
     let private resolveNativeMember (typeEnv: TypeEnv) (memberInfos: MemberInfo list) (tid: TypeId) : (MemberInfo * TypeId) list =
-        let result = List<MemberInfo * TypeId>()
+        let exactResult = List<MemberInfo * TypeId>()
+        let optionalResult = List<MemberInfo * TypeId>()
         for memberInfo in memberInfos do
             match memberInfo with
             | :? MethodInfo as methodInfo ->
-                let methodType = TypeId.Fn([for p in methodInfo.GetParameters() -> TypeId.fromSystemType p.ParameterType], TypeId.fromSystemType methodInfo.ReturnType)
-                if typeEnv.canUnify methodType tid then
-                    result.Add(memberInfo, methodType)
+                let parameterTypes = [ for p in methodInfo.GetParameters() -> TypeId.fromSystemType p.ParameterType ]
+                let returnType = TypeId.fromSystemType methodInfo.ReturnType
+                let methodType = TypeId.Fn(parameterTypes, returnType)
+                match tid with
+                | TypeId.Fn(expectedArgs, expectedRet) ->
+                    let parameters = methodInfo.GetParameters() |> Array.toList
+                    let requiredParamCount = parameters |> List.filter (fun p -> not p.IsOptional) |> List.length
+                    if
+                        expectedArgs.Length >= requiredParamCount
+                        && expectedArgs.Length <= parameters.Length
+                        && List.forall2 (fun expectedArg (parameterInfo: ParameterInfo) -> typeEnv.canUnify expectedArg (TypeId.fromSystemType parameterInfo.ParameterType)) expectedArgs (parameters |> List.take expectedArgs.Length)
+                        && typeEnv.canUnify expectedRet returnType then
+                        if expectedArgs.Length = parameters.Length then
+                            exactResult.Add(memberInfo, TypeId.Fn(expectedArgs, returnType))
+                        else
+                            optionalResult.Add(memberInfo, TypeId.Fn(expectedArgs, returnType))
+                | _ ->
+                    if typeEnv.canUnify methodType tid then
+                        exactResult.Add(memberInfo, methodType)
             | :? FieldInfo as fieldInfo ->
                 let fieldType = TypeId.fromSystemType fieldInfo.FieldType
                 if typeEnv.canUnify fieldType tid then
-                    result.Add(memberInfo, fieldType)
+                    exactResult.Add(memberInfo, fieldType)
             | :? PropertyInfo as propertyInfo ->
                 let propertyType = TypeId.fromSystemType propertyInfo.PropertyType
                 if typeEnv.canUnify propertyType tid then
-                    result.Add(memberInfo, propertyType)
+                    exactResult.Add(memberInfo, propertyType)
             | _ -> ()
-        Seq.toList result
+        if exactResult.Count > 0 then
+            Seq.toList exactResult
+        else
+            Seq.toList optionalResult
 
     type private EnumeratorMembers =
         { iteratorType: System.Type
@@ -155,8 +175,30 @@ module Analyze =
             | Result.Ok _ -> Result.Ok ()
             | Result.Error err -> Result.Error(errorExpr expected span (UnifyError.toMessage err))
 
-    let rec private analyzeExprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Ast.Expr) (tid: TypeId): Hir.Callable option =
-        match analyzeExpr nameEnv typeEnv expr tid with
+    let private tryDefaultArgExpr (parameterInfo: ParameterInfo) (span: Atla.Compiler.Core.Data.Span) : Hir.Expr option =
+        if not parameterInfo.IsOptional then
+            None
+        elif not parameterInfo.HasDefaultValue then
+            None
+        else
+            let parameterType = parameterInfo.ParameterType
+            let defaultValue = parameterInfo.DefaultValue
+            if parameterType.IsEnum then
+                let intValue = System.Convert.ToInt32(defaultValue)
+                Some(Hir.Expr.Int(intValue, span))
+            elif parameterType = typeof<int> then
+                Some(Hir.Expr.Int(unbox<int> defaultValue, span))
+            elif parameterType = typeof<bool> then
+                Some(Hir.Expr.Int((if unbox<bool> defaultValue then 1 else 0), span))
+            elif parameterType = typeof<float> then
+                Some(Hir.Expr.Float(unbox<float> defaultValue, span))
+            elif parameterType = typeof<string> then
+                Some(Hir.Expr.String((if obj.ReferenceEquals(defaultValue, null) then "" else unbox<string> defaultValue), span))
+            else
+                None
+
+    let rec private exprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Hir.Expr): Hir.Callable option =
+        match expr with
         | Hir.Expr.Id (sid, _, _) ->
             match nameEnv.resolveSym sid with
             | Some symInfo ->
@@ -222,10 +264,12 @@ module Analyze =
                 match analyzedArgs with
                 | [Hir.Expr.Unit _] -> []
                 | _ -> analyzedArgs
-            let funcType = normalizedArgs |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, tid)
-            let callable = analyzeExprAsCallable nameEnv typeEnv applyExpr.func funcType
+            let callRetType = typeEnv.freshMeta()
+            let funcType = normalizedArgs |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, callRetType)
+            let analyzedFunc = analyzeExpr nameEnv typeEnv applyExpr.func funcType
+            let callable = exprAsCallable nameEnv typeEnv analyzedFunc
             let instanceArgs =
-                match analyzeExpr nameEnv typeEnv applyExpr.func funcType with
+                match analyzedFunc with
                 | Hir.Expr.MemberAccess (_, Some instance, _, _) -> [ instance ]
                 | _ -> []
             match callable with
@@ -234,7 +278,7 @@ module Analyze =
                 let resolvedCall =
                     match resolvedCallable with
                     | Hir.Callable.NativeMethodGroup methods ->
-                        match methods |> List.filter (fun methodInfo -> methodInfo.GetParameters().Length = allArgs.Length) with
+                        match methods |> List.filter (fun methodInfo -> allArgs.Length <= methodInfo.GetParameters().Length) with
                         | [methodInfo] -> Some (Hir.Callable.NativeMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
                         | _ -> None
                     | Hir.Callable.NativeConstructorGroup ctors ->
@@ -243,12 +287,26 @@ module Analyze =
                         | _ -> None
                     | Hir.Callable.NativeMethod methodInfo -> Some (resolvedCallable, TypeId.fromSystemType methodInfo.ReturnType)
                     | Hir.Callable.NativeConstructor ctorInfo -> Some (resolvedCallable, TypeId.fromSystemType ctorInfo.DeclaringType)
-                    | _ -> Some (resolvedCallable, tid)
+                    | _ -> Some (resolvedCallable, typeEnv.resolveType callRetType)
 
                 match resolvedCall with
                 | Some (callableExpr, callRetType) ->
+                    let callArgs =
+                        match callableExpr with
+                        | Hir.Callable.NativeMethod methodInfo when methodInfo.GetParameters().Length > allArgs.Length ->
+                            let parameters = methodInfo.GetParameters()
+                            let missingDefaults =
+                                parameters
+                                |> Array.skip allArgs.Length
+                                |> Array.toList
+                                |> List.map (fun p -> tryDefaultArgExpr p applyExpr.span)
+                            if missingDefaults |> List.forall Option.isSome then
+                                allArgs @ (missingDefaults |> List.choose id)
+                            else
+                                allArgs
+                        | _ -> allArgs
                     match unifyOrError typeEnv tid callRetType applyExpr.span with
-                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, allArgs, callRetType, applyExpr.span)
+                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, callArgs, callRetType, applyExpr.span)
                     | Result.Error exprErr -> exprErr
                 | None ->
                     Hir.Expr.ExprError(sprintf "No overload matched argument count %d at %A" allArgs.Length applyExpr.span, tid, applyExpr.span)
@@ -411,8 +469,11 @@ module Analyze =
         | :? Ast.Stmt.Assign as assignStmt ->
             let tid = typeEnv.freshMeta ()
             let rhs = analyzeExpr nameEnv typeEnv assignStmt.value tid
-            match nameEnv.resolveVar assignStmt.name rhs.typ with
-            | [sid] -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)
+            match nameEnv.resolveVar assignStmt.name (typeEnv.freshMeta ()) with
+            | [sid] ->
+                match unifyOrError typeEnv (nameEnv.resolveSymType sid) rhs.typ assignStmt.span with
+                | Result.Ok _ -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)
+                | Result.Error exprErr -> Hir.Stmt.ExprStmt(exprErr, assignStmt.span)
             | [] -> Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" assignStmt.name assignStmt.span, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
             | _ -> failwith (sprintf "Ambiguous variable '%s' at %A" assignStmt.name assignStmt.span)
         | :? Ast.Stmt.ExprStmt as exprStmt ->

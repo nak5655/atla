@@ -65,3 +65,9 @@
 - `Resolve` は組み込み関数 `range` を `System.Linq.Enumerable.Range(int, int)` にバインドして `Scope` へ登録する。
 - `Analyze` の `for` 文解析は、`MoveNext`/`Current` を直接持つ反復子だけでなく、`GetEnumerator()` を持つ `IEnumerable` も受理し、必要に応じて `GetEnumerator()` 呼び出しを HIR に明示化する。
 - これにより `for i in range 1 20` のような書き方でも、Lowering には常に反復子形（`MoveNext`/`Current`）が渡る。
+
+## ネイティブメソッド呼び出し（optional 引数）の扱い
+
+- `Analyze` のネイティブメンバー解決では、まず「引数個数が完全一致する候補」を優先し、存在しない場合のみ optional 引数を末尾に持つ候補を許可する。
+- optional 引数が省略された呼び出しは、既定値を HIR 引数として補完してから `Hir.Expr.Call` を構築する。
+- これにより、`n_x.Split " "` のような 1 引数呼び出しでも `System.String.Split(string, StringSplitOptions=...)` を解決できる。
