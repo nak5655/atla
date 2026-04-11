@@ -218,11 +218,11 @@ module Analyze =
                 Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
             let analyzedArgs = applyExpr.args |> List.map (fun arg -> analyzeExpr nameEnv typeEnv arg (typeEnv.freshMeta()))
-            let args =
+            let normalizedArgs =
                 match analyzedArgs with
                 | [Hir.Expr.Unit _] -> []
                 | _ -> analyzedArgs
-            let funcType = args |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, tid)
+            let funcType = normalizedArgs |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, tid)
             let callable = analyzeExprAsCallable nameEnv typeEnv applyExpr.func funcType
             let instanceArgs =
                 match analyzeExpr nameEnv typeEnv applyExpr.func funcType with
@@ -230,7 +230,7 @@ module Analyze =
                 | _ -> []
             match callable with
             | Some resolvedCallable ->
-                let allArgs = instanceArgs @ args
+                let allArgs = instanceArgs @ normalizedArgs
                 let resolvedCall =
                     match resolvedCallable with
                     | Hir.Callable.NativeMethodGroup methods ->
@@ -458,7 +458,11 @@ module Analyze =
     let private analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =
         let bodyNameEnv = nameEnv.sub()
         let retType = nameEnv.resolveTypeExpr fnDecl.ret
-        let argTypes = fnDecl.args |> List.map bodyNameEnv.resolveArgType
+        let rawArgTypes = fnDecl.args |> List.map bodyNameEnv.resolveArgType
+        let argTypes =
+            match fnDecl.args, rawArgTypes with
+            | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
+            | _ -> rawArgTypes
 
         fnDecl.args
         |> List.iteri (fun index arg ->

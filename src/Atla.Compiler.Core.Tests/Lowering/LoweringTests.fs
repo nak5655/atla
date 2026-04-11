@@ -44,6 +44,44 @@ fn main: () = do
         Assert.Equal("Hello, World!", stdout.Trim())
 
 
+
+    [<Fact>]
+    let ``nullary function call with unit argument syntax compiles and runs`` () =
+        let program = """
+import System.Console
+
+fn greet (): () = Console.WriteLine "hello!"
+
+fn main: () = greet ()
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile("NullaryCall", program.Trim(), outDir)
+        Assert.True(res.IsOk)
+
+        let dllPath = Path.Join(outDir, "NullaryCall.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("hello!", stdout.Trim())
+
     [<Fact>]
     let ``fizzbuzz program compiles`` () =
         let program = """
