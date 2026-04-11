@@ -242,7 +242,7 @@ fn main: () = do
 import System.Console
 
 fn main: () = do
-    let a = (Console.ReadLine ()).Replace " " ""
+    let a = Console.ReadLine ()
     Console.WriteLine a[1]
 """
 
@@ -266,7 +266,7 @@ fn main: () = do
             )
 
         use proc = Process.Start(psi)
-        proc.StandardInput.WriteLine("1 2 3")
+        proc.StandardInput.WriteLine("12")
         proc.StandardInput.Close()
 
         let stdout = proc.StandardOutput.ReadToEnd()
