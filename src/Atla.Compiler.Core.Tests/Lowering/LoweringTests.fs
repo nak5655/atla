@@ -276,3 +276,44 @@ fn main: () = do
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("2", stdout.Trim())
+
+    [<Fact>]
+    let ``array index access on split result reads first token`` () =
+        let program = """
+import System.Console
+
+fn main: () = do
+    let a = (Console.ReadLine ()).Split " "
+    Console.WriteLine a[0]
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile("ArrayIndexAccessSplit", program.Trim(), outDir)
+        Assert.True(res.IsOk)
+
+        let dllPath = Path.Join(outDir, "ArrayIndexAccessSplit.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        proc.StandardInput.WriteLine("12 34")
+        proc.StandardInput.Close()
+
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("12", stdout.Trim())
