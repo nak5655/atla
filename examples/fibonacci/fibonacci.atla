@@ -1,4 +1,3 @@
-import System.Int32
 import System.Console
 
 fn fibonacci (n: Int): Int = if 

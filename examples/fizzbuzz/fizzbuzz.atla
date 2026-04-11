@@ -1,0 +1,15 @@
+import System::Array
+import System::Console
+import System::Linq::Enumerable
+
+fn fizzbuzz (n: Int): () =
+    for i in (Enumerable.Range 1 n).GetEnumerator()
+        Console.WriteLine if
+            | i % 15 == 0 => "FizzBuzz"
+            | i % 5 == 0 => "Buzz"
+            | i % 3 == 0 => "Fizz"
+            | else => i.ToString()
+
+fn main: () = do
+    let n = Int32.Parse (Console.ReadLine ())
+    fizzbuzz n
