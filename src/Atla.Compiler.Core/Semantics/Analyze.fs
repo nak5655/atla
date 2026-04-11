@@ -197,6 +197,23 @@ module Analyze =
             else
                 None
 
+    let private tryResolveIndexerMethod (receiverType: System.Type) : MethodInfo option =
+        let allTypes = receiverType :: (receiverType.GetInterfaces() |> Array.toList)
+        let candidates =
+            allTypes
+            |> List.collect (fun t ->
+                t.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+                |> Array.filter (fun methodInfo ->
+                    let ps = methodInfo.GetParameters()
+                    ps.Length = 1 && ps.[0].ParameterType = typeof<int>)
+                |> Array.toList)
+        let pickByName name =
+            candidates |> List.tryFind (fun methodInfo -> methodInfo.Name = name)
+
+        pickByName "Get"
+        |> Option.orElseWith (fun () -> pickByName "get_Item")
+        |> Option.orElseWith (fun () -> pickByName "GetValue")
+
     let rec private exprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Hir.Expr): Hir.Callable option =
         match expr with
         | Hir.Expr.Id (sid, _, _) ->
@@ -312,6 +329,29 @@ module Analyze =
                     Hir.Expr.ExprError(sprintf "No overload matched argument count %d at %A" allArgs.Length applyExpr.span, tid, applyExpr.span)
             | None ->
                 Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
+        | :? Ast.Expr.IndexAccess as indexAccessExpr ->
+            let receiver = analyzeExpr nameEnv typeEnv indexAccessExpr.receiver (typeEnv.freshMeta ())
+            let indexExpr = analyzeExpr nameEnv typeEnv indexAccessExpr.index TypeId.Int
+            let resolvedReceiverType = typeEnv.resolveType receiver.typ
+
+            let resolvedIndexResult =
+                match TypeId.tryToRuntimeSystemType resolvedReceiverType with
+                | Some systemType ->
+                    match tryResolveIndexerMethod systemType with
+                    | Some methodInfo ->
+                        let returnType = TypeId.fromSystemType methodInfo.ReturnType
+                        match unifyOrError typeEnv tid returnType indexAccessExpr.span with
+                        | Result.Ok _ ->
+                            Result.Ok(Hir.Expr.Call(Hir.Callable.NativeMethod methodInfo, None, [ receiver; indexExpr ], returnType, indexAccessExpr.span))
+                        | Result.Error errExpr -> Result.Error errExpr
+                    | None ->
+                        Result.Error(Hir.Expr.ExprError(sprintf "Type '%A' does not support single-index access at %A" systemType indexAccessExpr.span, tid, indexAccessExpr.span))
+                | None ->
+                    Result.Error(Hir.Expr.ExprError(sprintf "Type '%A' is not a runtime indexable type at %A" resolvedReceiverType indexAccessExpr.span, tid, indexAccessExpr.span))
+
+            match resolvedIndexResult with
+            | Result.Ok resolvedExpr -> resolvedExpr
+            | Result.Error errExpr -> errExpr
         | :? Ast.Expr.MemberAccess as memberAccessExpr ->
             let resolveMemberFromSystemTypeResult (sysType: System.Type) : Result<Hir.Expr, string> =
                 let memberInfos =

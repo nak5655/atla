@@ -235,3 +235,22 @@ fn main: () = do
 
         let dllPath = Path.Join(outDir, "SplitOptionalArg.dll")
         Assert.True(File.Exists dllPath)
+
+    [<Fact>]
+    let ``array index access compiles`` () =
+        let program = """
+import System.Console
+
+fn main: () = do
+    let a = (Console.ReadLine ()).Split " "
+    Console.WriteLine a[0]
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile("ArrayIndexAccess", program.Trim(), outDir)
+        Assert.True(res.IsOk)
+
+        let dllPath = Path.Join(outDir, "ArrayIndexAccess.dll")
+        Assert.True(File.Exists dllPath)

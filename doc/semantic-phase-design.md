@@ -71,3 +71,9 @@
 - `Analyze` のネイティブメンバー解決では、まず「引数個数が完全一致する候補」を優先し、存在しない場合のみ optional 引数を末尾に持つ候補を許可する。
 - optional 引数が省略された呼び出しは、既定値を HIR 引数として補完してから `Hir.Expr.Call` を構築する。
 - これにより、`n_x.Split " "` のような 1 引数呼び出しでも `System.String.Split(string, StringSplitOptions=...)` を解決できる。
+
+## インデックスアクセス `expr[index]` の扱い
+
+- `Parser` は `expr[index]` を `Ast.Expr.IndexAccess` として構築する（`expr.member[index]` のような後置連結も同じ後置規則で処理する）。
+- `Analyze` は `IndexAccess` をネイティブ呼び出しへ正規化し、`Get(int)` / `get_Item(int)` / `GetValue(int)` を優先順で解決して `Hir.Expr.Call` を生成する。
+- これにより、`let a = ...Split " "` の結果に対する `a[0]` のような配列アクセスも、Lowering には通常のネイティブメソッド呼び出しとして渡る。
