@@ -75,5 +75,5 @@
 ## インデックスアクセス `expr[index]` の扱い
 
 - `Parser` は `expr[index]` を `Ast.Expr.IndexAccess` として構築する（`expr.member[index]` のような後置連結も同じ後置規則で処理する）。
-- `Analyze` は `IndexAccess` をネイティブ呼び出しへ正規化し、`Get(int)` / `get_Item(int)` / `GetValue(int)` を優先順で解決して `Hir.Expr.Call` を生成する。
+- `Analyze` は `IndexAccess` をネイティブ呼び出しへ正規化し、`get_Item(int)` / `get_Chars(int)` / `Get(int)` / `GetValue(int)` を優先順で解決して `Hir.Expr.Call` を生成する。
 - これにより、`let a = ...Split " "` の結果に対する `a[0]` のような配列アクセスも、Lowering には通常のネイティブメソッド呼び出しとして渡る。

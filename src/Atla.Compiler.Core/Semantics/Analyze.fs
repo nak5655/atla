@@ -184,8 +184,15 @@ module Analyze =
             let parameterType = parameterInfo.ParameterType
             let defaultValue = parameterInfo.DefaultValue
             if parameterType.IsEnum then
-                let intValue = System.Convert.ToInt32(defaultValue)
-                Some(Hir.Expr.Int(intValue, span))
+                let enumName = System.Enum.GetName(parameterType, defaultValue)
+                if System.String.IsNullOrWhiteSpace(enumName) then
+                    None
+                else
+                    let enumField = parameterType.GetField(enumName, BindingFlags.Public ||| BindingFlags.Static)
+                    if obj.ReferenceEquals(enumField, null) then
+                        None
+                    else
+                        Some(Hir.Expr.MemberAccess(Hir.Member.NativeField enumField, None, TypeId.fromSystemType parameterType, span))
             elif parameterType = typeof<int> then
                 Some(Hir.Expr.Int(unbox<int> defaultValue, span))
             elif parameterType = typeof<bool> then
@@ -210,8 +217,9 @@ module Analyze =
         let pickByName name =
             candidates |> List.tryFind (fun methodInfo -> methodInfo.Name = name)
 
-        pickByName "Get"
-        |> Option.orElseWith (fun () -> pickByName "get_Item")
+        pickByName "get_Item"
+        |> Option.orElseWith (fun () -> pickByName "get_Chars")
+        |> Option.orElseWith (fun () -> pickByName "Get")
         |> Option.orElseWith (fun () -> pickByName "GetValue")
 
     let rec private exprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Hir.Expr): Hir.Callable option =

@@ -53,8 +53,11 @@ module Gen =
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Ldarg, index) // TODO Ldarg_0, Ldarg_1, Ldarg_2, Ldarg_3 を使う
         // this経由でフィールドをロード
         | Mir.Value.FieldVal field ->
-            genValue gen (Mir.Value.RegVal(Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0
-            gen.Emit(OpCodes.Ldfld, field)
+            if field.IsStatic then
+                gen.Emit(OpCodes.Ldsfld, field)
+            else
+                genValue gen (Mir.Value.RegVal(Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0
+                gen.Emit(OpCodes.Ldfld, field)
         | Mir.Value.MethodVal methodInfo ->
             failwithf "Method value cannot be loaded directly: %A" methodInfo
 

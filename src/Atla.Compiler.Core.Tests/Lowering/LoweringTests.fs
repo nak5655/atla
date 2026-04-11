@@ -237,13 +237,13 @@ fn main: () = do
         Assert.True(File.Exists dllPath)
 
     [<Fact>]
-    let ``array index access compiles`` () =
+    let ``array index access reads second element`` () =
         let program = """
 import System.Console
 
 fn main: () = do
-    let a = (Console.ReadLine ()).Split " "
-    Console.WriteLine a[0]
+    let a = (Console.ReadLine ()).Replace " " ""
+    Console.WriteLine a[1]
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -254,3 +254,25 @@ fn main: () = do
 
         let dllPath = Path.Join(outDir, "ArrayIndexAccess.dll")
         Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        proc.StandardInput.WriteLine("1 2 3")
+        proc.StandardInput.Close()
+
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("2", stdout.Trim())
