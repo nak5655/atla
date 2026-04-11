@@ -184,15 +184,7 @@ module Analyze =
             let parameterType = parameterInfo.ParameterType
             let defaultValue = parameterInfo.DefaultValue
             if parameterType.IsEnum then
-                let enumName = System.Enum.GetName(parameterType, defaultValue)
-                if System.String.IsNullOrWhiteSpace(enumName) then
-                    None
-                else
-                    let enumField = parameterType.GetField(enumName, BindingFlags.Public ||| BindingFlags.Static)
-                    if obj.ReferenceEquals(enumField, null) then
-                        None
-                    else
-                        Some(Hir.Expr.MemberAccess(Hir.Member.NativeField enumField, None, TypeId.fromSystemType parameterType, span))
+                Some(Hir.Expr.Int(System.Convert.ToInt32(defaultValue), span))
             elif parameterType = typeof<int> then
                 Some(Hir.Expr.Int(unbox<int> defaultValue, span))
             elif parameterType = typeof<bool> then
@@ -205,6 +197,13 @@ module Analyze =
                 None
 
     let private tryResolveIndexerMethod (receiverType: System.Type) : MethodInfo option =
+        let tryResolveSingleDimArrayIndexer () =
+            if receiverType.IsArray && receiverType.GetArrayRank() = 1 then
+                receiverType.GetMethod("GetValue", BindingFlags.Public ||| BindingFlags.Instance, null, [| typeof<int> |], null)
+                |> Option.ofObj
+            else
+                None
+
         let allTypes = receiverType :: (receiverType.GetInterfaces() |> Array.toList)
         let candidates =
             allTypes
@@ -217,10 +216,9 @@ module Analyze =
         let pickByName name =
             candidates |> List.tryFind (fun methodInfo -> methodInfo.Name = name)
 
-        pickByName "get_Item"
+        tryResolveSingleDimArrayIndexer ()
+        |> Option.orElseWith (fun () -> pickByName "get_Item")
         |> Option.orElseWith (fun () -> pickByName "get_Chars")
-        |> Option.orElseWith (fun () -> pickByName "Get")
-        |> Option.orElseWith (fun () -> pickByName "GetValue")
 
     let rec private exprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Hir.Expr): Hir.Callable option =
         match expr with
@@ -300,11 +298,35 @@ module Analyze =
             match callable with
             | Some resolvedCallable ->
                 let allArgs = instanceArgs @ normalizedArgs
+                let suppliedParameterCount (methodInfo: MethodInfo) =
+                    let instanceOffset = if methodInfo.IsStatic then 0 else 1
+                    max 0 (allArgs.Length - instanceOffset)
+
+                let canApplyWithOptionalDefaults (methodInfo: MethodInfo) =
+                    let parameters = methodInfo.GetParameters()
+                    let suppliedCount = suppliedParameterCount methodInfo
+                    if suppliedCount > parameters.Length then
+                        false
+                    else
+                        parameters
+                        |> Array.skip suppliedCount
+                        |> Array.forall (fun p -> p.IsOptional && (tryDefaultArgExpr p applyExpr.span |> Option.isSome))
+
                 let resolvedCall =
                     match resolvedCallable with
                     | Hir.Callable.NativeMethodGroup methods ->
-                        match methods |> List.filter (fun methodInfo -> allArgs.Length <= methodInfo.GetParameters().Length) with
-                        | [methodInfo] -> Some (Hir.Callable.NativeMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
+                        let exactArity =
+                            methods
+                            |> List.filter (fun methodInfo -> methodInfo.GetParameters().Length = suppliedParameterCount methodInfo)
+
+                        let optionalArity =
+                            methods
+                            |> List.filter (fun methodInfo -> methodInfo.GetParameters().Length > suppliedParameterCount methodInfo)
+                            |> List.filter canApplyWithOptionalDefaults
+
+                        match exactArity, optionalArity with
+                        | [methodInfo], _ -> Some (Hir.Callable.NativeMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
+                        | [], [methodInfo] -> Some (Hir.Callable.NativeMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
                         | _ -> None
                     | Hir.Callable.NativeConstructorGroup ctors ->
                         match ctors |> List.filter (fun ctorInfo -> ctorInfo.GetParameters().Length = allArgs.Length) with
@@ -318,17 +340,15 @@ module Analyze =
                 | Some (callableExpr, callRetType) ->
                     let callArgs =
                         match callableExpr with
-                        | Hir.Callable.NativeMethod methodInfo when methodInfo.GetParameters().Length > allArgs.Length ->
+                        | Hir.Callable.NativeMethod methodInfo when methodInfo.GetParameters().Length > suppliedParameterCount methodInfo ->
                             let parameters = methodInfo.GetParameters()
+                            let suppliedCount = suppliedParameterCount methodInfo
                             let missingDefaults =
                                 parameters
-                                |> Array.skip allArgs.Length
+                                |> Array.skip suppliedCount
                                 |> Array.toList
                                 |> List.map (fun p -> tryDefaultArgExpr p applyExpr.span)
-                            if missingDefaults |> List.forall Option.isSome then
-                                allArgs @ (missingDefaults |> List.choose id)
-                            else
-                                allArgs
+                            allArgs @ (missingDefaults |> List.choose id)
                         | _ -> allArgs
                     match unifyOrError typeEnv tid callRetType applyExpr.span with
                     | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, callArgs, callRetType, applyExpr.span)

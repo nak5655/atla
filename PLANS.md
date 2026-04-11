@@ -424,3 +424,10 @@
 
 - [x] `LoweringTests` のインデックスアクセス実行テストを指定コード（`Console.ReadLine` + `a[1]`）へ置き換える。
 - [x] 対象テストを実行して通過を確認する。
+
+## 2026-04-11 `Split` 結果配列のインデックスアクセス実行不具合修正
+
+- [x] `Semantics/Analyze.fs` の indexer 解決を見直し、1 次元配列では `System.Array.GetValue(int)` を優先して実行時に安全な呼び出しへ正規化する。
+- [x] `LoweringTests` にユーザー報告コード（`(Console.ReadLine ()).Split " "` + `a[0]`）の実行検証付き回帰テストを追加する。
+- [x] ドキュメント（`doc/semantic-phase-design.md`）の indexer 解決仕様を現実装に合わせて更新する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
