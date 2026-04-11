@@ -134,3 +134,40 @@ fn main: () = do
                 Assert.True(false, "function declaration was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses index access expression`` () =
+        let program = """
+import System.Console
+
+fn main: () = do
+    let a = (Console.ReadLine ()).Split " "
+    Console.WriteLine a[0]
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    match List.tryLast blockExpr.stmts with
+                    | Some (:? Ast.Stmt.ExprStmt as exprStmt) ->
+                        match exprStmt.expr with
+                        | :? Ast.Expr.Apply as applyExpr ->
+                            match applyExpr.args with
+                            | [ (:? Ast.Expr.IndexAccess) ] -> Assert.True(true)
+                            | _ -> Assert.True(false, "index access was not parsed in call argument")
+                        | _ -> Assert.True(false, "last statement was not parsed as apply expression")
+                    | _ -> Assert.True(false, "block does not end with expression statement")
+                | _ -> Assert.True(false, "main body was not parsed into block expression")
+            | None -> Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

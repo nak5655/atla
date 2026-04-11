@@ -98,6 +98,15 @@ module Ast =
                 member this.span = span
             interface HasSpan with
                 member this.span = span
+
+        type IndexAccess(receiver: Expr, index: Expr, span: Span) =
+            member this.receiver = receiver
+            member this.index = index
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
                 
         type StaticAccess(typeName: string, memberName: string, span: Span) =
             member this.typeName = typeName

@@ -122,20 +122,33 @@ module Parser =
             unit <|> paren () <|> ifExpr () <|> doExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str)
         )
 
-    and memberAccess (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            factor() <& symbol "." <&> tid |>> fun (expr, id) -> Ast.Expr.MemberAccess (expr, id.str, { left = expr.span.left; right = id.span.right })
-        )
-        
     and staticAccess (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
             tid <& delim ':' <& delim ':' <&> tid |>> fun (typ, id) -> Ast.Expr.StaticAccess (typ.str, id.str, { left = typ.span.left; right = id.span.right })
+        )
+
+    and postfixMemberAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
+        Delay (fun () ->
+            symbol "." &> tid |>> fun id ->
+                fun receiver -> Ast.Expr.MemberAccess(receiver, id.str, { left = receiver.span.left; right = id.span.right }) :> Ast.Expr
+        )
+
+    and postfixIndexAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
+        Delay (fun () ->
+            delim '[' &> expr () <&> delim ']' |>> fun (indexExpr, closeBracket) ->
+                fun receiver -> Ast.Expr.IndexAccess(receiver, indexExpr, { left = receiver.span.left; right = closeBracket.span.right }) :> Ast.Expr
+        )
+
+    and postfixExpr (): PackratParser<Token, Ast.Expr> =
+        Delay (fun () ->
+            (staticAccess () <|> factor ()) <&> Many (postfixMemberAccess () <|> postfixIndexAccess ())
+            |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes
         )
         
     // 呼び出し式の項
     and term1 (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            staticAccess () <|> memberAccess () <|> factor() 
+            postfixExpr ()
         )
 
     // 呼び出し式

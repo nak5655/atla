@@ -88,6 +88,7 @@ module Type =
         | Int, Int -> true
         | Float, Float -> true
         | String, String -> true
+        | Native t1, Native t2 when t1 = t2 -> true
         | Name id1, Name id2 when id1 = id2 -> true
         | Fn (args1, ret1), Fn (args2, ret2) ->
             if List.length args1 <> List.length args2 then
@@ -120,6 +121,7 @@ module Type =
         | Int, Int -> Result.Ok Int
         | Float, Float -> Result.Ok Float
         | String, String -> Result.Ok String
+        | Native t1, Native t2 when t1 = t2 -> Result.Ok (Native t1)
         | Name id1, Name id2 when id1 = id2 -> Result.Ok(Name id1)
         | Fn (args1, ret1), Fn (args2, ret2) ->
             if List.length args1 <> List.length args2 then
