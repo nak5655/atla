@@ -143,7 +143,9 @@ module Type =
         | Meta m, tid
         | tid, Meta m ->
             let resolvedTid = resolve subst tid
-            if occurs subst m resolvedTid then
+            if resolvedTid = Meta m then
+                Result.Ok resolvedTid
+            elif occurs subst m resolvedTid then
                 Result.Error(OccursCheckFailed(m, resolvedTid))
             else
                 subst.[m] <- resolvedTid

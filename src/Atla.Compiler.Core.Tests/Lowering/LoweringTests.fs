@@ -214,3 +214,23 @@ fn main: Int = 7
         Assert.Equal(7, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.True(String.IsNullOrWhiteSpace stdout, stdout)
+
+    [<Fact>]
+    let ``string split with optional argument style compiles`` () =
+        let program = """
+import System.Int32
+import System.Console
+
+fn main: () = do
+    var n_x = Console.ReadLine ()
+    n_x = n_x.Split " "
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile("SplitOptionalArg", program.Trim(), outDir)
+        Assert.True(res.IsOk)
+
+        let dllPath = Path.Join(outDir, "SplitOptionalArg.dll")
+        Assert.True(File.Exists dllPath)
