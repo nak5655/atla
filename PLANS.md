@@ -1,5 +1,22 @@
 # Plan
 
+## 2026-04-11 Atla.Cli phase4-5（テスト分離と運用仕上げ）
+
+- [x] `Atla.Cli.Tests` プロジェクトを新規作成し、CLIテストを収容する。
+- [x] 既存 `Atla.Compiler.Tests/Cli/CliTests.fs` を `Atla.Cli.Tests` へ移行する。
+- [x] `Atla.Compiler.Tests` からCLIテスト参照を削除し、solution 構成を更新する。
+- [x] フルテストスイートを実行して通過を確認する。
+- [x] CLIドキュメントを点検し、必要な追記を行う。
+
+## 2026-04-11 Atla.Cli 最小インターフェイス（phase1-3）
+
+- [x] `Atla.Cli` 実行プロジェクトを追加し、solution に組み込む。
+- [x] `build <input.atla>` の最小CLIを実装し、既存 `Compiler.compile` へ接続する。
+- [x] 入力検証（存在確認・`.atla`拡張子）と終了コード（成功0/失敗1）を実装する。
+- [x] CLIの最小ヘルプとデフォルト値（`--name` / `-o` 省略時）を実装する。
+- [x] CLI向けテストを追加してフルテストスイートを実行する。
+- [x] CLI利用方法のドキュメントを追加する。
+
 ## 2026-04-11 Unit/Void 同値化（Semantic吸収 + Lowering整合）
 
 - [x] `Semantics` で `Unit` と `Native System.Void` を文脈付きで同値化し、`void` 呼び出しを文文脈で `Unit` として許可する。

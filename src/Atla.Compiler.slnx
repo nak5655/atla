@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="Atla.Cli/Atla.Cli.fsproj" />
+  <Project Path="Atla.Cli.Tests/Atla.Cli.Tests.fsproj" />
   <Project Path="Atla.Compiler.Tests/Atla.Compiler.Tests.fsproj" />
   <Project Path="Atla.Compiler/Atla.Compiler.fsproj" />
 </Solution>
