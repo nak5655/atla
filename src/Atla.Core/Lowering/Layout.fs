@@ -284,6 +284,9 @@ module Layout =
 
         Mir.Module(hirModule.name, types, methods)
 
-    let layoutAssembly (asmName: string, asm: Hir.Assembly) : Mir.Assembly =
-        let modules = asm.modules |> List.map layoutModule
-        Mir.Assembly(asmName, modules)
+    let layoutAssembly (asmName: string, asm: Hir.Assembly) : PhaseResult<Mir.Assembly> =
+        try
+            let modules = asm.modules |> List.map layoutModule
+            PhaseResult.succeeded (Mir.Assembly(asmName, modules)) []
+        with ex ->
+            PhaseResult.failed [ Diagnostic.Error($"Lowering failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]

@@ -320,6 +320,13 @@
 - [x] `MemberAccess` と `StaticAccess` の解析ロジックを `Result` ベースに切り替える。
 - [x] テストを実行して回帰がないことを確認する。
 
+## 2026-04-12 failwith削減とCompile層準拠のフェーズ結果統一
+
+- [x] `Semantics.Data` に Compile層と整合する共通フェーズ結果型（`succeeded` + `diagnostics` + `value`）を追加する。
+- [x] `Resolve` / `Analyze` / `Layout` / `Gen` の公開APIをフェーズ結果型へ移行し、例外をDiagnosticへ変換する経路を追加する。
+- [x] `Compile.compile` を新しいフェーズ結果型連結へ更新し、成功時診断も維持する。
+- [x] 関連ユニットテストを更新し、フルテストを実行して回帰がないことを確認する。
+
 ## 2026-04-10 フィボナッチ和プログラムのコンパイルテスト追加
 
 - [x] `LoweringTests` に、指定されたフィボナッチプログラムが `Compiler.compile` で成功することを検証するテストを追加する。

@@ -17,13 +17,13 @@ module Analyze =
                 match scope.ResolveType(idTypeExpr.name) with
                 | Some t -> t
                 | _ -> TypeId.Error (sprintf "Undefined type '%s' at %A" idTypeExpr.name idTypeExpr.span)
-            | _ -> failwith "Unsupported type expression type"
+            | _ -> TypeId.Error (sprintf "Unsupported type expression type at %A" typeExpr.span)
 
         member this.resolveArgType (arg: Ast.FnArg) : TypeId =
             match arg with
             | :? Ast.FnArg.Named as namedArg -> this.resolveTypeExpr namedArg.typeExpr
             | :? Ast.FnArg.Unit -> TypeId.Unit
-            | _ -> failwith "Unsupported function argument type"
+            | _ -> TypeId.Error (sprintf "Unsupported function argument type at %A" arg.span)
 
         member this.declareLocal (name: string) (tid: TypeId) : SymbolId =
             let sid = symbolTable.NextId()
@@ -518,9 +518,9 @@ module Analyze =
                     let body = analyzeExpr nameEnv typeEnv thenBranch.body tid
                     Hir.Expr.If(cond, body, analyzeIfBranches (List.tail branches), tid, { left = thenBranch.span.left; right = (List.last branches).span.right })
                 | :? Ast.IfBranch.Else as elseBranch -> analyzeExpr nameEnv typeEnv elseBranch.body tid
-                | _ -> failwith "Unsupported if branch type"
+                | _ -> errorExpr tid (List.head branches).span "Unsupported if branch type"
             analyzeIfBranches ifExpr.branches
-        | _ -> failwith "Unsupported expression type"
+        | _ -> errorExpr tid expr.span "Unsupported expression type"
 
     and private analyzeStmt (nameEnv: NameEnv) (typeEnv: TypeEnv) (stmt: Ast.Stmt) : Hir.Stmt =
         match stmt with
@@ -543,7 +543,13 @@ module Analyze =
                 | Result.Ok _ -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)
                 | Result.Error exprErr -> Hir.Stmt.ExprStmt(exprErr, assignStmt.span)
             | [] -> Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" assignStmt.name assignStmt.span, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
-            | _ -> failwith (sprintf "Ambiguous variable '%s' at %A" assignStmt.name assignStmt.span)
+            | _ ->
+                Hir.Stmt.ExprStmt(
+                    Hir.Expr.ExprError(
+                        sprintf "Ambiguous variable '%s' at %A" assignStmt.name assignStmt.span,
+                        TypeId.Error(sprintf "Ambiguous variable '%s'" assignStmt.name),
+                        assignStmt.span),
+                    assignStmt.span)
         | :? Ast.Stmt.ExprStmt as exprStmt ->
             let expr = analyzeExpr nameEnv typeEnv exprStmt.expr TypeId.Unit
             Hir.Stmt.ExprStmt(expr, exprStmt.span)
@@ -582,7 +588,7 @@ module Analyze =
                     Hir.Stmt.For(loopVarSid, itemType, resolvedIteratorExpr, bodyStmts, forStmt.span)
                 | None ->
                     Hir.Stmt.ErrorStmt(sprintf "For iterable type '%A' does not define MoveNext/Current or GetEnumerator() at %A" iterableSystemType forStmt.span, forStmt.span)
-        | _ -> failwith "Unsupported statement type"
+        | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
     let private analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =
         let bodyNameEnv = nameEnv.sub()
@@ -600,7 +606,7 @@ module Analyze =
                 let argType = argTypes.[index]
                 bodyNameEnv.declareArg namedArg.name argType |> ignore
             | :? Ast.FnArg.Unit -> ()
-            | _ -> failwith "Unsupported function argument type")
+            | _ -> ())
 
         let tid = TypeId.Fn(argTypes, retType)
         let sid = nameEnv.declareLocal fnDecl.name tid
@@ -608,25 +614,30 @@ module Analyze =
 
         Hir.Method(sid, body, tid, fnDecl.span)
 
-    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Result<Hir.Module, Diagnostic list> =
-        let resolvedModule = Resolve.resolveModule (symbolTable, moduleName, moduleAst)
-        let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope)
-        let typeEnv = TypeEnv(typeSubst, TypeMetaFactory())
+    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
+        match Resolve.resolveModule (symbolTable, moduleName, moduleAst) with
+        | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
+        | { value = Some resolvedModule } ->
+            let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope)
+            let typeEnv = TypeEnv(typeSubst, TypeMetaFactory())
 
-        let fields = List<Hir.Field>()
-        let methods = List<Hir.Method>()
-        let types = List<Hir.Type>()
+            let fields = List<Hir.Field>()
+            let methods = List<Hir.Method>()
+            let types = List<Hir.Type>()
 
-        resolvedModule.fnDecls
-        |> List.iter (fun fnDecl -> methods.Add(analyzeMethod nameEnv typeEnv fnDecl))
+            resolvedModule.fnDecls
+            |> List.iter (fun fnDecl -> methods.Add(analyzeMethod nameEnv typeEnv fnDecl))
 
-        let untypedHirModule =
-            Hir.Module(
-                resolvedModule.moduleName,
-                types |> Seq.toList,
-                fields |> Seq.toList,
-                methods |> Seq.toList,
-                resolvedModule.moduleScope
-            )
+            let untypedHirModule =
+                Hir.Module(
+                    resolvedModule.moduleName,
+                    types |> Seq.toList,
+                    fields |> Seq.toList,
+                    methods |> Seq.toList,
+                    resolvedModule.moduleScope
+                )
 
-        Infer.inferModule (typeSubst, untypedHirModule)
+            match Infer.inferModule (typeSubst, untypedHirModule) with
+            | Result.Ok hir -> PhaseResult.succeeded hir []
+            | Result.Error diagnostics -> PhaseResult.failed diagnostics
+        | _ -> PhaseResult.failed [ Diagnostic.Error("Unknown analyze module failure", Atla.Core.Data.Span.Empty) ]

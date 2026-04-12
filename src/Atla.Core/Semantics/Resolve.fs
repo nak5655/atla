@@ -37,7 +37,7 @@ module Resolve =
         | Some _ -> ()
         | None -> declareSystemType symbolTable scope classPath |> ignore
 
-    let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : ResolvedModule =
+    let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : PhaseResult<ResolvedModule> =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
         moduleScope.DeclareType("Bool", TypeId.Bool)
@@ -50,6 +50,7 @@ module Resolve =
         |> List.iter (fun (name, sid) -> moduleScope.DeclareVar(name, sid))
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
+        let diagnostics = ResizeArray<Diagnostic>()
 
         for decl in moduleAst.decls do
             match decl with
@@ -57,8 +58,13 @@ module Resolve =
                 resolveImport symbolTable moduleScope importDecl
             | :? Ast.Decl.Fn as fnDecl ->
                 fnDecls.Add(fnDecl)
-            | _ -> failwith "Unsupported declaration type in module"
+            | _ -> diagnostics.Add(Diagnostic.Error("Unsupported declaration type in module", decl.span))
 
-        { moduleName = moduleName
-          moduleScope = moduleScope
-          fnDecls = Seq.toList fnDecls }
+        if diagnostics.Count > 0 then
+            PhaseResult.failed (Seq.toList diagnostics)
+        else
+            PhaseResult.succeeded
+                { moduleName = moduleName
+                  moduleScope = moduleScope
+                  fnDecls = Seq.toList fnDecls }
+                []
