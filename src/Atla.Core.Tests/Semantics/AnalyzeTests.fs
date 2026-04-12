@@ -22,11 +22,11 @@ module AnalyzeTests =
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
         match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
-        | Result.Ok hirModule ->
+        | { succeeded = true; value = Some hirModule } ->
             match hirModule.methods.Head.body with
             | Hir.Expr.Id (_, typ, _) -> Assert.Equal(TypeId.Int, Type.resolve subst typ)
             | other -> Assert.True(false, $"expected Hir.Expr.Id but got {other}")
-        | Result.Error diagnostics ->
+        | { diagnostics = diagnostics } ->
             let message =
                 diagnostics
                 |> List.map (fun err -> err.toDisplayText())
@@ -49,13 +49,13 @@ module AnalyzeTests =
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
         match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
-        | Result.Ok hirModule ->
+        | { succeeded = true; value = Some hirModule } ->
             let hasError =
                 hirModule.methods
                 |> List.exists (fun m -> m.hasError)
 
             Assert.False(hasError, "HIR に ExprError/ErrorStmt が残っています。")
-        | Result.Error diagnostics ->
+        | { diagnostics = diagnostics } ->
             let message =
                 diagnostics
                 |> List.map (fun err -> err.toDisplayText())
@@ -81,10 +81,16 @@ fn main (): Int = do
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
-                | Result.Ok hirModule ->
-                    let mirAsm = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
-                    Assert.Single(mirAsm.modules) |> ignore
-                | Result.Error diagnostics ->
+                | { succeeded = true; value = Some hirModule } ->
+                    match Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ])) with
+                    | { succeeded = true; value = Some mirAsm } -> Assert.Single(mirAsm.modules) |> ignore
+                    | { diagnostics = diagnostics } ->
+                        let message =
+                            diagnostics
+                            |> List.map (fun err -> err.toDisplayText())
+                            |> String.concat "; "
+                        Assert.True(false, $"Lowering failed: {message}")
+                | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())
@@ -112,9 +118,9 @@ fn main (): Int = do
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
         match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
-        | Result.Ok _ ->
+        | { succeeded = true } ->
             Assert.True(false, "void 呼び出しの値文脈利用は失敗するべきです。")
-        | Result.Error diagnostics ->
+        | { diagnostics = diagnostics } ->
             Assert.NotEmpty(diagnostics)
 
     [<Fact>]
@@ -137,9 +143,9 @@ fn main (): Int = do
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
         match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
-        | Result.Ok _ ->
+        | { succeeded = true } ->
             Assert.True(false, "void 呼び出しを引数値として渡す場合は失敗するべきです。")
-        | Result.Error diagnostics ->
+        | { diagnostics = diagnostics } ->
             Assert.NotEmpty(diagnostics)
 
     [<Fact>]
@@ -157,12 +163,12 @@ fn main (): Int = do
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
         match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
-        | Result.Ok hirModule ->
+        | { succeeded = true; value = Some hirModule } ->
             let hasError =
                 hirModule.methods
                 |> List.exists (fun m -> m.hasError)
             Assert.False(hasError, "式文コンテキストでの void 呼び出しは許可されるべきです。")
-        | Result.Error diagnostics ->
+        | { diagnostics = diagnostics } ->
             let message =
                 diagnostics
                 |> List.map (fun err -> err.toDisplayText())
@@ -191,10 +197,10 @@ fn main: () = greet ()
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
-                | Result.Ok hirModule ->
+                | { succeeded = true; value = Some hirModule } ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
                     Assert.False(hasError, "`greet ()` の0引数呼び出し解析に失敗しています。")
-                | Result.Error diagnostics ->
+                | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())
@@ -228,10 +234,10 @@ fn main: () = do
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
-                | Result.Ok hirModule ->
+                | { succeeded = true; value = Some hirModule } ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
                     Assert.False(hasError, "Enumerable.Range による for 解析に失敗しています。")
-                | Result.Error diagnostics ->
+                | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())
@@ -264,10 +270,10 @@ fn main: () = do
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
-                | Result.Ok hirModule ->
+                | { succeeded = true; value = Some hirModule } ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
                     Assert.False(hasError, "`Split \" \"` の解析に失敗しています。")
-                | Result.Error diagnostics ->
+                | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())
@@ -299,10 +305,10 @@ fn main: () = do
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
-                | Result.Ok hirModule ->
+                | { succeeded = true; value = Some hirModule } ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
                     Assert.False(hasError, "`a[0]` の解析に失敗しています。")
-                | Result.Error diagnostics ->
+                | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())
@@ -337,10 +343,10 @@ fn main: () = do
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
-                | Result.Ok hirModule ->
+                | { succeeded = true; value = Some hirModule } ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
                     Assert.False(hasError, "`Enumerable.Range 0 a.Length` + `a[i]` の解析に失敗しています。")
-                | Result.Error diagnostics ->
+                | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())

@@ -44,7 +44,11 @@ module GenTests =
         Directory.CreateDirectory(outputDir) |> ignore
 
         let asmPath = Path.Join(outputDir, "gen-type-resolution.dll")
-        Gen.genAssembly(assembly, asmPath)
+        match Gen.genAssembly(assembly, asmPath) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
 
         let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
         let useFoo =
@@ -88,7 +92,11 @@ module GenTests =
         Directory.CreateDirectory(outputDir) |> ignore
 
         let asmPath = Path.Join(outputDir, "gen-unit-void-return.dll")
-        Gen.genAssembly(assembly, asmPath)
+        match Gen.genAssembly(assembly, asmPath) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
 
         let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
         let globalsType = loaded.GetType("MainModule.Globals")

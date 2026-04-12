@@ -308,57 +308,61 @@ module Gen =
         | methodInfo -> Some methodInfo
 
     // MIRアセンブリをPEファイルとして出力する
-    let rec genAssembly (assembly: Mir.Assembly, filePath: string) =
-        // アセンブリビルダー初期化
-        assembly.builder <- PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
+    let rec genAssembly (assembly: Mir.Assembly, filePath: string) : PhaseResult<unit> =
+        try
+            // アセンブリビルダー初期化
+            assembly.builder <- PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
 
-        // 各モジュールを生成して最初のmainメソッドを採用
-        let mainMethod =
-            assembly.modules
-            |> List.fold (fun foundMain modul ->
-                let moduleBuilder = assembly.builder.DefineDynamicModule(modul.name)
-                let moduleMain = genModule moduleBuilder modul
+            // 各モジュールを生成して最初のmainメソッドを採用
+            let mainMethod =
+                assembly.modules
+                |> List.fold (fun foundMain modul ->
+                    let moduleBuilder = assembly.builder.DefineDynamicModule(modul.name)
+                    let moduleMain = genModule moduleBuilder modul
 
-                match foundMain with
-                | Some _ -> foundMain
-                | None -> moduleMain) None
+                    match foundMain with
+                    | Some _ -> foundMain
+                    | None -> moduleMain) None
 
-        // 実行時ターゲット情報を付与
-        let tfaCtor = typeof<TargetFrameworkAttribute>.GetConstructor([| typeof<string> |])
-        let tfa = CustomAttributeBuilder(tfaCtor, [| ".NETCoreApp,Version=v10.0" |])
-        assembly.builder.SetCustomAttribute(tfa)
+            // 実行時ターゲット情報を付与
+            let tfaCtor = typeof<TargetFrameworkAttribute>.GetConstructor([| typeof<string> |])
+            let tfa = CustomAttributeBuilder(tfaCtor, [| ".NETCoreApp,Version=v10.0" |])
+            assembly.builder.SetCustomAttribute(tfa)
 
-        // メタデータ/ILを生成
-        let mutable ilStream = BlobBuilder()
-        let mutable fieldData = BlobBuilder()
-        let metadataBuilder = assembly.builder.GenerateMetadata(&ilStream, &fieldData)
+            // メタデータ/ILを生成
+            let mutable ilStream = BlobBuilder()
+            let mutable fieldData = BlobBuilder()
+            let metadataBuilder = assembly.builder.GenerateMetadata(&ilStream, &fieldData)
 
-        // エントリポイント付き/なしでPEビルダーを構築
-        let peBuilder =
-            match mainMethod with
-            | Some methodInfo ->
-                ManagedPEBuilder(
-                    header = PEHeaderBuilder.CreateExecutableHeader(),
-                    metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
-                    ilStream = ilStream,
-                    mappedFieldData = fieldData,
-                    entryPoint = MetadataTokens.MethodDefinitionHandle(methodInfo.MetadataToken &&& 0x00FFFFFF))
-            | None ->
-                ManagedPEBuilder(
-                    header = PEHeaderBuilder.CreateExecutableHeader(),
-                    metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
-                    ilStream = ilStream,
-                    mappedFieldData = fieldData)
+            // エントリポイント付き/なしでPEビルダーを構築
+            let peBuilder =
+                match mainMethod with
+                | Some methodInfo ->
+                    ManagedPEBuilder(
+                        header = PEHeaderBuilder.CreateExecutableHeader(),
+                        metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
+                        ilStream = ilStream,
+                        mappedFieldData = fieldData,
+                        entryPoint = MetadataTokens.MethodDefinitionHandle(methodInfo.MetadataToken &&& 0x00FFFFFF))
+                | None ->
+                    ManagedPEBuilder(
+                        header = PEHeaderBuilder.CreateExecutableHeader(),
+                        metadataRootBuilder = MetadataRootBuilder(metadataBuilder),
+                        ilStream = ilStream,
+                        mappedFieldData = fieldData)
 
-        // PEをシリアライズして書き出し
-        let peBlob = BlobBuilder()
-        peBuilder.Serialize(peBlob) |> ignore
+            // PEをシリアライズして書き出し
+            let peBlob = BlobBuilder()
+            peBuilder.Serialize(peBlob) |> ignore
 
-        use fs = new FileStream(filePath, FileMode.Create, FileAccess.Write)
-        peBlob.WriteContentTo(fs)
+            use fs = new FileStream(filePath, FileMode.Create, FileAccess.Write)
+            peBlob.WriteContentTo(fs)
 
-        // 実行用runtimeconfigを書き出し
-        genRuntimeConfig filePath
+            // 実行用runtimeconfigを書き出し
+            genRuntimeConfig filePath
+            PhaseResult.succeeded () []
+        with ex ->
+            PhaseResult.failed [ Diagnostic.Error($"CIL generation failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]
 
     // dotnet実行に必要なruntimeconfigを生成する
     and genRuntimeConfig (assemblyPath: string) =

@@ -27,7 +27,13 @@ module LayoutTests =
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
         let hirAssembly = Hir.Assembly("ignored", [ hirModule ])
 
-        let mirAssembly = Layout.layoutAssembly("TestAsm", hirAssembly)
+        let mirAssemblyResult = Layout.layoutAssembly("TestAsm", hirAssembly)
+        let mirAssembly =
+            match mirAssemblyResult with
+            | { succeeded = true; value = Some asm } -> asm
+            | { diagnostics = diagnostics } ->
+                let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                failwith $"layoutAssembly failed: {message}"
         let methodBody = mirAssembly.modules.Head.methods.Head.body
 
         Assert.Contains(
@@ -55,8 +61,14 @@ fn main: () =
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
-                | Result.Ok hirModule ->
-                    let mirAssembly = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                | { succeeded = true; value = Some hirModule } ->
+                    let mirAssemblyResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirAssembly =
+                        match mirAssemblyResult with
+                        | { succeeded = true; value = Some asm } -> asm
+                        | { diagnostics = diagnostics } ->
+                            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                            failwith $"layoutAssembly failed: {message}"
                     let methodBody = mirAssembly.modules.Head.methods.Head.body
 
                     let hasMoveNextCall =
@@ -83,7 +95,7 @@ fn main: () =
                     Assert.True(hasMoveNextCall, "MIRにMoveNext呼び出しがありません。")
                     Assert.True(hasCurrentCall, "MIRにCurrent取得呼び出しがありません。")
                     Assert.True(hasLoopControl, "MIRにループ制御命令（ラベル/ジャンプ）がありません。")
-                | Result.Error diagnostics ->
+                | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())
