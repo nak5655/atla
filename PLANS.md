@@ -438,3 +438,10 @@
 - [x] `LoweringTests` にユーザー報告コード（`(Console.ReadLine ()).Split " "` + `a[0]`）の実行検証付き回帰テストを追加する。
 - [x] ドキュメント（`doc/semantic-phase-design.md`）の indexer 解決仕様を現実装に合わせて更新する。
 - [x] フルテストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-12 LanguageServer 機能復旧（フェーズ分割）
+
+- [x] Phase 0: LanguageServer 復旧タスクをフェーズ単位で `PLANS.md` に確定する。
+- [x] Phase 1: `Atla.LanguageServer` の旧 API 依存を現行 `Atla.Core` API に合わせて解消し、ビルドを通す。
+- [x] Phase 1: `Atla.LanguageServer.Tests` を現行 `Server` 公開 API に追従させ、最小テストを通す。
+- [x] Phase 1: LanguageServer 関連プロジェクトのテストを実行して結果を確認する（`Atla.LanguageServer.Tests` は成功、`dotnet test src/Atla.slnx` は既存 `Atla.Build` 側のコンパイルエラーで失敗）。
