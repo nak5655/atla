@@ -74,7 +74,7 @@ type Server() =
 
         let capabilities =
             ServerCapabilities(
-                true,
+                false,
                 TextDocumentSyncOptions(true, TextDocumentSyncKind.Full),
                 SemanticTokensOptions(
                     SemanticTokensLegend(tokenTypes |> Array.toList, []),

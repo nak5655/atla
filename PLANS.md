@@ -449,10 +449,10 @@
 
 ### Phase 2: LSP プロトコル準拠の強化
 
-- [ ] `Program.fs` の未対応 request 分岐（現在 `_ -> ()`）を JSON-RPC エラー応答へ変更し、クライアント待ち状態を防ぐ。
-- [ ] `LSPMessage.waitMessage` のヘッダー/本文解析を堅牢化し、EOF・Content-Length 欠落・不正 JSON 時に安全に失敗できるようにする。
-- [ ] `initialize` 応答 capability を見直し、実装済み機能のみを明示する。
-- [ ] `initialize` / `shutdown` / `exit` の往復を統合テスト化する。
+- [x] `Program.fs` の未対応 request 分岐（現在 `_ -> ()`）を JSON-RPC エラー応答へ変更し、クライアント待ち状態を防ぐ。
+- [x] `LSPMessage.waitMessage` のヘッダー/本文解析を堅牢化し、EOF・Content-Length 欠落・不正 JSON 時に安全に失敗できるようにする。
+- [x] `initialize` 応答 capability を見直し、実装済み機能のみを明示する。
+- [x] `initialize` / `shutdown` / `exit` の往復を統合テスト化する。
 
 ### Phase 3: ドキュメント同期と診断配信の安定化
 
@@ -494,3 +494,11 @@
 - [x] `Atla.Build/Program.fs` の `Compiler.compile` 参照を現行 namespace/module 構成に合わせて解決する。
 - [x] `dotnet build src/Atla.Build/Atla.Build.fsproj` を通し、`Atla.Build` 単体ビルドの成功を確認する。
 - [x] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` と `dotnet test src/Atla.slnx` を実行し、影響範囲を確認する。
+
+## 2026-04-12 LanguageServer Phase2 実施
+
+- [x] 未対応 request に対する JSON-RPC エラー応答を実装する。
+- [x] `waitMessage` の EOF / Content-Length / JSON 解析の異常系耐性を実装する。
+- [x] `initialize` capability を現実装に合わせて調整する。
+- [x] `initialize` -> `shutdown` -> `exit` の遷移をテストで検証する。
+- [x] LanguageServer テストとソリューション全体テストを実行して結果を確認する。

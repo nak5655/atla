@@ -69,6 +69,20 @@ type Response(id: int, result: obj) =
     member _.result = result
 
 [<JsonObject>]
+type ErrorObject(code: int, message: string) =
+    [<JsonProperty>]
+    member _.code = code
+    [<JsonProperty>]
+    member _.message = message
+
+[<JsonObject>]
+type ErrorResponse(id: int, error: ErrorObject) =
+    [<JsonProperty>]
+    member _.id = id
+    [<JsonProperty>]
+    member _.error = error
+
+[<JsonObject>]
 type SemanticTokens(resultId: string, data: uint32 list) =
     [<JsonProperty(NullValueHandling = NullValueHandling.Ignore)>]
     member _.resultId = resultId
