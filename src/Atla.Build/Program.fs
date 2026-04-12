@@ -2,6 +2,7 @@ module Atla.Build
 
 open System
 open System.IO
+open Atla.Compiler
 
 module Cli =
     type BuildOptions = {

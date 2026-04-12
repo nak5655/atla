@@ -445,3 +445,9 @@
 - [x] Phase 1: `Atla.LanguageServer` の旧 API 依存を現行 `Atla.Core` API に合わせて解消し、ビルドを通す。
 - [x] Phase 1: `Atla.LanguageServer.Tests` を現行 `Server` 公開 API に追従させ、最小テストを通す。
 - [x] Phase 1: LanguageServer 関連プロジェクトのテストを実行して結果を確認する（`Atla.LanguageServer.Tests` は成功、`dotnet test src/Atla.slnx` は既存 `Atla.Build` 側のコンパイルエラーで失敗）。
+
+## 2026-04-12 Atla.Build コンパイルエラー解消
+
+- [x] `Atla.Build/Program.fs` の `Compiler.compile` 参照を現行 namespace/module 構成に合わせて解決する。
+- [x] `dotnet build src/Atla.Build/Atla.Build.fsproj` を通し、`Atla.Build` 単体ビルドの成功を確認する。
+- [x] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` と `dotnet test src/Atla.slnx` を実行し、影響範囲を確認する。
