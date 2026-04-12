@@ -30,6 +30,15 @@ let private sanitizeAssemblyName (value: string) : string =
     let sanitized = String(chars)
     if String.IsNullOrWhiteSpace sanitized then "Application" else sanitized
 
+let private canonicalTokenTypes = [| "keyword"; "type"; "variable"; "number"; "string" |]
+
+let private normalizeSemanticInput (text: string) : string =
+    let raw = if isNull text then "" else text
+    let withoutBom =
+        if raw.Length > 0 && raw.[0] = '\uFEFF' then raw.Substring(1) else raw
+
+    withoutBom.Replace("\r\n", "\n").Replace("\r", "\n")
+
 type private DiagnosticStage =
     | Lex
     | Parse
@@ -175,6 +184,7 @@ type Server(?publishDiagnosticsFn: (string -> Diagnostic list -> unit)) =
     // ---- persistent state --------------------------------------------------
     let mutable isAvailablePublishDiagnostics = false
     let mutable tokenTypes: string[] = [||]
+    let mutable semanticTokensFallbackReason: string option = None
     let mutable workspaceRoots: string list = []
     let buffers = Dictionary<string, string>()
     let displayUris = Dictionary<string, string>()
@@ -219,6 +229,9 @@ type Server(?publishDiagnosticsFn: (string -> Diagnostic list -> unit)) =
         with get() = tokenTypes
         and set(v) = tokenTypes <- v
 
+    member _.SemanticTokensFallbackReason
+        with get() = semanticTokensFallbackReason
+
     member _.WorkspaceRoots
         with get() = workspaceRoots
 
@@ -246,8 +259,15 @@ type Server(?publishDiagnosticsFn: (string -> Diagnostic list -> unit)) =
                 content.["params"].["capabilities"].["textDocument"].["semanticTokens"].["tokenTypes"].ToObject<string[]>()
             with _ -> [||]
 
-        let serverTokenTypes = [| "keyword"; "comment"; "string"; "number"; "variable"; "type" |]
-        tokenTypes <- serverTokenTypes |> Array.filter (fun t -> clientTokenTypes |> Array.contains t)
+        let supported = canonicalTokenTypes |> Array.filter (fun t -> clientTokenTypes |> Array.contains t)
+        tokenTypes <- supported
+        semanticTokensFallbackReason <-
+            if clientTokenTypes.Length = 0 then
+                Some("Semantic tokens disabled: client did not advertise semantic token types.")
+            elif supported.Length = 0 then
+                Some("Semantic tokens disabled: no overlap between client token types and server token legend.")
+            else
+                None
 
         let capabilities =
             ServerCapabilities(
@@ -281,7 +301,8 @@ type Server(?publishDiagnosticsFn: (string -> Diagnostic list -> unit)) =
     /// Tokenize ``text`` and produce the flat encoded token list defined by
     /// the LSP semantic-tokens specification.
     member _.InternalTokenize(text: string) : uint32 list =
-        let input: Input<SourceChar> = StringInput(text)
+        let inputText = normalizeSemanticInput text
+        let input: Input<SourceChar> = StringInput(inputText)
         match Lexer.tokenize input Position.Zero with
         | Success(tokens, _) ->
             let mutable line = 0

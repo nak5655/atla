@@ -6,7 +6,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Tests.fs" />
+    <Compile Include="MessageTests.fs" />
+    <Compile Include="ServerLifecycleTests.fs" />
+    <Compile Include="DiagnosticsTests.fs" />
+    <Compile Include="SemanticTokensTests.fs" />
+    <Compile Include="ProgramTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

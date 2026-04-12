@@ -1,0 +1,30 @@
+name: language-server
+
+on:
+  pull_request:
+    paths:
+      - 'src/Atla.LanguageServer/**'
+      - 'src/Atla.LanguageServer.Tests/**'
+      - 'src/Atla.Core/**'
+      - '.github/workflows/language-server.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/Atla.LanguageServer/**'
+      - 'src/Atla.LanguageServer.Tests/**'
+      - 'src/Atla.Core/**'
+      - '.github/workflows/language-server.yml'
+
+jobs:
+  language-server-build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build Atla.LanguageServer
+        run: dotnet build src/Atla.LanguageServer/Atla.LanguageServer.fsproj --configuration Release
+      - name: Test Atla.LanguageServer.Tests
+        run: dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj --configuration Release

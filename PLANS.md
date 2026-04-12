@@ -473,37 +473,37 @@
 
 ### Phase 5: Semantic Tokens 精度改善
 
-- [ ] 決定事項: 互換性方針は「現時点で本来あるべき仕様」を優先し、Semantic Tokens の破壊的変更を許可する（クライアント互換より仕様整合を優先）。
-- [ ] 決定事項: token 種別は `keyword` / `type` / `variable` / `number` / `string` の5種を正とし、`InternalTokenize` はこの5種へ正規化する（未分類は送信しない）。
-- [ ] 決定事項: delta encoding の基準入力として LF / CRLF / BOM 付き入力を正式サポートし、同一意味入力で同一トークン列を返す決定性を必須条件にする。
-- [ ] 決定事項: クライアント capability が空または未知 token type のみの場合、サーバーは空データを返し、`window/logMessage` でフォールバック理由を通知する。
-- [ ] 決定事項: semantic tokens 応答スナップショットは `resultId` を固定値（空文字）として `data` 配列を主検証対象にする。
-- [ ] `InternalTokenize` のトークン種別マッピングを見直し、`keyword` / `type` / `variable` / `number` / `string` の判定を仕様化する。
-- [ ] 複数行・空行・先頭 BOM・CRLF 入力で delta encoding が壊れないことを回帰テストで保証する。
-- [ ] クライアントが未サポート token type を通知した場合のフォールバック挙動を固定する。
-- [ ] semantic tokens の JSON 応答をスナップショットテスト化する。
+- [x] 決定事項: 互換性方針は「現時点で本来あるべき仕様」を優先し、Semantic Tokens の破壊的変更を許可する（クライアント互換より仕様整合を優先）。
+- [x] 決定事項: token 種別は `keyword` / `type` / `variable` / `number` / `string` の5種を正とし、`InternalTokenize` はこの5種へ正規化する（未分類は送信しない）。
+- [x] 決定事項: delta encoding の基準入力として LF / CRLF / BOM 付き入力を正式サポートし、同一意味入力で同一トークン列を返す決定性を必須条件にする。
+- [x] 決定事項: クライアント capability が空または未知 token type のみの場合、サーバーは空データを返し、`window/logMessage` でフォールバック理由を通知する。
+- [x] 決定事項: semantic tokens 応答スナップショットは `resultId` を固定値（空文字）として `data` 配列を主検証対象にする。
+- [x] `InternalTokenize` のトークン種別マッピングを見直し、`keyword` / `type` / `variable` / `number` / `string` の判定を仕様化する。
+- [x] 複数行・空行・先頭 BOM・CRLF 入力で delta encoding が壊れないことを回帰テストで保証する。
+- [x] クライアントが未サポート token type を通知した場合のフォールバック挙動を固定する。
+- [x] semantic tokens の JSON 応答をスナップショットテスト化する。
 
 ### Phase 6: テスト基盤と回帰防止
 
-- [ ] 決定事項: `Atla.LanguageServer.Tests` を `Message` / `ServerLifecycle` / `Diagnostics` / `SemanticTokens` / `Program` の5モジュールに分割し、責務境界を固定する。
-- [ ] 決定事項: E2E テストは stdin/stdout の実フレーミング（`Content-Length`）を必須検証対象にし、`initialize -> didOpen -> semanticTokens -> shutdown -> exit` を最小正常系とする。
-- [ ] 決定事項: 異常系 E2E は `不正ヘッダー` / `Content-Length欠落` / `不正JSON` / `未知request` / `空本文` を最低セットとし、終了コードと応答有無を固定する。
-- [ ] 決定事項: LanguageServer 変更時の必須コマンドは `dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` と `dotnet test src/Atla.slnx` の2つに固定する。
-- [ ] `Atla.LanguageServer.Tests` を message レイヤー/サーバー状態遷移/診断配信/トークン化の観点で分割する。
-- [ ] stdin/stdout ベースの軽量 E2E テストを追加し、LSP フレーミングを実運用に近い形で検証する。
-- [ ] 異常系テスト（不正ヘッダー、不正 JSON、未知メソッド、空本文）を追加する。
-- [ ] LanguageServer 変更時に必ず実行するテストコマンドを `PLANS.md` または `doc` に明記する。
+- [x] 決定事項: `Atla.LanguageServer.Tests` を `Message` / `ServerLifecycle` / `Diagnostics` / `SemanticTokens` / `Program` の5モジュールに分割し、責務境界を固定する。
+- [x] 決定事項: E2E テストは stdin/stdout の実フレーミング（`Content-Length`）を必須検証対象にし、`initialize -> didOpen -> semanticTokens -> shutdown -> exit` を最小正常系とする。
+- [x] 決定事項: 異常系 E2E は `不正ヘッダー` / `Content-Length欠落` / `不正JSON` / `未知request` / `空本文` を最低セットとし、終了コードと応答有無を固定する。
+- [x] 決定事項: LanguageServer 変更時の必須コマンドは `dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` と `dotnet test src/Atla.slnx` の2つに固定する。
+- [x] `Atla.LanguageServer.Tests` を message レイヤー/サーバー状態遷移/診断配信/トークン化の観点で分割する。
+- [x] stdin/stdout ベースの軽量 E2E テストを追加し、LSP フレーミングを実運用に近い形で検証する。
+- [x] 異常系テスト（不正ヘッダー、不正 JSON、未知メソッド、空本文）を追加する。
+- [x] LanguageServer 変更時に必ず実行するテストコマンドを `PLANS.md` または `doc` に明記する。
 
 ### Phase 7: リリース準備
 
-- [ ] 決定事項: リリース時ドキュメントは「対応済み LSP メソッド」「未対応メソッド」「既知制約」「推奨クライアント設定」を必須セクションとして持つ。
-- [ ] 決定事項: 既知制約は機能単位（diagnostics / semantic tokens / sync）で列挙し、回避策がある場合は必ず併記する。
-- [ ] 決定事項: CI 必須チェックは `Atla.LanguageServer` build と `Atla.LanguageServer.Tests` test を required とし、失敗時はマージ不可とする。
-- [ ] 決定事項: Phase 7 完了条件は「ローカル full test 成功」「E2E 正常系/異常系成功」「ドキュメント更新完了」の3条件同時達成とする。
-- [ ] エディタ接続手順（起動コマンド、stdio 設定、サンプルプロジェクト）をドキュメント化する。
-- [ ] 既知制約（未実装 LSP メソッド、診断精度の制限）を整理して明示する。
-- [ ] CI で `Atla.LanguageServer` / `Atla.LanguageServer.Tests` を必須チェックにする。
-- [ ] フェーズ完了条件（ビルド成功・テスト成功・E2E 成功）を満たしたら完了マークを更新する。
+- [x] 決定事項: リリース時ドキュメントは「対応済み LSP メソッド」「未対応メソッド」「既知制約」「推奨クライアント設定」を必須セクションとして持つ。
+- [x] 決定事項: 既知制約は機能単位（diagnostics / semantic tokens / sync）で列挙し、回避策がある場合は必ず併記する。
+- [x] 決定事項: CI 必須チェックは `Atla.LanguageServer` build と `Atla.LanguageServer.Tests` test を required とし、失敗時はマージ不可とする。
+- [x] 決定事項: Phase 7 完了条件は「ローカル full test 成功」「E2E 正常系/異常系成功」「ドキュメント更新完了」の3条件同時達成とする。
+- [x] エディタ接続手順（起動コマンド、stdio 設定、サンプルプロジェクト）をドキュメント化する。
+- [x] 既知制約（未実装 LSP メソッド、診断精度の制限）を整理して明示する。
+- [x] CI で `Atla.LanguageServer` / `Atla.LanguageServer.Tests` を必須チェックにする。
+- [x] フェーズ完了条件（ビルド成功・テスト成功・E2E 成功）を満たしたら完了マークを更新する。
 
 ## 2026-04-12 Atla.Build コンパイルエラー解消
 
