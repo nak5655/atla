@@ -456,20 +456,28 @@
 
 ### Phase 3: ドキュメント同期と診断配信の安定化
 
-- [ ] `didOpen` / `didChange` / `didClose` のバッファライフサイクルを明確化し、Close 時にメモリと診断状態を適切に解放する。
-- [ ] URI 正規化（OS 差・ワークスペース外ファイル）を整理し、コンパイル対象判定を決定的にする。
-- [ ] コンパイル成功時に空 diagnostics を必ず送るルールをテストで固定する。
-- [ ] 失敗時 diagnostics の粒度（lex/parse/semantic）を段階的に分離できるよう変換レイヤーを導入する。
+- [x] 決定事項: `didOpen` / `didChange` / `didClose` の状態遷移は `Server` に集約し、`didClose` では `publishDiagnostics(uri, [])` 後にバッファを解放する。
+- [x] 決定事項: URI は正規化して内部キー化し、`file://` かつ（workspace 指定時は）workspace 配下のみをコンパイル対象とする。
+- [x] 決定事項: diagnostics 生成は変換レイヤー（Compile結果 -> LSP Diagnostics）を必須化し、段階的に lex/parse/semantic 粒度へ拡張可能な形にする。
+- [x] `didOpen` / `didChange` / `didClose` のバッファライフサイクルを明確化し、Close 時にメモリと診断状態を適切に解放する。
+- [x] URI 正規化（OS 差・ワークスペース外ファイル）を整理し、コンパイル対象判定を決定的にする。
+- [x] コンパイル成功時に空 diagnostics を必ず送るルールをテストで固定する。
+- [x] 失敗時 diagnostics の粒度（lex/parse/semantic）を段階的に分離できるよう変換レイヤーを導入する。
 
 ### Phase 4: Diagnostics 品質向上
 
-- [ ] `LSPTypes.Diagnostic` を拡張し、`severity` / `source` / `code` を扱えるようにする。
-- [ ] `Span.Empty` 固定の暫定実装を縮退し、取得可能な span を優先して range へ反映する。
-- [ ] 診断メッセージの安定化（決定性と順序）をテストで保証する。
-- [ ] 代表的な失敗ケース（未解決識別子/型不一致/構文エラー）の LSP 診断スナップショットを追加する。
+- [x] `LSPTypes.Diagnostic` を拡張し、`severity` / `source` / `code` を扱えるようにする。
+- [x] `Span.Empty` 固定の暫定実装を縮退し、取得可能な span を優先して range へ反映する。
+- [x] 診断メッセージの安定化（決定性と順序）をテストで保証する。
+- [x] 代表的な失敗ケース（未解決識別子/型不一致/構文エラー）の LSP 診断スナップショットを追加する。
 
 ### Phase 5: Semantic Tokens 精度改善
 
+- [ ] 決定事項: 互換性方針は「現時点で本来あるべき仕様」を優先し、Semantic Tokens の破壊的変更を許可する（クライアント互換より仕様整合を優先）。
+- [ ] 決定事項: token 種別は `keyword` / `type` / `variable` / `number` / `string` の5種を正とし、`InternalTokenize` はこの5種へ正規化する（未分類は送信しない）。
+- [ ] 決定事項: delta encoding の基準入力として LF / CRLF / BOM 付き入力を正式サポートし、同一意味入力で同一トークン列を返す決定性を必須条件にする。
+- [ ] 決定事項: クライアント capability が空または未知 token type のみの場合、サーバーは空データを返し、`window/logMessage` でフォールバック理由を通知する。
+- [ ] 決定事項: semantic tokens 応答スナップショットは `resultId` を固定値（空文字）として `data` 配列を主検証対象にする。
 - [ ] `InternalTokenize` のトークン種別マッピングを見直し、`keyword` / `type` / `variable` / `number` / `string` の判定を仕様化する。
 - [ ] 複数行・空行・先頭 BOM・CRLF 入力で delta encoding が壊れないことを回帰テストで保証する。
 - [ ] クライアントが未サポート token type を通知した場合のフォールバック挙動を固定する。
@@ -477,6 +485,10 @@
 
 ### Phase 6: テスト基盤と回帰防止
 
+- [ ] 決定事項: `Atla.LanguageServer.Tests` を `Message` / `ServerLifecycle` / `Diagnostics` / `SemanticTokens` / `Program` の5モジュールに分割し、責務境界を固定する。
+- [ ] 決定事項: E2E テストは stdin/stdout の実フレーミング（`Content-Length`）を必須検証対象にし、`initialize -> didOpen -> semanticTokens -> shutdown -> exit` を最小正常系とする。
+- [ ] 決定事項: 異常系 E2E は `不正ヘッダー` / `Content-Length欠落` / `不正JSON` / `未知request` / `空本文` を最低セットとし、終了コードと応答有無を固定する。
+- [ ] 決定事項: LanguageServer 変更時の必須コマンドは `dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` と `dotnet test src/Atla.slnx` の2つに固定する。
 - [ ] `Atla.LanguageServer.Tests` を message レイヤー/サーバー状態遷移/診断配信/トークン化の観点で分割する。
 - [ ] stdin/stdout ベースの軽量 E2E テストを追加し、LSP フレーミングを実運用に近い形で検証する。
 - [ ] 異常系テスト（不正ヘッダー、不正 JSON、未知メソッド、空本文）を追加する。
@@ -484,6 +496,10 @@
 
 ### Phase 7: リリース準備
 
+- [ ] 決定事項: リリース時ドキュメントは「対応済み LSP メソッド」「未対応メソッド」「既知制約」「推奨クライアント設定」を必須セクションとして持つ。
+- [ ] 決定事項: 既知制約は機能単位（diagnostics / semantic tokens / sync）で列挙し、回避策がある場合は必ず併記する。
+- [ ] 決定事項: CI 必須チェックは `Atla.LanguageServer` build と `Atla.LanguageServer.Tests` test を required とし、失敗時はマージ不可とする。
+- [ ] 決定事項: Phase 7 完了条件は「ローカル full test 成功」「E2E 正常系/異常系成功」「ドキュメント更新完了」の3条件同時達成とする。
 - [ ] エディタ接続手順（起動コマンド、stdio 設定、サンプルプロジェクト）をドキュメント化する。
 - [ ] 既知制約（未実装 LSP メソッド、診断精度の制限）を整理して明示する。
 - [ ] CI で `Atla.LanguageServer` / `Atla.LanguageServer.Tests` を必須チェックにする。
