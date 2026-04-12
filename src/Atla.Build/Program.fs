@@ -61,6 +61,17 @@ module Cli =
         else
             Ok ()
 
+    let private diagnosticPrefix (severity: Atla.Core.Semantics.Data.DiagnosticSeverity) : string =
+        match severity with
+        | Atla.Core.Semantics.Data.DiagnosticSeverity.Error -> "error"
+        | Atla.Core.Semantics.Data.DiagnosticSeverity.Warning -> "warning"
+        | Atla.Core.Semantics.Data.DiagnosticSeverity.Info -> "info"
+
+    let private printDiagnostics (diagnostics: Atla.Core.Semantics.Data.Diagnostic list) : unit =
+        diagnostics
+        |> List.iter (fun diagnostic ->
+            Console.Error.WriteLine($"{diagnosticPrefix diagnostic.severity}: {diagnostic.toDisplayText()}"))
+
     let run (args: string array) : int =
         match args |> Array.toList with
         | [] ->
@@ -84,13 +95,13 @@ module Cli =
                 | Ok () ->
                     let source = File.ReadAllText(options.inputPath)
                     Directory.CreateDirectory(options.outDir) |> ignore
-                    match Compiler.compile(options.asmName, source, options.outDir) with
-                    | Ok () ->
+                    let compileResult = Compiler.compile(options.asmName, source, options.outDir)
+                    printDiagnostics compileResult.diagnostics
+                    if compileResult.succeeded then
                         let dllPath = Path.Join(options.outDir, options.asmName + ".dll")
                         Console.WriteLine($"Generated: {dllPath}")
                         0
-                    | Error message ->
-                        Console.Error.WriteLine(message)
+                    else
                         1
         | command :: _ ->
             Console.Error.WriteLine($"unknown command: {command}")

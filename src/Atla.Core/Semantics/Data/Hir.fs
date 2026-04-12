@@ -64,25 +64,25 @@ module Hir =
             | ExprError (_, _, span) -> span
 
         member this.hasError =
-            this.getErrors |> List.isEmpty |> not
+            this.getDiagnostics |> List.exists (fun diagnostic -> diagnostic.isError)
 
-        member this.getErrors : Error list =
+        member this.getDiagnostics : Diagnostic list =
             match this with
-            | ExprError (message, _, span) -> [ Error(message, span) ]
+            | ExprError (message, _, span) -> [ Diagnostic.Error(message, span) ]
             | Block (stmts, body, _, _) ->
-                (stmts |> List.collect (fun stmt -> stmt.getErrors)) @ body.getErrors
+                (stmts |> List.collect (fun stmt -> stmt.getDiagnostics)) @ body.getDiagnostics
             | If (cond, thenBranch, elseBranch, _, _) ->
-                cond.getErrors @ thenBranch.getErrors @ elseBranch.getErrors
+                cond.getDiagnostics @ thenBranch.getDiagnostics @ elseBranch.getDiagnostics
             | Call (_, instance, args, _, _) ->
                 let instanceErrors =
                     instance
-                    |> Option.map (fun expr -> expr.getErrors)
+                    |> Option.map (fun expr -> expr.getDiagnostics)
                     |> Option.defaultValue []
-                instanceErrors @ (args |> List.collect (fun expr -> expr.getErrors))
-            | Lambda (_, _, body, _, _) -> body.getErrors
+                instanceErrors @ (args |> List.collect (fun expr -> expr.getDiagnostics))
+            | Lambda (_, _, body, _, _) -> body.getDiagnostics
             | MemberAccess (_, instance, _, _) ->
                 instance
-                |> Option.map (fun expr -> expr.getErrors)
+                |> Option.map (fun expr -> expr.getDiagnostics)
                 |> Option.defaultValue []
             | _ -> []
 
@@ -94,16 +94,16 @@ module Hir =
         | ErrorStmt of message: string * span: Span
 
         member this.hasError =
-            this.getErrors |> List.isEmpty |> not
+            this.getDiagnostics |> List.exists (fun diagnostic -> diagnostic.isError)
 
-        member this.getErrors : Error list =
+        member this.getDiagnostics : Diagnostic list =
             match this with
-            | ErrorStmt (message, span) -> [ Error(message, span) ]
+            | ErrorStmt (message, span) -> [ Diagnostic.Error(message, span) ]
             | Let (_, _, value, _)
             | Assign (_, value, _)
-            | ExprStmt (value, _) -> value.getErrors
+            | ExprStmt (value, _) -> value.getDiagnostics
             | For (_, _, iterable, body, _) ->
-                iterable.getErrors @ (body |> List.collect (fun stmt -> stmt.getErrors))
+                iterable.getDiagnostics @ (body |> List.collect (fun stmt -> stmt.getDiagnostics))
 
     type Field(sid: SymbolId, tid: TypeId, body: Expr, span: Span) =
         member this.sym = sid
@@ -111,7 +111,7 @@ module Hir =
         member this.body = body
         member this.span = span
         member this.hasError = body.hasError
-        member this.getErrors = body.getErrors
+        member this.getDiagnostics = body.getDiagnostics
 
     type Method(sid: SymbolId, body: Expr, tid: TypeId, span: Span) =
         member this.sym = sid
@@ -119,13 +119,13 @@ module Hir =
         member this.typ = tid
         member this.span = span
         member this.hasError = body.hasError
-        member this.getErrors = body.getErrors
+        member this.getDiagnostics = body.getDiagnostics
 
     type Type(sid: SymbolId, fields: Field list) =
         member this.sym = sid
         member this.fields = fields
         member this.hasError = fields |> List.exists (fun field -> field.hasError)
-        member this.getErrors = fields |> List.collect (fun field -> field.getErrors)
+        member this.getDiagnostics = fields |> List.collect (fun field -> field.getDiagnostics)
 
     type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope) =
         member this.name = name
@@ -137,13 +137,13 @@ module Hir =
             (fields |> List.exists (fun field -> field.hasError))
             || (methods |> List.exists (fun method -> method.hasError))
             || (types |> List.exists (fun typ -> typ.hasError))
-        member this.getErrors =
-            (fields |> List.collect (fun field -> field.getErrors))
-            @ (methods |> List.collect (fun method -> method.getErrors))
-            @ (types |> List.collect (fun typ -> typ.getErrors))
+        member this.getDiagnostics =
+            (fields |> List.collect (fun field -> field.getDiagnostics))
+            @ (methods |> List.collect (fun method -> method.getDiagnostics))
+            @ (types |> List.collect (fun typ -> typ.getDiagnostics))
 
     type Assembly(name: string, modules: Module list) =
         member this.name = name
         member this.modules = modules
         member this.hasError = modules |> List.exists (fun modul -> modul.hasError)
-        member this.getErrors = modules |> List.collect (fun modul -> modul.getErrors)
+        member this.getDiagnostics = modules |> List.collect (fun modul -> modul.getDiagnostics)

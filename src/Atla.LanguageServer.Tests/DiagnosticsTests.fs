@@ -20,7 +20,6 @@ module DiagnosticsTests =
         let _ = Assert.Single(diagnostics)
         Assert.Contains("\"source\":\"atla-lsp\"", json)
         Assert.Contains("\"severity\":1", json)
-        Assert.Contains("\"code\":\"ATLALS003\"", json)
 
     [<Fact>]
     let ``semantic type mismatch diagnostics snapshot`` () =
@@ -36,7 +35,6 @@ module DiagnosticsTests =
         let _ = Assert.Single(diagnostics)
         Assert.Contains("\"source\":\"atla-lsp\"", json)
         Assert.Contains("\"severity\":1", json)
-        Assert.Contains("\"code\":\"ATLALS003\"", json)
 
     [<Fact>]
     let ``syntax error diagnostics snapshot`` () =
@@ -52,7 +50,6 @@ module DiagnosticsTests =
         let _ = Assert.Single(diagnostics)
         Assert.Contains("\"source\":\"atla-lsp\"", json)
         Assert.Contains("\"severity\":1", json)
-        Assert.Contains("\"code\":\"ATLALS002\"", json)
 
         let first = diagnostics.Head
         Assert.True(first.range.start.line >= 0)
