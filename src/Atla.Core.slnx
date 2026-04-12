@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="Atla.Core.Tests/Atla.Core.Tests.fsproj" />
-  <Project Path="Atla.Core/Atla.Core.fsproj" />
-</Solution>
