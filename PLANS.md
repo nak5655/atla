@@ -446,6 +446,49 @@
 - [x] Phase 1: `Atla.LanguageServer.Tests` を現行 `Server` 公開 API に追従させ、最小テストを通す。
 - [x] Phase 1: LanguageServer 関連プロジェクトのテストを実行して結果を確認する（`Atla.LanguageServer.Tests` は成功、`dotnet test src/Atla.slnx` は既存 `Atla.Build` 側のコンパイルエラーで失敗）。
 
+
+### Phase 2: LSP プロトコル準拠の強化
+
+- [ ] `Program.fs` の未対応 request 分岐（現在 `_ -> ()`）を JSON-RPC エラー応答へ変更し、クライアント待ち状態を防ぐ。
+- [ ] `LSPMessage.waitMessage` のヘッダー/本文解析を堅牢化し、EOF・Content-Length 欠落・不正 JSON 時に安全に失敗できるようにする。
+- [ ] `initialize` 応答 capability を見直し、実装済み機能のみを明示する。
+- [ ] `initialize` / `shutdown` / `exit` の往復を統合テスト化する。
+
+### Phase 3: ドキュメント同期と診断配信の安定化
+
+- [ ] `didOpen` / `didChange` / `didClose` のバッファライフサイクルを明確化し、Close 時にメモリと診断状態を適切に解放する。
+- [ ] URI 正規化（OS 差・ワークスペース外ファイル）を整理し、コンパイル対象判定を決定的にする。
+- [ ] コンパイル成功時に空 diagnostics を必ず送るルールをテストで固定する。
+- [ ] 失敗時 diagnostics の粒度（lex/parse/semantic）を段階的に分離できるよう変換レイヤーを導入する。
+
+### Phase 4: Diagnostics 品質向上
+
+- [ ] `LSPTypes.Diagnostic` を拡張し、`severity` / `source` / `code` を扱えるようにする。
+- [ ] `Span.Empty` 固定の暫定実装を縮退し、取得可能な span を優先して range へ反映する。
+- [ ] 診断メッセージの安定化（決定性と順序）をテストで保証する。
+- [ ] 代表的な失敗ケース（未解決識別子/型不一致/構文エラー）の LSP 診断スナップショットを追加する。
+
+### Phase 5: Semantic Tokens 精度改善
+
+- [ ] `InternalTokenize` のトークン種別マッピングを見直し、`keyword` / `type` / `variable` / `number` / `string` の判定を仕様化する。
+- [ ] 複数行・空行・先頭 BOM・CRLF 入力で delta encoding が壊れないことを回帰テストで保証する。
+- [ ] クライアントが未サポート token type を通知した場合のフォールバック挙動を固定する。
+- [ ] semantic tokens の JSON 応答をスナップショットテスト化する。
+
+### Phase 6: テスト基盤と回帰防止
+
+- [ ] `Atla.LanguageServer.Tests` を message レイヤー/サーバー状態遷移/診断配信/トークン化の観点で分割する。
+- [ ] stdin/stdout ベースの軽量 E2E テストを追加し、LSP フレーミングを実運用に近い形で検証する。
+- [ ] 異常系テスト（不正ヘッダー、不正 JSON、未知メソッド、空本文）を追加する。
+- [ ] LanguageServer 変更時に必ず実行するテストコマンドを `PLANS.md` または `doc` に明記する。
+
+### Phase 7: リリース準備
+
+- [ ] エディタ接続手順（起動コマンド、stdio 設定、サンプルプロジェクト）をドキュメント化する。
+- [ ] 既知制約（未実装 LSP メソッド、診断精度の制限）を整理して明示する。
+- [ ] CI で `Atla.LanguageServer` / `Atla.LanguageServer.Tests` を必須チェックにする。
+- [ ] フェーズ完了条件（ビルド成功・テスト成功・E2E 成功）を満たしたら完了マークを更新する。
+
 ## 2026-04-12 Atla.Build コンパイルエラー解消
 
 - [x] `Atla.Build/Program.fs` の `Compiler.compile` 参照を現行 namespace/module 構成に合わせて解決する。
