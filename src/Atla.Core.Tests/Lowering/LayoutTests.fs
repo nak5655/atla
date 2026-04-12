@@ -86,7 +86,7 @@ fn main: () =
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics
-                        |> List.map (fun err -> err.toString())
+                        |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->

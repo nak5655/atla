@@ -20,7 +20,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("HelloWorld", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "HelloWorld.dll")
         Assert.True(File.Exists dllPath)
@@ -59,7 +59,7 @@ fn main: () = greet ()
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("NullaryCall", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "NullaryCall.dll")
         Assert.True(File.Exists dllPath)
@@ -105,7 +105,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("FizzBuzz", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "FizzBuzz.dll")
         Assert.True(File.Exists dllPath)
@@ -156,7 +156,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("Fibonacci", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "Fibonacci.dll")
         Assert.True(File.Exists dllPath)
@@ -193,7 +193,7 @@ fn main: Int = 7
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("ExitCodeProgram", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ExitCodeProgram.dll")
         Assert.True(File.Exists dllPath)
@@ -231,7 +231,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("SplitOptionalArg", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "SplitOptionalArg.dll")
         Assert.True(File.Exists dllPath)
@@ -250,7 +250,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("ArrayIndexAccess", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ArrayIndexAccess.dll")
         Assert.True(File.Exists dllPath)
@@ -291,7 +291,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("ArrayIndexAccessSplit", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ArrayIndexAccessSplit.dll")
         Assert.True(File.Exists dllPath)
@@ -335,7 +335,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let res = Compiler.compile("RangeArrayLengthLoop", program.Trim(), outDir)
-        Assert.True(res.IsOk)
+        Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "RangeArrayLengthLoop.dll")
         Assert.True(File.Exists dllPath)
@@ -361,3 +361,30 @@ fn main: () = do
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("10\n20\n30".Replace("\n", Environment.NewLine), stdout.Trim())
+
+    [<Fact>]
+    let ``compile result should include diagnostics list on success`` () =
+        let program = """
+fn main: Int = 0
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let result = Compiler.compile("CompileResultSuccess", program.Trim(), outDir)
+        Assert.True(result.succeeded)
+        Assert.Empty(result.diagnostics)
+
+    [<Fact>]
+    let ``compile result should include error diagnostics on failure`` () =
+        let program = """
+fn main: Int =
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let result = Compiler.compile("CompileResultFailure", program.Trim(), outDir)
+        Assert.False(result.succeeded)
+        Assert.NotEmpty(result.diagnostics)
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.isError)

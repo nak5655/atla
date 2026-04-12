@@ -1,5 +1,21 @@
 # Plan
 
+## 2026-04-12 診断モデル刷新（Warning/Info を成功時にも返す）
+
+- [x] `Semantics.Data` に `Diagnostic` DU を新設し、`Error | Warning | Info` を表現できるようにする（`span` と `message` を保持）。
+- [x] `Semantics.Data.Error` 型を削除し、コンパイラ内部の診断表現を `Diagnostic` に統一する（互換レイヤは作らない）。
+- [x] `Hir` の `getErrors` / `hasError` を `getDiagnostics` / `hasError` 相当に再設計し、Error 以外も収集できるようにする。
+- [x] `Analyze` / `Infer` の戻り値を `Diagnostic list` ベースへ更新し、成功時も非 Error 診断を保持できる形にする。
+- [x] `Compiler.compile` の戻り値を `CompileResult` 型へ変更し、`diagnostics` を常に保持する。
+- [x] `Atla.Build`（CLI）を `CompileResult` に追従させ、成功時でも Warning/Info を表示できるようにする。
+- [x] `Atla.LanguageServer` を `CompileResult` + `Diagnostic` に追従させ、LSP 診断 severity を `Error/Warning/Information` へ正しくマッピングする。
+- [x] 今回は診断コード（error code）を導入しない。コード体系の設計・付与は将来タスクとして保留する。
+- [x] テストを更新・追加し、以下を検証する：
+  - [x] コンパイル成功 + Warning/Info の診断返却
+  - [x] コンパイル失敗 + Error 診断返却
+  - [x] CLI/LSP での severity 反映
+  - [x] 診断順序の決定性
+
 ## 2026-04-12 プロパティアクセス Lowering 修正（a.Length 実行時失敗の解消）
 
 - [x] `Lowering/Layout.fs` で `Hir.Member.NativeProperty` を値として使用する際、getter 呼び出し命令へ正規化する。

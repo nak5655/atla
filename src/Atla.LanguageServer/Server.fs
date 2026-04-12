@@ -5,11 +5,11 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
-open System.Text.RegularExpressions
 open System.Reflection
 open Newtonsoft.Json.Linq
 open Atla.Compiler
 open Atla.Core.Data
+open Atla.Core.Semantics.Data
 open Atla.Core.Syntax
 open Atla.Core.Syntax.Data
 open Atla.LanguageServer.LSPTypes
@@ -27,7 +27,7 @@ let private spanToRange (span: Span) : Range =
 
 let private sanitizeAssemblyName (value: string) : string =
     let chars = value |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else '_') |> Seq.toArray
-    let sanitized = String(chars)
+    let sanitized = System.String(chars)
     if String.IsNullOrWhiteSpace sanitized then "Application" else sanitized
 
 let private canonicalTokenTypes = [| "keyword"; "type"; "variable"; "number"; "string" |]
@@ -39,80 +39,18 @@ let private normalizeSemanticInput (text: string) : string =
 
     withoutBom.Replace("\r\n", "\n").Replace("\r", "\n")
 
-type private DiagnosticStage =
-    | Lex
-    | Parse
-    | Semantic
-    | Unknown
+let private toLspSeverity (severity: Atla.Core.Semantics.Data.DiagnosticSeverity) : DiagnosticSeverity =
+    match severity with
+    | Atla.Core.Semantics.Data.DiagnosticSeverity.Error -> DiagnosticSeverity.Error
+    | Atla.Core.Semantics.Data.DiagnosticSeverity.Warning -> DiagnosticSeverity.Warning
+    | Atla.Core.Semantics.Data.DiagnosticSeverity.Info -> DiagnosticSeverity.Information
 
-type private DiagnosticEnvelope =
-    { stage: DiagnosticStage
-      span: Span
-      message: string
-      code: string }
-
-let private classifyDiagnosticStage (message: string) : DiagnosticStage =
-    let m = if isNull message then "" else message.ToLowerInvariant()
-    if m.Contains("lex") || m.Contains("token") then Lex
-    elif m.Contains("parse") || m.Contains("syntax") || m.Contains("unsupported declaration type") then Parse
-    elif m.Contains("type") || m.Contains("unresolved") || m.Contains("semantic") then Semantic
-    else Unknown
-
-let private toDiagnosticEnvelopes (compileError: string) : DiagnosticEnvelope list =
-    let stage = classifyDiagnosticStage compileError
-    let code =
-        match stage with
-        | Lex -> "ATLALS001"
-        | Parse -> "ATLALS002"
-        | Semantic -> "ATLALS003"
-        | Unknown -> "ATLALS000"
-
-    [ { stage = stage
-        span = Span.Empty
-        message = compileError
-        code = code } ]
-
-let private tryExtractSpanFromMessage (message: string) : Span option =
-    if String.IsNullOrWhiteSpace message then
-        None
-    else
-        let compact = message.Replace("\r", " ").Replace("\n", " ")
-        let lineColPattern = Regex(@"at\s+(?<line>\d+):(?<col>\d+)", RegexOptions.IgnoreCase)
-        let lineColumnPattern = Regex(@"line\s*=\s*(?<line>\d+)\s*;?\s*column\s*=\s*(?<col>\d+)", RegexOptions.IgnoreCase)
-
-        let tryCreateSpan (m: Match) =
-            if not m.Success then
-                None
-            else
-                let okLine, line = Int32.TryParse m.Groups.["line"].Value
-                let okCol, col = Int32.TryParse m.Groups.["col"].Value
-                if okLine && okCol then
-                    let left: Atla.Core.Data.Position = { Line = line; Column = col }
-                    let right: Atla.Core.Data.Position = { Line = line; Column = col + 1 }
-                    Some({ left = left; right = right })
-                else
-                    None
-
-        match tryCreateSpan (lineColPattern.Match compact) with
-        | Some span -> Some span
-        | None -> tryCreateSpan (lineColumnPattern.Match compact)
-
-let private toLspDiagnostics (envelopes: DiagnosticEnvelope list) : Diagnostic list =
-    envelopes
+let private toLspDiagnostics (diagnostics: Atla.Core.Semantics.Data.Diagnostic list) : Atla.LanguageServer.LSPTypes.Diagnostic list =
+    diagnostics
     |> List.mapi (fun i x ->
-        let span =
-            match tryExtractSpanFromMessage x.message with
-            | Some parsed -> parsed
-            | None -> x.span
-
-        let severity =
-            match x.stage with
-            | Lex
-            | Parse
-            | Semantic
-            | Unknown -> DiagnosticSeverity.Error
-
-        i, Diagnostic(spanToRange span, x.message, severity = severity, source = "atla-lsp", code = x.code))
+        let span = x.span
+        let severity = toLspSeverity x.severity
+        i, Diagnostic(spanToRange span, x.message, severity = severity, source = "atla-lsp"))
     |> List.sortBy (fun (i, d) ->
         d.range.start.line,
         d.range.start.character,
@@ -179,7 +117,7 @@ let private collectWorkspaceRoots (content: JObject) : string list =
 // ---------------------------------------------------------------------------
 
 /// Mutable server state (one instance per process).
-type Server(?publishDiagnosticsFn: (string -> Diagnostic list -> unit)) =
+type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagnostic list -> unit)) =
 
     // ---- persistent state --------------------------------------------------
     let mutable isAvailablePublishDiagnostics = false
@@ -208,14 +146,11 @@ type Server(?publishDiagnosticsFn: (string -> Diagnostic list -> unit)) =
                 else normalizedUri |> Path.GetFileNameWithoutExtension |> sanitizeAssemblyName
 
             try
-                match Compiler.compile(asmName, text, outputDir) with
-                | Ok () -> publish displayUri []
-                | Error message ->
-                    message |> toDiagnosticEnvelopes |> toLspDiagnostics |> publish displayUri
+                let compileResult = Compiler.compile(asmName, text, outputDir)
+                compileResult.diagnostics |> toLspDiagnostics |> publish displayUri
             with ex ->
                 let fallback =
-                    sprintf "Compiler internal error: %s" ex.Message
-                    |> toDiagnosticEnvelopes
+                    [ Diagnostic.Error(sprintf "Compiler internal error: %s" ex.Message, Span.Empty) ]
                     |> toLspDiagnostics
 
                 publish displayUri fallback

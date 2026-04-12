@@ -29,7 +29,7 @@ module AnalyzeTests =
         | Result.Error diagnostics ->
             let message =
                 diagnostics
-                |> List.map (fun err -> err.toString())
+                |> List.map (fun err -> err.toDisplayText())
                 |> String.concat "; "
             Assert.True(false, $"semantic analysis failed: {message}")
 
@@ -58,7 +58,7 @@ module AnalyzeTests =
         | Result.Error diagnostics ->
             let message =
                 diagnostics
-                |> List.map (fun err -> err.toString())
+                |> List.map (fun err -> err.toDisplayText())
                 |> String.concat "; "
             Assert.True(false, $"semantic analysis failed: {message}")
 
@@ -87,7 +87,7 @@ fn main (): Int = do
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics
-                        |> List.map (fun err -> err.toString())
+                        |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
@@ -165,7 +165,7 @@ fn main (): Int = do
         | Result.Error diagnostics ->
             let message =
                 diagnostics
-                |> List.map (fun err -> err.toString())
+                |> List.map (fun err -> err.toDisplayText())
                 |> String.concat "; "
             Assert.True(false, $"semantic analysis failed unexpectedly: {message}")
 
@@ -197,7 +197,7 @@ fn main: () = greet ()
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics
-                        |> List.map (fun err -> err.toString())
+                        |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
@@ -234,7 +234,7 @@ fn main: () = do
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics
-                        |> List.map (fun err -> err.toString())
+                        |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
@@ -270,7 +270,7 @@ fn main: () = do
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics
-                        |> List.map (fun err -> err.toString())
+                        |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
@@ -305,7 +305,7 @@ fn main: () = do
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics
-                        |> List.map (fun err -> err.toString())
+                        |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
@@ -343,7 +343,7 @@ fn main: () = do
                 | Result.Error diagnostics ->
                     let message =
                         diagnostics
-                        |> List.map (fun err -> err.toString())
+                        |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->

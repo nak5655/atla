@@ -51,7 +51,7 @@ module Infer =
             Hir.Stmt.For(sid, inferredTid, inferredIterable, inferredBody, span)
         | Hir.Stmt.ErrorStmt _ -> stmt
 
-    let inferModule (typeSubst: TypeSubst, hirModule: Hir.Module) : Result<Hir.Module, Error list> =
+    let inferModule (typeSubst: TypeSubst, hirModule: Hir.Module) : Result<Hir.Module, Diagnostic list> =
         let inferredFields =
             hirModule.fields
             |> List.map (fun field -> Hir.Field(field.sym, Type.resolve typeSubst field.typ, inferExpr typeSubst field.body, field.span))
@@ -70,6 +70,7 @@ module Infer =
 
         let typedModule = Hir.Module(hirModule.name, inferredTypes, inferredFields, inferredMethods, hirModule.scope)
 
-        match typedModule.getErrors with
+        let diagnostics = typedModule.getDiagnostics
+        match diagnostics |> List.filter (fun diagnostic -> diagnostic.isError) with
         | [] -> Result.Ok typedModule
-        | diagnostics -> Result.Error diagnostics
+        | errors -> Result.Error errors

@@ -608,7 +608,7 @@ module Analyze =
 
         Hir.Method(sid, body, tid, fnDecl.span)
 
-    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Result<Hir.Module, Error list> =
+    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : Result<Hir.Module, Diagnostic list> =
         let resolvedModule = Resolve.resolveModule (symbolTable, moduleName, moduleAst)
         let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope)
         let typeEnv = TypeEnv(typeSubst, TypeMetaFactory())
