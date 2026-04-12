@@ -76,7 +76,7 @@ let main _ =
                 | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null && p.["textDocument"].["text"] <> null ->
                     let uri = p.["textDocument"].["uri"].ToString()
                     let text = p.["textDocument"].["text"].ToString()
-                    server.Compile(uri, text)
+                    server.OpenDocument(uri, text)
                     windowLogMessage (sprintf "textDocument/didOpen %s" uri) MessageType.Info
                 | _ ->
                     windowLogMessage "textDocument/didOpen has invalid params" MessageType.Warning
@@ -88,7 +88,7 @@ let main _ =
                     let changes = p.["contentChanges"] :?> JArray |> Seq.toArray
                     if changes.Length > 0 && changes.[changes.Length - 1].["text"] <> null then
                         let text = changes.[changes.Length - 1].["text"].ToString()
-                        server.Compile(uri, text)
+                        server.ChangeDocument(uri, text)
                     windowLogMessage (sprintf "textDocument/didChange %s" uri) MessageType.Info
                 | _ ->
                     windowLogMessage "textDocument/didChange has invalid params" MessageType.Warning
@@ -97,6 +97,7 @@ let main _ =
                 match messageParams content with
                 | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null ->
                     let uri = p.["textDocument"].["uri"].ToString()
+                    server.CloseDocument(uri)
                     windowLogMessage (sprintf "textDocument/didClose %s" uri) MessageType.Info
                 | _ ->
                     windowLogMessage "textDocument/didClose has invalid params" MessageType.Warning

@@ -456,10 +456,13 @@
 
 ### Phase 3: ドキュメント同期と診断配信の安定化
 
-- [ ] `didOpen` / `didChange` / `didClose` のバッファライフサイクルを明確化し、Close 時にメモリと診断状態を適切に解放する。
-- [ ] URI 正規化（OS 差・ワークスペース外ファイル）を整理し、コンパイル対象判定を決定的にする。
-- [ ] コンパイル成功時に空 diagnostics を必ず送るルールをテストで固定する。
-- [ ] 失敗時 diagnostics の粒度（lex/parse/semantic）を段階的に分離できるよう変換レイヤーを導入する。
+- [x] 決定事項: `didOpen` / `didChange` / `didClose` の状態遷移は `Server` に集約し、`didClose` では `publishDiagnostics(uri, [])` 後にバッファを解放する。
+- [x] 決定事項: URI は正規化して内部キー化し、`file://` かつ（workspace 指定時は）workspace 配下のみをコンパイル対象とする。
+- [x] 決定事項: diagnostics 生成は変換レイヤー（Compile結果 -> LSP Diagnostics）を必須化し、段階的に lex/parse/semantic 粒度へ拡張可能な形にする。
+- [x] `didOpen` / `didChange` / `didClose` のバッファライフサイクルを明確化し、Close 時にメモリと診断状態を適切に解放する。
+- [x] URI 正規化（OS 差・ワークスペース外ファイル）を整理し、コンパイル対象判定を決定的にする。
+- [x] コンパイル成功時に空 diagnostics を必ず送るルールをテストで固定する。
+- [x] 失敗時 diagnostics の粒度（lex/parse/semantic）を段階的に分離できるよう変換レイヤーを導入する。
 
 ### Phase 4: Diagnostics 品質向上
 
