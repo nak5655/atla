@@ -28,3 +28,97 @@ This phase fixes document lifecycle determinism and diagnostics delivery behavio
 2. Diagnostics prioritize extractable spans from compiler messages (`at line:col` / `Line = ; Column =`) and only fall back to `Span.Empty` when unavailable.
 3. Diagnostics ordering is deterministic (range, message, stable insertion index).
 4. Snapshot-style tests cover semantic unresolved identifier, semantic type mismatch, and syntax-error paths.
+
+## Phase 5: Semantic Tokens precision improvements (2026-04-12)
+
+1. Compatibility policy prioritizes current spec alignment over backward compatibility for semantic tokens.
+2. Canonical token kinds are fixed to five types only:
+   - `keyword`
+   - `type`
+   - `variable`
+   - `number`
+   - `string`
+3. `InternalTokenize` emits only those five kinds; unclassified tokens are not sent.
+4. Input normalization for semantic tokenization is deterministic:
+   - UTF-8 BOM at head is ignored
+   - CRLF / CR is normalized to LF before lexing
+   - Equivalent content yields identical semantic token data
+5. If client capability is empty or has only unknown token kinds:
+   - server returns empty semantic token data
+   - server sends `window/logMessage` with fallback reason
+6. Semantic tokens snapshot validation fixes `resultId` to empty string and focuses verification on `data`.
+
+## Phase 6: Test foundation and regression prevention (2026-04-12)
+
+1. `Atla.LanguageServer.Tests` is split by responsibility:
+   - `Message`
+   - `ServerLifecycle`
+   - `Diagnostics`
+   - `SemanticTokens`
+   - `Program`
+2. E2E tests validate actual stdin/stdout framing using `Content-Length`.
+3. Minimum normal E2E path is fixed to:
+   - `initialize -> didOpen -> semanticTokens -> shutdown -> exit`
+4. Minimum abnormal E2E set is fixed to:
+   - malformed header
+   - missing `Content-Length`
+   - invalid JSON
+   - unknown request
+   - empty body
+5. Required validation commands for LanguageServer changes:
+   - `dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj`
+   - `dotnet test src/Atla.slnx`
+
+## Phase 7: Release readiness (2026-04-12)
+
+### Supported LSP methods
+
+- Requests
+  - `initialize`
+  - `shutdown`
+  - `textDocument/semanticTokens/full`
+- Notifications
+  - `initialized`
+  - `textDocument/didOpen`
+  - `textDocument/didChange` (full sync)
+  - `textDocument/didClose`
+  - `exit`
+
+### Unsupported methods
+
+- Any request/notification not listed above is currently unsupported.
+- Unknown requests return JSON-RPC `Method not found` (`-32601`).
+
+### Known limitations and workarounds
+
+1. Diagnostics
+   - Limitation: stage split (lex/parse/semantic) is heuristic from message text.
+   - Workaround: rely on compiler message text and span extraction for now.
+2. Semantic tokens
+   - Limitation: only five token kinds are emitted; no modifiers.
+   - Workaround: client should gracefully handle empty/modifier-free legend.
+3. Document sync
+   - Limitation: full-sync (`didChange` full text) only.
+   - Workaround: configure client to send full content changes.
+
+### Recommended client settings
+
+- Start command: `dotnet <path-to-atla-lsp.dll>`
+- Transport: stdio
+- Send full sync changes (`textDocumentSync.kind = Full` compatible behavior)
+- Advertise semantic token types including:
+  `keyword`, `type`, `variable`, `number`, `string`
+
+### CI required checks policy
+
+- Required checks:
+  - `Atla.LanguageServer` build
+  - `Atla.LanguageServer.Tests` test
+- Merge is blocked when either required check fails.
+
+### Phase 7 completion gate
+
+Phase 7 is complete only when all of the following are true at the same time:
+1. local full tests are green
+2. E2E normal and abnormal tests are green
+3. documentation updates are complete

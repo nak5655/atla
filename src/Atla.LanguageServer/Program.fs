@@ -43,7 +43,15 @@ let main _ =
                     match messageParams content with
                     | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null ->
                         let uri = p.["textDocument"].["uri"].ToString()
-                        let data = server.Tokenize uri
+                        let data =
+                            if server.TokenTypes.Length = 0 then
+                                match server.SemanticTokensFallbackReason with
+                                | Some reason -> windowLogMessage reason MessageType.Warning
+                                | None -> ()
+
+                                []
+                            else
+                                server.Tokenize uri
                         sendResponse id (SemanticTokens("", data))
                     | _ ->
                         sendErrorResponse id invalidRequest "Missing textDocument.uri"
