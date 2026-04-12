@@ -1,6 +1,0 @@
-<Solution>
-  <Project Path="Atla.Compiler.Cli.Tests/Atla.Compiler.Cli.Tests.fsproj" />
-  <Project Path="Atla.Compiler.Cli/Atla.Compiler.Cli.fsproj" />
-  <Project Path="Atla.Compiler.Core.Tests/Atla.Compiler.Core.Tests.fsproj" />
-  <Project Path="Atla.Compiler.Core/Atla.Compiler.Core.fsproj" />
-</Solution>

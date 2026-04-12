@@ -1,0 +1,352 @@
+namespace Atla.Core.Tests.Semantics
+
+open Xunit
+open Atla.Core.Data
+open Atla.Core.Syntax
+open Atla.Core.Syntax.Data
+open Atla.Core.Semantics
+open Atla.Core.Semantics.Data
+open Atla.Core.Lowering
+
+module AnalyzeTests =
+    [<Fact>]
+    let ``analyzeMethod infers argument reference type`` () =
+        let span = Span.Empty
+        let argType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let arg = Ast.FnArg.Named("x", argType, span) :> Ast.FnArg
+        let body = Ast.Expr.Id("x", span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("id", [arg], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([fnDecl])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok hirModule ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Id (_, typ, _) -> Assert.Equal(TypeId.Int, Type.resolve subst typ)
+            | other -> Assert.True(false, $"expected Hir.Expr.Id but got {other}")
+        | Result.Error diagnostics ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toString())
+                |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``ast to hir should not keep error nodes`` () =
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+        let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
+        let helloArg = Ast.Expr.String("Hello, World!", span) :> Ast.Expr
+        let callExpr = Ast.Expr.Apply(writeLineExpr, [ helloArg ], span) :> Ast.Expr
+        let bodyStmt = Ast.Stmt.ExprStmt(callExpr, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ bodyStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok hirModule ->
+            let hasError =
+                hirModule.methods
+                |> List.exists (fun m -> m.hasError)
+
+            Assert.False(hasError, "HIR に ExprError/ErrorStmt が残っています。")
+        | Result.Error diagnostics ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toString())
+                |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``semantic analysis and lowering handle do block`` () =
+        let program = """
+fn main (): Int = do
+    let value = 1
+    value
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let mirAsm = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    Assert.Single(mirAsm.modules) |> ignore
+                | Result.Error diagnostics ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toString())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``void call should not be used as value`` () =
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+        let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
+        let helloArg = Ast.Expr.String("Hello, World!", span) :> Ast.Expr
+        let callExpr = Ast.Expr.Apply(writeLineExpr, [ helloArg ], span) :> Ast.Expr
+        let letStmt = Ast.Stmt.Let("x", callExpr, span) :> Ast.Stmt
+        let valueStmt = Ast.Stmt.ExprStmt(Ast.Expr.Id("x", span) :> Ast.Expr, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ letStmt; valueStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok _ ->
+            Assert.True(false, "void 呼び出しの値文脈利用は失敗するべきです。")
+        | Result.Error diagnostics ->
+            Assert.NotEmpty(diagnostics)
+
+    [<Fact>]
+    let ``void call should not be passed as argument value`` () =
+        let span = Span.Empty
+        let importConsole = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let importInt32 = Ast.Decl.Import([ "System"; "Int32" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+
+        let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
+        let writeLineCall = Ast.Expr.Apply(writeLineExpr, [ Ast.Expr.String("x", span) :> Ast.Expr ], span) :> Ast.Expr
+        let parseExpr = Ast.Expr.StaticAccess("Int32", "Parse", span) :> Ast.Expr
+        let parseCall = Ast.Expr.Apply(parseExpr, [ writeLineCall ], span) :> Ast.Expr
+
+        let bodyStmt = Ast.Stmt.ExprStmt(parseCall, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ bodyStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ importConsole; importInt32; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok _ ->
+            Assert.True(false, "void 呼び出しを引数値として渡す場合は失敗するべきです。")
+        | Result.Error diagnostics ->
+            Assert.NotEmpty(diagnostics)
+
+    [<Fact>]
+    let ``void call should be allowed in expression statement`` () =
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+        let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
+        let callExpr = Ast.Expr.Apply(writeLineExpr, [ Ast.Expr.String("ok", span) :> Ast.Expr ], span) :> Ast.Expr
+        let bodyStmt = Ast.Stmt.ExprStmt(callExpr, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ bodyStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | Result.Ok hirModule ->
+            let hasError =
+                hirModule.methods
+                |> List.exists (fun m -> m.hasError)
+            Assert.False(hasError, "式文コンテキストでの void 呼び出しは許可されるべきです。")
+        | Result.Error diagnostics ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toString())
+                |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed unexpectedly: {message}")
+
+
+    [<Fact>]
+    let ``nullary function call with unit argument syntax should be allowed`` () =
+        let program = """
+import System.Console
+
+fn greet (): () = Console.WriteLine "hello!"
+
+fn main: () = greet ()
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "`greet ()` の0引数呼び出し解析に失敗しています。")
+                | Result.Error diagnostics ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toString())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``for statement accepts Enumerable.Range enumerable`` () =
+        let program = """
+import System.Console
+
+import System.Linq.Enumerable
+
+fn main: () = do
+    for i in Enumerable.Range 1 20
+        Console.WriteLine i
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "Enumerable.Range による for 解析に失敗しています。")
+                | Result.Error diagnostics ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toString())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``string split with implicit optional argument should be analyzed`` () =
+        let program = """
+import System.Int32
+import System.Console
+
+fn main: () = do
+    var n_x = Console.ReadLine ()
+    n_x = n_x.Split " "
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "`Split \" \"` の解析に失敗しています。")
+                | Result.Error diagnostics ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toString())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``array index access should be analyzed`` () =
+        let program = """
+import System.Console
+
+fn main: () = do
+    let a = (Console.ReadLine ()).Split " "
+    Console.WriteLine a[0]
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "`a[0]` の解析に失敗しています。")
+                | Result.Error diagnostics ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toString())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``for range with array length and index access should be analyzed`` () =
+        let program = """
+import System.Int32
+import System.Console
+import System.Linq.Enumerable
+
+fn main: () = do
+    let a = (Console.ReadLine ()).Split " "
+    for i in Enumerable.Range 0 a.Length
+        Console.WriteLine a[i]
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "`Enumerable.Range 0 a.Length` + `a[i]` の解析に失敗しています。")
+                | Result.Error diagnostics ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toString())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
