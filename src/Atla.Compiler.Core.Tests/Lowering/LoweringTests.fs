@@ -317,3 +317,47 @@ fn main: () = do
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("12", stdout.Trim())
+
+    [<Fact>]
+    let ``range with array length and index access prints all tokens`` () =
+        let program = """
+import System.Int32
+import System.Console
+import System.Linq.Enumerable
+
+fn main: () = do
+    let a = (Console.ReadLine ()).Split " "
+    for i in Enumerable.Range 0 a.Length
+        Console.WriteLine a[i]
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile("RangeArrayLengthLoop", program.Trim(), outDir)
+        Assert.True(res.IsOk)
+
+        let dllPath = Path.Join(outDir, "RangeArrayLengthLoop.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        proc.StandardInput.WriteLine("10 20 30")
+        proc.StandardInput.Close()
+
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("10\n20\n30".Replace("\n", Environment.NewLine), stdout.Trim())

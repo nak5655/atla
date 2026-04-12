@@ -30,14 +30,35 @@ module Layout =
             | None ->
                 let argReg = frame.addArg(sid, tid)
                 { ins = []; res = Some(Mir.Value.RegVal argReg) }
-        | Hir.Expr.MemberAccess (mem, _, _, _) ->
+        | Hir.Expr.MemberAccess (mem, instance, tid, span) ->
             match mem with
             | Hir.Member.NativeField fi -> { ins = []; res = Some(Mir.Value.FieldVal fi) }
             | Hir.Member.NativeMethod mi -> { ins = []; res = Some(Mir.Value.MethodVal mi) }
             | Hir.Member.NativeProperty pi ->
                 match pi.GetMethod with
                 | null -> failwithf "Property has no getter: %s" pi.Name
-                | getter -> { ins = []; res = Some(Mir.Value.MethodVal getter) }
+                | getter ->
+                    let instanceKn =
+                        match instance with
+                        | Some expr -> Some(layoutExpr frame expr)
+                        | None -> None
+
+                    let instanceIns =
+                        instanceKn
+                        |> Option.map (fun kn -> kn.ins)
+                        |> Option.defaultValue []
+
+                    let instanceArg =
+                        instanceKn
+                        |> Option.bind (fun kn -> kn.res)
+                        |> Option.map List.singleton
+                        |> Option.defaultValue []
+
+                    if tid = TypeId.Unit || getter.ReturnType = typeof<System.Void> then
+                        { ins = instanceIns @ [ Mir.Ins.Call(Choice1Of2 getter, instanceArg) ]; res = None }
+                    else
+                        let dst = declareTemp frame tid
+                        { ins = instanceIns @ [ Mir.Ins.CallAssign(dst, getter, instanceArg) ]; res = Some(Mir.Value.RegVal dst) }
         | Hir.Expr.Call (func, _, args, tid, _) ->
             let argKn = args |> List.map (layoutExpr frame)
             let argIns = argKn |> List.collect (fun k -> k.ins)

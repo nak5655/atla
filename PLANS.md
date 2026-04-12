@@ -1,5 +1,12 @@
 # Plan
 
+## 2026-04-12 プロパティアクセス Lowering 修正（a.Length 実行時失敗の解消）
+
+- [x] `Lowering/Layout.fs` で `Hir.Member.NativeProperty` を値として使用する際、getter 呼び出し命令へ正規化する。
+- [x] `Semantics/AnalyzeTests.fs` に `Enumerable.Range 0 a.Length` + `a[i]` の回帰テストを追加する。
+- [x] `Lowering/LoweringTests.fs` にユーザー報告コードのコンパイル成功（必要なら実行）回帰テストを追加する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+
 ## 2026-04-11 組み込み `range` 廃止と `Enumerable.Range` 利用への移行
 
 - [x] `Semantics/Resolve.fs` から組み込み `range` 登録を削除する。

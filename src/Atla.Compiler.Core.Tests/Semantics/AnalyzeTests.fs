@@ -312,3 +312,41 @@ fn main: () = do
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``for range with array length and index access should be analyzed`` () =
+        let program = """
+import System.Int32
+import System.Console
+import System.Linq.Enumerable
+
+fn main: () = do
+    let a = (Console.ReadLine ()).Split " "
+    for i in Enumerable.Range 0 a.Length
+        Console.WriteLine a[i]
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | Result.Ok hirModule ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "`Enumerable.Range 0 a.Length` + `a[i]` の解析に失敗しています。")
+                | Result.Error diagnostics ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toString())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
