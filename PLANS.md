@@ -466,10 +466,10 @@
 
 ### Phase 4: Diagnostics 品質向上
 
-- [ ] `LSPTypes.Diagnostic` を拡張し、`severity` / `source` / `code` を扱えるようにする。
-- [ ] `Span.Empty` 固定の暫定実装を縮退し、取得可能な span を優先して range へ反映する。
-- [ ] 診断メッセージの安定化（決定性と順序）をテストで保証する。
-- [ ] 代表的な失敗ケース（未解決識別子/型不一致/構文エラー）の LSP 診断スナップショットを追加する。
+- [x] `LSPTypes.Diagnostic` を拡張し、`severity` / `source` / `code` を扱えるようにする。
+- [x] `Span.Empty` 固定の暫定実装を縮退し、取得可能な span を優先して range へ反映する。
+- [x] 診断メッセージの安定化（決定性と順序）をテストで保証する。
+- [x] 代表的な失敗ケース（未解決識別子/型不一致/構文エラー）の LSP 診断スナップショットを追加する。
 
 ### Phase 5: Semantic Tokens 精度改善
 

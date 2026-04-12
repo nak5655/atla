@@ -5,6 +5,7 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Text.RegularExpressions
 open System.Reflection
 open Newtonsoft.Json.Linq
 open Atla.Compiler
@@ -38,22 +39,79 @@ type private DiagnosticStage =
 type private DiagnosticEnvelope =
     { stage: DiagnosticStage
       span: Span
-      message: string }
+      message: string
+      code: string }
 
 let private classifyDiagnosticStage (message: string) : DiagnosticStage =
     let m = if isNull message then "" else message.ToLowerInvariant()
     if m.Contains("lex") || m.Contains("token") then Lex
-    elif m.Contains("parse") || m.Contains("syntax") then Parse
+    elif m.Contains("parse") || m.Contains("syntax") || m.Contains("unsupported declaration type") then Parse
     elif m.Contains("type") || m.Contains("unresolved") || m.Contains("semantic") then Semantic
     else Unknown
 
 let private toDiagnosticEnvelopes (compileError: string) : DiagnosticEnvelope list =
-    [ { stage = classifyDiagnosticStage compileError
+    let stage = classifyDiagnosticStage compileError
+    let code =
+        match stage with
+        | Lex -> "ATLALS001"
+        | Parse -> "ATLALS002"
+        | Semantic -> "ATLALS003"
+        | Unknown -> "ATLALS000"
+
+    [ { stage = stage
         span = Span.Empty
-        message = compileError } ]
+        message = compileError
+        code = code } ]
+
+let private tryExtractSpanFromMessage (message: string) : Span option =
+    if String.IsNullOrWhiteSpace message then
+        None
+    else
+        let compact = message.Replace("\r", " ").Replace("\n", " ")
+        let lineColPattern = Regex(@"at\s+(?<line>\d+):(?<col>\d+)", RegexOptions.IgnoreCase)
+        let lineColumnPattern = Regex(@"line\s*=\s*(?<line>\d+)\s*;?\s*column\s*=\s*(?<col>\d+)", RegexOptions.IgnoreCase)
+
+        let tryCreateSpan (m: Match) =
+            if not m.Success then
+                None
+            else
+                let okLine, line = Int32.TryParse m.Groups.["line"].Value
+                let okCol, col = Int32.TryParse m.Groups.["col"].Value
+                if okLine && okCol then
+                    let left: Atla.Core.Data.Position = { Line = line; Column = col }
+                    let right: Atla.Core.Data.Position = { Line = line; Column = col + 1 }
+                    Some({ left = left; right = right })
+                else
+                    None
+
+        match tryCreateSpan (lineColPattern.Match compact) with
+        | Some span -> Some span
+        | None -> tryCreateSpan (lineColumnPattern.Match compact)
 
 let private toLspDiagnostics (envelopes: DiagnosticEnvelope list) : Diagnostic list =
-    envelopes |> List.map (fun x -> Diagnostic(spanToRange x.span, x.message))
+    envelopes
+    |> List.mapi (fun i x ->
+        let span =
+            match tryExtractSpanFromMessage x.message with
+            | Some parsed -> parsed
+            | None -> x.span
+
+        let severity =
+            match x.stage with
+            | Lex
+            | Parse
+            | Semantic
+            | Unknown -> DiagnosticSeverity.Error
+
+        i, Diagnostic(spanToRange span, x.message, severity = severity, source = "atla-lsp", code = x.code))
+    |> List.sortBy (fun (i, d) ->
+        d.range.start.line,
+        d.range.start.character,
+        d.range.``end``.line,
+        d.range.``end``.character,
+        d.message,
+        i)
+    |> List.map snd
 
 
 let private normalizePathForKey (path: string) : string =
@@ -139,10 +197,18 @@ type Server(?publishDiagnosticsFn: (string -> Diagnostic list -> unit)) =
                 if String.IsNullOrWhiteSpace normalizedUri then "Application"
                 else normalizedUri |> Path.GetFileNameWithoutExtension |> sanitizeAssemblyName
 
-            match Compiler.compile(asmName, text, outputDir) with
-            | Ok () -> publish displayUri []
-            | Error message ->
-                message |> toDiagnosticEnvelopes |> toLspDiagnostics |> publish displayUri
+            try
+                match Compiler.compile(asmName, text, outputDir) with
+                | Ok () -> publish displayUri []
+                | Error message ->
+                    message |> toDiagnosticEnvelopes |> toLspDiagnostics |> publish displayUri
+            with ex ->
+                let fallback =
+                    sprintf "Compiler internal error: %s" ex.Message
+                    |> toDiagnosticEnvelopes
+                    |> toLspDiagnostics
+
+                publish displayUri fallback
 
     // ---- public surface used by tests --------------------------------------
     member _.IsAvailablePublishDiagnostics

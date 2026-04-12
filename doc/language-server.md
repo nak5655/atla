@@ -21,3 +21,10 @@ This phase fixes document lifecycle determinism and diagnostics delivery behavio
    - This keeps room for future lex/parse/semantic split without changing request handlers.
 
 4. Successful compilation must always send empty diagnostics (`[]`) to clear stale errors.
+
+## Phase 4: Diagnostics quality improvements (2026-04-12)
+
+1. `LSPTypes.Diagnostic` includes optional `severity`, `source`, and `code`.
+2. Diagnostics prioritize extractable spans from compiler messages (`at line:col` / `Line = ; Column =`) and only fall back to `Span.Empty` when unavailable.
+3. Diagnostics ordering is deterministic (range, message, stable insertion index).
+4. Snapshot-style tests cover semantic unresolved identifier, semantic type mismatch, and syntax-error paths.

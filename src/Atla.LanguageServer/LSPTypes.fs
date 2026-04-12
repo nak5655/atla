@@ -128,12 +128,31 @@ type Range(start: Position, ``end``: Position) =
     [<JsonProperty>]
     member _.``end`` = ``end``
 
+type DiagnosticSeverity =
+    | Error = 1
+    | Warning = 2
+    | Information = 3
+    | Hint = 4
+
 [<JsonObject>]
-type Diagnostic(range: Range, message: string) =
+type Diagnostic
+    (
+        range: Range,
+        message: string,
+        ?severity: DiagnosticSeverity,
+        ?source: string,
+        ?code: string
+    ) =
     [<JsonProperty>]
     member _.range = range
     [<JsonProperty>]
     member _.message = message
+    [<JsonProperty(NullValueHandling = NullValueHandling.Ignore)>]
+    member _.severity = severity |> Option.map int |> Option.map box |> Option.defaultValue null
+    [<JsonProperty(NullValueHandling = NullValueHandling.Ignore)>]
+    member _.source = source |> Option.toObj
+    [<JsonProperty(NullValueHandling = NullValueHandling.Ignore)>]
+    member _.code = code |> Option.toObj
 
 [<JsonObject>]
 type PublishDiagnosticsParams(uri: string, diagnostics: Diagnostic list) =
