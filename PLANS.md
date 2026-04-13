@@ -1,5 +1,11 @@
 # Plan
 
+## 2026-04-13 LSPシンタックスハイライト右端1文字欠落の修正
+
+- [x] `SourceString.join` の span 終端計算を見直し、トークン長が1文字短くならないように修正する。
+- [x] 右端欠落を再現・防止する回帰テスト（少なくとも span と semantic token length）を追加する。
+- [x] 関連テストとフルテストスイートを実行して回帰がないことを確認する。
+
 ## 2026-04-13 Language Server 初期化時の空パス例外修正
 
 - [x] `Atla.LanguageServer.Server.Initialize` のサーバー版数取得処理で、アセンブリパスが空文字の場合に例外を出さずフォールバック値を返すようにする。
@@ -559,4 +565,3 @@
 - [x] `Atla.Console` / `Atla.LanguageServer` の publish 設定を単一実行ファイル出力（single-file）向けに拡張する。
 - [x] ドキュメントに「exe 単独実行」向けの publish 手順と実行例を追記する。
 - [x] フルテストスイートを実行して回帰がないことを確認する。
-

@@ -43,6 +43,7 @@ This phase fixes document lifecycle determinism and diagnostics delivery behavio
    - UTF-8 BOM at head is ignored
    - CRLF / CR is normalized to LF before lexing
    - Equivalent content yields identical semantic token data
+   - Token span width is preserved to the right edge (no rightmost-character truncation)
 5. If client capability is empty or has only unknown token kinds:
    - server returns empty semantic token data
    - server sends `window/logMessage` with fallback reason

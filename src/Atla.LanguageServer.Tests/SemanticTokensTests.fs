@@ -37,6 +37,15 @@ module SemanticTokensTests =
         Assert.NotEmpty(tokens)
 
     [<Fact>]
+    let ``semantic token length includes rightmost character`` () =
+        let server = Server()
+        server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
+
+        let tokens = server.InternalTokenize("fn")
+
+        Assert.Equal<uint32 list>([ 0u; 0u; 2u; 0u; 0u ], tokens)
+
+    [<Fact>]
     let ``tokenize returns empty list when uri is not opened`` () =
         let server = Server()
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
