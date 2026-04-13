@@ -1,10 +1,10 @@
-module Atla.Build
+module Atla.Console
 
 open System
 open System.IO
 open Atla.Compiler
 
-module Cli =
+module Console =
     type BuildOptions = {
         inputPath: string
         outDir: string
@@ -109,4 +109,4 @@ module Cli =
             1
 
 [<EntryPoint>]
-let main argv = Cli.run argv
+let main argv = Console.run argv

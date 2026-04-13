@@ -1,19 +1,19 @@
-namespace Atla.Build.Cli.Tests
+namespace Atla.Console.Build.Tests
 
 open System
 open System.IO
 open Xunit
-open Atla.Build
+open Atla.Console
 
 module CliTests =
     [<Fact>]
     let ``help should return zero`` () =
-        let code = Cli.run [| "--help" |]
+        let code = Console.run [| "--help" |]
         Assert.Equal(0, code)
 
     [<Fact>]
     let ``no args should return one`` () =
-        let code = Cli.run [||]
+        let code = Console.run [||]
         Assert.Equal(1, code)
 
     [<Fact>]
@@ -23,7 +23,7 @@ module CliTests =
         let sourcePath = Path.Join(tempDir, "main.txt")
         File.WriteAllText(sourcePath, "fn main: () = ()")
 
-        let code = Cli.run [| "build"; sourcePath |]
+        let code = Console.run [| "build"; sourcePath |]
         Assert.Equal(1, code)
 
     [<Fact>]
@@ -40,7 +40,7 @@ fn main: () = do
 """.Trim())
 
         let outDir = Path.Join(tempDir, "artifacts")
-        let code = Cli.run [| "build"; sourcePath; "-o"; outDir; "--name"; "HelloCli" |]
+        let code = Console.run [| "build"; sourcePath; "-o"; outDir; "--name"; "HelloConsole" |]
 
         Assert.Equal(0, code)
-        Assert.True(File.Exists(Path.Join(outDir, "HelloCli.dll")))
+        Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.dll")))
