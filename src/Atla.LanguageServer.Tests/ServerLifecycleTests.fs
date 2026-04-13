@@ -70,3 +70,23 @@ module ServerLifecycleTests =
         let publishedUris = published |> Seq.map fst |> Seq.toList
         Assert.Contains("file:///tmp/workspace/in.atla", publishedUris)
         Assert.DoesNotContain("file:///tmp/out.atla", publishedUris)
+
+    [<Fact>]
+    let ``initialize falls back to default version when assembly path is empty`` () =
+        let server = Server(assemblyLocationResolver = (fun () -> ""))
+
+        let content = JObject.Parse("""
+        {
+          "params": {
+            "capabilities": {
+              "textDocument": {
+                "publishDiagnostics": { "relatedInformation": true },
+                "semanticTokens": { "tokenTypes": ["keyword", "number", "string", "variable", "type"] }
+              }
+            }
+          }
+        }
+        """)
+
+        let result = server.Initialize(content)
+        Assert.Equal("0.0.0", result.serverInfo.version)

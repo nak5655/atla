@@ -88,6 +88,16 @@ let private tryUriToNormalizedPath (uriText: string) : string option =
     else
         None
 
+let private resolveServerVersion (assemblyLocation: string) : string =
+    if String.IsNullOrWhiteSpace assemblyLocation then
+        "0.0.0"
+    else
+        try
+            let versionInfo = FileVersionInfo.GetVersionInfo(assemblyLocation)
+            if String.IsNullOrWhiteSpace versionInfo.FileVersion then "0.0.0" else versionInfo.FileVersion
+        with _ ->
+            "0.0.0"
+
 let private collectWorkspaceRoots (content: JObject) : string list =
     let rootsFromFolders =
         match content.SelectToken("$.params.workspaceFolders") with
@@ -117,7 +127,7 @@ let private collectWorkspaceRoots (content: JObject) : string list =
 // ---------------------------------------------------------------------------
 
 /// Mutable server state (one instance per process).
-type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagnostic list -> unit)) =
+type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagnostic list -> unit), ?assemblyLocationResolver: unit -> string) =
 
     // ---- persistent state --------------------------------------------------
     let mutable isAvailablePublishDiagnostics = false
@@ -127,6 +137,8 @@ type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagn
     let buffers = Dictionary<string, string>()
     let displayUris = Dictionary<string, string>()
     let publish = defaultArg publishDiagnosticsFn publishDiagnostics
+    let getAssemblyLocation =
+        defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
 
     let canCompileUri (normalizedUri: string) : bool =
         match tryUriToNormalizedPath normalizedUri with
@@ -215,9 +227,8 @@ type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagn
                 )
             )
 
-        let assembly = Assembly.GetExecutingAssembly()
-        let versionInfo = FileVersionInfo.GetVersionInfo(assembly.Location)
-        let serverInfo = ServerInfo("atla-lsp", versionInfo.FileVersion)
+        let serverVersion = getAssemblyLocation () |> resolveServerVersion
+        let serverInfo = ServerInfo("atla-lsp", serverVersion)
 
         InitializeResult(capabilities, serverInfo)
 
