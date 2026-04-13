@@ -17,7 +17,7 @@ type SourceString =
             | first :: rest ->
                 let start = first.span.left
                 let endPos =
-                    rest
+                    chars
                     |> List.fold (fun (pos: Position) c -> pos.Advance(c.char)) start
                 { left = start; right = endPos }
         { string = str; span = span }
