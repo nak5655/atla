@@ -5,7 +5,7 @@ open System.IO
 open Xunit
 open Atla.Console
 
-module CliTests =
+module BuildTests =
     [<Fact>]
     let ``help should return zero`` () =
         let code = Console.run [| "--help" |]
