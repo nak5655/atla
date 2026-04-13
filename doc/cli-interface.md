@@ -21,3 +21,19 @@ dotnet run --project src/Atla.Cli -- build <input.atla> [-o <outDir>] [--name <a
 ## Test project
 
 - CLI tests live in `src/Atla.Cli.Tests`.
+
+## Self-contained publish
+
+`Atla.Console` はプロジェクト既定で self-contained publish を有効化しています。
+
+```bash
+dotnet publish src/Atla.Console/Atla.Console.fsproj -c Release -r win-x64
+```
+
+`Atla.LanguageServer` も同様に self-contained publish を有効化しています。
+
+```bash
+dotnet publish src/Atla.LanguageServer/Atla.LanguageServer.fsproj -c Release -r win-x64
+```
+
+> Runtime Identifier (`-r`) は配布先OS/CPUに合わせて指定してください。

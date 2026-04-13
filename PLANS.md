@@ -541,3 +541,10 @@
 - [x] `initialize` capability を現実装に合わせて調整する。
 - [x] `initialize` -> `shutdown` -> `exit` の遷移をテストで検証する。
 - [x] LanguageServer テストとソリューション全体テストを実行して結果を確認する。
+
+## 2026-04-13 Atla.Console / Atla.LanguageServer の self-contained application 対応
+
+- [x] `Atla.Console.fsproj` と `Atla.LanguageServer.fsproj` に self-contained publish 向けプロパティを追加する。
+- [x] 利用者向けドキュメントに self-contained publish 手順を追記する。
+- [x] テストスイートを実行して回帰がないことを確認する。
+

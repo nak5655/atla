@@ -122,3 +122,19 @@ Phase 7 is complete only when all of the following are true at the same time:
 1. local full tests are green
 2. E2E normal and abnormal tests are green
 3. documentation updates are complete
+
+
+## Build/Publish notes (2026-04-13)
+
+- `Atla.LanguageServer` is configured with `PublishSelfContained=true`.
+- Publish with an explicit Runtime Identifier, for example:
+
+```bash
+dotnet publish src/Atla.LanguageServer/Atla.LanguageServer.fsproj -c Release -r win-x64
+```
+
+- `Atla.Console` is also configured the same way:
+
+```bash
+dotnet publish src/Atla.Console/Atla.Console.fsproj -c Release -r win-x64
+```
