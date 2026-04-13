@@ -122,3 +122,19 @@ Phase 7 is complete only when all of the following are true at the same time:
 1. local full tests are green
 2. E2E normal and abnormal tests are green
 3. documentation updates are complete
+
+## Build/Publish notes (2026-04-13)
+
+- `Atla.LanguageServer` は `PublishSelfContained=true` + `PublishSingleFile=true` を有効化しています。
+- `Atla.Console` も同様に単一実行ファイル publish を有効化しています。
+- いずれも publish 時には Runtime Identifier (`-r`) を明示してください。
+
+```bash
+# Language Server: 単一exe
+dotnet publish src/Atla.LanguageServer/Atla.LanguageServer.fsproj -c Release -r win-x64
+.\src\Atla.LanguageServer\bin\Release\net10.0\win-x64\publish\atla-lsp.exe
+
+# Console: 単一exe
+dotnet publish src/Atla.Console/Atla.Console.fsproj -c Release -r win-x64
+.\src\Atla.Console\bin\Release\net10.0\win-x64\publish\atla.exe --help
+```
