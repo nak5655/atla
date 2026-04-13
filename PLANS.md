@@ -548,3 +548,9 @@
 - [x] 利用者向けドキュメントに self-contained publish 手順を追記する。
 - [x] テストスイートを実行して回帰がないことを確認する。
 
+## 2026-04-13 self-contained 単一実行ファイル（exe）出力対応
+
+- [x] `Atla.Console` / `Atla.LanguageServer` の publish 設定を単一実行ファイル出力（single-file）向けに拡張する。
+- [x] ドキュメントに「exe 単独実行」向けの publish 手順と実行例を追記する。
+- [x] フルテストスイートを実行して回帰がないことを確認する。
+

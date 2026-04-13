@@ -22,18 +22,18 @@ dotnet run --project src/Atla.Cli -- build <input.atla> [-o <outDir>] [--name <a
 
 - CLI tests live in `src/Atla.Cli.Tests`.
 
-## Self-contained publish
+## Self-contained single-file publish
 
-`Atla.Console` はプロジェクト既定で self-contained publish を有効化しています。
+`Atla.Console` / `Atla.LanguageServer` はプロジェクト既定で `PublishSelfContained=true` + `PublishSingleFile=true` を有効化しています。
 
 ```bash
+# Atla.Console (Windows x64 単一exe)
 dotnet publish src/Atla.Console/Atla.Console.fsproj -c Release -r win-x64
-```
+.\src\Atla.Console\bin\Release\net10.0\win-x64\publish\atla.exe --help
 
-`Atla.LanguageServer` も同様に self-contained publish を有効化しています。
-
-```bash
+# Atla.LanguageServer (Windows x64 単一exe)
 dotnet publish src/Atla.LanguageServer/Atla.LanguageServer.fsproj -c Release -r win-x64
+.\src\Atla.LanguageServer\bin\Release\net10.0\win-x64\publish\atla-lsp.exe
 ```
 
 > Runtime Identifier (`-r`) は配布先OS/CPUに合わせて指定してください。
