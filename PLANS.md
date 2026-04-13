@@ -1,5 +1,11 @@
 # Plan
 
+## 2026-04-13 Language Server 初期化時の空パス例外修正
+
+- [x] `Atla.LanguageServer.Server.Initialize` のサーバー版数取得処理で、アセンブリパスが空文字の場合に例外を出さずフォールバック値を返すようにする。
+- [x] 空パス入力を再現する回帰テストを `Atla.LanguageServer.Tests` に追加する。
+- [x] 既存を含むテストを実行して回帰がないことを確認する。
+
 ## 2026-04-12 診断モデル刷新（Warning/Info を成功時にも返す）
 
 - [x] `Semantics.Data` に `Diagnostic` DU を新設し、`Error | Warning | Info` を表現できるようにする（`span` と `message` を保持）。
