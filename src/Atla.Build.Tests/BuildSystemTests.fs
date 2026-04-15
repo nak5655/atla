@@ -208,7 +208,7 @@ commonB = {{ path = "{relativeB}" }}
         let result = BuildSystem.buildProject { projectRoot = rootProject }
 
         Assert.False(result.succeeded)
-        Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("duplicate dependency name")))
+        Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("dependency version conflict `common`")))
 
     [<Fact>]
     let ``buildProject should parse dependency with version as nuget-style dependency`` () =
@@ -294,7 +294,7 @@ jsonLocal = {{ path = "{relativePath}" }}
 
             Assert.False(result.succeeded)
             Assert.True(result.plan.IsNone)
-            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("duplicate dependency name `Newtonsoft.Json`")))
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("dependency version conflict `Newtonsoft.Json`")))
         )
 
     [<Fact>]
@@ -317,4 +317,108 @@ version = "0.1.0"
             Assert.False(result.succeeded)
             Assert.True(result.plan.IsNone)
             Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package not found in cache")))
+        )
+
+    [<Fact>]
+    let ``buildProject should fail when transitive nuget versions do not match`` () =
+        let rootProject = createTempProjectDir ()
+        let depProjectA = createTempProjectDir ()
+        let depProjectB = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        Directory.CreateDirectory(Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")) |> ignore
+        Directory.CreateDirectory(Path.Join(packagesRoot, "newtonsoft.json", "12.0.3")) |> ignore
+
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA)
+        let relativeB = Path.GetRelativePath(rootProject, depProjectB)
+
+        writeManifest depProjectA """
+[package]
+name = "dep-a"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        writeManifest depProjectB """
+[package]
+name = "dep-b"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "12.0.3" }
+"""
+
+        writeManifest rootProject $"""
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+depA = {{ path = "{relativeA}" }}
+depB = {{ path = "{relativeB}" }}
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.False(result.succeeded)
+            Assert.True(result.plan.IsNone)
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("dependency version conflict `Newtonsoft.Json`")))
+        )
+
+    [<Fact>]
+    let ``buildProject should allow transitive nuget versions when they match exactly`` () =
+        let rootProject = createTempProjectDir ()
+        let depProjectA = createTempProjectDir ()
+        let depProjectB = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packagePath = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
+        Directory.CreateDirectory(packagePath) |> ignore
+
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA)
+        let relativeB = Path.GetRelativePath(rootProject, depProjectB)
+
+        writeManifest depProjectA """
+[package]
+name = "dep-a"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        writeManifest depProjectB """
+[package]
+name = "dep-b"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        writeManifest rootProject $"""
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+depA = {{ path = "{relativeA}" }}
+depB = {{ path = "{relativeB}" }}
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let jsonDeps = plan.dependencies |> List.filter (fun dep -> dep.name = "Newtonsoft.Json")
+                let jsonDependency = Assert.Single(jsonDeps)
+                Assert.Equal("13.0.3", jsonDependency.version)
+                Assert.Equal(Path.GetFullPath(packagePath), jsonDependency.source)
+            | None ->
+                Assert.Fail("expected build plan")
         )

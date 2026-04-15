@@ -27,6 +27,13 @@
 - [x] `Atla.Build.fsproj` のコンパイル順序に `Resolver.fs` を追加する。
 - [x] 既存テストで振る舞い非退行を確認する。
 
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ4（競合解決: 厳密一致）
+
+- [x] 同一依存名の解決結果について、version 不一致を明示的な競合診断として扱う。
+- [x] version 一致かつ source 一致の場合のみ重複を許可（再訪として統合）する。
+- [x] version 一致でも source 不一致の場合は重複依存名診断で失敗させる。
+- [x] `Atla.Build.Tests` に transitive NuGet の version 不一致/一致ケースを追加する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）
