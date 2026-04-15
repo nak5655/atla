@@ -1,6 +1,7 @@
 namespace Atla.Build
 
 open System
+open System.Diagnostics
 open System.IO
 open System.Globalization
 open Atla.Core.Data
@@ -39,22 +40,94 @@ module internal Resolver =
     let private toNuGetPathSegment (value: string) : string =
         value.ToLower(CultureInfo.InvariantCulture)
 
-    let private tryResolveNuGetDependency (packageId: string) (version: string) : Result<Compiler.ResolvedDependency, Diagnostic list> =
-        let packagesRoot = getNuGetPackagesRoot ()
+    let private isAutoRestoreEnabled () : bool =
+        match Environment.GetEnvironmentVariable("ATLA_BUILD_ENABLE_NUGET_RESTORE") with
+        | null -> false
+        | value ->
+            let normalized = value.Trim().ToLowerInvariant()
+            normalized = "1" || normalized = "true" || normalized = "yes"
+
+    let private tryRunRestore (packagesRoot: string) (packageId: string) (version: string) : Result<unit, string> =
+        let tempRoot = Path.Join(Path.GetTempPath(), $"atla-build-nuget-restore-{Guid.NewGuid():N}")
+        Directory.CreateDirectory(tempRoot) |> ignore
+
+        let projectPath = Path.Join(tempRoot, "restore.csproj")
+
+        let projectContent =
+            $"""<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="{packageId}" Version="{version}" />
+  </ItemGroup>
+</Project>"""
+
+        File.WriteAllText(projectPath, projectContent)
+
+        let startInfo = ProcessStartInfo()
+        startInfo.FileName <- "dotnet"
+        startInfo.Arguments <- $"restore \"{projectPath}\" --nologo --verbosity quiet"
+        startInfo.WorkingDirectory <- tempRoot
+        startInfo.RedirectStandardOutput <- true
+        startInfo.RedirectStandardError <- true
+        startInfo.UseShellExecute <- false
+        startInfo.CreateNoWindow <- true
+        startInfo.Environment["NUGET_PACKAGES"] <- packagesRoot
+
+        use proc = new Process()
+        proc.StartInfo <- startInfo
+
+        let started = proc.Start()
+        if not started then
+            Result.Error "failed to start `dotnet restore` process."
+        else
+            let stdOut = proc.StandardOutput.ReadToEnd()
+            let stdErr = proc.StandardError.ReadToEnd()
+            proc.WaitForExit()
+
+            if proc.ExitCode = 0 then
+                Ok()
+            else
+                let details = if String.IsNullOrWhiteSpace stdErr then stdOut else stdErr
+                Result.Error(details.Trim())
+
+    let private toNuGetPackagePath (packagesRoot: string) (packageId: string) (version: string) : string =
         let packagePath =
             Path.Join(packagesRoot, toNuGetPathSegment packageId, toNuGetPathSegment version)
             |> normalizePath
+        packagePath
+
+    let private tryResolveNuGetDependency (packageId: string) (version: string) : Result<Compiler.ResolvedDependency, Diagnostic list> =
+        let packagesRoot = getNuGetPackagesRoot ()
+        let packagePath = toNuGetPackagePath packagesRoot packageId version
+
+        let resolved : Compiler.ResolvedDependency =
+            { name = packageId
+              version = version
+              source = packagePath }
 
         if Directory.Exists packagePath then
-            Ok {
-                name = packageId
-                version = version
-                source = packagePath
-            }
+            Ok resolved
+        elif isAutoRestoreEnabled () then
+            match tryRunRestore packagesRoot packageId version with
+            | Ok () when Directory.Exists packagePath ->
+                Ok resolved
+            | Ok () ->
+                Result.Error [
+                    error
+                        $"nuget package restore completed but package was not found: {packageId} {version} (expected: {packagePath})."
+                ]
+            | Result.Error restoreError ->
+                Result.Error [
+                    error
+                        $"nuget package restore failed: {packageId} {version}. {restoreError}"
+                ]
         else
             Result.Error [
                 error
-                    $"nuget package not found in cache: {packageId} {version} (expected: {packagePath}). Set NUGET_PACKAGES or run restore beforehand."
+                    $"nuget package not found in cache: {packageId} {version} (expected: {packagePath}). Set NUGET_PACKAGES or run restore beforehand. To enable automatic restore, set ATLA_BUILD_ENABLE_NUGET_RESTORE=1."
             ]
 
     let resolveDependencies

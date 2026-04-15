@@ -33,6 +33,15 @@ module BuildSystemTests =
         finally
             Environment.SetEnvironmentVariable("NUGET_PACKAGES", previous)
 
+    let private withEnvironmentVariable (name: string) (value: string) (action: unit -> unit) =
+        let previous = Environment.GetEnvironmentVariable(name)
+        Environment.SetEnvironmentVariable(name, value)
+
+        try
+            action ()
+        finally
+            Environment.SetEnvironmentVariable(name, previous)
+
     [<Fact>]
     let ``buildProject should parse minimal atla.toml`` () =
         let projectRoot = createTempProjectDir ()
@@ -317,6 +326,31 @@ version = "0.1.0"
             Assert.False(result.succeeded)
             Assert.True(result.plan.IsNone)
             Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package not found in cache")))
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("ATLA_BUILD_ENABLE_NUGET_RESTORE=1")))
+        )
+
+    [<Fact>]
+    let ``buildProject should keep auto restore disabled by default`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        writeManifest rootProject """
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            withEnvironmentVariable "ATLA_BUILD_ENABLE_NUGET_RESTORE" "0" (fun () ->
+                let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+                Assert.False(result.succeeded)
+                Assert.True(result.plan.IsNone)
+                Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package not found in cache")))
+            )
         )
 
     [<Fact>]

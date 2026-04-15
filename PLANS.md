@@ -34,6 +34,12 @@
 - [x] version 一致でも source 不一致の場合は重複依存名診断で失敗させる。
 - [x] `Atla.Build.Tests` に transitive NuGet の version 不一致/一致ケースを追加する。
 
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ5（自動Restore導線）
+
+- [x] NuGetキャッシュ不在時に `ATLA_BUILD_ENABLE_NUGET_RESTORE=1` で自動 `dotnet restore` を試行できるようにする。
+- [x] 自動Restoreが無効な既定動作を維持し、診断に有効化方法を含める。
+- [x] `Atla.Build.Tests` に既定無効動作と診断メッセージの回帰テストを追加する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）
