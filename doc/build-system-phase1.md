@@ -31,6 +31,7 @@ version = "0.1.0"
 - 実装は `Build.fs`（manifest解析）と `Resolver.fs`（依存解決）に責務分離する。
 - 競合解決は厳密一致とし、同一依存名は `version` が一致する場合のみ統合する。
 - キャッシュ不在時は既定で失敗し、`ATLA_BUILD_ENABLE_NUGET_RESTORE=1` で自動 restore 試行を有効化できる。
+- テストは `BuildTests`（build経路）と `ResolverTests`（NuGet/競合解決）へ分割する。
 
 ```toml
 [dependencies]

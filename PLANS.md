@@ -40,6 +40,12 @@
 - [x] 自動Restoreが無効な既定動作を維持し、診断に有効化方法を含める。
 - [x] `Atla.Build.Tests` に既定無効動作と診断メッセージの回帰テストを追加する。
 
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ6（テスト構造分割）
+
+- [x] `BuildSystemTests.fs` を `BuildTests.fs`（manifest/build経路）と `ResolverTests.fs`（NuGet/競合解決経路）に分割する。
+- [x] `Atla.Build.Tests.fsproj` の `Compile Include` を新しいテスト構成へ更新する。
+- [x] 分割後の `Atla.Build.Tests` とフルテストスイート通過を確認する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）
