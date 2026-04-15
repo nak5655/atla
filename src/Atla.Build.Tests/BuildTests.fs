@@ -5,7 +5,15 @@ open System.IO
 open Xunit
 open Atla.Build
 
-module BuildSystemTests =
+module BuildTests =
+    let private createTempProjectDir () =
+        let path = Path.Join(Path.GetTempPath(), $"atla-build-tests-{Guid.NewGuid():N}")
+        Directory.CreateDirectory(path) |> ignore
+        path
+
+    let private writeManifest (projectRoot: string) (content: string) =
+        File.WriteAllText(Path.Join(projectRoot, "atla.toml"), content.Trim())
+
     [<Fact>]
     let ``createEmptyPlan keeps projectRoot and no dependencies`` () =
         let request = { BuildRequest.projectRoot = "/tmp/hello" }
@@ -15,14 +23,6 @@ module BuildSystemTests =
         Assert.Equal<string>("", plan.projectName)
         Assert.Equal<string>("", plan.projectVersion)
         Assert.Empty(plan.dependencies)
-
-    let private createTempProjectDir () =
-        let path = Path.Join(Path.GetTempPath(), $"atla-build-tests-{Guid.NewGuid():N}")
-        Directory.CreateDirectory(path) |> ignore
-        path
-
-    let private writeManifest (projectRoot: string) (content: string) =
-        File.WriteAllText(Path.Join(projectRoot, "atla.toml"), content.Trim())
 
     [<Fact>]
     let ``buildProject should parse minimal atla.toml`` () =
@@ -199,4 +199,4 @@ commonB = {{ path = "{relativeB}" }}
         let result = BuildSystem.buildProject { projectRoot = rootProject }
 
         Assert.False(result.succeeded)
-        Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("duplicate dependency name")))
+        Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("dependency version conflict `common`")))

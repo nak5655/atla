@@ -21,6 +21,25 @@ version = "0.1.0"
 
 `dependencies` は将来フェーズで導入し、NuGetパッケージ解決へ対応する。
 
+2026-04-15 時点のフェーズ0-3合意:
+
+- `path` 指定がある場合は path 依存として扱う（優先度: `path > version`）。
+- `path` がなく `version` がある場合は NuGet 依存として扱う。
+- `path` と `version` の同時指定は不正とする。
+- NuGet依存は `NUGET_PACKAGES`（未設定時 `~/.nuget/packages`）配下から解決する。
+- NuGet依存の `ResolvedDependency.source` は実体ディレクトリの絶対パスとする。
+- 実装は `Build.fs`（manifest解析）と `Resolver.fs`（依存解決）に責務分離する。
+- 競合解決は厳密一致とし、同一依存名は `version` が一致する場合のみ統合する。
+- キャッシュ不在時は既定で失敗し、`ATLA_BUILD_ENABLE_NUGET_RESTORE=1` で自動 restore 試行を有効化できる。
+- テストは `BuildTests`（build経路）と `ResolverTests`（NuGet/競合解決）へ分割する。
+- 決定性保証として、依存出力順序と診断順序の再現性をテストで検証する。
+
+```toml
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" } # nuget
+local-lib = { path = "../local-lib" }     # local path
+```
+
 ## 責務境界
 
 - `Atla.Build`

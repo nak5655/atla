@@ -1,5 +1,63 @@
 # Plan
 
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ0-1（仕様確定 + manifest拡張）
+
+- [x] フェーズ0: 依存種別の優先度を `path > version(nuget)` として明確化する。
+- [x] フェーズ1: `[dependencies]` で `version` 指定時に NuGet 依存として解釈できるようにする（例: `Newtonsoft.Json = { version = "13.0.3" }`）。
+- [x] フェーズ1: `path` と `version` の同時指定を診断エラーにする。
+- [x] `Atla.Build.Tests` に `version` 指定の受理（現時点は未解決診断）と同時指定エラーの回帰テストを追加する。
+
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ2（BuildPlan解決モデル拡張）
+
+- [x] `version` 指定の NuGet 依存を `BuildPlan.dependencies` の `ResolvedDependency` として返せるようにする。
+- [x] NuGet依存の `source` を決定的な表現（`nuget:<packageId>/<version>`）で保持する。
+- [x] path依存とnuget依存が同一パッケージ名へ解決される場合は重複診断にする。
+- [x] `Atla.Build.Tests` に NuGet解決成功ケースと path+nuget 同名衝突ケースを追加する。
+
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ3（ローカルキャッシュ解決基盤）
+
+- [x] NuGet依存を `NUGET_PACKAGES`（未設定時は `~/.nuget/packages`）から解決する。
+- [x] 依存がキャッシュに存在しない場合は構造化診断で失敗させる。
+- [x] NuGet依存の `ResolvedDependency.source` を実体ディレクトリ（絶対パス）にする。
+- [x] `Atla.Build.Tests` にキャッシュ存在/不存在ケースを追加する。
+
+## 2026-04-15 Atla.Build リファクタ（Resolver分割）
+
+- [x] `Build.fs` から依存解決ロジックを `Resolver.fs` に分離する。
+- [x] `Atla.Build.fsproj` のコンパイル順序に `Resolver.fs` を追加する。
+- [x] 既存テストで振る舞い非退行を確認する。
+
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ4（競合解決: 厳密一致）
+
+- [x] 同一依存名の解決結果について、version 不一致を明示的な競合診断として扱う。
+- [x] version 一致かつ source 一致の場合のみ重複を許可（再訪として統合）する。
+- [x] version 一致でも source 不一致の場合は重複依存名診断で失敗させる。
+- [x] `Atla.Build.Tests` に transitive NuGet の version 不一致/一致ケースを追加する。
+
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ5（自動Restore導線）
+
+- [x] NuGetキャッシュ不在時に `ATLA_BUILD_ENABLE_NUGET_RESTORE=1` で自動 `dotnet restore` を試行できるようにする。
+- [x] 自動Restoreが無効な既定動作を維持し、診断に有効化方法を含める。
+- [x] `Atla.Build.Tests` に既定無効動作と診断メッセージの回帰テストを追加する。
+
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ6（テスト構造分割）
+
+- [x] `BuildSystemTests.fs` を `BuildTests.fs`（manifest/build経路）と `ResolverTests.fs`（NuGet/競合解決経路）に分割する。
+- [x] `Atla.Build.Tests.fsproj` の `Compile Include` を新しいテスト構成へ更新する。
+- [x] 分割後の `Atla.Build.Tests` とフルテストスイート通過を確認する。
+
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ7（README整備）
+
+- [x] ルート `README.md` を追加し、CLIインターフェイス（`build <projectRoot>`）を記載する。
+- [x] NuGet関連の環境変数（`NUGET_PACKAGES`, `ATLA_BUILD_ENABLE_NUGET_RESTORE`）をREADMEに明記する。
+- [x] 既存 `doc/cli-interface.md` と整合する最小プロジェクト構成・実行例を記載する。
+
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ8（決定性検証）
+
+- [x] 依存解決結果の並び順が決定的であることを `ResolverTests` で検証する。
+- [x] 診断メッセージ順が同一入力で再現可能であることを `ResolverTests` で検証する。
+- [x] `Atla.Build.Tests` とフルテストスイート通過でフェーズ完了を確認する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）
