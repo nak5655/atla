@@ -52,6 +52,12 @@
 - [x] NuGet関連の環境変数（`NUGET_PACKAGES`, `ATLA_BUILD_ENABLE_NUGET_RESTORE`）をREADMEに明記する。
 - [x] 既存 `doc/cli-interface.md` と整合する最小プロジェクト構成・実行例を記載する。
 
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ8（決定性検証）
+
+- [x] 依存解決結果の並び順が決定的であることを `ResolverTests` で検証する。
+- [x] 診断メッセージ順が同一入力で再現可能であることを `ResolverTests` で検証する。
+- [x] `Atla.Build.Tests` とフルテストスイート通過でフェーズ完了を確認する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）

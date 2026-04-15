@@ -269,3 +269,80 @@ depB = {{ path = "{relativeB}" }}
             | None ->
                 Assert.Fail("expected build plan")
         )
+
+    [<Fact>]
+    let ``buildProject should return dependencies in deterministic order`` () =
+        let rootProject = createTempProjectDir ()
+        let depProjectA = createTempProjectDir ()
+        let depProjectZ = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        Directory.CreateDirectory(Path.Join(packagesRoot, "pkgx", "1.0.0")) |> ignore
+
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA)
+        let relativeZ = Path.GetRelativePath(rootProject, depProjectZ)
+
+        writeManifest depProjectA """
+[package]
+name = "A"
+version = "0.1.0"
+"""
+
+        writeManifest depProjectZ """
+[package]
+name = "Z"
+version = "0.1.0"
+"""
+
+        writeManifest rootProject $"""
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+zdep = {{ path = "{relativeZ}" }}
+"PkgX" = {{ version = "1.0.0" }}
+adep = {{ path = "{relativeA}" }}
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let names = plan.dependencies |> List.map (fun dep -> dep.name)
+                Assert.Equal<string list>([ "A"; "PkgX"; "Z" ], names)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should keep diagnostics order deterministic across runs`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        writeManifest rootProject """
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+missingPath = { path = "./deps/missing" }
+"Missing.Pkg" = { version = "9.9.9" }
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            withEnvironmentVariable "ATLA_BUILD_ENABLE_NUGET_RESTORE" "0" (fun () ->
+                let run1 = BuildSystem.buildProject { projectRoot = rootProject }
+                let run2 = BuildSystem.buildProject { projectRoot = rootProject }
+
+                Assert.False(run1.succeeded)
+                Assert.False(run2.succeeded)
+
+                let messages1 = run1.diagnostics |> List.map (fun d -> d.message)
+                let messages2 = run2.diagnostics |> List.map (fun d -> d.message)
+                Assert.Equal<string list>(messages1, messages2)
+            )
+        )
