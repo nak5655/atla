@@ -25,6 +25,7 @@ type BuildResult =
       diagnostics: Diagnostic list }
 
 module BuildSystem =
+    (* Manifest ファイル関連の固定設定と、共通ユーティリティ。 *)
     let private manifestFileName = "atla.toml"
 
     let private normalizePath (path: string) : string =
@@ -43,6 +44,7 @@ module BuildSystem =
           plan = Some plan
           diagnostics = [] }
 
+    (* [package] テーブルの必須文字列項目を検証する。 *)
     let private tryGetRequiredString (table: TomlTable) (fieldName: string) : Result<string, Diagnostic list> =
         match table.TryGetValue(fieldName) with
         | true, (:? string as value) when not (String.IsNullOrWhiteSpace value) ->
@@ -54,6 +56,7 @@ module BuildSystem =
         | false, _ ->
             Result.Error [ error $"missing required field `package.{fieldName}`" ]
 
+    (* [dependencies] テーブルを deterministic な順序で解釈し、Resolver 用の依存仕様へ変換する。 *)
     let private parseDependencies (root: TomlTable) : Result<Resolver.DependencySpec list, Diagnostic list> =
         match root.TryGetValue("dependencies") with
         | false, _ -> Ok []
@@ -118,6 +121,7 @@ module BuildSystem =
         | true, _ ->
             Result.Error [ error "`dependencies` must be a table" ]
 
+    (* atla.toml 全体を読み取り、package/dependencies を検証済み Manifest に変換する。 *)
     let private parseManifest (manifestPath: string) : Result<Resolver.Manifest, Diagnostic list> =
         if not (File.Exists manifestPath) then
             Result.Error [ error $"atla.toml not found: {manifestPath}" ]
@@ -156,12 +160,17 @@ module BuildSystem =
             | :? TomlException as tomlEx ->
                 Result.Error [ error $"atla.toml parse error: {tomlEx.Message}" ]
 
+    (* BuildRequest から最小の空 BuildPlan を組み立てる補助API。 *)
     let createEmptyPlan (request: BuildRequest) : BuildPlan =
         { projectName = ""
           projectVersion = ""
           projectRoot = request.projectRoot
           dependencies = [] }
 
+    (* Build エントリポイント:
+       1) manifest を解析し
+       2) Resolver で依存解決を実行し
+       3) BuildPlan を返す。 *)
     let buildProject (request: BuildRequest) : BuildResult =
         let projectRoot = normalizePath request.projectRoot
         let manifestPath = Path.Join(projectRoot, manifestFileName)

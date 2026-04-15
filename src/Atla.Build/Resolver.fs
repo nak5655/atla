@@ -9,6 +9,7 @@ open Atla.Core.Semantics.Data
 open Atla.Compiler
 
 module internal Resolver =
+    (* Manifest で受け入れる依存指定の正規化表現。 *)
     type DependencySpec =
         | PathDependency of name: string * relativePath: string
         | NuGetDependency of packageId: string * version: string
@@ -30,6 +31,8 @@ module internal Resolver =
     let private error (message: string) : Diagnostic =
         Diagnostic.Error(message, Span.Empty)
 
+    (* NuGet キャッシュの探索ルートを決定する:
+       NUGET_PACKAGES 優先、未指定時は ~/.nuget/packages。 *)
     let private getNuGetPackagesRoot () : string =
         match Environment.GetEnvironmentVariable("NUGET_PACKAGES") with
         | value when not (String.IsNullOrWhiteSpace value) -> normalizePath value
@@ -47,6 +50,8 @@ module internal Resolver =
             let normalized = value.Trim().ToLowerInvariant()
             normalized = "1" || normalized = "true" || normalized = "yes"
 
+    (* ローカル一時 csproj を生成して `dotnet restore` を起動し、
+       指定 package/version のキャッシュ展開を試行する。 *)
     let private tryRunRestore (packagesRoot: string) (packageId: string) (version: string) : Result<unit, string> =
         let tempRoot = Path.Join(Path.GetTempPath(), $"atla-build-nuget-restore-{Guid.NewGuid():N}")
         Directory.CreateDirectory(tempRoot) |> ignore
@@ -99,6 +104,10 @@ module internal Resolver =
             |> normalizePath
         packagePath
 
+    (* NuGet 依存の解決本体:
+       1) キャッシュ直解決
+       2) 必要に応じて自動 restore
+       3) 診断付き失敗 *)
     let private tryResolveNuGetDependency (packageId: string) (version: string) : Result<Compiler.ResolvedDependency, Diagnostic list> =
         let packagesRoot = getNuGetPackagesRoot ()
         let packagePath = toNuGetPackagePath packagesRoot packageId version
@@ -136,6 +145,7 @@ module internal Resolver =
         (projectRoot: string)
         (manifest: Manifest)
         : Result<Compiler.ResolvedDependency list, Diagnostic list> =
+        (* 依存名単位での一意化と競合診断を行う。 *)
         let mergeResolvedDependency (state: ResolveState) (resolved: Compiler.ResolvedDependency) : ResolveState =
             let dependencyNameKey = resolved.name.ToLowerInvariant()
 
@@ -155,6 +165,10 @@ module internal Resolver =
             | Some _ ->
                 state
 
+        (* 依存木 DFS:
+           - path 依存は再帰的に manifest を読む
+           - nuget 依存はローカルキャッシュを解決する
+           - stack で循環参照を検出する *)
         let rec visitDependency (state: ResolveState) (ownerRoot: string) (dependency: DependencySpec) : ResolveState =
             match dependency with
             | NuGetDependency(packageId, version) ->
@@ -207,6 +221,7 @@ module internal Resolver =
               resolvedByName = Map.empty
               diagnostics = [] }
 
+        (* top-level dependencies を順序付きで走査し、結果を名前順で正規化して返す。 *)
         let finalState = manifest.dependencies |> List.fold (fun state dependency -> visitDependency state projectRoot dependency) initialState
 
         if List.isEmpty finalState.diagnostics then
