@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Build.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Tomlyn" Version="0.17.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Atla.Core\Atla.Core.fsproj" />
+  </ItemGroup>
+
+</Project>
