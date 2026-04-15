@@ -1,5 +1,19 @@
 # Plan
 
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ0-1（仕様確定 + manifest拡張）
+
+- [x] フェーズ0: 依存種別の優先度を `path > version(nuget)` として明確化する。
+- [x] フェーズ1: `[dependencies]` で `version` 指定時に NuGet 依存として解釈できるようにする（例: `Newtonsoft.Json = { version = "13.0.3" }`）。
+- [x] フェーズ1: `path` と `version` の同時指定を診断エラーにする。
+- [x] `Atla.Build.Tests` に `version` 指定の受理（現時点は未解決診断）と同時指定エラーの回帰テストを追加する。
+
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ2（BuildPlan解決モデル拡張）
+
+- [x] `version` 指定の NuGet 依存を `BuildPlan.dependencies` の `ResolvedDependency` として返せるようにする。
+- [x] NuGet依存の `source` を決定的な表現（`nuget:<packageId>/<version>`）で保持する。
+- [x] path依存とnuget依存が同一パッケージ名へ解決される場合は重複診断にする。
+- [x] `Atla.Build.Tests` に NuGet解決成功ケースと path+nuget 同名衝突ケースを追加する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）

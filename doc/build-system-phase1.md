@@ -21,6 +21,19 @@ version = "0.1.0"
 
 `dependencies` は将来フェーズで導入し、NuGetパッケージ解決へ対応する。
 
+2026-04-15 時点のフェーズ0-2合意:
+
+- `path` 指定がある場合は path 依存として扱う（優先度: `path > version`）。
+- `path` がなく `version` がある場合は NuGet 依存として扱う。
+- `path` と `version` の同時指定は不正とする。
+- NuGet依存は `ResolvedDependency.source = "nuget:<packageId>/<version>"` として BuildPlan へ渡す。
+
+```toml
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" } # nuget
+local-lib = { path = "../local-lib" }     # local path
+```
+
 ## 責務境界
 
 - `Atla.Build`

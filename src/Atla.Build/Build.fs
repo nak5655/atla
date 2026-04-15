@@ -28,8 +28,8 @@ module BuildSystem =
     let private manifestFileName = "atla.toml"
 
     type private DependencySpec =
-        { name: string
-          relativePath: string }
+        | PathDependency of name: string * relativePath: string
+        | NuGetDependency of packageId: string * version: string
 
     type private Manifest =
         { name: string
@@ -39,7 +39,8 @@ module BuildSystem =
     type private ResolveState =
         { stack: string list
           visitedByPath: Map<string, Compiler.ResolvedDependency>
-          pathByName: Map<string, string>
+          sourceByName: Map<string, string>
+          resolvedByName: Map<string, Compiler.ResolvedDependency>
           diagnostics: Diagnostic list }
 
     let private normalizePath (path: string) : string =
@@ -57,6 +58,9 @@ module BuildSystem =
         { succeeded = true
           plan = Some plan
           diagnostics = [] }
+
+    let private createNuGetSource (packageId: string) (version: string) : string =
+        $"nuget:{packageId}/{version}"
 
     let private tryGetRequiredString (table: TomlTable) (fieldName: string) : Result<string, Diagnostic list> =
         match table.TryGetValue(fieldName) with
@@ -76,21 +80,43 @@ module BuildSystem =
             let parseEntry (entry: KeyValuePair<string, obj>) : Result<DependencySpec, Diagnostic list> =
                 match entry.Value with
                 | :? string as pathValue when not (String.IsNullOrWhiteSpace pathValue) ->
-                    Ok { name = entry.Key; relativePath = pathValue }
+                    Ok(PathDependency(entry.Key, pathValue))
                 | :? string ->
                     Result.Error [ error $"`dependencies.{entry.Key}` path must not be empty" ]
                 | :? TomlTable as inlineTable ->
-                    match inlineTable.TryGetValue("path") with
-                    | true, (:? string as pathValue) when not (String.IsNullOrWhiteSpace pathValue) ->
-                        Ok { name = entry.Key; relativePath = pathValue }
-                    | true, (:? string) ->
-                        Result.Error [ error $"`dependencies.{entry.Key}.path` must not be empty" ]
-                    | true, _ ->
-                        Result.Error [ error $"`dependencies.{entry.Key}.path` must be a string" ]
-                    | false, _ ->
-                        Result.Error [ error $"missing required field `dependencies.{entry.Key}.path`" ]
+                    let pathResult =
+                        match inlineTable.TryGetValue("path") with
+                        | true, (:? string as pathValue) when not (String.IsNullOrWhiteSpace pathValue) -> Ok(Some pathValue)
+                        | true, (:? string) ->
+                            Result.Error [ error $"`dependencies.{entry.Key}.path` must not be empty" ]
+                        | true, _ ->
+                            Result.Error [ error $"`dependencies.{entry.Key}.path` must be a string" ]
+                        | false, _ -> Ok None
+
+                    let versionResult =
+                        match inlineTable.TryGetValue("version") with
+                        | true, (:? string as version) when not (String.IsNullOrWhiteSpace version) -> Ok(Some version)
+                        | true, (:? string) ->
+                            Result.Error [ error $"`dependencies.{entry.Key}.version` must not be empty" ]
+                        | true, _ ->
+                            Result.Error [ error $"`dependencies.{entry.Key}.version` must be a string" ]
+                        | false, _ -> Ok None
+
+                    match pathResult, versionResult with
+                    | Result.Error pathErrors, Ok _ -> Result.Error pathErrors
+                    | Ok _, Result.Error versionErrors -> Result.Error versionErrors
+                    | Result.Error pathErrors, Result.Error versionErrors ->
+                        Result.Error(pathErrors @ versionErrors)
+                    | Ok(Some _), Ok(Some _) ->
+                        Result.Error [ error $"`dependencies.{entry.Key}` cannot specify both `path` and `version`" ]
+                    | Ok(Some pathValue), Ok None ->
+                        Ok(PathDependency(entry.Key, pathValue))
+                    | Ok None, Ok(Some version) ->
+                        Ok(NuGetDependency(entry.Key, version))
+                    | Ok None, Ok None ->
+                        Result.Error [ error $"`dependencies.{entry.Key}` must define either `path` or `version`" ]
                 | _ ->
-                    Result.Error [ error $"`dependencies.{entry.Key}` must be a string path or table with `path`" ]
+                    Result.Error [ error $"`dependencies.{entry.Key}` must be a string path or table with `path` / `version`" ]
 
             let orderedEntries =
                 dependenciesTable
@@ -157,59 +183,79 @@ module BuildSystem =
 
     let private resolveDependencies (projectRoot: string) (manifest: Manifest) : Result<Compiler.ResolvedDependency list, Diagnostic list> =
         let rec visitDependency (state: ResolveState) (ownerRoot: string) (dependency: DependencySpec) : ResolveState =
-            let dependencyRoot = normalizePath (Path.Join(ownerRoot, dependency.relativePath))
-            let manifestPath = Path.Join(dependencyRoot, manifestFileName)
+            match dependency with
+            | NuGetDependency(packageId, version) ->
+                let dependencyNameKey = packageId.ToLowerInvariant()
+                let nugetSource = createNuGetSource packageId version
 
-            if List.contains dependencyRoot state.stack then
-                let cyclePath = state.stack @ [ dependencyRoot ]
-                let cycleDescription = cyclePath |> List.map Path.GetFileName |> String.concat " -> "
-                { state with diagnostics = state.diagnostics @ [ error $"cyclic dependency detected: {cycleDescription}" ] }
-            elif not (Directory.Exists dependencyRoot) then
-                { state with diagnostics = state.diagnostics @ [ error $"dependency path not found: {dependency.name} -> {dependencyRoot}" ] }
-            elif state.visitedByPath.ContainsKey(dependencyRoot) then
-                state
-            else
-                match parseManifest manifestPath with
-                | Result.Error diagnostics ->
-                    let wrapped =
-                        diagnostics
-                        |> List.map (fun diagnostic -> error $"dependency `{dependency.name}`: {diagnostic.message}")
+                match state.sourceByName.TryFind(dependencyNameKey) with
+                | Some existingSource when not (String.Equals(existingSource, nugetSource, StringComparison.Ordinal)) ->
+                    { state with diagnostics = state.diagnostics @ [ error $"duplicate dependency name `{packageId}` resolved from `{existingSource}` and `{nugetSource}`" ] }
+                | _ ->
+                    let resolved : Compiler.ResolvedDependency =
+                        { name = packageId
+                          version = version
+                          source = nugetSource }
 
-                    { state with diagnostics = state.diagnostics @ wrapped }
-                | Ok dependencyManifest ->
-                    let dependencyNameKey = dependencyManifest.name.ToLowerInvariant()
+                    { state with
+                        sourceByName = state.sourceByName.Add(dependencyNameKey, nugetSource)
+                        resolvedByName = state.resolvedByName.Add(dependencyNameKey, resolved) }
+            | PathDependency(name, relativePath) ->
+                let dependencyRoot = normalizePath (Path.Join(ownerRoot, relativePath))
+                let manifestPath = Path.Join(dependencyRoot, manifestFileName)
 
-                    match state.pathByName.TryFind(dependencyNameKey) with
-                    | Some existingPath when not (String.Equals(existingPath, dependencyRoot, StringComparison.Ordinal)) ->
-                        { state with diagnostics = state.diagnostics @ [ error $"duplicate dependency name `{dependencyManifest.name}` resolved from `{existingPath}` and `{dependencyRoot}`" ] }
-                    | _ ->
-                        let resolved : Compiler.ResolvedDependency =
-                            { name = dependencyManifest.name
-                              version = dependencyManifest.version
-                              source = dependencyRoot }
+                if List.contains dependencyRoot state.stack then
+                    let cyclePath = state.stack @ [ dependencyRoot ]
+                    let cycleDescription = cyclePath |> List.map Path.GetFileName |> String.concat " -> "
+                    { state with diagnostics = state.diagnostics @ [ error $"cyclic dependency detected: {cycleDescription}" ] }
+                elif not (Directory.Exists dependencyRoot) then
+                    { state with diagnostics = state.diagnostics @ [ error $"dependency path not found: {name} -> {dependencyRoot}" ] }
+                elif state.visitedByPath.ContainsKey(dependencyRoot) then
+                    state
+                else
+                    match parseManifest manifestPath with
+                    | Result.Error diagnostics ->
+                        let wrapped =
+                            diagnostics
+                            |> List.map (fun diagnostic -> error $"dependency `{name}`: {diagnostic.message}")
 
-                        let enteredState =
-                            { state with
-                                stack = state.stack @ [ dependencyRoot ]
-                                visitedByPath = state.visitedByPath.Add(dependencyRoot, resolved)
-                                pathByName = state.pathByName.Add(dependencyNameKey, dependencyRoot) }
+                        { state with diagnostics = state.diagnostics @ wrapped }
+                    | Ok dependencyManifest ->
+                        let dependencyNameKey = dependencyManifest.name.ToLowerInvariant()
 
-                        let nestedState =
-                            dependencyManifest.dependencies
-                            |> List.fold (fun currentState child -> visitDependency currentState dependencyRoot child) enteredState
+                        match state.sourceByName.TryFind(dependencyNameKey) with
+                        | Some existingPath when not (String.Equals(existingPath, dependencyRoot, StringComparison.Ordinal)) ->
+                            { state with diagnostics = state.diagnostics @ [ error $"duplicate dependency name `{dependencyManifest.name}` resolved from `{existingPath}` and `{dependencyRoot}`" ] }
+                        | _ ->
+                            let resolved : Compiler.ResolvedDependency =
+                                { name = dependencyManifest.name
+                                  version = dependencyManifest.version
+                                  source = dependencyRoot }
 
-                        { nestedState with stack = state.stack }
+                            let enteredState =
+                                { state with
+                                    stack = state.stack @ [ dependencyRoot ]
+                                    visitedByPath = state.visitedByPath.Add(dependencyRoot, resolved)
+                                    sourceByName = state.sourceByName.Add(dependencyNameKey, dependencyRoot)
+                                    resolvedByName = state.resolvedByName.Add(dependencyNameKey, resolved) }
+
+                            let nestedState =
+                                dependencyManifest.dependencies
+                                |> List.fold (fun currentState child -> visitDependency currentState dependencyRoot child) enteredState
+
+                            { nestedState with stack = state.stack }
 
         let initialState =
             { stack = [ normalizePath projectRoot ]
               visitedByPath = Map.empty
-              pathByName = Map.empty
+              sourceByName = Map.empty
+              resolvedByName = Map.empty
               diagnostics = [] }
 
         let finalState = manifest.dependencies |> List.fold (fun state dependency -> visitDependency state projectRoot dependency) initialState
 
         if List.isEmpty finalState.diagnostics then
-            finalState.visitedByPath
+            finalState.resolvedByName
             |> Map.toList
             |> List.map snd
             |> List.sortBy (fun dep -> dep.name)

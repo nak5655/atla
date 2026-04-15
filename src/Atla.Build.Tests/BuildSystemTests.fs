@@ -200,3 +200,80 @@ commonB = {{ path = "{relativeB}" }}
 
         Assert.False(result.succeeded)
         Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("duplicate dependency name")))
+
+    [<Fact>]
+    let ``buildProject should parse dependency with version as nuget-style dependency`` () =
+        let rootProject = createTempProjectDir ()
+
+        writeManifest rootProject """
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+        Assert.True(result.succeeded)
+        Assert.Empty(result.diagnostics)
+
+        match result.plan with
+        | Some plan ->
+            let dependency = Assert.Single(plan.dependencies)
+            Assert.Equal("Newtonsoft.Json", dependency.name)
+            Assert.Equal("13.0.3", dependency.version)
+            Assert.Equal("nuget:Newtonsoft.Json/13.0.3", dependency.source)
+        | None ->
+            Assert.Fail("expected build plan")
+
+    [<Fact>]
+    let ``buildProject should fail when dependency specifies both path and version`` () =
+        let rootProject = createTempProjectDir ()
+
+        writeManifest rootProject """
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+common = { path = "./deps/common", version = "1.2.3" }
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+        Assert.False(result.succeeded)
+        Assert.True(
+            result.diagnostics
+            |> List.exists (fun d -> d.message.Contains("cannot specify both `path` and `version`"))
+        )
+        Assert.True(result.plan.IsNone)
+
+    [<Fact>]
+    let ``buildProject should fail when path and nuget dependencies resolve to same package name`` () =
+        let rootProject = createTempProjectDir ()
+        let depProject = createTempProjectDir ()
+        let relativePath = Path.GetRelativePath(rootProject, depProject)
+
+        writeManifest depProject """
+[package]
+name = "Newtonsoft.Json"
+version = "9.0.1"
+"""
+
+        writeManifest rootProject $"""
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+jsonLocal = {{ path = "{relativePath}" }}
+"Newtonsoft.Json" = {{ version = "13.0.3" }}
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+        Assert.False(result.succeeded)
+        Assert.True(result.plan.IsNone)
+        Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("duplicate dependency name `Newtonsoft.Json`")))
