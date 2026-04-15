@@ -1,5 +1,36 @@
 # Plan
 
+## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
+
+- [x] フェーズ1: `Atla.Build` の責務と `atla.toml` 最小仕様を確定する。
+  - [x] `atla.toml` は当面 `[package]` のみを対象にし、`name` / `version` を必須とする。
+  - [x] 想定最小構成は以下とする:
+    - [x] `[package]`
+    - [x] `name = "hello"`
+    - [x] `version = "0.1.0"`
+  - [x] `dependencies` は将来フェーズで NuGet パッケージ解決に対応する（本フェーズでは未実装）。
+  - [x] 責務境界は `Atla.Build = manifest読取/依存解決`、`Atla.Core = コンパイル` を維持する。
+  - [x] `Atla.Core.Compile` へ渡す依存モデルは `ResolvedDependency list` を採用する。
+- [x] フェーズ2: `Atla.Build` / `Atla.Build.Tests` のプロジェクト雛形を追加する。
+  - [x] `src/Atla.Build/Atla.Build.fsproj` を追加し、solution (`src/Atla.slnx`) に組み込む。
+  - [x] `src/Atla.Build.Tests/Atla.Build.Tests.fsproj` を追加し、solution (`src/Atla.slnx`) に組み込む。
+  - [x] 最小のビルド確認テストを追加し、プロジェクト参照が正しいことを検証する。
+- [x] フェーズ3: `Atla.Build` で `atla.toml` 解析を実装する（Tomlyn使用）。
+  - [x] `Tomlyn` を `Atla.Build` に追加し、`atla.toml` の `[package]`/`name`/`version` を検証する。
+  - [x] `BuildSystem.buildProject` を実装し、成功時 `BuildPlan`、失敗時 `Diagnostic list` を返す。
+  - [x] `Atla.Build.Tests` に正常系・異常系（ファイル欠損、構文エラー、必須項目欠落）を追加する。
+- [x] `Atla.Build` に `atla.toml` パーサーを実装し、構文/必須項目不足を診断として返す。
+- [ ] `Atla.Build` に依存解決を実装し、循環依存・欠損パス・重複依存を診断として返す。
+- [x] `Atla.Build` の公開API（`buildProject`）を追加し、解決済み依存情報を返せるようにする（依存解決本体は次フェーズ）。
+- [ ] `Atla.Console` の `build` コマンド入力をプロジェクトルート前提へ更新し、`Atla.Build` を呼び出す。
+- [ ] `Atla.Console` から `Atla.Core.Compile` へ解決済み依存を渡す経路を追加する。
+- [ ] `Atla.Core.Compile` の入力モデルを拡張し、依存情報を受け取れるようにする（LanguageServer等の既存呼び出しは互換維持または追従）。
+- [x] `Atla.Build.Tests` を追加し、まずは最小のプロジェクト疎通テストを配置する（`atla.toml` パース/依存解決の正常系・異常系は次フェーズで拡張）。
+- [ ] `Atla.Console.Tests` を更新し、`build <projectRoot>` 経路の成功/失敗を検証する。
+- [ ] AST/HIR/MIR のスナップショットと診断検証を含む関連テストを追加/更新する。
+- [ ] `doc/cli-interface.md` を更新し、`build` の新しい入力と `atla.toml` 運用を明記する。
+- [ ] フルテストスイートを実行し、決定性・フェーズ不変条件・回帰なしを確認する。
+
 ## 2026-04-13 LSPシンタックスハイライト右端1文字欠落の修正
 
 - [x] `SourceString.join` の span 終端計算を見直し、トークン長が1文字短くならないように修正する。
