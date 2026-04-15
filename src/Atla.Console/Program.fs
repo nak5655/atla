@@ -2,64 +2,55 @@ module Atla.Console
 
 open System
 open System.IO
+open Atla.Build
 open Atla.Compiler
 
 module Console =
-    type BuildOptions = {
-        inputPath: string
-        outDir: string
-        asmName: string
-    }
+    type BuildOptions =
+        { projectRoot: string
+          outDir: string option
+          asmName: string option }
 
     let private usage () =
         String.concat Environment.NewLine [
-            "Usage: atla build <input.atla> [-o <outDir>] [--name <assemblyName>]"
+            "Usage: atla build <projectRoot> [-o <outDir>] [--name <assemblyName>]"
             ""
             "Commands:"
-            "  build    Compile .atla source into a .dll"
+            "  build    Build an Atla project rooted at <projectRoot>"
         ]
 
     let private parseBuildArgs (args: string list) : Result<BuildOptions, string> =
-        let rec loop (rest: string list) (inputPath: string option) (outDir: string option) (asmName: string option) =
+        let rec loop (rest: string list) (projectRoot: string option) (outDir: string option) (asmName: string option) =
             match rest with
             | [] ->
-                match inputPath with
-                | None -> Error "build command requires <input.atla>"
-                | Some path ->
-                    let fileName = Path.GetFileNameWithoutExtension(path)
-                    let resolvedOutDir =
-                        match outDir with
-                        | Some value -> value
-                        | None -> Path.Join(Directory.GetCurrentDirectory(), "out")
-                    let resolvedAsmName =
-                        match asmName with
-                        | Some value when not (String.IsNullOrWhiteSpace value) -> value
-                        | _ -> fileName
+                match projectRoot with
+                | None -> Error "build command requires <projectRoot>"
+                | Some root ->
                     Ok {
-                        inputPath = path
-                        outDir = resolvedOutDir
-                        asmName = resolvedAsmName
+                        projectRoot = root
+                        outDir = outDir
+                        asmName = asmName
                     }
-            | "-o" :: value :: tail -> loop tail inputPath (Some value) asmName
-            | "--name" :: value :: tail -> loop tail inputPath outDir (Some value)
+            | "-o" :: value :: tail -> loop tail projectRoot (Some value) asmName
+            | "--name" :: value :: tail -> loop tail projectRoot outDir (Some value)
             | flag :: [] when flag = "-o" || flag = "--name" ->
                 Error $"{flag} requires a value"
-            | value :: tail when value.StartsWith("-") ->
+            | value :: _ when value.StartsWith("-") ->
                 Error $"unknown option: {value}"
             | value :: tail ->
-                match inputPath with
-                | Some _ -> Error "only one input file is supported"
+                match projectRoot with
+                | Some _ -> Error "only one projectRoot is supported"
                 | None -> loop tail (Some value) outDir asmName
 
         loop args None None None
 
-    let private validateInputPath (path: string) : Result<unit, string> =
-        if not (File.Exists path) then
-            Error $"input file not found: {path}"
-        elif not (String.Equals(Path.GetExtension(path), ".atla", StringComparison.OrdinalIgnoreCase)) then
-            Error $"input file extension must be .atla: {path}"
+    let private validateProjectRoot (projectRoot: string) : Result<string, string> =
+        let normalizedProjectRoot = Path.GetFullPath(projectRoot)
+
+        if not (Directory.Exists normalizedProjectRoot) then
+            Error $"project root not found: {normalizedProjectRoot}"
         else
-            Ok ()
+            Ok normalizedProjectRoot
 
     let private diagnosticPrefix (severity: Atla.Core.Semantics.Data.DiagnosticSeverity) : string =
         match severity with
@@ -71,6 +62,15 @@ module Console =
         diagnostics
         |> List.iter (fun diagnostic ->
             Console.Error.WriteLine($"{diagnosticPrefix diagnostic.severity}: {diagnostic.toDisplayText()}"))
+
+    let private resolveMainPath (projectRoot: string) : Result<string, string> =
+        let candidatePath = Path.Join(projectRoot, "src", "main.atla")
+
+        if File.Exists candidatePath then
+            Ok candidatePath
+        else
+            Error $"project entrypoint not found: {candidatePath}"
+
 
     let run (args: string array) : int =
         match args |> Array.toList with
@@ -88,21 +88,55 @@ module Console =
                 Console.Error.WriteLine(usage())
                 1
             | Ok options ->
-                match validateInputPath options.inputPath with
+                match validateProjectRoot options.projectRoot with
                 | Error message ->
                     Console.Error.WriteLine(message)
                     1
-                | Ok () ->
-                    let source = File.ReadAllText(options.inputPath)
-                    Directory.CreateDirectory(options.outDir) |> ignore
-                    let compileResult = Compiler.compile(options.asmName, source, options.outDir)
-                    printDiagnostics compileResult.diagnostics
-                    if compileResult.succeeded then
-                        let dllPath = Path.Join(options.outDir, options.asmName + ".dll")
-                        Console.WriteLine($"Generated: {dllPath}")
-                        0
-                    else
+                | Ok normalizedProjectRoot ->
+                    let buildResult = BuildSystem.buildProject { projectRoot = normalizedProjectRoot }
+                    printDiagnostics buildResult.diagnostics
+
+                    if not buildResult.succeeded then
                         1
+                    else
+                        match buildResult.plan with
+                        | None ->
+                            Console.Error.WriteLine("build plan was not produced")
+                            1
+                        | Some plan ->
+                            match resolveMainPath plan.projectRoot with
+                            | Error message ->
+                                Console.Error.WriteLine(message)
+                                1
+                            | Ok inputPath ->
+                                let source = File.ReadAllText(inputPath)
+                                let outDir =
+                                    match options.outDir with
+                                    | Some value -> value
+                                    | None -> Path.Join(plan.projectRoot, "out")
+                                let asmName =
+                                    match options.asmName with
+                                    | Some value when not (String.IsNullOrWhiteSpace value) -> value
+                                    | _ -> plan.projectName
+
+                                Directory.CreateDirectory(outDir) |> ignore
+
+                                let compileResult =
+                                    Compiler.compile {
+                                        asmName = asmName
+                                        source = source
+                                        outDir = outDir
+                                        dependencies = plan.dependencies
+                                    }
+
+                                printDiagnostics compileResult.diagnostics
+
+                                if compileResult.succeeded then
+                                    let dllPath = Path.Join(outDir, asmName + ".dll")
+                                    Console.WriteLine($"Generated: {dllPath}")
+                                    0
+                                else
+                                    1
         | command :: _ ->
             Console.Error.WriteLine($"unknown command: {command}")
             Console.Error.WriteLine(usage())
