@@ -19,7 +19,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("HelloWorld", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "HelloWorld"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "HelloWorld.dll")
@@ -58,7 +58,7 @@ fn main: () = greet ()
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("NullaryCall", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "NullaryCall"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "NullaryCall.dll")
@@ -104,7 +104,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("FizzBuzz", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "FizzBuzz"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "FizzBuzz.dll")
@@ -155,7 +155,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("Fibonacci", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "Fibonacci"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "Fibonacci.dll")
@@ -192,7 +192,7 @@ fn main: Int = 7
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("ExitCodeProgram", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "ExitCodeProgram"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ExitCodeProgram.dll")
@@ -230,7 +230,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("SplitOptionalArg", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "SplitOptionalArg"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "SplitOptionalArg.dll")
@@ -249,7 +249,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("ArrayIndexAccess", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "ArrayIndexAccess"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ArrayIndexAccess.dll")
@@ -290,7 +290,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("ArrayIndexAccessSplit", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "ArrayIndexAccessSplit"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ArrayIndexAccessSplit.dll")
@@ -334,7 +334,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile("RangeArrayLengthLoop", program.Trim(), outDir)
+        let res = Compiler.compile { asmName = "RangeArrayLengthLoop"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "RangeArrayLengthLoop.dll")
@@ -371,7 +371,7 @@ fn main: Int = 0
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let result = Compiler.compile("CompileResultSuccess", program.Trim(), outDir)
+        let result = Compiler.compile { asmName = "CompileResultSuccess"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(result.succeeded)
         Assert.Empty(result.diagnostics)
 
@@ -384,7 +384,7 @@ fn main: Int =
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let result = Compiler.compile("CompileResultFailure", program.Trim(), outDir)
+        let result = Compiler.compile { asmName = "CompileResultFailure"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.False(result.succeeded)
         Assert.NotEmpty(result.diagnostics)
         Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.isError)

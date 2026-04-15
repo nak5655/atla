@@ -14,6 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Atla.Build\Atla.Build.fsproj" />
     <ProjectReference Include="..\Atla.Core\Atla.Core.fsproj" />
   </ItemGroup>
 

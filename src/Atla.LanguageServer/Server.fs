@@ -158,7 +158,7 @@ type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagn
                 else normalizedUri |> Path.GetFileNameWithoutExtension |> sanitizeAssemblyName
 
             try
-                let compileResult = Compiler.compile(asmName, text, outputDir)
+                let compileResult = Compiler.compile { asmName = asmName; source = text; outDir = outputDir; dependencies = [] }
                 compileResult.diagnostics |> toLspDiagnostics |> publish displayUri
             with ex ->
                 let fallback =

@@ -1,26 +1,54 @@
-# Atla CLI (minimal)
+# Atla CLI
 
-`Atla.Cli` is the executable frontend for `Atla.Compiler`.
+`Atla.Console` is the executable frontend for `Atla.Core` + `Atla.Build`.
 
 ## Usage
 
 ```bash
-dotnet run --project src/Atla.Cli -- build <input.atla> [-o <outDir>] [--name <assemblyName>]
-# publish 後: atla.exe build <input.atla> [-o <outDir>] [--name <assemblyName>]
+dotnet run --project src/Atla.Console -- build <projectRoot> [-o <outDir>] [--name <assemblyName>]
+# publish 後: atla.exe build <projectRoot> [-o <outDir>] [--name <assemblyName>]
+```
+
+## Project layout
+
+`build` コマンドは `projectRoot` を起点に以下を読み取ります。
+
+- `atla.toml`
+- `src/main.atla`
+
+最小 `atla.toml`:
+
+```toml
+[package]
+name = "hello"
+version = "0.1.0"
+```
+
+依存定義（ローカル path）:
+
+```toml
+[dependencies]
+corelib = { path = "../corelib" }
+utils = "../utils"
 ```
 
 ## Behavior
 
-- Input must be an existing `.atla` file.
-- Output directory defaults to `./out`.
-- Assembly name defaults to the input filename without extension.
-- Exit code is `0` on success and `1` on failure.
+- `projectRoot` は存在するディレクトリである必要があります。
+- `atla.toml` は必須です。
+- エントリポイントは `src/main.atla` 固定です。
+- 出力ディレクトリの既定値は `<projectRoot>/out` です。
+- アセンブリ名の既定値は `atla.toml` の `package.name` です。
+- 依存解決時に以下を診断します。
+  - 欠損パス
+  - 循環依存
+  - 重複パッケージ名
+- Exit code は成功時 `0`、失敗時 `1` です。
 - Published executable name is `atla.exe`.
-
 
 ## Test project
 
-- CLI tests live in `src/Atla.Cli.Tests`.
+- CLI tests live in `src/Atla.Console.Tests`.
 
 ## Self-contained single-file publish
 

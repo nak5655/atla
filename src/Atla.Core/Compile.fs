@@ -9,6 +9,17 @@ open Atla.Core.Lowering
 open System.IO
 
 module Compiler =
+    type ResolvedDependency =
+        { name: string
+          version: string
+          source: string }
+
+    type CompileRequest =
+        { asmName: string
+          source: string
+          outDir: string
+          dependencies: ResolvedDependency list }
+
     type CompileResult =
         { succeeded: bool
           diagnostics: Diagnostic list }
@@ -23,9 +34,9 @@ module Compiler =
         { succeeded = true
           diagnostics = diagnostics }
 
-    let compile (asmName: string, source: string, outDir: string) : CompileResult =
+    let compile (request: CompileRequest) : CompileResult =
         // Lexing
-        let input: Input<SourceChar> = StringInput source
+        let input: Input<SourceChar> = StringInput request.source
         match Lexer.tokenize input Position.Zero with
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
@@ -42,12 +53,12 @@ module Compiler =
                         failed diagnostics
                     | { value = Some hir; diagnostics = analyzeDiagnostics } ->
                         // Lowering
-                        match Layout.layoutAssembly(asmName, Hir.Assembly("hello", [ hir ])) with
+                        match Layout.layoutAssembly(request.asmName, Hir.Assembly("hello", [ hir ])) with
                         | { succeeded = false; diagnostics = layoutDiagnostics } ->
                             failed (analyzeDiagnostics @ layoutDiagnostics)
                         | { value = Some mir; diagnostics = layoutDiagnostics } ->
                             // Code Generation
-                            let outPath = Path.Join(outDir, sprintf "%s.dll" asmName)
+                            let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
                             match Gen.genAssembly(mir, outPath) with
                             | { succeeded = false; diagnostics = genDiagnostics } ->
                                 failed (analyzeDiagnostics @ layoutDiagnostics @ genDiagnostics)
