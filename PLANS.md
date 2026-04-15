@@ -46,6 +46,12 @@
 - [x] `Atla.Build.Tests.fsproj` の `Compile Include` を新しいテスト構成へ更新する。
 - [x] 分割後の `Atla.Build.Tests` とフルテストスイート通過を確認する。
 
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ7（README整備）
+
+- [x] ルート `README.md` を追加し、CLIインターフェイス（`build <projectRoot>`）を記載する。
+- [x] NuGet関連の環境変数（`NUGET_PACKAGES`, `ATLA_BUILD_ENABLE_NUGET_RESTORE`）をREADMEに明記する。
+- [x] 既存 `doc/cli-interface.md` と整合する最小プロジェクト構成・実行例を記載する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）
