@@ -28,6 +28,7 @@ version = "0.1.0"
 - `path` と `version` の同時指定は不正とする。
 - NuGet依存は `NUGET_PACKAGES`（未設定時 `~/.nuget/packages`）配下から解決する。
 - NuGet依存の `ResolvedDependency.source` は実体ディレクトリの絶対パスとする。
+- 実装は `Build.fs`（manifest解析）と `Resolver.fs`（依存解決）に責務分離する。
 
 ```toml
 [dependencies]

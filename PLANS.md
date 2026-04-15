@@ -21,6 +21,12 @@
 - [x] NuGet依存の `ResolvedDependency.source` を実体ディレクトリ（絶対パス）にする。
 - [x] `Atla.Build.Tests` にキャッシュ存在/不存在ケースを追加する。
 
+## 2026-04-15 Atla.Build リファクタ（Resolver分割）
+
+- [x] `Build.fs` から依存解決ロジックを `Resolver.fs` に分離する。
+- [x] `Atla.Build.fsproj` のコンパイル順序に `Resolver.fs` を追加する。
+- [x] 既存テストで振る舞い非退行を確認する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）
