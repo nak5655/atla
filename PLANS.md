@@ -14,6 +14,13 @@
 - [x] path依存とnuget依存が同一パッケージ名へ解決される場合は重複診断にする。
 - [x] `Atla.Build.Tests` に NuGet解決成功ケースと path+nuget 同名衝突ケースを追加する。
 
+## 2026-04-15 Atla.Build NuGet依存解決 フェーズ3（ローカルキャッシュ解決基盤）
+
+- [x] NuGet依存を `NUGET_PACKAGES`（未設定時は `~/.nuget/packages`）から解決する。
+- [x] 依存がキャッシュに存在しない場合は構造化診断で失敗させる。
+- [x] NuGet依存の `ResolvedDependency.source` を実体ディレクトリ（絶対パス）にする。
+- [x] `Atla.Build.Tests` にキャッシュ存在/不存在ケースを追加する。
+
 ## 2026-04-15 Atla.Buildプロジェクト追加（atla.toml依存解決 + Console連携）
 
 ### 2026-04-15 実装バッチ（依存解決 + Console/Core連携）

@@ -21,12 +21,13 @@ version = "0.1.0"
 
 `dependencies` は将来フェーズで導入し、NuGetパッケージ解決へ対応する。
 
-2026-04-15 時点のフェーズ0-2合意:
+2026-04-15 時点のフェーズ0-3合意:
 
 - `path` 指定がある場合は path 依存として扱う（優先度: `path > version`）。
 - `path` がなく `version` がある場合は NuGet 依存として扱う。
 - `path` と `version` の同時指定は不正とする。
-- NuGet依存は `ResolvedDependency.source = "nuget:<packageId>/<version>"` として BuildPlan へ渡す。
+- NuGet依存は `NUGET_PACKAGES`（未設定時 `~/.nuget/packages`）配下から解決する。
+- NuGet依存の `ResolvedDependency.source` は実体ディレクトリの絶対パスとする。
 
 ```toml
 [dependencies]

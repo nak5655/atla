@@ -3,6 +3,7 @@ namespace Atla.Build
 open System
 open System.IO
 open System.Collections.Generic
+open System.Globalization
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
 open Atla.Compiler
@@ -59,8 +60,33 @@ module BuildSystem =
           plan = Some plan
           diagnostics = [] }
 
-    let private createNuGetSource (packageId: string) (version: string) : string =
-        $"nuget:{packageId}/{version}"
+    let private getNuGetPackagesRoot () : string =
+        match Environment.GetEnvironmentVariable("NUGET_PACKAGES") with
+        | value when not (String.IsNullOrWhiteSpace value) -> normalizePath value
+        | _ ->
+            let homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            normalizePath (Path.Join(homeDir, ".nuget", "packages"))
+
+    let private toNuGetPathSegment (value: string) : string =
+        value.ToLower(CultureInfo.InvariantCulture)
+
+    let private tryResolveNuGetDependency (packageId: string) (version: string) : Result<Compiler.ResolvedDependency, Diagnostic list> =
+        let packagesRoot = getNuGetPackagesRoot ()
+        let packagePath =
+            Path.Join(packagesRoot, toNuGetPathSegment packageId, toNuGetPathSegment version)
+            |> normalizePath
+
+        if Directory.Exists packagePath then
+            Ok {
+                name = packageId
+                version = version
+                source = packagePath
+            }
+        else
+            Result.Error [
+                error
+                    $"nuget package not found in cache: {packageId} {version} (expected: {packagePath}). Set NUGET_PACKAGES or run restore beforehand."
+            ]
 
     let private tryGetRequiredString (table: TomlTable) (fieldName: string) : Result<string, Diagnostic list> =
         match table.TryGetValue(fieldName) with
@@ -186,20 +212,18 @@ module BuildSystem =
             match dependency with
             | NuGetDependency(packageId, version) ->
                 let dependencyNameKey = packageId.ToLowerInvariant()
-                let nugetSource = createNuGetSource packageId version
 
-                match state.sourceByName.TryFind(dependencyNameKey) with
-                | Some existingSource when not (String.Equals(existingSource, nugetSource, StringComparison.Ordinal)) ->
-                    { state with diagnostics = state.diagnostics @ [ error $"duplicate dependency name `{packageId}` resolved from `{existingSource}` and `{nugetSource}`" ] }
-                | _ ->
-                    let resolved : Compiler.ResolvedDependency =
-                        { name = packageId
-                          version = version
-                          source = nugetSource }
-
-                    { state with
-                        sourceByName = state.sourceByName.Add(dependencyNameKey, nugetSource)
-                        resolvedByName = state.resolvedByName.Add(dependencyNameKey, resolved) }
+                match tryResolveNuGetDependency packageId version with
+                | Result.Error diagnostics ->
+                    { state with diagnostics = state.diagnostics @ diagnostics }
+                | Ok resolved ->
+                    match state.sourceByName.TryFind(dependencyNameKey) with
+                    | Some existingSource when not (String.Equals(existingSource, resolved.source, StringComparison.Ordinal)) ->
+                        { state with diagnostics = state.diagnostics @ [ error $"duplicate dependency name `{packageId}` resolved from `{existingSource}` and `{resolved.source}`" ] }
+                    | _ ->
+                        { state with
+                            sourceByName = state.sourceByName.Add(dependencyNameKey, resolved.source)
+                            resolvedByName = state.resolvedByName.Add(dependencyNameKey, resolved) }
             | PathDependency(name, relativePath) ->
                 let dependencyRoot = normalizePath (Path.Join(ownerRoot, relativePath))
                 let manifestPath = Path.Join(dependencyRoot, manifestFileName)

@@ -24,6 +24,15 @@ module BuildSystemTests =
     let private writeManifest (projectRoot: string) (content: string) =
         File.WriteAllText(Path.Join(projectRoot, "atla.toml"), content.Trim())
 
+    let private withNuGetPackagesRoot (packagesRoot: string) (action: unit -> unit) =
+        let previous = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
+        Environment.SetEnvironmentVariable("NUGET_PACKAGES", packagesRoot)
+
+        try
+            action ()
+        finally
+            Environment.SetEnvironmentVariable("NUGET_PACKAGES", previous)
+
     [<Fact>]
     let ``buildProject should parse minimal atla.toml`` () =
         let projectRoot = createTempProjectDir ()
@@ -204,6 +213,9 @@ commonB = {{ path = "{relativeB}" }}
     [<Fact>]
     let ``buildProject should parse dependency with version as nuget-style dependency`` () =
         let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let expectedPackagePath = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
+        Directory.CreateDirectory(expectedPackagePath) |> ignore
 
         writeManifest rootProject """
 [package]
@@ -214,19 +226,21 @@ version = "0.1.0"
 "Newtonsoft.Json" = { version = "13.0.3" }
 """
 
-        let result = BuildSystem.buildProject { projectRoot = rootProject }
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
 
-        Assert.True(result.succeeded)
-        Assert.Empty(result.diagnostics)
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
 
-        match result.plan with
-        | Some plan ->
-            let dependency = Assert.Single(plan.dependencies)
-            Assert.Equal("Newtonsoft.Json", dependency.name)
-            Assert.Equal("13.0.3", dependency.version)
-            Assert.Equal("nuget:Newtonsoft.Json/13.0.3", dependency.source)
-        | None ->
-            Assert.Fail("expected build plan")
+            match result.plan with
+            | Some plan ->
+                let dependency = Assert.Single(plan.dependencies)
+                Assert.Equal("Newtonsoft.Json", dependency.name)
+                Assert.Equal("13.0.3", dependency.version)
+                Assert.Equal(Path.GetFullPath(expectedPackagePath), dependency.source)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
 
     [<Fact>]
     let ``buildProject should fail when dependency specifies both path and version`` () =
@@ -254,6 +268,9 @@ common = { path = "./deps/common", version = "1.2.3" }
     let ``buildProject should fail when path and nuget dependencies resolve to same package name`` () =
         let rootProject = createTempProjectDir ()
         let depProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packagePath = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
+        Directory.CreateDirectory(packagePath) |> ignore
         let relativePath = Path.GetRelativePath(rootProject, depProject)
 
         writeManifest depProject """
@@ -272,8 +289,32 @@ jsonLocal = {{ path = "{relativePath}" }}
 "Newtonsoft.Json" = {{ version = "13.0.3" }}
 """
 
-        let result = BuildSystem.buildProject { projectRoot = rootProject }
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
 
-        Assert.False(result.succeeded)
-        Assert.True(result.plan.IsNone)
-        Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("duplicate dependency name `Newtonsoft.Json`")))
+            Assert.False(result.succeeded)
+            Assert.True(result.plan.IsNone)
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("duplicate dependency name `Newtonsoft.Json`")))
+        )
+
+    [<Fact>]
+    let ``buildProject should fail when nuget package does not exist in cache`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        writeManifest rootProject """
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.False(result.succeeded)
+            Assert.True(result.plan.IsNone)
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package not found in cache")))
+        )
