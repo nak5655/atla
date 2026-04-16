@@ -19,6 +19,10 @@ module ResolverTests =
         Directory.CreateDirectory(tfmDir) |> ignore
         File.WriteAllText(Path.Join(tfmDir, assemblyFileName), "")
 
+    /// TOML の basic string で解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
+    let private toTomlPath (path: string) =
+        path.Replace("\\", "/")
+
     let private withNuGetPackagesRoot (packagesRoot: string) (action: unit -> unit) =
         let previous = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
         Environment.SetEnvironmentVariable("NUGET_PACKAGES", packagesRoot)
@@ -90,7 +94,7 @@ version = "0.1.0"
         File.WriteAllText(Path.Join(nugetLibDir, "Newtonsoft.Json.dll"), "")
         File.WriteAllText(Path.Join(pathRefDir, "dep-lib.dll"), "")
         File.WriteAllText(Path.Join(pathLibDir, "dep-lib-runtime.dll"), "")
-        let relativePath = Path.GetRelativePath(rootProject, depProject)
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toTomlPath
 
         writeManifest depProject """
 [package]
@@ -244,7 +248,7 @@ common = { path = "./deps/common", version = "1.2.3" }
         let packagePath = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
         Directory.CreateDirectory(Path.Join(packagePath, "ref", "net8.0")) |> ignore
         File.WriteAllText(Path.Join(packagePath, "ref", "net8.0", "Newtonsoft.Json.dll"), "")
-        let relativePath = Path.GetRelativePath(rootProject, depProject)
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toTomlPath
 
         writeManifest depProject """
 [package]
@@ -331,8 +335,8 @@ version = "0.1.0"
         File.WriteAllText(Path.Join(packagesRoot, "newtonsoft.json", "13.0.3", "ref", "net8.0", "Newtonsoft.Json.dll"), "")
         File.WriteAllText(Path.Join(packagesRoot, "newtonsoft.json", "12.0.3", "ref", "net8.0", "Newtonsoft.Json.dll"), "")
 
-        let relativeA = Path.GetRelativePath(rootProject, depProjectA)
-        let relativeB = Path.GetRelativePath(rootProject, depProjectB)
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toTomlPath
+        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toTomlPath
 
         writeManifest depProjectA """
 [package]
@@ -382,8 +386,8 @@ depB = {{ path = "{relativeB}" }}
         Directory.CreateDirectory(Path.Join(packagePath, "ref", "net8.0")) |> ignore
         File.WriteAllText(Path.Join(packagePath, "ref", "net8.0", "Newtonsoft.Json.dll"), "")
 
-        let relativeA = Path.GetRelativePath(rootProject, depProjectA)
-        let relativeB = Path.GetRelativePath(rootProject, depProjectB)
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toTomlPath
+        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toTomlPath
 
         writeManifest depProjectA """
 [package]
@@ -441,8 +445,8 @@ depB = {{ path = "{relativeB}" }}
         Directory.CreateDirectory(Path.Join(packagesRoot, "pkgx", "1.0.0", "ref", "net8.0")) |> ignore
         File.WriteAllText(Path.Join(packagesRoot, "pkgx", "1.0.0", "ref", "net8.0", "PkgX.dll"), "")
 
-        let relativeA = Path.GetRelativePath(rootProject, depProjectA)
-        let relativeZ = Path.GetRelativePath(rootProject, depProjectZ)
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toTomlPath
+        let relativeZ = Path.GetRelativePath(rootProject, depProjectZ) |> toTomlPath
 
         writeManifest depProjectA """
 [package]
