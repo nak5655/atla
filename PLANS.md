@@ -764,3 +764,9 @@
 - [x] `ResolverTests` で `Path.GetRelativePath` を TOML へ埋め込む箇所を洗い出し、Windowsで不正エスケープになる経路を再現・特定する。
 - [x] `ResolverTests` 側にも TOML 向けパス正規化を適用し、OS非依存で同一テストデータを生成する。
 - [x] `Atla.Build.Tests` と `src/Atla.slnx` を実行して回帰がないことを確認する。
+
+## 2026-04-16 LanguageServer URI正規化テストのWindows差分修正
+
+- [x] `ServerLifecycleTests.normalize uri makes file key deterministic` の期待値がOS依存になっている箇所を特定する。
+- [x] 期待値をOS非依存（正規化関数の仕様準拠）へ修正し、Windows/Unixで同一意図を検証できるようにする。
+- [x] `Atla.LanguageServer.Tests` と `src/Atla.slnx` のテストを実行して回帰がないことを確認する。
