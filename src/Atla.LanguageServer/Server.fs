@@ -132,9 +132,9 @@ let private isWithinWorkspaceRoots (workspaceRoots: string list) (path: string) 
     | roots -> roots |> List.exists (pathIsUnder path)
 
 let private tryFindProjectRootFromManifest (workspaceRoots: string list) (documentPath: string) : string option =
-    /// Walk from the document parent directory toward ancestors until atla.toml is found.
+    /// Walk from the document parent directory toward ancestors until atla.yaml is found.
     let rec loop (currentDir: string) : string option =
-        let manifestPath = Path.Join(currentDir, "atla.toml")
+        let manifestPath = Path.Join(currentDir, "atla.yaml")
 
         if File.Exists manifestPath then
             Some currentDir
