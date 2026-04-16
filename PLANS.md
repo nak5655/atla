@@ -747,9 +747,8 @@
 - [x] ドキュメントに「exe 単独実行」向けの publish 手順と実行例を追記する。
 - [x] フルテストスイートを実行して回帰がないことを確認する。
 
-## 2026-04-16 ルート実行のフルテスト修正
+## 2026-04-16 ルートAtla.slnx追加変更の取り消し
 
-- [x] 失敗再現: リポジトリルートで `dotnet test` を実行し、project/solution 未検出エラーを確認する。
-- [x] ルートから `dotnet test` 実行時に `src/Atla.slnx` 相当のフルテストが解決されるよう solution 配置を修正する。
-- [x] README のテスト手順を更新し、ルート実行コマンドを明記する。
-- [x] フルテスト（`dotnet test` および `dotnet test src/Atla.slnx`）を実行して回帰がないことを確認する。
+- [x] ルート追加した `Atla.slnx` を削除し、solution エントリポイントを `src/Atla.slnx` のみに戻す。
+- [x] `README.md` のテスト実行手順を `dotnet test src/Atla.slnx` 前提へ戻す。
+- [x] `src/Atla.slnx` に対するフルテストを実行して非退行を確認する。
