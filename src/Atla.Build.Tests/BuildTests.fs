@@ -19,6 +19,10 @@ module BuildTests =
         Directory.CreateDirectory(tfmDir) |> ignore
         File.WriteAllText(Path.Join(tfmDir, assemblyFileName), "")
 
+    /// TOML の basic string で解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
+    let private toTomlPath (path: string) =
+        path.Replace("\\", "/")
+
     [<Fact>]
     let ``createEmptyPlan keeps projectRoot and no dependencies`` () =
         let request = { BuildRequest.projectRoot = "/tmp/hello" }
@@ -65,7 +69,7 @@ version = "1.2.3"
 """
         writeReferenceDll depProject "dep.dll"
 
-        let relativePath = Path.GetRelativePath(rootProject, depProject)
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toTomlPath
 
         writeManifest rootProject $"""
 [package]
@@ -145,8 +149,8 @@ missing = { path = "./deps/missing" }
         let projectA = createTempProjectDir ()
         let projectB = createTempProjectDir ()
 
-        let relativeAToB = Path.GetRelativePath(projectA, projectB)
-        let relativeBToA = Path.GetRelativePath(projectB, projectA)
+        let relativeAToB = Path.GetRelativePath(projectA, projectB) |> toTomlPath
+        let relativeBToA = Path.GetRelativePath(projectB, projectA) |> toTomlPath
 
         writeManifest projectA $"""
 [package]
@@ -193,8 +197,8 @@ version = "2.0.0"
 """
         writeReferenceDll depProjectB "common.dll"
 
-        let relativeA = Path.GetRelativePath(rootProject, depProjectA)
-        let relativeB = Path.GetRelativePath(rootProject, depProjectB)
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toTomlPath
+        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toTomlPath
 
         writeManifest rootProject $"""
 [package]

@@ -752,3 +752,9 @@
 - [x] ルート追加した `Atla.slnx` を削除し、solution エントリポイントを `src/Atla.slnx` のみに戻す。
 - [x] `README.md` のテスト実行手順を `dotnet test src/Atla.slnx` 前提へ戻す。
 - [x] `src/Atla.slnx` に対するフルテストを実行して非退行を確認する。
+
+## 2026-04-16 Windowsでのcycle依存テスト失敗修正
+
+- [x] `buildProject should fail when dependency graph has cycle` の失敗を再現し、Windows特有の `atla.toml` 文字列エスケープ問題を特定する。
+- [x] テストデータ生成をOS非依存な書き方へ修正し、TOMLパースが安定するようにする。
+- [x] `Atla.Build.Tests` と `src/Atla.slnx` のテストを実行して回帰がないことを確認する。
