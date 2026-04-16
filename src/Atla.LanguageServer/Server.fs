@@ -8,6 +8,7 @@ open System.IO
 open System.Reflection
 open Newtonsoft.Json.Linq
 open Atla.Compiler
+open Atla.Build
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
 open Atla.Core.Syntax
@@ -45,12 +46,15 @@ let private toLspSeverity (severity: Atla.Core.Semantics.Data.DiagnosticSeverity
     | Atla.Core.Semantics.Data.DiagnosticSeverity.Warning -> DiagnosticSeverity.Warning
     | Atla.Core.Semantics.Data.DiagnosticSeverity.Info -> DiagnosticSeverity.Information
 
-let private toLspDiagnostics (diagnostics: Atla.Core.Semantics.Data.Diagnostic list) : Atla.LanguageServer.LSPTypes.Diagnostic list =
+let private toLspDiagnostics
+    (source: string)
+    (diagnostics: Atla.Core.Semantics.Data.Diagnostic list)
+    : Atla.LanguageServer.LSPTypes.Diagnostic list =
     diagnostics
     |> List.mapi (fun i x ->
         let span = x.span
         let severity = toLspSeverity x.severity
-        i, Diagnostic(spanToRange span, x.message, severity = severity, source = "atla-lsp"))
+        i, Diagnostic(spanToRange span, x.message, severity = severity, source = source))
     |> List.sortBy (fun (i, d) ->
         d.range.start.line,
         d.range.start.character,
@@ -122,12 +126,47 @@ let private collectWorkspaceRoots (content: JObject) : string list =
         | Some root -> [ root ]
         | None -> []
 
+let private isWithinWorkspaceRoots (workspaceRoots: string list) (path: string) : bool =
+    match workspaceRoots with
+    | [] -> true
+    | roots -> roots |> List.exists (pathIsUnder path)
+
+let private tryFindProjectRootFromManifest (workspaceRoots: string list) (documentPath: string) : string option =
+    /// Walk from the document parent directory toward ancestors until atla.toml is found.
+    let rec loop (currentDir: string) : string option =
+        let manifestPath = Path.Join(currentDir, "atla.toml")
+
+        if File.Exists manifestPath then
+            Some currentDir
+        else
+            let parent = Directory.GetParent(currentDir)
+
+            if isNull parent then
+                None
+            elif isWithinWorkspaceRoots workspaceRoots (normalizePathForKey parent.FullName) then
+                loop (normalizePathForKey parent.FullName)
+            else
+                None
+
+    let docDir = Path.GetDirectoryName(documentPath)
+
+    if String.IsNullOrWhiteSpace docDir then
+        None
+    else
+        loop (normalizePathForKey docDir)
+
 // ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
 
 /// Mutable server state (one instance per process).
-type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagnostic list -> unit), ?assemblyLocationResolver: unit -> string) =
+type Server
+    (
+        ?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagnostic list -> unit),
+        ?assemblyLocationResolver: unit -> string,
+        ?buildProjectFn: BuildRequest -> BuildResult,
+        ?compileFn: Compiler.CompileRequest -> Compiler.CompileResult
+    ) =
 
     // ---- persistent state --------------------------------------------------
     let mutable isAvailablePublishDiagnostics = false
@@ -139,6 +178,8 @@ type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagn
     let publish = defaultArg publishDiagnosticsFn publishDiagnostics
     let getAssemblyLocation =
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
+    let buildProject = defaultArg buildProjectFn BuildSystem.buildProject
+    let compile = defaultArg compileFn Compiler.compile
 
     let canCompileUri (normalizedUri: string) : bool =
         match tryUriToNormalizedPath normalizedUri with
@@ -147,6 +188,24 @@ type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagn
             match workspaceRoots with
             | [] -> true
             | roots -> roots |> List.exists (pathIsUnder path)
+
+    let resolveDependenciesForDocument
+        (normalizedUri: string)
+        : Result<Compiler.ResolvedDependency list, Atla.Core.Semantics.Data.Diagnostic list> =
+        match tryUriToNormalizedPath normalizedUri with
+        | None -> Ok []
+        | Some normalizedPath ->
+            match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
+            | None -> Ok []
+            | Some projectRoot ->
+                let buildResult = buildProject { projectRoot = projectRoot }
+                if buildResult.succeeded then
+                    buildResult.plan
+                    |> Option.map (fun plan -> plan.dependencies)
+                    |> Option.defaultValue []
+                    |> Ok
+                else
+                    Result.Error buildResult.diagnostics
 
     let compileAndPublish (normalizedUri: string) (displayUri: string) (text: string) =
         if isAvailablePublishDiagnostics && canCompileUri normalizedUri then
@@ -158,14 +217,22 @@ type Server(?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagn
                 else normalizedUri |> Path.GetFileNameWithoutExtension |> sanitizeAssemblyName
 
             try
-                let compileResult = Compiler.compile { asmName = asmName; source = text; outDir = outputDir; dependencies = [] }
-                compileResult.diagnostics |> toLspDiagnostics |> publish displayUri
+                match resolveDependenciesForDocument normalizedUri with
+                | Result.Error buildDiagnostics ->
+                    buildDiagnostics |> toLspDiagnostics "atla-build" |> publish displayUri
+                | Ok dependencies ->
+                    let compileResult =
+                        compile { asmName = asmName; source = text; outDir = outputDir; dependencies = dependencies }
+
+                    compileResult.diagnostics |> toLspDiagnostics "atla-compiler" |> publish displayUri
             with ex ->
                 let fallback =
-                    [ Diagnostic.Error(sprintf "Compiler internal error: %s" ex.Message, Span.Empty) ]
-                    |> toLspDiagnostics
+                    [ Atla.Core.Semantics.Data.Diagnostic.Error(sprintf "Compiler internal error: %s" ex.Message, Span.Empty) ]
+                    |> toLspDiagnostics "atla-lsp"
 
                 publish displayUri fallback
+        elif isAvailablePublishDiagnostics then
+            publish displayUri []
 
     // ---- public surface used by tests --------------------------------------
     member _.IsAvailablePublishDiagnostics
