@@ -13,11 +13,11 @@ module BuildTests =
 
     let private writeManifest (projectRoot: string) (name: string) =
         File.WriteAllText(
-            Path.Join(projectRoot, "atla.toml"),
+            Path.Join(projectRoot, "atla.yaml"),
             $"""
-[package]
-name = "{name}"
-version = "0.1.0"
+package:
+  name: "{name}"
+  version: "0.1.0"
 """.Trim())
 
     [<Fact>]

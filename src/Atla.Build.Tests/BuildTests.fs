@@ -12,15 +12,15 @@ module BuildTests =
         path
 
     let private writeManifest (projectRoot: string) (content: string) =
-        File.WriteAllText(Path.Join(projectRoot, "atla.toml"), content.Trim())
+        File.WriteAllText(Path.Join(projectRoot, "atla.yaml"), content.Trim())
 
     let private writeReferenceDll (projectRoot: string) (assemblyFileName: string) =
         let tfmDir = Path.Join(projectRoot, "ref", "net8.0")
         Directory.CreateDirectory(tfmDir) |> ignore
         File.WriteAllText(Path.Join(tfmDir, assemblyFileName), "")
 
-    /// TOML の basic string で解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
-    let private toTomlPath (path: string) =
+    /// YAML の文字列として解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
+    let private toYamlPath (path: string) =
         path.Replace("\\", "/")
 
     [<Fact>]
@@ -34,13 +34,13 @@ module BuildTests =
         Assert.Empty(plan.dependencies)
 
     [<Fact>]
-    let ``buildProject should parse minimal atla.toml`` () =
+    let ``buildProject should parse minimal atla.yaml`` () =
         let projectRoot = createTempProjectDir ()
 
         writeManifest projectRoot """
-[package]
-name = "hello"
-version = "0.1.0"
+package:
+  name: "hello"
+  version: "0.1.0"
 """
 
         let result = BuildSystem.buildProject { projectRoot = projectRoot }
@@ -63,21 +63,21 @@ version = "0.1.0"
         let depProject = createTempProjectDir ()
 
         writeManifest depProject """
-[package]
-name = "dep"
-version = "1.2.3"
+package:
+  name: "dep"
+  version: "1.2.3"
 """
         writeReferenceDll depProject "dep.dll"
 
-        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toTomlPath
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toYamlPath
 
         writeManifest rootProject $"""
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-dep = {{ path = "{relativePath}" }}
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  dep:
+    path: "{relativePath}"
 """
 
         let result = BuildSystem.buildProject { projectRoot = rootProject }
@@ -94,19 +94,19 @@ dep = {{ path = "{relativePath}" }}
             Assert.Fail("expected build plan")
 
     [<Fact>]
-    let ``buildProject should fail when atla.toml is missing`` () =
+    let ``buildProject should fail when atla.yaml is missing`` () =
         let projectRoot = createTempProjectDir ()
 
         let result = BuildSystem.buildProject { projectRoot = projectRoot }
 
         Assert.False(result.succeeded)
-        Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("atla.toml not found")))
+        Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("atla.yaml not found")))
         Assert.True(result.plan.IsNone)
 
     [<Fact>]
     let ``buildProject should fail for syntax error`` () =
         let projectRoot = createTempProjectDir ()
-        writeManifest projectRoot "[package"
+        writeManifest projectRoot "package: ["
 
         let result = BuildSystem.buildProject { projectRoot = projectRoot }
 
@@ -117,7 +117,7 @@ dep = {{ path = "{relativePath}" }}
     [<Fact>]
     let ``buildProject should fail when required fields are missing`` () =
         let projectRoot = createTempProjectDir ()
-        writeManifest projectRoot "[package]"
+        writeManifest projectRoot "package: {}"
 
         let result = BuildSystem.buildProject { projectRoot = projectRoot }
 
@@ -131,12 +131,12 @@ dep = {{ path = "{relativePath}" }}
         let rootProject = createTempProjectDir ()
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-missing = { path = "./deps/missing" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  missing:
+    path: "./deps/missing"
 """
 
         let result = BuildSystem.buildProject { projectRoot = rootProject }
@@ -149,26 +149,26 @@ missing = { path = "./deps/missing" }
         let projectA = createTempProjectDir ()
         let projectB = createTempProjectDir ()
 
-        let relativeAToB = Path.GetRelativePath(projectA, projectB) |> toTomlPath
-        let relativeBToA = Path.GetRelativePath(projectB, projectA) |> toTomlPath
+        let relativeAToB = Path.GetRelativePath(projectA, projectB) |> toYamlPath
+        let relativeBToA = Path.GetRelativePath(projectB, projectA) |> toYamlPath
 
         writeManifest projectA $"""
-[package]
-name = "a"
-version = "0.1.0"
-
-[dependencies]
-b = {{ path = "{relativeAToB}" }}
+package:
+  name: "a"
+  version: "0.1.0"
+dependencies:
+  b:
+    path: "{relativeAToB}"
 """
         writeReferenceDll projectA "a.dll"
 
         writeManifest projectB $"""
-[package]
-name = "b"
-version = "0.1.0"
-
-[dependencies]
-a = {{ path = "{relativeBToA}" }}
+package:
+  name: "b"
+  version: "0.1.0"
+dependencies:
+  a:
+    path: "{relativeBToA}"
 """
         writeReferenceDll projectB "b.dll"
 
@@ -184,30 +184,31 @@ a = {{ path = "{relativeBToA}" }}
         let depProjectB = createTempProjectDir ()
 
         writeManifest depProjectA """
-[package]
-name = "common"
-version = "1.0.0"
+package:
+  name: "common"
+  version: "1.0.0"
 """
         writeReferenceDll depProjectA "common.dll"
 
         writeManifest depProjectB """
-[package]
-name = "common"
-version = "2.0.0"
+package:
+  name: "common"
+  version: "2.0.0"
 """
         writeReferenceDll depProjectB "common.dll"
 
-        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toTomlPath
-        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toTomlPath
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toYamlPath
+        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toYamlPath
 
         writeManifest rootProject $"""
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-commonA = {{ path = "{relativeA}" }}
-commonB = {{ path = "{relativeB}" }}
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  commonA:
+    path: "{relativeA}"
+  commonB:
+    path: "{relativeB}"
 """
 
         let result = BuildSystem.buildProject { projectRoot = rootProject }

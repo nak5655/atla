@@ -113,7 +113,7 @@ module ServerLifecycleTests =
         let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-dependency-inject-{System.Guid.NewGuid():N}")
         let srcDir = Path.Join(tempRoot, "src")
         Directory.CreateDirectory(srcDir) |> ignore
-        File.WriteAllText(Path.Join(tempRoot, "atla.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
+        File.WriteAllText(Path.Join(tempRoot, "atla.yaml"), "package:\n  name: \"app\"\n  version: \"0.1.0\"\n")
 
         let buildProject (_: BuildRequest) : BuildResult =
             { succeeded = true
@@ -164,7 +164,7 @@ module ServerLifecycleTests =
         let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-build-fail-{System.Guid.NewGuid():N}")
         let srcDir = Path.Join(tempRoot, "src")
         Directory.CreateDirectory(srcDir) |> ignore
-        File.WriteAllText(Path.Join(tempRoot, "atla.toml"), "[package]\nname = \"broken\"\n")
+        File.WriteAllText(Path.Join(tempRoot, "atla.yaml"), "package:\n  name: \"broken\"\n")
 
         let buildProject (_: BuildRequest) : BuildResult =
             { succeeded = false

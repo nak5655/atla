@@ -12,15 +12,15 @@ module ResolverTests =
         path
 
     let private writeManifest (projectRoot: string) (content: string) =
-        File.WriteAllText(Path.Join(projectRoot, "atla.toml"), content.Trim())
+        File.WriteAllText(Path.Join(projectRoot, "atla.yaml"), content.Trim())
 
     let private writeReferenceDll (projectRoot: string) (assemblyFileName: string) =
         let tfmDir = Path.Join(projectRoot, "ref", "net8.0")
         Directory.CreateDirectory(tfmDir) |> ignore
         File.WriteAllText(Path.Join(tfmDir, assemblyFileName), "")
 
-    /// TOML の basic string で解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
-    let private toTomlPath (path: string) =
+    /// YAML の basic string で解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
+    let private toYamlPath (path: string) =
         path.Replace("\\", "/")
 
     let private withNuGetPackagesRoot (packagesRoot: string) (action: unit -> unit) =
@@ -51,12 +51,12 @@ module ResolverTests =
         File.WriteAllText(expectedDllPath, "")
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -94,22 +94,23 @@ version = "0.1.0"
         File.WriteAllText(Path.Join(nugetLibDir, "Newtonsoft.Json.dll"), "")
         File.WriteAllText(Path.Join(pathRefDir, "dep-lib.dll"), "")
         File.WriteAllText(Path.Join(pathLibDir, "dep-lib-runtime.dll"), "")
-        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toTomlPath
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toYamlPath
 
         writeManifest depProject """
-[package]
-name = "dep-lib"
-version = "0.1.0"
+package:
+  name: "dep-lib"
+  version: "0.1.0"
 """
 
         writeManifest rootProject $"""
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-depLocal = {{ path = "{relativePath}" }}
-"Newtonsoft.Json" = {{ version = "13.0.3" }}
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  depLocal:
+    path: "{relativePath}"
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -137,12 +138,12 @@ depLocal = {{ path = "{relativePath}" }}
         Directory.CreateDirectory(packageRoot) |> ignore
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -169,12 +170,12 @@ version = "0.1.0"
         File.WriteAllText(Path.Join(libNet10, "Newtonsoft.Json.dll"), "")
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -202,12 +203,12 @@ version = "0.1.0"
         File.WriteAllText(Path.Join(duplicateDir, "Newtonsoft.Json.dll"), "")
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -223,12 +224,13 @@ version = "0.1.0"
         let rootProject = createTempProjectDir ()
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-common = { path = "./deps/common", version = "1.2.3" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  common:
+    path: "./deps/common"
+    version: "1.2.3"
 """
 
         let result = BuildSystem.buildProject { projectRoot = rootProject }
@@ -248,23 +250,24 @@ common = { path = "./deps/common", version = "1.2.3" }
         let packagePath = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
         Directory.CreateDirectory(Path.Join(packagePath, "ref", "net8.0")) |> ignore
         File.WriteAllText(Path.Join(packagePath, "ref", "net8.0", "Newtonsoft.Json.dll"), "")
-        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toTomlPath
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toYamlPath
 
         writeManifest depProject """
-[package]
-name = "Newtonsoft.Json"
-version = "9.0.1"
+package:
+  name: "Newtonsoft.Json"
+  version: "9.0.1"
 """
         writeReferenceDll depProject "Newtonsoft.Json.dll"
 
         writeManifest rootProject $"""
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-jsonLocal = {{ path = "{relativePath}" }}
-"Newtonsoft.Json" = {{ version = "13.0.3" }}
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  jsonLocal:
+    path: "{relativePath}"
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -281,12 +284,12 @@ jsonLocal = {{ path = "{relativePath}" }}
         let packagesRoot = createTempProjectDir ()
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -304,12 +307,12 @@ version = "0.1.0"
         let packagesRoot = createTempProjectDir ()
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -335,37 +338,38 @@ version = "0.1.0"
         File.WriteAllText(Path.Join(packagesRoot, "newtonsoft.json", "13.0.3", "ref", "net8.0", "Newtonsoft.Json.dll"), "")
         File.WriteAllText(Path.Join(packagesRoot, "newtonsoft.json", "12.0.3", "ref", "net8.0", "Newtonsoft.Json.dll"), "")
 
-        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toTomlPath
-        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toTomlPath
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toYamlPath
+        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toYamlPath
 
         writeManifest depProjectA """
-[package]
-name = "dep-a"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "dep-a"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
         writeReferenceDll depProjectA "dep-a.dll"
 
         writeManifest depProjectB """
-[package]
-name = "dep-b"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "12.0.3" }
+package:
+  name: "dep-b"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "12.0.3"
 """
         writeReferenceDll depProjectB "dep-b.dll"
 
         writeManifest rootProject $"""
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-depA = {{ path = "{relativeA}" }}
-depB = {{ path = "{relativeB}" }}
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  depA:
+    path: "{relativeA}"
+  depB:
+    path: "{relativeB}"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -386,37 +390,38 @@ depB = {{ path = "{relativeB}" }}
         Directory.CreateDirectory(Path.Join(packagePath, "ref", "net8.0")) |> ignore
         File.WriteAllText(Path.Join(packagePath, "ref", "net8.0", "Newtonsoft.Json.dll"), "")
 
-        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toTomlPath
-        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toTomlPath
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toYamlPath
+        let relativeB = Path.GetRelativePath(rootProject, depProjectB) |> toYamlPath
 
         writeManifest depProjectA """
-[package]
-name = "dep-a"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "dep-a"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
         writeReferenceDll depProjectA "dep-a.dll"
 
         writeManifest depProjectB """
-[package]
-name = "dep-b"
-version = "0.1.0"
-
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" }
+package:
+  name: "dep-b"
+  version: "0.1.0"
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"
 """
         writeReferenceDll depProjectB "dep-b.dll"
 
         writeManifest rootProject $"""
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-depA = {{ path = "{relativeA}" }}
-depB = {{ path = "{relativeB}" }}
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  depA:
+    path: "{relativeA}"
+  depB:
+    path: "{relativeB}"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -445,32 +450,34 @@ depB = {{ path = "{relativeB}" }}
         Directory.CreateDirectory(Path.Join(packagesRoot, "pkgx", "1.0.0", "ref", "net8.0")) |> ignore
         File.WriteAllText(Path.Join(packagesRoot, "pkgx", "1.0.0", "ref", "net8.0", "PkgX.dll"), "")
 
-        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toTomlPath
-        let relativeZ = Path.GetRelativePath(rootProject, depProjectZ) |> toTomlPath
+        let relativeA = Path.GetRelativePath(rootProject, depProjectA) |> toYamlPath
+        let relativeZ = Path.GetRelativePath(rootProject, depProjectZ) |> toYamlPath
 
         writeManifest depProjectA """
-[package]
-name = "A"
-version = "0.1.0"
+package:
+  name: "A"
+  version: "0.1.0"
 """
         writeReferenceDll depProjectA "A.dll"
 
         writeManifest depProjectZ """
-[package]
-name = "Z"
-version = "0.1.0"
+package:
+  name: "Z"
+  version: "0.1.0"
 """
         writeReferenceDll depProjectZ "Z.dll"
 
         writeManifest rootProject $"""
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-zdep = {{ path = "{relativeZ}" }}
-"PkgX" = {{ version = "1.0.0" }}
-adep = {{ path = "{relativeA}" }}
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  zdep:
+    path: "{relativeZ}"
+  PkgX:
+    version: "1.0.0"
+  adep:
+    path: "{relativeA}"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -493,13 +500,14 @@ adep = {{ path = "{relativeA}" }}
         let packagesRoot = createTempProjectDir ()
 
         writeManifest rootProject """
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-missingPath = { path = "./deps/missing" }
-"Missing.Pkg" = { version = "9.9.9" }
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  missingPath:
+    path: "./deps/missing"
+  Missing.Pkg:
+    version: "9.9.9"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->

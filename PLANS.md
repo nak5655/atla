@@ -1,5 +1,14 @@
 # Plan
 
+## 2026-04-16 Atla.Build manifest YAML完全移行
+
+- [x] フェーズ0: 方針確定（`atla.yaml` のみサポート、Toml関連処理を削除、診断文言を `atla.yaml` に統一、YAMLライブラリは `YamlDotNet 17.0.1` を採用）。
+- [x] フェーズ1: `Atla.Build` の manifest パース実装を TOML から YAML へ置換し、`atla.yaml` 固定で build できるようにする。
+- [x] フェーズ2: 依存解決・参照側（LSP/CLI）での manifest 探索名を `atla.yaml` に統一する。
+- [x] フェーズ3: テストを `atla.yaml` 前提へ更新する（TOML回帰テストは作成しない）。
+- [x] フェーズ4: ドキュメントを YAML 前提記述へ全面置換する（廃止告知は記載しない）。
+- [x] フェーズ5: フルテストスイート実行で回帰なしを確認する。
+
 ## 2026-04-16 NuGet依存DLLロード実装（analyzeModule直前で実行）
 
 ### フェーズ0: 方針確定（推奨案で決定）
