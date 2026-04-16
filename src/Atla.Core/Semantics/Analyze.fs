@@ -157,6 +157,12 @@ module Analyze =
         | Result.Ok expr -> expr
         | Result.Error message -> errorExpr tid span message
 
+    let private unresolvedImportedSystemTypeMessage (typeName: string) (span: Atla.Core.Data.Span) : string =
+        sprintf
+            "Imported system type '%s' was not found at %A. If this type is provided by a dependency, check dependency loading diagnostics."
+            typeName
+            span
+
     let private isNativeVoid (typeEnv: TypeEnv) (tid: TypeId) : bool =
         match typeEnv.resolveType tid with
         | TypeId.Native runtimeType when runtimeType = typeof<System.Void> -> true
@@ -402,7 +408,7 @@ module Analyze =
                 | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) ->
                     resolveMemberFromSystemTypeResult sysType
                 | SymbolKind.External(ExternalBinding.SystemTypeRef _) ->
-                    Result.Error (sprintf "System type '%A' could not be loaded at %A" typeName memberAccessExpr.span)
+                    Result.Error (unresolvedImportedSystemTypeMessage (string typeName) memberAccessExpr.span)
                 | _ ->
                     Result.Error (sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span)
 
@@ -415,7 +421,7 @@ module Analyze =
                         | Some symInfo ->
                             match symInfo.kind with
                             | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemTypeResult sysType
-                            | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Result.Error (sprintf "System type '%s' could not be loaded at %A" receiverId.name memberAccessExpr.span)
+                            | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Result.Error (unresolvedImportedSystemTypeMessage receiverId.name memberAccessExpr.span)
                             | _ -> Result.Error (sprintf "Type '%s' is not a system type at %A" receiverId.name memberAccessExpr.span)
                         | None -> Result.Error (sprintf "Undefined type symbol '%s' at %A" receiverId.name memberAccessExpr.span)
                     | _ ->
@@ -489,7 +495,7 @@ module Analyze =
                         match symInfo.kind with
                         | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) ->
                             if obj.ReferenceEquals(sysType, null) then
-                                Result.Error (sprintf "System type '%s' could not be loaded at %A" staticAccessExpr.typeName staticAccessExpr.span)
+                                Result.Error (unresolvedImportedSystemTypeMessage staticAccessExpr.typeName staticAccessExpr.span)
                             else
                                 let memberInfos =
                                     sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static)

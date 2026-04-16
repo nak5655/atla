@@ -441,3 +441,63 @@ fn main: Int = 0
 
         Assert.False(result.succeeded)
         Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("not a valid .NET assembly"))
+
+    [<Fact>]
+    let ``compile should resolve imported system type after dependency assembly load`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        let program = """
+import System.Text.Json.JsonNamingPolicy
+
+fn main: () = do
+    var policy = JsonNamingPolicy.CamelCase
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let dependency: Compiler.ResolvedDependency =
+            { name = "System.Text.Json"
+              version = "runtime"
+              source = runtimeDir
+              referenceAssemblyPaths = [ jsonAssemblyPath ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "JsonImportWithDependency"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [ dependency ] }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+
+    [<Fact>]
+    let ``compile should report unresolved imported system type separately from dependency load failures`` () =
+        let program = """
+import System.Text.Json.DoesNotExist
+
+fn main: () = do
+    var x = DoesNotExist.Parse
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let result =
+            Compiler.compile
+                { asmName = "JsonImportMissingType"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [] }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(
+            result.diagnostics,
+            fun diagnostic -> diagnostic.message.Contains("Imported system type 'DoesNotExist' was not found")
+        )
+        Assert.DoesNotContain(
+            result.diagnostics,
+            fun diagnostic -> diagnostic.message.Contains("dependency `")
+        )
