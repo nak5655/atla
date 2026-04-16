@@ -1,17 +1,28 @@
 namespace Atla.LanguageServer.Tests
 
+open System.IO
 open Newtonsoft.Json.Linq
 open Xunit
 open Atla.LanguageServer.Server
 
 module ServerLifecycleTests =
+    /// `Server.tryNormalizeUri` の file URI 仕様に合わせて期待値をOS非依存で組み立てる。
+    let private expectedNormalizedFileUri (path: string) =
+        let normalizedPath = Path.GetFullPath(path).Replace('\\', '/')
+        let normalizedPathForOs =
+            if Path.DirectorySeparatorChar = '\\' then
+                normalizedPath.ToLowerInvariant()
+            else
+                normalizedPath
+        sprintf "file://%s" normalizedPathForOs
+
     [<Fact>]
     let ``normalize uri makes file key deterministic`` () =
         let server = Server()
 
         let normalized = server.TryNormalizeUri("file:///tmp/../tmp/test.atla")
 
-        Assert.Equal(Some("file:///tmp/test.atla"), normalized)
+        Assert.Equal(Some(expectedNormalizedFileUri "/tmp/test.atla"), normalized)
 
     [<Fact>]
     let ``did open, change, close lifecycle publishes diagnostics and clears buffer`` () =

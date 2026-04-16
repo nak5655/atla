@@ -746,3 +746,27 @@
 - [x] `Atla.Console` / `Atla.LanguageServer` の publish 設定を単一実行ファイル出力（single-file）向けに拡張する。
 - [x] ドキュメントに「exe 単独実行」向けの publish 手順と実行例を追記する。
 - [x] フルテストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-16 ルートAtla.slnx追加変更の取り消し
+
+- [x] ルート追加した `Atla.slnx` を削除し、solution エントリポイントを `src/Atla.slnx` のみに戻す。
+- [x] `README.md` のテスト実行手順を `dotnet test src/Atla.slnx` 前提へ戻す。
+- [x] `src/Atla.slnx` に対するフルテストを実行して非退行を確認する。
+
+## 2026-04-16 Windowsでのcycle依存テスト失敗修正
+
+- [x] `buildProject should fail when dependency graph has cycle` の失敗を再現し、Windows特有の `atla.toml` 文字列エスケープ問題を特定する。
+- [x] テストデータ生成をOS非依存な書き方へ修正し、TOMLパースが安定するようにする。
+- [x] `Atla.Build.Tests` と `src/Atla.slnx` のテストを実行して回帰がないことを確認する。
+
+## 2026-04-16 ResolveTests のWindowsパス区切り問題修正
+
+- [x] `ResolverTests` で `Path.GetRelativePath` を TOML へ埋め込む箇所を洗い出し、Windowsで不正エスケープになる経路を再現・特定する。
+- [x] `ResolverTests` 側にも TOML 向けパス正規化を適用し、OS非依存で同一テストデータを生成する。
+- [x] `Atla.Build.Tests` と `src/Atla.slnx` を実行して回帰がないことを確認する。
+
+## 2026-04-16 LanguageServer URI正規化テストのWindows差分修正
+
+- [x] `ServerLifecycleTests.normalize uri makes file key deterministic` の期待値がOS依存になっている箇所を特定する。
+- [x] 期待値をOS非依存（正規化関数の仕様準拠）へ修正し、Windows/Unixで同一意図を検証できるようにする。
+- [x] `Atla.LanguageServer.Tests` と `src/Atla.slnx` のテストを実行して回帰がないことを確認する。
