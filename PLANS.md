@@ -41,11 +41,13 @@
 - [x] 回帰テストとして同一入力でロード順・診断順が不変であることを検証する。
 - [x] フェーズ5実施時は `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` と `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` を先行実行して回帰を確認する。
 
-### フェーズ6: ドキュメント・運用
+### LSPサーバー経路への dependencies 注入タスク（新規）
 
-- [ ] `README.md` と `doc/cli-interface.md` に依存解決～DLLロードの流れと失敗時の対処を追記する。
-- [ ] 環境変数（`NUGET_PACKAGES`, `ATLA_BUILD_ENABLE_NUGET_RESTORE`）と TFM選択規則を明記する。
-- [ ] LSP経路（現状 dependencies 未注入）の扱いを仕様化する。
+- [ ] `Atla.LanguageServer.Server.compileAndPublish` に `BuildSystem.buildProject` を組み込み、`Compiler.compile` へ `plan.dependencies` を渡す経路を追加する。
+- [ ] `didOpen` / `didChange` の URI からプロジェクトルート（`atla.toml` 起点）を決定するルールを追加し、ワークスペース外・manifest未検出時のフォールバック挙動を定義する。
+- [ ] Build失敗（manifest不正/依存解決失敗）と Compile失敗（lex/parse/semantic/依存ロード失敗）を識別して LSP diagnostics へ反映する変換レイヤーを追加する。
+- [ ] `Atla.LanguageServer.Tests` に dependencies 注入の統合テストを追加する（成功: 外部型import解決、失敗: 依存不足/競合/キャッシュ未配置）。
+- [ ] LSP経路での決定性（同一入力で依存解決順・診断順が不変）を回帰テストで固定する。
 
 ### 完了条件
 
