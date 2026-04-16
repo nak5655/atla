@@ -36,9 +36,10 @@
 
 ### フェーズ5: テスト
 
-- [ ] `Atla.Build.Tests` に DLL選定（TFM優先・ref/lib優先・異常系）の単体テストを追加する。
-- [ ] `Atla.Core.Tests` に analyze直前ロード経路の統合テスト（成功/失敗/競合）を追加する。
-- [ ] 回帰テストとして同一入力でロード順・診断順が不変であることを検証する。
+- [x] `Atla.Build.Tests` に DLL選定（TFM優先・ref/lib優先・異常系）の単体テストを追加する。
+- [x] `Atla.Core.Tests` に analyze直前ロード経路の統合テスト（成功/失敗/競合）を追加する。
+- [x] 回帰テストとして同一入力でロード順・診断順が不変であることを検証する。
+- [x] フェーズ5実施時は `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` と `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` を先行実行して回帰を確認する。
 
 ### フェーズ6: ドキュメント・運用
 
@@ -48,9 +49,9 @@
 
 ### 完了条件
 
-- [ ] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` が成功する。
-- [ ] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` が成功する。
-- [ ] `dotnet test src/Atla.slnx` が成功する。
+- [x] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` が成功する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` が成功する。
+- [x] `dotnet test src/Atla.slnx` が成功する。
 
 ## 2026-04-15 コメント規約追記（関数・ブロック必須）
 

@@ -63,6 +63,29 @@ module DependencyLoader =
                 else
                     Some(Diagnostic.Error($"dependency `{dependencyName}` reference assembly not found: {normalizedPath}", Span.Empty)))
 
+    (* simple name 衝突を検出し、競合診断を返す。 *)
+    let private detectSimpleNameConflicts (normalizedReferences: (string * string) list) : Diagnostic list =
+        normalizedReferences
+        |> List.groupBy (fun (_, path) -> Path.GetFileNameWithoutExtension(path).ToLowerInvariant())
+        |> List.choose (fun (simpleName, entries) ->
+            let distinctPaths =
+                entries
+                |> List.map snd
+                |> List.map Path.GetFullPath
+                |> List.distinct
+                |> List.sort
+
+            if List.length distinctPaths > 1 then
+                let pathsText = String.Join(", ", distinctPaths)
+                Some(
+                    Diagnostic.Error(
+                        $"reference assembly simple-name conflict `{simpleName}` detected across multiple paths: {pathsText}",
+                        Span.Empty
+                    )
+                )
+            else
+                None)
+
     (* 例外を構造化診断へ変換する。 *)
     let private toLoadDiagnostic (dependencyName: string) (assemblyPath: string) (exn: exn) : Diagnostic =
         match exn with
@@ -91,9 +114,12 @@ module DependencyLoader =
     let loadDependencies (dependencies: (string * string list) list) : DependencyLoadResult =
         let normalizedReferences = normalizeReferenceAssemblyPaths dependencies
         let pathDiagnostics = validateReferencePaths normalizedReferences
+        let conflictDiagnostics = detectSimpleNameConflicts normalizedReferences
 
         if not (List.isEmpty pathDiagnostics) then
             failed pathDiagnostics
+        elif not (List.isEmpty conflictDiagnostics) then
+            failed conflictDiagnostics
         elif List.isEmpty normalizedReferences then
             succeeded None
         else

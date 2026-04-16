@@ -501,3 +501,76 @@ fn main: () = do
             result.diagnostics,
             fun diagnostic -> diagnostic.message.Contains("dependency `")
         )
+
+    [<Fact>]
+    let ``compile should fail when dependency reference simple names conflict`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        let depDirA = Path.Join(outDir, "depA")
+        let depDirB = Path.Join(outDir, "depB")
+        Directory.CreateDirectory(depDirA) |> ignore
+        Directory.CreateDirectory(depDirB) |> ignore
+
+        let copiedPathA = Path.Join(depDirA, "System.Text.Json.dll")
+        let copiedPathB = Path.Join(depDirB, "System.Text.Json.dll")
+        File.Copy(jsonAssemblyPath, copiedPathA, true)
+        File.Copy(jsonAssemblyPath, copiedPathB, true)
+
+        let depA: Compiler.ResolvedDependency =
+            { name = "dep-a"
+              version = "1.0.0"
+              source = depDirA
+              referenceAssemblyPaths = [ copiedPathA ] }
+
+        let depB: Compiler.ResolvedDependency =
+            { name = "dep-b"
+              version = "1.0.0"
+              source = depDirB
+              referenceAssemblyPaths = [ copiedPathB ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "DependencyConflictProgram"
+                  source = "fn main: Int = 0"
+                  outDir = outDir
+                  dependencies = [ depA; depB ] }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("simple-name conflict"))
+
+    [<Fact>]
+    let ``compile should keep dependency diagnostics order deterministic across runs`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let depA: Compiler.ResolvedDependency =
+            { name = "zzz-missing"
+              version = "1.0.0"
+              source = outDir
+              referenceAssemblyPaths = [ Path.Join(outDir, "zzz-missing.dll") ] }
+
+        let depB: Compiler.ResolvedDependency =
+            { name = "aaa-missing"
+              version = "1.0.0"
+              source = outDir
+              referenceAssemblyPaths = [ Path.Join(outDir, "aaa-missing.dll") ] }
+
+        let compileOnce () =
+            Compiler.compile
+                { asmName = "DependencyDeterminismProgram"
+                  source = "fn main: Int = 0"
+                  outDir = outDir
+                  dependencies = [ depA; depB ] }
+
+        let run1 = compileOnce ()
+        let run2 = compileOnce ()
+
+        Assert.False(run1.succeeded)
+        Assert.False(run2.succeeded)
+
+        let messages1 = run1.diagnostics |> List.map (fun diagnostic -> diagnostic.message)
+        let messages2 = run2.diagnostics |> List.map (fun diagnostic -> diagnostic.message)
+        Assert.Equal<string list>(messages1, messages2)
