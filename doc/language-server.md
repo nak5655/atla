@@ -142,7 +142,7 @@ dotnet publish src/Atla.Console/Atla.Console.fsproj -c Release -r win-x64
 
 ## Dependency injection on LSP compile route (2026-04-16)
 
-1. `didOpen` / `didChange` compile flow now attempts project-root discovery by walking parent directories from the target document and finding the nearest `atla.toml`.
+1. `didOpen` / `didChange` compile flow now attempts project-root discovery by walking parent directories from the target document and finding the nearest `atla.yaml`.
 2. If a manifest is found, `Atla.Build.BuildSystem.buildProject` is executed first and resolved `plan.dependencies` are injected into `Compiler.compile`.
 3. If no manifest is found, the server falls back to compile with `dependencies = []`.
 4. If the document is outside workspace roots, the server does not compile and publishes empty diagnostics (`[]`) to clear stale state deterministically.

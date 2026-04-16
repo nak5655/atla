@@ -6,14 +6,14 @@
 
 `Atla.Build` プロジェクト追加に向けたフェーズ1として、manifest最小仕様・責務境界・依存受け渡しモデルを確定する。
 
-## atla.toml 最小仕様（フェーズ1）
+## atla.yaml 最小仕様（フェーズ1）
 
-フェーズ1では `atla.toml` の対象を `[package]` セクションのみに限定する。
+フェーズ1では `atla.yaml` の対象を `package` セクションのみに限定する。
 
-```toml
-[package]
-name = "hello"
-version = "0.1.0"
+```yaml
+package:
+  name: "hello"
+  version: "0.1.0"
 ```
 
 - `name` は必須
@@ -34,17 +34,19 @@ version = "0.1.0"
 - テストは `BuildTests`（build経路）と `ResolverTests`（NuGet/競合解決）へ分割する。
 - 決定性保証として、依存出力順序と診断順序の再現性をテストで検証する。
 
-```toml
-[dependencies]
-"Newtonsoft.Json" = { version = "13.0.3" } # nuget
-local-lib = { path = "../local-lib" }     # local path
+```yaml
+dependencies:
+  Newtonsoft.Json:
+    version: "13.0.3"   # nuget
+  local-lib:
+    path: "../local-lib" # local path
 ```
 
 ## 責務境界
 
 - `Atla.Build`
   - プロジェクトルート決定
-  - `atla.toml` 読み取り/検証
+  - `atla.yaml` 読み取り/検証
   - 依存解決（将来 `dependencies` + NuGet を含む）
 - `Atla.Core`
   - コンパイルパイプライン（AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL）

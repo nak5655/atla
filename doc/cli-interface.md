@@ -13,32 +13,35 @@ dotnet run --project src/Atla.Console -- build <projectRoot> [-o <outDir>] [--na
 
 `build` コマンドは `projectRoot` を起点に以下を読み取ります。
 
-- `atla.toml`
+- `atla.yaml`
 - `src/main.atla`
 
-最小 `atla.toml`:
+最小 `atla.yaml`:
 
-```toml
-[package]
-name = "hello"
-version = "0.1.0"
+```yaml
+package:
+  name: "hello"
+  version: "0.1.0"
 ```
 
-依存定義（ローカル path）:
+依存定義（ローカル path / NuGet version）:
 
-```toml
-[dependencies]
-corelib = { path = "../corelib" }
-utils = "../utils"
+```yaml
+dependencies:
+  corelib:
+    path: "../corelib"
+  utils: "../utils"
+  Newtonsoft.Json:
+    version: "13.0.3"
 ```
 
 ## Behavior
 
 - `projectRoot` は存在するディレクトリである必要があります。
-- `atla.toml` は必須です。
+- `atla.yaml` は必須です。
 - エントリポイントは `src/main.atla` 固定です。
 - 出力ディレクトリの既定値は `<projectRoot>/out` です。
-- アセンブリ名の既定値は `atla.toml` の `package.name` です。
+- アセンブリ名の既定値は `atla.yaml` の `package.name` です。
 - 依存解決時に以下を診断します。
   - 欠損パス
   - 循環依存
