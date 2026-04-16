@@ -43,10 +43,11 @@
 
 ### LSPサーバー経路への dependencies 注入タスク（新規）
 
-- [ ] `Atla.LanguageServer.Server.compileAndPublish` に `BuildSystem.buildProject` を組み込み、`Compiler.compile` へ `plan.dependencies` を渡す経路を追加する。
-- [ ] `didOpen` / `didChange` の URI からプロジェクトルート（`atla.toml` 起点）を決定するルールを追加し、ワークスペース外・manifest未検出時のフォールバック挙動を定義する。
-- [ ] Build失敗（manifest不正/依存解決失敗）と Compile失敗（lex/parse/semantic/依存ロード失敗）を識別して LSP diagnostics へ反映する変換レイヤーを追加する。
-- [ ] `Atla.LanguageServer.Tests` に dependencies 注入の統合テストを追加する（成功: 外部型import解決、失敗: 依存不足/競合/キャッシュ未配置）。
+- [x] 実装前に現行 `Server.compileAndPublish` の依存注入欠落経路を確認し、`BuildSystem` 連携方針を確定する。
+- [x] `Atla.LanguageServer.Server.compileAndPublish` に `BuildSystem.buildProject` を組み込み、`Compiler.compile` へ `plan.dependencies` を渡す経路を追加する。
+- [x] `didOpen` / `didChange` の URI からプロジェクトルート（`atla.toml` 起点）を決定するルールを追加し、ワークスペース外・manifest未検出時のフォールバック挙動を定義する。
+- [x] Build失敗（manifest不正/依存解決失敗）と Compile失敗（lex/parse/semantic/依存ロード失敗）を識別して LSP diagnostics へ反映する変換レイヤーを追加する。
+- [x] `Atla.LanguageServer.Tests` に dependencies 注入の統合テストを追加する（成功: build plan dependencies が compile request へ注入される、失敗: build diagnostics が `atla-build` source で配信され compile をスキップ）。
 - [ ] LSP経路での決定性（同一入力で依存解決順・診断順が不変）を回帰テストで固定する。
 
 ### 完了条件

@@ -18,7 +18,7 @@ module DiagnosticsTests =
         let json = JsonConvert.SerializeObject(diagnostics, Formatting.None)
 
         let _ = Assert.Single(diagnostics)
-        Assert.Contains("\"source\":\"atla-lsp\"", json)
+        Assert.Contains("\"source\":\"atla-compiler\"", json)
         Assert.Contains("\"severity\":1", json)
 
     [<Fact>]
@@ -33,7 +33,7 @@ module DiagnosticsTests =
         let json = JsonConvert.SerializeObject(diagnostics, Formatting.None)
 
         let _ = Assert.Single(diagnostics)
-        Assert.Contains("\"source\":\"atla-lsp\"", json)
+        Assert.Contains("\"source\":\"atla-compiler\"", json)
         Assert.Contains("\"severity\":1", json)
 
     [<Fact>]
@@ -48,7 +48,7 @@ module DiagnosticsTests =
         let json = JsonConvert.SerializeObject(diagnostics, Formatting.None)
 
         let _ = Assert.Single(diagnostics)
-        Assert.Contains("\"source\":\"atla-lsp\"", json)
+        Assert.Contains("\"source\":\"atla-compiler\"", json)
         Assert.Contains("\"severity\":1", json)
 
         let first = diagnostics.Head
