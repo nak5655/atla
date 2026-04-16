@@ -1,5 +1,69 @@
 # Plan
 
+## 2026-04-16 NuGet依存DLLロード実装（analyzeModule直前で実行）
+
+### フェーズ0: 方針確定（推奨案で決定）
+
+- [x] 決定事項: 依存DLLロードは `Compiler.compile` 内で `Analyze.analyzeModule` 呼び出し直前に実行する。
+- [x] 決定事項: ロード失敗は警告継続ではなく `Diagnostic.Error` で fail-fast する。
+- [x] 決定事項: 参照DLL探索は `ref/` 優先、次に `lib/` を探索する。
+- [x] 決定事項: TFM優先順位は `net10.0 > net9.0 > net8.0 > netstandard2.1 > netstandard2.0` とする。
+- [x] 決定事項: 同名アセンブリ競合（同一simple nameの複数version）は診断エラーで失敗させる。
+- [x] 決定事項: ロード順・診断順は決定的（ソート済み）でなければならない。
+
+### フェーズ1: モデル拡張（Build -> Compiler 受け渡し）
+
+- [ ] `ResolvedDependency` または `CompileRequest` に「参照対象DLL一覧」を保持するモデルを追加する。
+- [ ] `Atla.Build` 側で NuGet package root から「最終的に採用したDLLパス」を計算して BuildPlan に反映する。
+- [ ] path依存についても参照DLL抽出の規約を明文化し、NuGet依存と同じデータ形へ正規化する。
+
+### フェーズ2: NuGet DLL選定ロジック実装（Atla.Build）
+
+- [ ] `Resolver` に `ref/` -> `lib/` 探索を追加し、TFM優先順位に従って DLL を選定する。
+- [ ] 候補なし/候補過多/破損パスに対する構造化診断を追加する。
+- [ ] 依存ごとの選定結果を決定的順序で返す。
+
+### フェーズ3: DLLロード実装（Atla.Compiler）
+
+- [ ] `DependencyLoader`（新規モジュール）を追加し、`Analyze.analyzeModule` 直前で依存DLLをロードする。
+- [ ] ロード処理は `AssemblyLoadContext` ベース（将来の隔離・解放を見据えた設計）で実装する。
+- [ ] 失敗理由（ファイル欠損/BadImageFormat/依存連鎖不足）を `Diagnostic` に変換する。
+
+### フェーズ4: 意味解析連携
+
+- [ ] 依存DLLロード後に `Resolve.tryResolveSystemType` で型解決できることを統合テストで保証する。
+- [ ] `import` 解決エラーで「型未存在」と「依存ロード失敗」を識別可能な診断メッセージへ改善する。
+
+### フェーズ5: テスト
+
+- [ ] `Atla.Build.Tests` に DLL選定（TFM優先・ref/lib優先・異常系）の単体テストを追加する。
+- [ ] `Atla.Core.Tests` に analyze直前ロード経路の統合テスト（成功/失敗/競合）を追加する。
+- [ ] 回帰テストとして同一入力でロード順・診断順が不変であることを検証する。
+
+### フェーズ6: ドキュメント・運用
+
+- [ ] `README.md` と `doc/cli-interface.md` に依存解決～DLLロードの流れと失敗時の対処を追記する。
+- [ ] 環境変数（`NUGET_PACKAGES`, `ATLA_BUILD_ENABLE_NUGET_RESTORE`）と TFM選択規則を明記する。
+- [ ] LSP経路（現状 dependencies 未注入）の扱いを仕様化する。
+
+### 完了条件
+
+- [ ] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` が成功する。
+- [ ] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` が成功する。
+- [ ] `dotnet test src/Atla.slnx` が成功する。
+
+## 2026-04-15 コメント規約追記（関数・ブロック必須）
+
+- [x] `AGENTS.md` に「関数および処理ブロックには必ずコメントを付与する」ルールを追加する。
+- [x] 既存の開発ワークフロー規約と矛盾しない位置に追記する。
+- [x] フルテストスイートを実行し、ドキュメント変更のみで非退行を確認する。
+
+## 2026-04-15 Atla.Build コメント整備（ブロック単位）
+
+- [x] `src/Atla.Build/Build.fs` の主要処理ブロック（manifest検証・依存解析・build entry）にブロックコメントを追加する。
+- [x] `src/Atla.Build/Resolver.fs` の主要処理ブロック（NuGet解決・依存木走査・競合診断）にブロックコメントを追加する。
+- [x] フルテストスイートを実行し、コメント追加のみで挙動非退行を確認する。
+
 ## 2026-04-15 Atla.Build NuGet依存解決 フェーズ0-1（仕様確定 + manifest拡張）
 
 - [x] フェーズ0: 依存種別の優先度を `path > version(nuget)` として明確化する。

@@ -186,6 +186,7 @@ if not found then failwith "name missing"
 4. You MUST run the full test suite.
 5. You MUST update documentation for user-visible or invariant-impacting changes.
 6. If code in a block is unchanged, you MUST NOT remove existing comments in that block.
+7. You MUST add comments for every function and each major processing block.
 
 ### GOOD
 - Commit includes: `PLANS.md`, implementation, tests, docs.
