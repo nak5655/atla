@@ -61,6 +61,17 @@ NuGet 依存がキャッシュに存在しないとき、`dotnet restore` を自
 
 既定ではキャッシュ不在時に診断を返して失敗します。自動 restore を使う場合のみ明示的に有効化してください。
 
+
+## テスト実行
+
+フルテストはリポジトリルートで次を実行します。
+
+```bash
+dotnet test
+```
+
+`dotnet test src/Atla.slnx` でも同じテストスイートを実行できます。
+
 ## 参考ドキュメント
 
 - CLI 詳細: `doc/cli-interface.md`

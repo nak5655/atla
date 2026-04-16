@@ -746,3 +746,10 @@
 - [x] `Atla.Console` / `Atla.LanguageServer` の publish 設定を単一実行ファイル出力（single-file）向けに拡張する。
 - [x] ドキュメントに「exe 単独実行」向けの publish 手順と実行例を追記する。
 - [x] フルテストスイートを実行して回帰がないことを確認する。
+
+## 2026-04-16 ルート実行のフルテスト修正
+
+- [x] 失敗再現: リポジトリルートで `dotnet test` を実行し、project/solution 未検出エラーを確認する。
+- [x] ルートから `dotnet test` 実行時に `src/Atla.slnx` 相当のフルテストが解決されるよう solution 配置を修正する。
+- [x] README のテスト手順を更新し、ルート実行コマンドを明記する。
+- [x] フルテスト（`dotnet test` および `dotnet test src/Atla.slnx`）を実行して回帰がないことを確認する。
