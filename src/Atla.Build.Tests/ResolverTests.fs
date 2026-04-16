@@ -14,6 +14,11 @@ module ResolverTests =
     let private writeManifest (projectRoot: string) (content: string) =
         File.WriteAllText(Path.Join(projectRoot, "atla.toml"), content.Trim())
 
+    let private writeReferenceDll (projectRoot: string) (assemblyFileName: string) =
+        let tfmDir = Path.Join(projectRoot, "ref", "net8.0")
+        Directory.CreateDirectory(tfmDir) |> ignore
+        File.WriteAllText(Path.Join(tfmDir, assemblyFileName), "")
+
     let private withNuGetPackagesRoot (packagesRoot: string) (action: unit -> unit) =
         let previous = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
         Environment.SetEnvironmentVariable("NUGET_PACKAGES", packagesRoot)
@@ -37,7 +42,9 @@ module ResolverTests =
         let rootProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
         let expectedPackagePath = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
-        Directory.CreateDirectory(expectedPackagePath) |> ignore
+        let expectedDllPath = Path.Join(expectedPackagePath, "ref", "net8.0", "Newtonsoft.Json.dll")
+        Directory.CreateDirectory(Path.GetDirectoryName(expectedDllPath)) |> ignore
+        File.WriteAllText(expectedDllPath, "")
 
         writeManifest rootProject """
 [package]
@@ -60,8 +67,151 @@ version = "0.1.0"
                 Assert.Equal("Newtonsoft.Json", dependency.name)
                 Assert.Equal("13.0.3", dependency.version)
                 Assert.Equal(Path.GetFullPath(expectedPackagePath), dependency.source)
+                Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.referenceAssemblyPaths)
             | None ->
                 Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should normalize reference assembly paths from ref then lib for nuget and path dependencies`` () =
+        let rootProject = createTempProjectDir ()
+        let depProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let nugetRoot = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
+        let nugetRefDir = Path.Join(nugetRoot, "ref", "net8.0")
+        let nugetLibDir = Path.Join(nugetRoot, "lib", "net8.0")
+        let pathRefDir = Path.Join(depProject, "ref", "net8.0")
+        let pathLibDir = Path.Join(depProject, "lib", "net8.0")
+        Directory.CreateDirectory(nugetRefDir) |> ignore
+        Directory.CreateDirectory(nugetLibDir) |> ignore
+        Directory.CreateDirectory(pathRefDir) |> ignore
+        Directory.CreateDirectory(pathLibDir) |> ignore
+        File.WriteAllText(Path.Join(nugetRefDir, "Newtonsoft.Json.dll"), "")
+        File.WriteAllText(Path.Join(nugetLibDir, "Newtonsoft.Json.dll"), "")
+        File.WriteAllText(Path.Join(pathRefDir, "dep-lib.dll"), "")
+        File.WriteAllText(Path.Join(pathLibDir, "dep-lib-runtime.dll"), "")
+        let relativePath = Path.GetRelativePath(rootProject, depProject)
+
+        writeManifest depProject """
+[package]
+name = "dep-lib"
+version = "0.1.0"
+"""
+
+        writeManifest rootProject $"""
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+depLocal = {{ path = "{relativePath}" }}
+"Newtonsoft.Json" = {{ version = "13.0.3" }}
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let byName = plan.dependencies |> List.map (fun dep -> dep.name, dep) |> Map.ofList
+                let localDependency = byName["dep-lib"]
+                let nugetDependency = byName["Newtonsoft.Json"]
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(pathRefDir, "dep-lib.dll")) ], localDependency.referenceAssemblyPaths)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetRefDir, "Newtonsoft.Json.dll")) ], nugetDependency.referenceAssemblyPaths)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should fail when dependency has no supported reference assembly layout`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packageRoot = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
+        Directory.CreateDirectory(packageRoot) |> ignore
+
+        writeManifest rootProject """
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.False(result.succeeded)
+            Assert.True(result.plan.IsNone)
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("has no supported reference assemblies")))
+        )
+
+    [<Fact>]
+    let ``buildProject should prefer highest tfm within ref over lib`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packageRoot = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
+        let refNet8 = Path.Join(packageRoot, "ref", "net8.0")
+        let refNetstandard = Path.Join(packageRoot, "ref", "netstandard2.0")
+        let libNet10 = Path.Join(packageRoot, "lib", "net10.0")
+        Directory.CreateDirectory(refNet8) |> ignore
+        Directory.CreateDirectory(refNetstandard) |> ignore
+        Directory.CreateDirectory(libNet10) |> ignore
+        File.WriteAllText(Path.Join(refNet8, "Newtonsoft.Json.dll"), "")
+        File.WriteAllText(Path.Join(refNetstandard, "Newtonsoft.Json.dll"), "")
+        File.WriteAllText(Path.Join(libNet10, "Newtonsoft.Json.dll"), "")
+
+        writeManifest rootProject """
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+
+            match result.plan with
+            | Some plan ->
+                let dependency = Assert.Single(plan.dependencies)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(refNet8, "Newtonsoft.Json.dll")) ], dependency.referenceAssemblyPaths)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should fail when selected tfm has duplicate simple names`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packageRoot = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
+        let tfmRoot = Path.Join(packageRoot, "ref", "net8.0")
+        let duplicateDir = Path.Join(tfmRoot, "alt")
+        Directory.CreateDirectory(duplicateDir) |> ignore
+        File.WriteAllText(Path.Join(tfmRoot, "Newtonsoft.Json.dll"), "")
+        File.WriteAllText(Path.Join(duplicateDir, "Newtonsoft.Json.dll"), "")
+
+        writeManifest rootProject """
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+"Newtonsoft.Json" = { version = "13.0.3" }
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.False(result.succeeded)
+            Assert.True(result.plan.IsNone)
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("ambiguous reference assemblies")))
         )
 
     [<Fact>]
@@ -92,7 +242,8 @@ common = { path = "./deps/common", version = "1.2.3" }
         let depProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
         let packagePath = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
-        Directory.CreateDirectory(packagePath) |> ignore
+        Directory.CreateDirectory(Path.Join(packagePath, "ref", "net8.0")) |> ignore
+        File.WriteAllText(Path.Join(packagePath, "ref", "net8.0", "Newtonsoft.Json.dll"), "")
         let relativePath = Path.GetRelativePath(rootProject, depProject)
 
         writeManifest depProject """
@@ -100,6 +251,7 @@ common = { path = "./deps/common", version = "1.2.3" }
 name = "Newtonsoft.Json"
 version = "9.0.1"
 """
+        writeReferenceDll depProject "Newtonsoft.Json.dll"
 
         writeManifest rootProject $"""
 [package]
@@ -174,6 +326,10 @@ version = "0.1.0"
         let packagesRoot = createTempProjectDir ()
         Directory.CreateDirectory(Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")) |> ignore
         Directory.CreateDirectory(Path.Join(packagesRoot, "newtonsoft.json", "12.0.3")) |> ignore
+        Directory.CreateDirectory(Path.Join(packagesRoot, "newtonsoft.json", "13.0.3", "ref", "net8.0")) |> ignore
+        Directory.CreateDirectory(Path.Join(packagesRoot, "newtonsoft.json", "12.0.3", "ref", "net8.0")) |> ignore
+        File.WriteAllText(Path.Join(packagesRoot, "newtonsoft.json", "13.0.3", "ref", "net8.0", "Newtonsoft.Json.dll"), "")
+        File.WriteAllText(Path.Join(packagesRoot, "newtonsoft.json", "12.0.3", "ref", "net8.0", "Newtonsoft.Json.dll"), "")
 
         let relativeA = Path.GetRelativePath(rootProject, depProjectA)
         let relativeB = Path.GetRelativePath(rootProject, depProjectB)
@@ -186,6 +342,7 @@ version = "0.1.0"
 [dependencies]
 "Newtonsoft.Json" = { version = "13.0.3" }
 """
+        writeReferenceDll depProjectA "dep-a.dll"
 
         writeManifest depProjectB """
 [package]
@@ -195,6 +352,7 @@ version = "0.1.0"
 [dependencies]
 "Newtonsoft.Json" = { version = "12.0.3" }
 """
+        writeReferenceDll depProjectB "dep-b.dll"
 
         writeManifest rootProject $"""
 [package]
@@ -221,7 +379,8 @@ depB = {{ path = "{relativeB}" }}
         let depProjectB = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
         let packagePath = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
-        Directory.CreateDirectory(packagePath) |> ignore
+        Directory.CreateDirectory(Path.Join(packagePath, "ref", "net8.0")) |> ignore
+        File.WriteAllText(Path.Join(packagePath, "ref", "net8.0", "Newtonsoft.Json.dll"), "")
 
         let relativeA = Path.GetRelativePath(rootProject, depProjectA)
         let relativeB = Path.GetRelativePath(rootProject, depProjectB)
@@ -234,6 +393,7 @@ version = "0.1.0"
 [dependencies]
 "Newtonsoft.Json" = { version = "13.0.3" }
 """
+        writeReferenceDll depProjectA "dep-a.dll"
 
         writeManifest depProjectB """
 [package]
@@ -243,6 +403,7 @@ version = "0.1.0"
 [dependencies]
 "Newtonsoft.Json" = { version = "13.0.3" }
 """
+        writeReferenceDll depProjectB "dep-b.dll"
 
         writeManifest rootProject $"""
 [package]
@@ -277,6 +438,8 @@ depB = {{ path = "{relativeB}" }}
         let depProjectZ = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
         Directory.CreateDirectory(Path.Join(packagesRoot, "pkgx", "1.0.0")) |> ignore
+        Directory.CreateDirectory(Path.Join(packagesRoot, "pkgx", "1.0.0", "ref", "net8.0")) |> ignore
+        File.WriteAllText(Path.Join(packagesRoot, "pkgx", "1.0.0", "ref", "net8.0", "PkgX.dll"), "")
 
         let relativeA = Path.GetRelativePath(rootProject, depProjectA)
         let relativeZ = Path.GetRelativePath(rootProject, depProjectZ)
@@ -286,12 +449,14 @@ depB = {{ path = "{relativeB}" }}
 name = "A"
 version = "0.1.0"
 """
+        writeReferenceDll depProjectA "A.dll"
 
         writeManifest depProjectZ """
 [package]
 name = "Z"
 version = "0.1.0"
 """
+        writeReferenceDll depProjectZ "Z.dll"
 
         writeManifest rootProject $"""
 [package]

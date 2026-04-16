@@ -12,7 +12,8 @@ module Compiler =
     type ResolvedDependency =
         { name: string
           version: string
-          source: string }
+          source: string
+          referenceAssemblyPaths: string list }
 
     type CompileRequest =
         { asmName: string
@@ -45,29 +46,41 @@ module Compiler =
             match Parser.fileModule() tokenInput start with
             | Success (moduleAst, _) ->
                 try
-                    // Semantic Analysis
-                    let symbolTable = SymbolTable()
-                    let typeSubst = TypeSubst()
-                    match Analyze.analyzeModule(symbolTable, typeSubst, "main", moduleAst) with
-                    | { succeeded = false; diagnostics = diagnostics } ->
-                        failed diagnostics
-                    | { value = Some hir; diagnostics = analyzeDiagnostics } ->
-                        // Lowering
-                        match Layout.layoutAssembly(request.asmName, Hir.Assembly("hello", [ hir ])) with
-                        | { succeeded = false; diagnostics = layoutDiagnostics } ->
-                            failed (analyzeDiagnostics @ layoutDiagnostics)
-                        | { value = Some mir; diagnostics = layoutDiagnostics } ->
-                            // Code Generation
-                            let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
-                            match Gen.genAssembly(mir, outPath) with
-                            | { succeeded = false; diagnostics = genDiagnostics } ->
-                                failed (analyzeDiagnostics @ layoutDiagnostics @ genDiagnostics)
-                            | { diagnostics = genDiagnostics } ->
-                                succeeded (analyzeDiagnostics @ layoutDiagnostics @ genDiagnostics)
-                        | _ ->
-                            failed (analyzeDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ])
-                    | _ ->
-                        failed [ Diagnostic.Error("Semantic analysis failed with unknown state", Span.Empty) ]
+                    // Dependency loading
+                    let dependencyInputs =
+                        request.dependencies
+                        |> List.map (fun dependency -> dependency.name, dependency.referenceAssemblyPaths)
+
+                    match DependencyLoader.loadDependencies dependencyInputs with
+                    | { succeeded = false; diagnostics = dependencyDiagnostics } ->
+                        failed dependencyDiagnostics
+                    | { loadContext = dependencyLoadContext } ->
+                        try
+                            // Semantic Analysis
+                            let symbolTable = SymbolTable()
+                            let typeSubst = TypeSubst()
+                            match Analyze.analyzeModule(symbolTable, typeSubst, "main", moduleAst) with
+                            | { succeeded = false; diagnostics = diagnostics } ->
+                                failed diagnostics
+                            | { value = Some hir; diagnostics = analyzeDiagnostics } ->
+                                // Lowering
+                                match Layout.layoutAssembly(request.asmName, Hir.Assembly("hello", [ hir ])) with
+                                | { succeeded = false; diagnostics = layoutDiagnostics } ->
+                                    failed (analyzeDiagnostics @ layoutDiagnostics)
+                                | { value = Some mir; diagnostics = layoutDiagnostics } ->
+                                    // Code Generation
+                                    let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
+                                    match Gen.genAssembly(mir, outPath) with
+                                    | { succeeded = false; diagnostics = genDiagnostics } ->
+                                        failed (analyzeDiagnostics @ layoutDiagnostics @ genDiagnostics)
+                                    | { diagnostics = genDiagnostics } ->
+                                        succeeded (analyzeDiagnostics @ layoutDiagnostics @ genDiagnostics)
+                                | _ ->
+                                    failed (analyzeDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ])
+                            | _ ->
+                                failed [ Diagnostic.Error("Semantic analysis failed with unknown state", Span.Empty) ]
+                        finally
+                            DependencyLoader.unloadDependencies dependencyLoadContext
                 with ex ->
                     failed [ Diagnostic.Error($"Compilation failed: {ex.Message}", Span.Empty) ]
             | Failure (reason, span) ->

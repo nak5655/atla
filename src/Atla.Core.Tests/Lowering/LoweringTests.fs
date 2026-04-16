@@ -388,3 +388,189 @@ fn main: Int =
         Assert.False(result.succeeded)
         Assert.NotEmpty(result.diagnostics)
         Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.isError)
+
+    [<Fact>]
+    let ``compile should fail when dependency reference assembly path is missing`` () =
+        let program = """
+fn main: Int = 0
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+        let missingPath = Path.Join(outDir, "missing-dependency.dll")
+
+        let dependency: Compiler.ResolvedDependency =
+            { name = "missing-dependency"
+              version = "1.0.0"
+              source = outDir
+              referenceAssemblyPaths = [ missingPath ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "MissingDependencyProgram"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [ dependency ] }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("reference assembly not found"))
+
+    [<Fact>]
+    let ``compile should fail when dependency reference assembly is invalid format`` () =
+        let program = """
+fn main: Int = 0
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+        let invalidDllPath = Path.Join(outDir, "invalid-dependency.dll")
+        File.WriteAllText(invalidDllPath, "not a valid managed assembly")
+
+        let dependency: Compiler.ResolvedDependency =
+            { name = "invalid-dependency"
+              version = "1.0.0"
+              source = outDir
+              referenceAssemblyPaths = [ invalidDllPath ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "InvalidDependencyProgram"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [ dependency ] }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("not a valid .NET assembly"))
+
+    [<Fact>]
+    let ``compile should resolve imported system type after dependency assembly load`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        let program = """
+import System.Text.Json.JsonNamingPolicy
+
+fn main: () = do
+    var policy = JsonNamingPolicy.CamelCase
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let dependency: Compiler.ResolvedDependency =
+            { name = "System.Text.Json"
+              version = "runtime"
+              source = runtimeDir
+              referenceAssemblyPaths = [ jsonAssemblyPath ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "JsonImportWithDependency"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [ dependency ] }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+
+    [<Fact>]
+    let ``compile should report unresolved imported system type separately from dependency load failures`` () =
+        let program = """
+import System.Text.Json.DoesNotExist
+
+fn main: () = do
+    var x = DoesNotExist.Parse
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let result =
+            Compiler.compile
+                { asmName = "JsonImportMissingType"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [] }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(
+            result.diagnostics,
+            fun diagnostic -> diagnostic.message.Contains("Imported system type 'DoesNotExist' was not found")
+        )
+        Assert.DoesNotContain(
+            result.diagnostics,
+            fun diagnostic -> diagnostic.message.Contains("dependency `")
+        )
+
+    [<Fact>]
+    let ``compile should fail when dependency reference simple names conflict`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        let depDirA = Path.Join(outDir, "depA")
+        let depDirB = Path.Join(outDir, "depB")
+        Directory.CreateDirectory(depDirA) |> ignore
+        Directory.CreateDirectory(depDirB) |> ignore
+
+        let copiedPathA = Path.Join(depDirA, "System.Text.Json.dll")
+        let copiedPathB = Path.Join(depDirB, "System.Text.Json.dll")
+        File.Copy(jsonAssemblyPath, copiedPathA, true)
+        File.Copy(jsonAssemblyPath, copiedPathB, true)
+
+        let depA: Compiler.ResolvedDependency =
+            { name = "dep-a"
+              version = "1.0.0"
+              source = depDirA
+              referenceAssemblyPaths = [ copiedPathA ] }
+
+        let depB: Compiler.ResolvedDependency =
+            { name = "dep-b"
+              version = "1.0.0"
+              source = depDirB
+              referenceAssemblyPaths = [ copiedPathB ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "DependencyConflictProgram"
+                  source = "fn main: Int = 0"
+                  outDir = outDir
+                  dependencies = [ depA; depB ] }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("simple-name conflict"))
+
+    [<Fact>]
+    let ``compile should keep dependency diagnostics order deterministic across runs`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let depA: Compiler.ResolvedDependency =
+            { name = "zzz-missing"
+              version = "1.0.0"
+              source = outDir
+              referenceAssemblyPaths = [ Path.Join(outDir, "zzz-missing.dll") ] }
+
+        let depB: Compiler.ResolvedDependency =
+            { name = "aaa-missing"
+              version = "1.0.0"
+              source = outDir
+              referenceAssemblyPaths = [ Path.Join(outDir, "aaa-missing.dll") ] }
+
+        let compileOnce () =
+            Compiler.compile
+                { asmName = "DependencyDeterminismProgram"
+                  source = "fn main: Int = 0"
+                  outDir = outDir
+                  dependencies = [ depA; depB ] }
+
+        let run1 = compileOnce ()
+        let run2 = compileOnce ()
+
+        Assert.False(run1.succeeded)
+        Assert.False(run2.succeeded)
+
+        let messages1 = run1.diagnostics |> List.map (fun diagnostic -> diagnostic.message)
+        let messages2 = run2.diagnostics |> List.map (fun diagnostic -> diagnostic.message)
+        Assert.Equal<string list>(messages1, messages2)
