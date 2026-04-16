@@ -104,6 +104,89 @@ module internal Resolver =
             |> normalizePath
         packagePath
 
+    (* 参照DLL探索で許可する TFM を優先順で保持する。 *)
+    let private tfmPriority: string list =
+        [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
+
+    (* 指定ディレクトリ直下から、優先順位に従って採用する TFM ディレクトリを決める。 *)
+    let private trySelectTfmDirectory (root: string) : string option =
+        if not (Directory.Exists root) then
+            None
+        else
+            let children =
+                Directory.GetDirectories(root)
+                |> Array.map (fun dir -> Path.GetFileName(dir).ToLowerInvariant(), normalizePath dir)
+                |> Map.ofArray
+
+            tfmPriority
+            |> List.tryPick (fun tfm -> children.TryFind tfm)
+
+    (* TFM ディレクトリ配下の DLL を simple name 単位に検証し、決定的順序で返す。 *)
+    let private tryCollectDllsFromDirectory (dependencyName: string) (probeRoot: string) (tfmDir: string) : Result<string list, Diagnostic list> =
+        let dlls =
+            Directory.GetFiles(tfmDir, "*.dll", SearchOption.AllDirectories)
+            |> Array.map normalizePath
+            |> Array.sort
+            |> Array.toList
+
+        let duplicateSimpleNames =
+            dlls
+            |> List.groupBy (fun path -> Path.GetFileNameWithoutExtension(path).ToLowerInvariant())
+            |> List.choose (fun (simpleName, items) ->
+                if List.length items > 1 then
+                    Some simpleName
+                else
+                    None)
+            |> List.sort
+
+        let missingFiles = dlls |> List.filter (fun path -> not (File.Exists path))
+        let missingFilesText = String.Join(", ", missingFiles)
+        let duplicateSimpleNamesText = String.Join(", ", duplicateSimpleNames)
+
+        if not (List.isEmpty missingFiles) then
+            Result.Error [
+                error
+                    $"dependency `{dependencyName}` has broken reference path(s) under `{probeRoot}` (tfm `{Path.GetFileName(tfmDir)}`): {missingFilesText}"
+            ]
+        elif not (List.isEmpty duplicateSimpleNames) then
+            Result.Error [
+                error
+                    $"dependency `{dependencyName}` has ambiguous reference assemblies under `{probeRoot}` (tfm `{Path.GetFileName(tfmDir)}`): {duplicateSimpleNamesText}"
+            ]
+        else
+            Ok dlls
+
+    (* 依存ルート配下から参照DLL候補を収集する。
+       フェーズ2仕様に従い ref/ を優先し、次に lib/ を探索して、優先TFMのDLL群を採用する。 *)
+    let private tryCollectReferenceAssemblyPaths (dependencyName: string) (dependencyRoot: string) : Result<string list, Diagnostic list> =
+        let normalizedRoot = normalizePath dependencyRoot
+        let refRoot = Path.Join(normalizedRoot, "ref")
+        let libRoot = Path.Join(normalizedRoot, "lib")
+
+        let tryCollectFromRoot (probeRoot: string) : Result<string list, Diagnostic list> option =
+            match trySelectTfmDirectory probeRoot with
+            | None -> None
+            | Some tfmDir ->
+                match tryCollectDllsFromDirectory dependencyName probeRoot tfmDir with
+                | Ok dlls when List.isEmpty dlls ->
+                    Some(Result.Error [ error $"dependency `{dependencyName}` has no dll candidates under `{probeRoot}` (tfm `{Path.GetFileName(tfmDir)}`)" ])
+                | Ok dlls ->
+                    Some(Ok dlls)
+                | Result.Error diagnostics ->
+                    Some(Result.Error diagnostics)
+
+        match tryCollectFromRoot refRoot, tryCollectFromRoot libRoot with
+        | Some(Ok dlls), _ -> Ok dlls
+        | Some(Result.Error diagnostics), _ -> Result.Error diagnostics
+        | None, Some(Ok dlls) -> Ok dlls
+        | None, Some(Result.Error diagnostics) -> Result.Error diagnostics
+        | None, None ->
+            let tfmListText = String.Join(", ", tfmPriority)
+            Result.Error [
+                error
+                    $"dependency `{dependencyName}` has no supported reference assemblies. expected under `ref/<tfm>` or `lib/<tfm>` where tfm is one of [{tfmListText}]. root: {normalizedRoot}"
+            ]
+
     (* NuGet 依存の解決本体:
        1) キャッシュ直解決
        2) 必要に応じて自動 restore
@@ -112,17 +195,28 @@ module internal Resolver =
         let packagesRoot = getNuGetPackagesRoot ()
         let packagePath = toNuGetPackagePath packagesRoot packageId version
 
-        let resolved : Compiler.ResolvedDependency =
-            { name = packageId
-              version = version
-              source = packagePath }
-
         if Directory.Exists packagePath then
-            Ok resolved
+            match tryCollectReferenceAssemblyPaths packageId packagePath with
+            | Ok referenceAssemblyPaths ->
+                Ok
+                    { name = packageId
+                      version = version
+                      source = packagePath
+                      referenceAssemblyPaths = referenceAssemblyPaths }
+            | Result.Error diagnostics ->
+                Result.Error diagnostics
         elif isAutoRestoreEnabled () then
             match tryRunRestore packagesRoot packageId version with
             | Ok () when Directory.Exists packagePath ->
-                Ok resolved
+                match tryCollectReferenceAssemblyPaths packageId packagePath with
+                | Ok referenceAssemblyPaths ->
+                    Ok
+                        { name = packageId
+                          version = version
+                          source = packagePath
+                          referenceAssemblyPaths = referenceAssemblyPaths }
+                | Result.Error diagnostics ->
+                    Result.Error diagnostics
             | Ok () ->
                 Result.Error [
                     error
@@ -197,23 +291,28 @@ module internal Resolver =
 
                         { state with diagnostics = state.diagnostics @ wrapped }
                     | Ok dependencyManifest ->
-                        let resolved : Compiler.ResolvedDependency =
-                            { name = dependencyManifest.name
-                              version = dependencyManifest.version
-                              source = dependencyRoot }
+                        match tryCollectReferenceAssemblyPaths dependencyManifest.name dependencyRoot with
+                        | Result.Error diagnostics ->
+                            { state with diagnostics = state.diagnostics @ diagnostics }
+                        | Ok referenceAssemblyPaths ->
+                            let resolved : Compiler.ResolvedDependency =
+                                { name = dependencyManifest.name
+                                  version = dependencyManifest.version
+                                  source = dependencyRoot
+                                  referenceAssemblyPaths = referenceAssemblyPaths }
 
-                        let enteredState =
-                            let mergedState = mergeResolvedDependency state resolved
+                            let enteredState =
+                                let mergedState = mergeResolvedDependency state resolved
 
-                            { mergedState with
-                                stack = state.stack @ [ dependencyRoot ]
-                                visitedByPath = state.visitedByPath.Add(dependencyRoot, resolved) }
+                                { mergedState with
+                                    stack = state.stack @ [ dependencyRoot ]
+                                    visitedByPath = state.visitedByPath.Add(dependencyRoot, resolved) }
 
-                        let nestedState =
-                            dependencyManifest.dependencies
-                            |> List.fold (fun currentState child -> visitDependency currentState dependencyRoot child) enteredState
+                            let nestedState =
+                                dependencyManifest.dependencies
+                                |> List.fold (fun currentState child -> visitDependency currentState dependencyRoot child) enteredState
 
-                        { nestedState with stack = state.stack }
+                            { nestedState with stack = state.stack }
 
         let initialState =
             { stack = [ normalizePath projectRoot ]

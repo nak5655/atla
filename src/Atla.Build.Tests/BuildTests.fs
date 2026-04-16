@@ -14,6 +14,11 @@ module BuildTests =
     let private writeManifest (projectRoot: string) (content: string) =
         File.WriteAllText(Path.Join(projectRoot, "atla.toml"), content.Trim())
 
+    let private writeReferenceDll (projectRoot: string) (assemblyFileName: string) =
+        let tfmDir = Path.Join(projectRoot, "ref", "net8.0")
+        Directory.CreateDirectory(tfmDir) |> ignore
+        File.WriteAllText(Path.Join(tfmDir, assemblyFileName), "")
+
     [<Fact>]
     let ``createEmptyPlan keeps projectRoot and no dependencies`` () =
         let request = { BuildRequest.projectRoot = "/tmp/hello" }
@@ -58,6 +63,7 @@ version = "0.1.0"
 name = "dep"
 version = "1.2.3"
 """
+        writeReferenceDll depProject "dep.dll"
 
         let relativePath = Path.GetRelativePath(rootProject, depProject)
 
@@ -150,6 +156,7 @@ version = "0.1.0"
 [dependencies]
 b = {{ path = "{relativeAToB}" }}
 """
+        writeReferenceDll projectA "a.dll"
 
         writeManifest projectB $"""
 [package]
@@ -159,6 +166,7 @@ version = "0.1.0"
 [dependencies]
 a = {{ path = "{relativeBToA}" }}
 """
+        writeReferenceDll projectB "b.dll"
 
         let result = BuildSystem.buildProject { projectRoot = projectA }
 
@@ -176,12 +184,14 @@ a = {{ path = "{relativeBToA}" }}
 name = "common"
 version = "1.0.0"
 """
+        writeReferenceDll depProjectA "common.dll"
 
         writeManifest depProjectB """
 [package]
 name = "common"
 version = "2.0.0"
 """
+        writeReferenceDll depProjectB "common.dll"
 
         let relativeA = Path.GetRelativePath(rootProject, depProjectA)
         let relativeB = Path.GetRelativePath(rootProject, depProjectB)

@@ -388,3 +388,56 @@ fn main: Int =
         Assert.False(result.succeeded)
         Assert.NotEmpty(result.diagnostics)
         Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.isError)
+
+    [<Fact>]
+    let ``compile should fail when dependency reference assembly path is missing`` () =
+        let program = """
+fn main: Int = 0
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+        let missingPath = Path.Join(outDir, "missing-dependency.dll")
+
+        let dependency: Compiler.ResolvedDependency =
+            { name = "missing-dependency"
+              version = "1.0.0"
+              source = outDir
+              referenceAssemblyPaths = [ missingPath ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "MissingDependencyProgram"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [ dependency ] }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("reference assembly not found"))
+
+    [<Fact>]
+    let ``compile should fail when dependency reference assembly is invalid format`` () =
+        let program = """
+fn main: Int = 0
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+        let invalidDllPath = Path.Join(outDir, "invalid-dependency.dll")
+        File.WriteAllText(invalidDllPath, "not a valid managed assembly")
+
+        let dependency: Compiler.ResolvedDependency =
+            { name = "invalid-dependency"
+              version = "1.0.0"
+              source = outDir
+              referenceAssemblyPaths = [ invalidDllPath ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "InvalidDependencyProgram"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [ dependency ] }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("not a valid .NET assembly"))

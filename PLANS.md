@@ -13,21 +13,21 @@
 
 ### フェーズ1: モデル拡張（Build -> Compiler 受け渡し）
 
-- [ ] `ResolvedDependency` または `CompileRequest` に「参照対象DLL一覧」を保持するモデルを追加する。
-- [ ] `Atla.Build` 側で NuGet package root から「最終的に採用したDLLパス」を計算して BuildPlan に反映する。
-- [ ] path依存についても参照DLL抽出の規約を明文化し、NuGet依存と同じデータ形へ正規化する。
+- [x] `ResolvedDependency` または `CompileRequest` に「参照対象DLL一覧」を保持するモデルを追加する。
+- [x] `Atla.Build` 側で NuGet package root から「最終的に採用したDLLパス」を計算して BuildPlan に反映する。
+- [x] path依存についても参照DLL抽出の規約を明文化し、NuGet依存と同じデータ形へ正規化する。
 
 ### フェーズ2: NuGet DLL選定ロジック実装（Atla.Build）
 
-- [ ] `Resolver` に `ref/` -> `lib/` 探索を追加し、TFM優先順位に従って DLL を選定する。
-- [ ] 候補なし/候補過多/破損パスに対する構造化診断を追加する。
-- [ ] 依存ごとの選定結果を決定的順序で返す。
+- [x] `Resolver` に `ref/` -> `lib/` 探索を追加し、TFM優先順位に従って DLL を選定する。
+- [x] 候補なし/候補過多/破損パスに対する構造化診断を追加する。
+- [x] 依存ごとの選定結果を決定的順序で返す。
 
 ### フェーズ3: DLLロード実装（Atla.Compiler）
 
-- [ ] `DependencyLoader`（新規モジュール）を追加し、`Analyze.analyzeModule` 直前で依存DLLをロードする。
-- [ ] ロード処理は `AssemblyLoadContext` ベース（将来の隔離・解放を見据えた設計）で実装する。
-- [ ] 失敗理由（ファイル欠損/BadImageFormat/依存連鎖不足）を `Diagnostic` に変換する。
+- [x] `DependencyLoader`（新規モジュール）を追加し、`Analyze.analyzeModule` 直前で依存DLLをロードする。
+- [x] ロード処理は `AssemblyLoadContext` ベース（将来の隔離・解放を見据えた設計）で実装する。
+- [x] 失敗理由（ファイル欠損/BadImageFormat/依存連鎖不足）を `Diagnostic` に変換する。
 
 ### フェーズ4: 意味解析連携
 
