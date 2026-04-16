@@ -2,13 +2,11 @@ namespace Atla.Build
 
 open System
 open System.IO
-open System.Collections.Generic
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
 open Atla.Compiler
-open Tomlyn
-open Tomlyn.Model
-open Tomlyn.Serialization
+open YamlDotNet.Core
+open YamlDotNet.RepresentationModel
 
 type BuildRequest =
     { projectRoot: string }
@@ -26,91 +24,112 @@ type BuildResult =
 
 module BuildSystem =
     (* Manifest ファイル関連の固定設定と、共通ユーティリティ。 *)
-    let private manifestFileName = "atla.toml"
+    let private manifestFileName = "atla.yaml"
 
+    /// Build 入力パスを絶対パスへ正規化する。
     let private normalizePath (path: string) : string =
         Path.GetFullPath(path)
 
+    /// エラーメッセージを Diagnostic.Error へ変換する。
     let private error (message: string) : Diagnostic =
         Diagnostic.Error(message, Span.Empty)
 
+    /// 診断付き失敗 BuildResult を構築する。
     let private failed (diagnostics: Diagnostic list) : BuildResult =
         { succeeded = false
           plan = None
           diagnostics = diagnostics }
 
+    /// 診断なし成功 BuildResult を構築する。
     let private succeeded (plan: BuildPlan) : BuildResult =
         { succeeded = true
           plan = Some plan
           diagnostics = [] }
 
-    (* [package] テーブルの必須文字列項目を検証する。 *)
-    let private tryGetRequiredString (table: TomlTable) (fieldName: string) : Result<string, Diagnostic list> =
-        match table.TryGetValue(fieldName) with
-        | true, (:? string as value) when not (String.IsNullOrWhiteSpace value) ->
-            Ok value
-        | true, (:? string) ->
-            Result.Error [ error $"`package.{fieldName}` must not be empty" ]
-        | true, _ ->
-            Result.Error [ error $"`package.{fieldName}` must be a string" ]
-        | false, _ ->
-            Result.Error [ error $"missing required field `package.{fieldName}`" ]
+    /// YAML マッピングから指定キーの値ノードを取得する。
+    let private tryFindMappingValue (mapping: YamlMappingNode) (key: string) : YamlNode option =
+        mapping.Children
+        |> Seq.tryPick (fun pair ->
+            match pair.Key with
+            | :? YamlScalarNode as scalar when scalar.Value = key -> Some pair.Value
+            | _ -> None)
 
-    (* [dependencies] テーブルを deterministic な順序で解釈し、Resolver 用の依存仕様へ変換する。 *)
-    let private parseDependencies (root: TomlTable) : Result<Resolver.DependencySpec list, Diagnostic list> =
-        match root.TryGetValue("dependencies") with
-        | false, _ -> Ok []
-        | true, (:? TomlTable as dependenciesTable) ->
-            let parseEntry (entry: KeyValuePair<string, obj>) : Result<Resolver.DependencySpec, Diagnostic list> =
-                match entry.Value with
-                | :? string as pathValue when not (String.IsNullOrWhiteSpace pathValue) ->
-                    Ok(Resolver.PathDependency(entry.Key, pathValue))
-                | :? string ->
-                    Result.Error [ error $"`dependencies.{entry.Key}` path must not be empty" ]
-                | :? TomlTable as inlineTable ->
-                    let pathResult =
-                        match inlineTable.TryGetValue("path") with
-                        | true, (:? string as pathValue) when not (String.IsNullOrWhiteSpace pathValue) -> Ok(Some pathValue)
-                        | true, (:? string) ->
-                            Result.Error [ error $"`dependencies.{entry.Key}.path` must not be empty" ]
-                        | true, _ ->
-                            Result.Error [ error $"`dependencies.{entry.Key}.path` must be a string" ]
-                        | false, _ -> Ok None
+    /// Scalar ノードを空白不可の文字列として読み取る。
+    let private tryGetRequiredScalarString (fieldPath: string) (node: YamlNode) : Result<string, Diagnostic list> =
+        match node with
+        | :? YamlScalarNode as scalar when not (String.IsNullOrWhiteSpace scalar.Value) ->
+            Ok scalar.Value
+        | :? YamlScalarNode ->
+            Result.Error [ error $"`{fieldPath}` must not be empty" ]
+        | _ ->
+            Result.Error [ error $"`{fieldPath}` must be a string" ]
 
-                    let versionResult =
-                        match inlineTable.TryGetValue("version") with
-                        | true, (:? string as version) when not (String.IsNullOrWhiteSpace version) -> Ok(Some version)
-                        | true, (:? string) ->
-                            Result.Error [ error $"`dependencies.{entry.Key}.version` must not be empty" ]
-                        | true, _ ->
-                            Result.Error [ error $"`dependencies.{entry.Key}.version` must be a string" ]
-                        | false, _ -> Ok None
+    /// [package] 相当ノードの必須項目を検証する。
+    let private tryGetRequiredPackageField (package: YamlMappingNode) (fieldName: string) : Result<string, Diagnostic list> =
+        match tryFindMappingValue package fieldName with
+        | Some valueNode -> tryGetRequiredScalarString $"package.{fieldName}" valueNode
+        | None -> Result.Error [ error $"missing required field `package.{fieldName}`" ]
 
-                    match pathResult, versionResult with
-                    | Result.Error pathErrors, Ok _ -> Result.Error pathErrors
-                    | Ok _, Result.Error versionErrors -> Result.Error versionErrors
-                    | Result.Error pathErrors, Result.Error versionErrors ->
-                        Result.Error(pathErrors @ versionErrors)
-                    | Ok(Some _), Ok(Some _) ->
-                        Result.Error [ error $"`dependencies.{entry.Key}` cannot specify both `path` and `version`" ]
-                    | Ok(Some pathValue), Ok None ->
-                        Ok(Resolver.PathDependency(entry.Key, pathValue))
-                    | Ok None, Ok(Some version) ->
-                        Ok(Resolver.NuGetDependency(entry.Key, version))
-                    | Ok None, Ok None ->
-                        Result.Error [ error $"`dependencies.{entry.Key}` must define either `path` or `version`" ]
-                | _ ->
-                    Result.Error [ error $"`dependencies.{entry.Key}` must be a string path or table with `path` / `version`" ]
+    /// dependencies の単一エントリを Resolver 用仕様へ変換する。
+    let private parseDependencyEntry (dependencyName: string) (valueNode: YamlNode) : Result<Resolver.DependencySpec, Diagnostic list> =
+        match valueNode with
+        | :? YamlScalarNode as pathNode when not (String.IsNullOrWhiteSpace pathNode.Value) ->
+            Ok(Resolver.PathDependency(dependencyName, pathNode.Value))
+        | :? YamlScalarNode ->
+            Result.Error [ error $"`dependencies.{dependencyName}` path must not be empty" ]
+        | :? YamlMappingNode as inlineMapping ->
+            let pathResult =
+                match tryFindMappingValue inlineMapping "path" with
+                | Some pathNode ->
+                    match tryGetRequiredScalarString $"dependencies.{dependencyName}.path" pathNode with
+                    | Ok pathValue -> Ok(Some pathValue)
+                    | Result.Error diagnostics -> Result.Error diagnostics
+                | None -> Ok None
 
+            let versionResult =
+                match tryFindMappingValue inlineMapping "version" with
+                | Some versionNode ->
+                    match tryGetRequiredScalarString $"dependencies.{dependencyName}.version" versionNode with
+                    | Ok versionValue -> Ok(Some versionValue)
+                    | Result.Error diagnostics -> Result.Error diagnostics
+                | None -> Ok None
+
+            match pathResult, versionResult with
+            | Result.Error pathErrors, Ok _ -> Result.Error pathErrors
+            | Ok _, Result.Error versionErrors -> Result.Error versionErrors
+            | Result.Error pathErrors, Result.Error versionErrors ->
+                Result.Error(pathErrors @ versionErrors)
+            | Ok(Some _), Ok(Some _) ->
+                Result.Error [ error $"`dependencies.{dependencyName}` cannot specify both `path` and `version`" ]
+            | Ok(Some pathValue), Ok None ->
+                Ok(Resolver.PathDependency(dependencyName, pathValue))
+            | Ok None, Ok(Some versionValue) ->
+                Ok(Resolver.NuGetDependency(dependencyName, versionValue))
+            | Ok None, Ok None ->
+                Result.Error [ error $"`dependencies.{dependencyName}` must define either `path` or `version`" ]
+        | _ ->
+            Result.Error [ error $"`dependencies.{dependencyName}` must be a string path or mapping with `path` / `version`" ]
+
+    /// [dependencies] マッピングを deterministic な順序で Resolver 用仕様へ変換する。
+    let private parseDependencies (root: YamlMappingNode) : Result<Resolver.DependencySpec list, Diagnostic list> =
+        match tryFindMappingValue root "dependencies" with
+        | None -> Ok []
+        | Some (:? YamlMappingNode as dependenciesMapping) ->
             let orderedEntries =
-                dependenciesTable
-                |> Seq.sortBy (fun pair -> pair.Key)
+                dependenciesMapping.Children
+                |> Seq.map (fun pair -> pair.Key, pair.Value)
+                |> Seq.sortBy (fun (keyNode, _) -> keyNode.ToString())
                 |> Seq.toList
 
-            let folder (dependencies, diagnostics) entry =
-                match parseEntry entry with
-                | Ok dependency -> (dependency :: dependencies, diagnostics)
-                | Result.Error errs -> (dependencies, diagnostics @ errs)
+            let folder (dependencies, diagnostics) ((keyNode: YamlNode), (valueNode: YamlNode)) =
+                match keyNode with
+                | :? YamlScalarNode as keyScalar when not (String.IsNullOrWhiteSpace keyScalar.Value) ->
+                    match parseDependencyEntry keyScalar.Value valueNode with
+                    | Ok dependency -> (dependency :: dependencies, diagnostics)
+                    | Result.Error errs -> (dependencies, diagnostics @ errs)
+                | _ ->
+                    let keyDiagnostic = error "`dependencies` keys must be non-empty strings"
+                    (dependencies, diagnostics @ [ keyDiagnostic ])
 
             let (deps, diagnostics) = orderedEntries |> List.fold folder ([], [])
 
@@ -118,20 +137,41 @@ module BuildSystem =
                 Ok(List.rev deps)
             else
                 Result.Error diagnostics
-        | true, _ ->
-            Result.Error [ error "`dependencies` must be a table" ]
+        | Some _ ->
+            Result.Error [ error "`dependencies` must be a mapping" ]
 
-    (* atla.toml 全体を読み取り、package/dependencies を検証済み Manifest に変換する。 *)
+    /// YAML テキストを root mapping へデシリアライズする。
+    let private parseYamlRootMapping (manifestText: string) : Result<YamlMappingNode, Diagnostic list> =
+        try
+            let yaml = YamlStream()
+            use reader = new StringReader(manifestText)
+            yaml.Load(reader)
+
+            if yaml.Documents.Count = 0 then
+                Result.Error [ error "atla.yaml parse error: yaml document is empty" ]
+            else
+                match yaml.Documents[0].RootNode with
+                | :? YamlMappingNode as rootMapping -> Ok rootMapping
+                | _ -> Result.Error [ error "`atla.yaml` root node must be a mapping" ]
+        with
+        | :? YamlException as yamlEx ->
+            Result.Error [ error $"atla.yaml parse error: {yamlEx.Message}" ]
+
+    (* atla.yaml 全体を読み取り、package/dependencies を検証済み Manifest に変換する。 *)
     let private parseManifest (manifestPath: string) : Result<Resolver.Manifest, Diagnostic list> =
         if not (File.Exists manifestPath) then
-            Result.Error [ error $"atla.toml not found: {manifestPath}" ]
+            Result.Error [ error $"atla.yaml not found: {manifestPath}" ]
         else
-            try
-                let root = TomlSerializer.Deserialize<TomlTable>(File.ReadAllText(manifestPath))
-
-                match root.TryGetValue("package") with
-                | true, (:? TomlTable as packageTable) ->
-                    match tryGetRequiredString packageTable "name", tryGetRequiredString packageTable "version", parseDependencies root with
+            match parseYamlRootMapping (File.ReadAllText(manifestPath)) with
+            | Result.Error diagnostics -> Result.Error diagnostics
+            | Ok root ->
+                match tryFindMappingValue root "package" with
+                | Some (:? YamlMappingNode as packageMapping) ->
+                    match
+                        tryGetRequiredPackageField packageMapping "name",
+                        tryGetRequiredPackageField packageMapping "version",
+                        parseDependencies root
+                    with
                     | Ok packageName, Ok packageVersion, Ok dependencies ->
                         Ok {
                             name = packageName
@@ -147,18 +187,10 @@ module BuildSystem =
                         Result.Error(versionErrors @ dependencyErrors)
                     | Result.Error nameErrors, Result.Error versionErrors, Result.Error dependencyErrors ->
                         Result.Error(nameErrors @ versionErrors @ dependencyErrors)
-                | true, _ ->
-                    Result.Error [ error "`package` must be a table" ]
-                | false, _ ->
-                    Result.Error [ error "missing required table `[package]`" ]
-            with
-            | :? TomlException as tomlEx when not (isNull tomlEx.Diagnostics) && tomlEx.Diagnostics.Count > 0 ->
-                tomlEx.Diagnostics
-                |> Seq.map (fun diag -> error $"atla.toml parse error: {diag.Message}")
-                |> Seq.toList
-                |> Result.Error
-            | :? TomlException as tomlEx ->
-                Result.Error [ error $"atla.toml parse error: {tomlEx.Message}" ]
+                | Some _ ->
+                    Result.Error [ error "`package` must be a mapping" ]
+                | None ->
+                    Result.Error [ error "missing required mapping `package`" ]
 
     (* BuildRequest から最小の空 BuildPlan を組み立てる補助API。 *)
     let createEmptyPlan (request: BuildRequest) : BuildPlan =
