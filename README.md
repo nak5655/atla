@@ -53,14 +53,10 @@ dependencies:
 NuGet パッケージキャッシュの参照先を上書きします。  
 未設定時は `~/.nuget/packages`（ユーザープロファイル配下）を使用します。
 
-### `ATLA_BUILD_ENABLE_NUGET_RESTORE`
+### NuGet 自動取得
 
-NuGet 依存がキャッシュに存在しないとき、`dotnet restore` を自動試行するかを制御します。
-
-- 有効値: `1`, `true`, `yes`
-- 既定値: 無効（未設定）
-
-既定ではキャッシュ不在時に診断を返して失敗します。自動 restore を使う場合のみ明示的に有効化してください。
+NuGet 依存がキャッシュに存在しない場合は、NuGet.Client API 経由で取得を自動試行します。
+キャッシュ配置を明示したい場合は `NUGET_PACKAGES` を設定してください。
 
 
 ## 参考ドキュメント
