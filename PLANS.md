@@ -1,5 +1,22 @@
 # Plan
 
+## 2026-04-17 Atla.Build 自動NuGet取得の既定化（環境変数廃止）
+
+- [x] `ATLA_BUILD_ENABLE_NUGET_RESTORE` 判定を削除し、NuGetキャッシュ未存在時は常にNuGet.Client取得を試行する。
+- [x] キャッシュ未存在時の診断文言から環境変数有効化案内を削除し、取得失敗理由を返す仕様へ統一する。
+- [x] `Atla.Build.Tests` のフラグ前提テストを新仕様（常時取得）に合わせて更新する。
+- [x] README から `ATLA_BUILD_ENABLE_NUGET_RESTORE` の説明を削除し、既定挙動を記載する。
+- [x] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` と `dotnet test src/Atla.slnx` を実行して回帰を確認する。
+
+## 2026-04-17 Atla.Build NuGet.Client 直呼び移行（一時csproj廃止）
+
+- [x] `Atla.Build` に NuGet.Client 系パッケージ参照を追加し、`dotnet restore` 外部プロセス依存を除去する。
+- [x] `Resolver` の自動取得経路を NuGet.Client API ベースへ置換し、一時 `restore.csproj` を生成しないようにする。
+- [x] 取得失敗時の診断を既存 `Result`/`Diagnostic` 形に正規化し、既定挙動（未キャッシュ時失敗・有効時のみ自動取得）を維持する。
+- [x] `Atla.Build.Tests` に NuGet.Client 自動取得経路の回帰テストを追加し、既存失敗系テストとの整合を確認する。
+- [x] README の `ATLA_BUILD_ENABLE_NUGET_RESTORE` 説明を実装実態（NuGet.Client 自動取得）に合わせて更新する。
+- [x] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` と `dotnet test src/Atla.slnx` を実行して回帰なしを確認する。
+
 ## 2026-04-16 Atla.Build manifest YAML完全移行
 
 - [x] フェーズ0: 方針確定（`atla.yaml` のみサポート、Toml関連処理を削除、診断文言を `atla.yaml` に統一、YAMLライブラリは `YamlDotNet 17.0.1` を採用）。

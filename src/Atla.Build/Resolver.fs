@@ -1,12 +1,18 @@
 namespace Atla.Build
 
 open System
-open System.Diagnostics
 open System.IO
 open System.Globalization
+open System.IO.Compression
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
 open Atla.Compiler
+open NuGet.Common
+open NuGet.Configuration
+open NuGet.Packaging.Core
+open NuGet.Protocol
+open NuGet.Protocol.Core.Types
+open NuGet.Versioning
 
 module internal Resolver =
     (* Manifest で受け入れる依存指定の正規化表現。 *)
@@ -43,60 +49,101 @@ module internal Resolver =
     let private toNuGetPathSegment (value: string) : string =
         value.ToLower(CultureInfo.InvariantCulture)
 
-    let private isAutoRestoreEnabled () : bool =
-        match Environment.GetEnvironmentVariable("ATLA_BUILD_ENABLE_NUGET_RESTORE") with
-        | null -> false
-        | value ->
-            let normalized = value.Trim().ToLowerInvariant()
-            normalized = "1" || normalized = "true" || normalized = "yes"
+    (* NuGet.Client の Task 実行を同期化し、F# の純関数型パイプラインへ接続する。 *)
+    let private runTask (task: System.Threading.Tasks.Task<'T>) : 'T =
+        task.GetAwaiter().GetResult()
 
-    (* ローカル一時 csproj を生成して `dotnet restore` を起動し、
-       指定 package/version のキャッシュ展開を試行する。 *)
-    let private tryRunRestore (packagesRoot: string) (packageId: string) (version: string) : Result<unit, string> =
-        let tempRoot = Path.Join(Path.GetTempPath(), $"atla-build-nuget-restore-{Guid.NewGuid():N}")
-        Directory.CreateDirectory(tempRoot) |> ignore
+    (* NuGet.Config を読み取り、利用可能な package source 一覧を決定する。 *)
+    let private getSourceRepositories () : SourceRepository list =
+        let settings = Settings.LoadDefaultSettings(null)
+        let sourceProvider = PackageSourceProvider(settings)
+        let repositories =
+            SourceRepositoryProvider(sourceProvider, Repository.Provider.GetCoreV3())
+                .GetRepositories()
+            |> Seq.toList
 
-        let projectPath = Path.Join(tempRoot, "restore.csproj")
-
-        let projectContent =
-            $"""<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="{packageId}" Version="{version}" />
-  </ItemGroup>
-</Project>"""
-
-        File.WriteAllText(projectPath, projectContent)
-
-        let startInfo = ProcessStartInfo()
-        startInfo.FileName <- "dotnet"
-        startInfo.Arguments <- $"restore \"{projectPath}\" --nologo --verbosity quiet"
-        startInfo.WorkingDirectory <- tempRoot
-        startInfo.RedirectStandardOutput <- true
-        startInfo.RedirectStandardError <- true
-        startInfo.UseShellExecute <- false
-        startInfo.CreateNoWindow <- true
-        startInfo.Environment["NUGET_PACKAGES"] <- packagesRoot
-
-        use proc = new Process()
-        proc.StartInfo <- startInfo
-
-        let started = proc.Start()
-        if not started then
-            Result.Error "failed to start `dotnet restore` process."
+        if List.isEmpty repositories then
+            [ SourceRepository(PackageSource("https://api.nuget.org/v3/index.json"), Repository.Provider.GetCoreV3()) ]
         else
-            let stdOut = proc.StandardOutput.ReadToEnd()
-            let stdErr = proc.StandardError.ReadToEnd()
-            proc.WaitForExit()
+            repositories
 
-            if proc.ExitCode = 0 then
-                Ok()
-            else
-                let details = if String.IsNullOrWhiteSpace stdErr then stdOut else stdErr
-                Result.Error(details.Trim())
+    (* 展開前の既存ディレクトリを安全に掃除し、抽出先を決定的に初期化する。 *)
+    let private resetDirectory (path: string) : unit =
+        if Directory.Exists path then
+            Directory.Delete(path, recursive = true)
+        Directory.CreateDirectory(path) |> ignore
+
+    (* 取得済み nupkg を global-packages 互換レイアウトへ展開する。 *)
+    let private extractNupkgToPackagePath (nupkgPath: string) (packagePath: string) : Result<unit, string> =
+        try
+            let parent = Directory.GetParent(packagePath).FullName
+            Directory.CreateDirectory(parent) |> ignore
+            resetDirectory packagePath
+            ZipFile.ExtractToDirectory(nupkgPath, packagePath, overwriteFiles = true)
+            Ok()
+        with ex ->
+            Result.Error($"failed to extract downloaded package: {ex.Message}")
+
+    (* NuGet source を順次探索し、package/version の nupkg を取得する。 *)
+    let rec private tryDownloadFromSources
+        (sources: SourceRepository list)
+        (packageId: string)
+        (version: NuGetVersion)
+        (destinationNupkgPath: string)
+        : Result<unit, string> =
+        match sources with
+        | [] ->
+            Result.Error($"package `{packageId}` `{version}` was not found in configured sources.")
+        | source :: rest ->
+            try
+                let resource = runTask (source.GetResourceAsync<FindPackageByIdResource>())
+                use cache = new SourceCacheContext()
+                use destination = File.Create(destinationNupkgPath)
+
+                let copied =
+                    runTask (
+                        resource.CopyNupkgToStreamAsync(
+                            packageId,
+                            version,
+                            destination,
+                            cache,
+                            NullLogger.Instance,
+                            System.Threading.CancellationToken.None
+                        )
+                    )
+
+                if copied then
+                    Ok()
+                else
+                    tryDownloadFromSources rest packageId version destinationNupkgPath
+            with ex ->
+                let tailResult = tryDownloadFromSources rest packageId version destinationNupkgPath
+                match tailResult with
+                | Ok () -> Ok ()
+                | Result.Error nextError ->
+                    Result.Error($"{source.PackageSource.Source}: {ex.Message}; {nextError}")
+
+    (* NuGet.Client API を使い、指定 package/version を packagesRoot 配下へ展開する。 *)
+    let private tryRunRestore (packagesRoot: string) (packageId: string) (version: string) : Result<unit, string> =
+        try
+            let parsedVersion = NuGetVersion.Parse(version)
+            let packagePath =
+                Path.Join(packagesRoot, toNuGetPathSegment packageId, toNuGetPathSegment version)
+                |> normalizePath
+            let tempRoot = Path.Join(Path.GetTempPath(), $"atla-build-nuget-download-{Guid.NewGuid():N}")
+            Directory.CreateDirectory(tempRoot) |> ignore
+            let nupkgPath = Path.Join(tempRoot, $"{toNuGetPathSegment packageId}.{toNuGetPathSegment version}.nupkg")
+            let sources = getSourceRepositories ()
+
+            match tryDownloadFromSources sources packageId parsedVersion nupkgPath with
+            | Result.Error message ->
+                Result.Error message
+            | Ok () ->
+                match extractNupkgToPackagePath nupkgPath packagePath with
+                | Ok () -> Ok ()
+                | Result.Error message -> Result.Error message
+        with ex ->
+            Result.Error($"failed to run NuGet.Client restore: {ex.Message}")
 
     let private toNuGetPackagePath (packagesRoot: string) (packageId: string) (version: string) : string =
         let packagePath =
@@ -189,7 +236,7 @@ module internal Resolver =
 
     (* NuGet 依存の解決本体:
        1) キャッシュ直解決
-       2) 必要に応じて自動 restore
+       2) キャッシュ不在時は自動 restore
        3) 診断付き失敗 *)
     let private tryResolveNuGetDependency (packageId: string) (version: string) : Result<Compiler.ResolvedDependency, Diagnostic list> =
         let packagesRoot = getNuGetPackagesRoot ()
@@ -205,7 +252,7 @@ module internal Resolver =
                       referenceAssemblyPaths = referenceAssemblyPaths }
             | Result.Error diagnostics ->
                 Result.Error diagnostics
-        elif isAutoRestoreEnabled () then
+        else
             match tryRunRestore packagesRoot packageId version with
             | Ok () when Directory.Exists packagePath ->
                 match tryCollectReferenceAssemblyPaths packageId packagePath with
@@ -227,11 +274,6 @@ module internal Resolver =
                     error
                         $"nuget package restore failed: {packageId} {version}. {restoreError}"
                 ]
-        else
-            Result.Error [
-                error
-                    $"nuget package not found in cache: {packageId} {version} (expected: {packagePath}). Set NUGET_PACKAGES or run restore beforehand. To enable automatic restore, set ATLA_BUILD_ENABLE_NUGET_RESTORE=1."
-            ]
 
     let resolveDependencies
         (manifestFileName: string)

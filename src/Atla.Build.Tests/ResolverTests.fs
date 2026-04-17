@@ -288,8 +288,8 @@ package:
   name: "app"
   version: "0.1.0"
 dependencies:
-  Newtonsoft.Json:
-    version: "13.0.3"
+  Atla.NonExistent.Package.For.Tests.MissingA:
+    version: "99.99.99"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
@@ -297,12 +297,11 @@ dependencies:
 
             Assert.False(result.succeeded)
             Assert.True(result.plan.IsNone)
-            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package not found in cache")))
-            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("ATLA_BUILD_ENABLE_NUGET_RESTORE=1")))
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package restore failed")))
         )
 
     [<Fact>]
-    let ``buildProject should keep auto restore disabled by default`` () =
+    let ``buildProject should always attempt restore when nuget package does not exist in cache`` () =
         let rootProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
 
@@ -311,18 +310,38 @@ package:
   name: "app"
   version: "0.1.0"
 dependencies:
-  Newtonsoft.Json:
-    version: "13.0.3"
+  Atla.NonExistent.Package.For.Tests.MissingB:
+    version: "99.99.99"
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
-            withEnvironmentVariable "ATLA_BUILD_ENABLE_NUGET_RESTORE" "0" (fun () ->
-                let result = BuildSystem.buildProject { projectRoot = rootProject }
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
 
-                Assert.False(result.succeeded)
-                Assert.True(result.plan.IsNone)
-                Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package not found in cache")))
-            )
+            Assert.False(result.succeeded)
+            Assert.True(result.plan.IsNone)
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package restore failed")))
+        )
+
+    [<Fact>]
+    let ``buildProject should report restore failure when package cannot be resolved`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Atla.NonExistent.Package.For.Tests:
+    version: "99.99.99"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.False(result.succeeded)
+            Assert.True(result.plan.IsNone)
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("nuget package restore failed")))
         )
 
     [<Fact>]
@@ -511,15 +530,13 @@ dependencies:
 """
 
         withNuGetPackagesRoot packagesRoot (fun () ->
-            withEnvironmentVariable "ATLA_BUILD_ENABLE_NUGET_RESTORE" "0" (fun () ->
-                let run1 = BuildSystem.buildProject { projectRoot = rootProject }
-                let run2 = BuildSystem.buildProject { projectRoot = rootProject }
+            let run1 = BuildSystem.buildProject { projectRoot = rootProject }
+            let run2 = BuildSystem.buildProject { projectRoot = rootProject }
 
-                Assert.False(run1.succeeded)
-                Assert.False(run2.succeeded)
+            Assert.False(run1.succeeded)
+            Assert.False(run2.succeeded)
 
-                let messages1 = run1.diagnostics |> List.map (fun d -> d.message)
-                let messages2 = run2.diagnostics |> List.map (fun d -> d.message)
-                Assert.Equal<string list>(messages1, messages2)
-            )
+            let messages1 = run1.diagnostics |> List.map (fun d -> d.message)
+            let messages2 = run2.diagnostics |> List.map (fun d -> d.message)
+            Assert.Equal<string list>(messages1, messages2)
         )

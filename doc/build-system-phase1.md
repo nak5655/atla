@@ -30,7 +30,7 @@ package:
 - NuGet依存の `ResolvedDependency.source` は実体ディレクトリの絶対パスとする。
 - 実装は `Build.fs`（manifest解析）と `Resolver.fs`（依存解決）に責務分離する。
 - 競合解決は厳密一致とし、同一依存名は `version` が一致する場合のみ統合する。
-- キャッシュ不在時は既定で失敗し、`ATLA_BUILD_ENABLE_NUGET_RESTORE=1` で自動 restore 試行を有効化できる。
+- キャッシュ不在時は NuGet.Client API で自動取得を試行し、取得失敗時は診断付きで失敗する。
 - テストは `BuildTests`（build経路）と `ResolverTests`（NuGet/競合解決）へ分割する。
 - 決定性保証として、依存出力順序と診断順序の再現性をテストで検証する。
 
