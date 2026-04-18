@@ -126,6 +126,15 @@ module Ast =
             interface HasSpan with
                 member this.span = this.span
 
+        type GenericApply(func: Expr, typeArgs: TypeExpr list, span: Span) =
+            member this.func = func
+            member this.typeArgs = typeArgs
+            member this.span = span
+            interface Expr with
+                member this.span = this.span
+            interface HasSpan with
+                member this.span = this.span
+
         type Block(stmts: Stmt list, span: Span) =
             member this.stmts = stmts
             member this.span = span

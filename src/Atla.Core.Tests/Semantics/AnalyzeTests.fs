@@ -291,7 +291,7 @@ import System.Console
 
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
-    Console.WriteLine a[0]
+    Console.WriteLine a !! 0
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -307,7 +307,7 @@ fn main: () = do
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
-                    Assert.False(hasError, "`a[0]` の解析に失敗しています。")
+                    Assert.False(hasError, "`a !! 0` の解析に失敗しています。")
                 | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
@@ -449,7 +449,7 @@ import System.Linq.Enumerable
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
     for i in Enumerable.Range 0 a.Length
-        Console.WriteLine a[i]
+        Console.WriteLine a !! i
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -465,7 +465,7 @@ fn main: () = do
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
-                    Assert.False(hasError, "`Enumerable.Range 0 a.Length` + `a[i]` の解析に失敗しています。")
+                    Assert.False(hasError, "`Enumerable.Range 0 a.Length` + `a !! i` の解析に失敗しています。")
                 | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics

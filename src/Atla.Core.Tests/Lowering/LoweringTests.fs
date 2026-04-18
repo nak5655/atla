@@ -243,7 +243,7 @@ import System.Console
 
 fn main: () = do
     let a = Console.ReadLine ()
-    Console.WriteLine a[1]
+    Console.WriteLine a !! 1
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -284,7 +284,7 @@ import System.Console
 
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
-    Console.WriteLine a[0]
+    Console.WriteLine a !! 0
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -371,7 +371,7 @@ import System.Linq.Enumerable
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
     for i in Enumerable.Range 0 a.Length
-        Console.WriteLine a[i]
+        Console.WriteLine a !! i
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))

@@ -1,5 +1,13 @@
 # Plan
 
+## 2026-04-18 GUI向け構文更新（フェーズ1: Parser/AST）
+
+- [x] `PLANS.md` に本バッチ（フェーズ1）の実装計画を記録する。
+- [x] Generic呼び出し構文を `target[typeArgs]` へ変更し、`Ast.Expr.GenericApply` として表現できるようにする。
+- [x] indexアクセス構文を `expr !! index` へ変更し、Parser で `Ast.Expr.IndexAccess` として扱う。
+- [x] 後方互換は考慮せず、既存の `a[b]` 構文を廃止する。
+- [x] `ParserTests` を新構文へ更新し、generic postfix と index `!!` の回帰テストを追加する。
+
 ## 2026-04-18 型適用の一般化（Array 専用制約の解除）
 
 - [x] `TypeId` に汎用型適用ノードを追加し、型解決/単一化/解決処理で保持できるようにする。

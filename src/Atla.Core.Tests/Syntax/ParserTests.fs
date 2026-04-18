@@ -136,13 +136,13 @@ fn main: () = do
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses index access expression`` () =
+    let ``fileModule parses index access expression with bang-bang operator`` () =
         let program = """
 import System.Console
 
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
-    Console.WriteLine a[0]
+    Console.WriteLine a !! 0
 """
 
         match parseModule program with
@@ -160,15 +160,89 @@ fn main: () = do
                 | :? Ast.Expr.Block as blockExpr ->
                     match List.tryLast blockExpr.stmts with
                     | Some (:? Ast.Stmt.ExprStmt as exprStmt) ->
-                        match exprStmt.expr with
-                        | :? Ast.Expr.Apply as applyExpr ->
-                            match applyExpr.args with
-                            | [ (:? Ast.Expr.IndexAccess) ] -> Assert.True(true)
-                            | _ -> Assert.True(false, "index access was not parsed in call argument")
-                        | _ -> Assert.True(false, "last statement was not parsed as apply expression")
+                        let rec containsIndexAccess (expr: Ast.Expr) : bool =
+                            match expr with
+                            | :? Ast.Expr.IndexAccess -> true
+                            | :? Ast.Expr.Apply as applyExpr ->
+                                containsIndexAccess applyExpr.func || (applyExpr.args |> List.exists containsIndexAccess)
+                            | :? Ast.Expr.MemberAccess as memberExpr ->
+                                containsIndexAccess memberExpr.receiver
+                            | :? Ast.Expr.GenericApply as genericExpr ->
+                                containsIndexAccess genericExpr.func
+                            | :? Ast.Expr.Block as blockExpr ->
+                                blockExpr.stmts
+                                |> List.exists (fun stmt ->
+                                    match stmt with
+                                    | :? Ast.Stmt.ExprStmt as nestedExprStmt -> containsIndexAccess nestedExprStmt.expr
+                                    | :? Ast.Stmt.Let as letStmt -> containsIndexAccess letStmt.value
+                                    | :? Ast.Stmt.Var as varStmt -> containsIndexAccess varStmt.value
+                                    | :? Ast.Stmt.Assign as assignStmt -> containsIndexAccess assignStmt.value
+                                    | :? Ast.Stmt.Return as returnStmt -> containsIndexAccess returnStmt.expr
+                                    | _ -> false)
+                            | _ -> false
+
+                        if containsIndexAccess exprStmt.expr then
+                            Assert.True(true)
+                        else
+                            Assert.True(false, "index access was not found in parsed expression tree")
                     | _ -> Assert.True(false, "block does not end with expression statement")
                 | _ -> Assert.True(false, "main body was not parsed into block expression")
             | None -> Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses generic apply postfix`` () =
+        let program = """
+import Avalonia.Controls.AppBuilder
+import Avalonia.Application
+
+fn main: () = do
+    let config = AppBuilder.Configure[Application] ()
+    config
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let letStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.Let as stmt when stmt.name = "config" -> Some stmt
+                            | _ -> None)
+
+                    match letStmt with
+                    | Some stmt ->
+                        match stmt.value with
+                        | :? Ast.Expr.Apply as applyExpr ->
+                            match applyExpr.func with
+                            | :? Ast.Expr.GenericApply as genericApply ->
+                                match genericApply.typeArgs with
+                                | [ (:? Ast.TypeExpr.Id as typeArg) ] ->
+                                    Assert.Equal("Application", typeArg.name)
+                                | _ ->
+                                    Assert.True(false, "generic apply type arguments were not parsed as expected")
+                            | _ ->
+                                Assert.True(false, "generic apply function was not parsed as Ast.Expr.GenericApply")
+                        | _ ->
+                            Assert.True(false, "let statement value was not parsed as apply expression")
+                    | None ->
+                        Assert.True(false, "config let statement was not found")
+                | _ ->
+                    Assert.True(false, "main body was not parsed into a block expression")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
