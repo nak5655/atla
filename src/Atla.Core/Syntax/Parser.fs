@@ -65,6 +65,8 @@ module Parser =
         p |>> fun di -> di :> Ast.DataItem
     let asDecl<'D when 'D :> Ast.Decl> (p: PackratParser<Token, 'D>) : PackratParser<Token, Ast.Decl> =
         p |>> fun d -> d :> Ast.Decl
+    let asTypeExpr<'T when 'T :> Ast.TypeExpr> (p: PackratParser<Token, 'T>) : PackratParser<Token, Ast.TypeExpr> =
+        p |>> fun t -> t :> Ast.TypeExpr
 
     let block<'A> (opener: PackratParser<Token, Token>) (body: PackratParser<Token, 'A>): PackratParser<Token, 'A> =
         Delay (fun () -> fun input pos ->
@@ -240,9 +242,21 @@ module Parser =
             tid |>> fun id -> Ast.TypeExpr.Id (id.str, id.span)
         )
         
+    and typeExprAtom (): PackratParser<Token, Ast.TypeExpr> =
+        Delay (fun () ->
+            (asTypeExpr (typeExprUnit ())) <|> (asTypeExpr (typeExprId ()))
+        )
+
     and typeExpr (): PackratParser<Token, Ast.TypeExpr> =
         Delay (fun () ->
-            typeExprUnit () <|> typeExprId ()
+            // 空白区切りの型適用（例: Array String）を左結合で畳み込む。
+            Many1 (typeExprAtom ())
+            |>> fun typeExprs ->
+                match typeExprs with
+                | [] -> Ast.TypeExpr.Unit(Span.Empty) :> Ast.TypeExpr
+                | head :: [] -> head
+                | head :: tail ->
+                    Ast.TypeExpr.Apply(head, tail, { left = head.span.left; right = (List.last tail).span.right }) :> Ast.TypeExpr
         )
 
     // データ宣言

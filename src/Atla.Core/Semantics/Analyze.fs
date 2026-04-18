@@ -10,13 +10,30 @@ module Analyze =
         member this.symbolTable = symbolTable
         member this.scope = scope
 
+        // TypeExprをTypeIdへ解決する。
         member this.resolveTypeExpr (typeExpr: Ast.TypeExpr) : TypeId =
+            let resolveNamedType (name: string) (span: Atla.Core.Data.Span) : TypeId =
+                match scope.ResolveType(name) with
+                | Some typ -> typ
+                | _ -> TypeId.Error (sprintf "Undefined type '%s' at %A" name span)
+
             match typeExpr with
             | :? Ast.TypeExpr.Unit -> TypeId.Unit
             | :? Ast.TypeExpr.Id as idTypeExpr ->
-                match scope.ResolveType(idTypeExpr.name) with
-                | Some t -> t
-                | _ -> TypeId.Error (sprintf "Undefined type '%s' at %A" idTypeExpr.name idTypeExpr.span)
+                resolveNamedType idTypeExpr.name idTypeExpr.span
+            | :? Ast.TypeExpr.Apply as applyTypeExpr ->
+                let resolvedArgs = applyTypeExpr.args |> List.map this.resolveTypeExpr
+                match applyTypeExpr.head, resolvedArgs with
+                | :? Ast.TypeExpr.Id as headId, [] ->
+                    TypeId.Error(sprintf "Type '%s' requires at least one type argument at %A" headId.name applyTypeExpr.span)
+                | :? Ast.TypeExpr.Id as headId, _ when headId.name = "Array" ->
+                    match resolvedArgs with
+                    | [elemType] -> TypeId.Array elemType
+                    | _ -> TypeId.Error(sprintf "Array type expects exactly one type argument at %A" applyTypeExpr.span)
+                | :? Ast.TypeExpr.Id as headId, _ ->
+                    TypeId.Error(sprintf "Type '%s' does not accept type arguments at %A" headId.name applyTypeExpr.span)
+                | _, _ ->
+                    TypeId.Error(sprintf "Unsupported type application at %A" applyTypeExpr.span)
             | _ -> TypeId.Error (sprintf "Unsupported type expression type at %A" typeExpr.span)
 
         member this.resolveArgType (arg: Ast.FnArg) : TypeId =

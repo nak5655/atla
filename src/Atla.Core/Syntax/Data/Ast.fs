@@ -228,6 +228,16 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        // 空白区切りの型適用（例: Array String）を表す。
+        type Apply(head: TypeExpr, args: TypeExpr list, span: Span) =
+            member this.head = head
+            member this.args = args
+            member this.span = span
+            interface TypeExpr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
     module DataItem =
         type Field(name:string, typeExpr: TypeExpr, span: Span) =
             member this.name = name

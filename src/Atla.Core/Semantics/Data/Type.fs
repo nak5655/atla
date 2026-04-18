@@ -20,29 +20,36 @@ type TypeId =
     | Int
     | Float
     | String
-    | Name of sid: SymbolId // TODO: App of SymbolId * TypeId list // 型コンストラクタ適用
+    | Array of elem: TypeId
+    | Name of sid: SymbolId
     | Fn of args: TypeId list * ret: TypeId
     | Meta of TypeMeta
     | Native of System.Type
     | Error of message: string
 
 module TypeId =
-    let fromSystemType (t: System.Type) : TypeId =
+    let rec fromSystemType (t: System.Type) : TypeId =
         if t = typeof<unit> then Unit
         elif t = typeof<System.Void> then Native typeof<System.Void>
         elif t = typeof<bool> then Bool
         elif t = typeof<int> then Int
         elif t = typeof<float> then Float
         elif t = typeof<string> then String
+        elif t.IsArray then
+            let elemType = t.GetElementType()
+            if obj.ReferenceEquals(elemType, null) then Native t else Array (fromSystemType elemType)
         else Native t
 
-    let tryToRuntimeSystemType (tid: TypeId) : System.Type option =
+    let rec tryToRuntimeSystemType (tid: TypeId) : System.Type option =
         match tid with
         | Unit -> Some typeof<unit>
         | Bool -> Some typeof<bool>
         | Int -> Some typeof<int>
         | Float -> Some typeof<float>
         | String -> Some typeof<string>
+        | Array elem ->
+            tryToRuntimeSystemType elem
+            |> Option.map (fun elementType -> elementType.MakeArrayType())
         | Native t -> Some t
         | _ -> None
 
@@ -76,6 +83,7 @@ module Type =
             match subst.TryGetValue(m2) with
             | true, t' -> occurs subst m t'
             | false, _ -> false
+        | Array elem -> occurs subst m elem
         | Fn (args, ret) -> List.exists (occurs subst m) args || occurs subst m ret
         | _ -> false
 
@@ -88,6 +96,7 @@ module Type =
         | Int, Int -> true
         | Float, Float -> true
         | String, String -> true
+        | Array leftElem, Array rightElem -> canUnify subst leftElem rightElem
         | Native t1, Native t2 when t1 = t2 -> true
         | Name id1, Name id2 when id1 = id2 -> true
         | Fn (args1, ret1), Fn (args2, ret2) ->
@@ -108,6 +117,7 @@ module Type =
             match subst.TryGetValue(m) with
             | true, t' -> resolve subst t'
             | false, _ -> tid
+        | Array elem -> Array (resolve subst elem)
         | Fn (args, ret) -> Fn (List.map (resolve subst) args, resolve subst ret)
         | _ -> tid
 
@@ -121,6 +131,9 @@ module Type =
         | Int, Int -> Result.Ok Int
         | Float, Float -> Result.Ok Float
         | String, String -> Result.Ok String
+        | Array leftElem, Array rightElem ->
+            unify subst leftElem rightElem
+            |> Result.map Array
         | Native t1, Native t2 when t1 = t2 -> Result.Ok (Native t1)
         | Name id1, Name id2 when id1 = id2 -> Result.Ok(Name id1)
         | Fn (args1, ret1), Fn (args2, ret2) ->
@@ -158,6 +171,7 @@ module Type =
     let rec hasError (subst: TypeSubst) (tid: TypeId) : bool =
         match tid with
         | Error _ -> true
+        | Array elem -> hasError subst elem
         | Fn (args, ret) -> List.exists (hasError subst) args || hasError subst ret
         | Meta m ->
             match subst.TryGetValue(m) with

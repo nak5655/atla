@@ -320,6 +320,46 @@ fn main: () = do
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``array String type application should be analyzed`` () =
+        let program = "fn join (xs: Array String): () = ()"
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let joinMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun meth ->
+                            match hirModule.scope.vars.TryGetValue("join") with
+                            | true, sid -> sid.id = meth.sym.id
+                            | _ -> false)
+
+                    match joinMethod with
+                    | Some methodInfo ->
+                        match Type.resolve subst methodInfo.typ with
+                        | TypeId.Fn([TypeId.Array TypeId.String], TypeId.Unit) -> Assert.True(true)
+                        | other -> Assert.True(false, $"Unexpected method type: {other}")
+                    | None ->
+                        Assert.True(false, "join method was not found in HIR module")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``for range with array length and index access should be analyzed`` () =
         let program = """
 import System.Int32
