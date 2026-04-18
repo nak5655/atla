@@ -319,6 +319,49 @@ fn main: () = do
         Assert.Equal("12", stdout.Trim())
 
     [<Fact>]
+    let ``Array String annotated function compiles and runs`` () =
+        let program = """
+import System.Console
+
+fn count (xs: Array String): Int = xs.Length
+
+fn main: () = do
+    let a = (Console.ReadLine ()).Split " "
+    Console.WriteLine (count a)
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile { asmName = "ArrayStringAnnotated"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded)
+
+        let dllPath = Path.Join(outDir, "ArrayStringAnnotated.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        proc.StandardInput.WriteLine("foo bar baz")
+        proc.StandardInput.Close()
+
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("3", stdout.Trim())
+
+    [<Fact>]
     let ``range with array length and index access prints all tokens`` () =
         let program = """
 import System.Int32

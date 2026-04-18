@@ -1,5 +1,12 @@
 # Plan
 
+## 2026-04-18 Array String 対応（フェーズ5-6）
+
+- [x] フェーズ5: `Array String` 型引数を持つ関数が HIR→MIR で配列型シグネチャを保持することを Lowering テストで検証する。
+- [x] フェーズ6: `TypeId.Array TypeId.String` が CIL 生成時に `System.String[]` パラメータへ変換されることを Gen テストで検証する。
+- [x] フェーズ6: `Array String` 型注釈を使うプログラムの compile→run E2E テストを追加し、ランタイム挙動を確認する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
 ## 2026-04-18 Array String 対応フォローアップ（小文字プリミティブ別名の撤回）
 
 - [x] フェーズ3実装から小文字プリミティブ別名解決を削除する。
