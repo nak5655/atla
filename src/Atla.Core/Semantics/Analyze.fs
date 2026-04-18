@@ -37,7 +37,7 @@ module Analyze =
                     let resolvedArgs, firstArgError = resolveArgs ()
                     match firstArgError, resolvedArgs with
                     | Some message, _ -> TypeId.Error message
-                    | None, [elemType] -> TypeId.Array elemType
+                    | None, [elemType] -> TypeId.App(TypeId.Native typeof<System.Array>, [ elemType ])
                     | None, _ -> TypeId.Error(sprintf "Array type expects exactly one type argument at %A" applyTypeExpr.span)
                 | _ ->
                     let resolvedHead = this.resolveTypeExpr applyTypeExpr.head

@@ -20,7 +20,6 @@ type TypeId =
     | Int
     | Float
     | String
-    | Array of elem: TypeId
     | App of head: TypeId * args: TypeId list
     | Name of sid: SymbolId
     | Fn of args: TypeId list * ret: TypeId
@@ -38,7 +37,7 @@ module TypeId =
         elif t = typeof<string> then String
         elif t.IsArray then
             let elemType = t.GetElementType()
-            if obj.ReferenceEquals(elemType, null) then Native t else Array (fromSystemType elemType)
+            if obj.ReferenceEquals(elemType, null) then Native t else App(Native typeof<System.Array>, [ fromSystemType elemType ])
         else Native t
 
     let rec tryToRuntimeSystemType (tid: TypeId) : System.Type option =
@@ -48,7 +47,7 @@ module TypeId =
         | Int -> Some typeof<int>
         | Float -> Some typeof<float>
         | String -> Some typeof<string>
-        | Array elem ->
+        | App (Native t, [ elem ]) when t = typeof<System.Array> ->
             tryToRuntimeSystemType elem
             |> Option.map (fun elementType -> elementType.MakeArrayType())
         | App _ -> None
@@ -85,7 +84,6 @@ module Type =
             match subst.TryGetValue(m2) with
             | true, t' -> occurs subst m t'
             | false, _ -> false
-        | Array elem -> occurs subst m elem
         | App (head, args) -> occurs subst m head || (args |> List.exists (occurs subst m))
         | Fn (args, ret) -> List.exists (occurs subst m) args || occurs subst m ret
         | _ -> false
@@ -99,7 +97,6 @@ module Type =
         | Int, Int -> true
         | Float, Float -> true
         | String, String -> true
-        | Array leftElem, Array rightElem -> canUnify subst leftElem rightElem
         | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
             List.length leftArgs = List.length rightArgs
             && canUnify subst leftHead rightHead
@@ -124,7 +121,6 @@ module Type =
             match subst.TryGetValue(m) with
             | true, t' -> resolve subst t'
             | false, _ -> tid
-        | Array elem -> Array (resolve subst elem)
         | App (head, args) -> App (resolve subst head, args |> List.map (resolve subst))
         | Fn (args, ret) -> Fn (List.map (resolve subst) args, resolve subst ret)
         | _ -> tid
@@ -139,9 +135,6 @@ module Type =
         | Int, Int -> Result.Ok Int
         | Float, Float -> Result.Ok Float
         | String, String -> Result.Ok String
-        | Array leftElem, Array rightElem ->
-            unify subst leftElem rightElem
-            |> Result.map Array
         | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
             if List.length leftArgs <> List.length rightArgs then
                 Result.Error(CannotUnify(tid1, tid2))
@@ -198,7 +191,6 @@ module Type =
     let rec hasError (subst: TypeSubst) (tid: TypeId) : bool =
         match tid with
         | Error _ -> true
-        | Array elem -> hasError subst elem
         | App (head, args) -> hasError subst head || (args |> List.exists (hasError subst))
         | Fn (args, ret) -> List.exists (hasError subst) args || hasError subst ret
         | Meta m ->

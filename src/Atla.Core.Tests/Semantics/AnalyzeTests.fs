@@ -344,7 +344,8 @@ fn main: () = do
                     match joinMethod with
                     | Some methodInfo ->
                         match Type.resolve subst methodInfo.typ with
-                        | TypeId.Fn([TypeId.Array TypeId.String], TypeId.Unit) -> Assert.True(true)
+                        | TypeId.Fn([TypeId.App(TypeId.Native arrayType, [ TypeId.String ])], TypeId.Unit)
+                            when arrayType = typeof<System.Array> -> Assert.True(true)
                         | other -> Assert.True(false, $"Unexpected method type: {other}")
                     | None ->
                         Assert.True(false, "join method was not found in HIR module")

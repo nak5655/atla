@@ -137,8 +137,8 @@ fn keep (xs: Array String): Array String = xs
 
                     match keepMethod with
                     | Some mirMethod ->
-                        Assert.Equal<TypeId list>([ TypeId.Array TypeId.String ], mirMethod.args)
-                        Assert.Equal(TypeId.Array TypeId.String, mirMethod.ret)
+                        Assert.Equal<TypeId list>([ TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.String ]) ], mirMethod.args)
+                        Assert.Equal(TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.String ]), mirMethod.ret)
                     | None ->
                         Assert.True(false, "MIR method 'keep' was not found.")
                 | { diagnostics = diagnostics } ->
@@ -169,6 +169,21 @@ fn keep (xs: Array String): Array String = xs
                 $"Apply({snapshotTypeExpr applyType.head},[{argSnapshot}])"
             | _ -> "Unsupported"
 
+        let rec snapshotTypeId (tid: TypeId) : string =
+            match tid with
+            | TypeId.String -> "String"
+            | TypeId.Int -> "Int"
+            | TypeId.Unit -> "Unit"
+            | TypeId.Native t when t = typeof<System.Array> -> "ArrayCtor"
+            | TypeId.App (head, args) ->
+                let argSnapshot = args |> List.map snapshotTypeId |> String.concat ","
+                $"App({snapshotTypeId head},[{argSnapshot}])"
+            | TypeId.Fn (args, ret) ->
+                let argSnapshot = args |> List.map snapshotTypeId |> String.concat ","
+                $"Fn([{argSnapshot}],{snapshotTypeId ret})"
+            | TypeId.Error message -> $"Error({message})"
+            | other -> sprintf "%A" other
+
         match Lexer.tokenize input Position.Zero with
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
@@ -193,10 +208,10 @@ fn keep (xs: Array String): Array String = xs
                     let hirSnapshot =
                         hirModule.methods
                         |> List.tryFind (fun methodInfo -> methodInfo.sym.id = (hirModule.scope.vars.["keep"]).id)
-                        |> Option.map (fun methodInfo -> sprintf "%A" (Type.resolve subst methodInfo.typ))
+                        |> Option.map (fun methodInfo -> snapshotTypeId (Type.resolve subst methodInfo.typ))
                         |> Option.defaultValue "missing"
 
-                    Assert.Equal("Fn ([Array String], Array String)", hirSnapshot)
+                    Assert.Equal("Fn([App(ArrayCtor,[String])],App(ArrayCtor,[String]))", hirSnapshot)
 
                     let mirAssemblyResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
                     let mirSnapshot =
@@ -204,13 +219,15 @@ fn keep (xs: Array String): Array String = xs
                         | { succeeded = true; value = Some asm } ->
                             asm.modules.Head.methods
                             |> List.tryFind (fun mirMethod -> mirMethod.name = "keep")
-                            |> Option.map (fun mirMethod -> sprintf "args=%A;ret=%A" mirMethod.args mirMethod.ret)
+                            |> Option.map (fun mirMethod ->
+                                let argsSnapshot = mirMethod.args |> List.map snapshotTypeId |> String.concat ","
+                                $"args=[{argsSnapshot}];ret={snapshotTypeId mirMethod.ret}")
                             |> Option.defaultValue "missing"
                         | { diagnostics = diagnostics } ->
                             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                             failwith $"layoutAssembly failed: {message}"
 
-                    Assert.Equal("args=[Array String];ret=Array String", mirSnapshot)
+                    Assert.Equal("args=[App(ArrayCtor,[String])];ret=App(ArrayCtor,[String])", mirSnapshot)
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")

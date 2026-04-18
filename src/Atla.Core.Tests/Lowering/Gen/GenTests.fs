@@ -112,7 +112,7 @@ module GenTests =
         Assert.Equal(typeof<int>, answer.ReturnType)
 
     [<Fact>]
-    let ``GenAssembly maps TypeId.Array String argument to CLR string array`` () =
+    let ``GenAssembly maps App(ArrayCtor, String) argument to CLR string array`` () =
         let mainSym = SymbolId 301
         let firstSym = SymbolId 302
 
@@ -129,7 +129,7 @@ module GenTests =
             Mir.Method(
                 "first",
                 firstSym,
-                [ TypeId.Array TypeId.String ],
+                [ TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.String ]) ],
                 TypeId.String,
                 [ Mir.Ins.RetValue(Mir.Value.ImmVal(Mir.Imm.String "ok")) ],
                 Mir.Frame())

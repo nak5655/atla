@@ -4,7 +4,7 @@
 
 - [x] `TypeId` に汎用型適用ノードを追加し、型解決/単一化/解決処理で保持できるようにする。
 - [x] `Analyze.resolveTypeExpr` を更新し、`Ast.TypeExpr.Apply` を `Array` 以外でも `TypeId.App` として解決する。
-- [x] 既存の `Array String` は引き続き `TypeId.Array` として扱い、ランタイム配列解決互換を維持する。
+- [x] 既存の `Array String` は `TypeId.App(Native System.Array, [String])` として扱い、ランタイム配列解決互換を維持する。
 - [x] セマンティクステストを更新し、`String Int` などの非Array型適用が `TypeId.App` として保持されることを検証する。
 - [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
 
@@ -18,7 +18,7 @@
 ## 2026-04-18 Array String 対応（フェーズ5-6）
 
 - [x] フェーズ5: `Array String` 型引数を持つ関数が HIR→MIR で配列型シグネチャを保持することを Lowering テストで検証する。
-- [x] フェーズ6: `TypeId.Array TypeId.String` が CIL 生成時に `System.String[]` パラメータへ変換されることを Gen テストで検証する。
+- [x] フェーズ6: `TypeId.App(Native System.Array, [TypeId.String])` が CIL 生成時に `System.String[]` パラメータへ変換されることを Gen テストで検証する。
 - [x] フェーズ6: `Array String` 型注釈を使うプログラムの compile→run E2E テストを追加し、ランタイム挙動を確認する。
 - [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
 
