@@ -17,7 +17,7 @@ module Analyze =
             let resolveNamedType (name: string) (span: Atla.Core.Data.Span) : TypeId =
                 match scope.ResolveType(name) with
                 | Some typ -> typ
-                | _ -> TypeId.Error (sprintf "Undefined type '%s' at %A" name span)
+                | _ -> TypeId.Error (sprintf "Undefined type '%s'" name)
 
             match typeExpr with
             | :? Ast.TypeExpr.Unit -> TypeId.Unit
@@ -40,7 +40,7 @@ module Analyze =
                     match firstArgError, resolvedArgs with
                     | Some message, _ -> TypeId.Error message
                     | None, [elemType] -> TypeId.App(TypeId.Native typeof<System.Array>, [ elemType ])
-                    | None, _ -> TypeId.Error(sprintf "Array type expects exactly one type argument at %A" applyTypeExpr.span)
+                    | None, _ -> TypeId.Error("Array type expects exactly one type argument")
                 | _ ->
                     let resolvedHead = this.resolveTypeExpr applyTypeExpr.head
                     let resolvedArgs, firstArgError = resolveArgs ()
@@ -48,13 +48,13 @@ module Analyze =
                     | TypeId.Error message, _ -> TypeId.Error message
                     | _, Some message -> TypeId.Error message
                     | _, None -> TypeId.App(resolvedHead, resolvedArgs)
-            | _ -> TypeId.Error (sprintf "Unsupported type expression type at %A" typeExpr.span)
+            | _ -> TypeId.Error "Unsupported type expression type"
 
         member this.resolveArgType (arg: Ast.FnArg) : TypeId =
             match arg with
             | :? Ast.FnArg.Named as namedArg -> this.resolveTypeExpr namedArg.typeExpr
             | :? Ast.FnArg.Unit -> TypeId.Unit
-            | _ -> TypeId.Error (sprintf "Unsupported function argument type at %A" arg.span)
+            | _ -> TypeId.Error "Unsupported function argument type"
 
         member this.declareLocal (name: string) (tid: TypeId) : SymbolId =
             let sid = symbolTable.NextId()
@@ -201,11 +201,10 @@ module Analyze =
         | Result.Ok expr -> expr
         | Result.Error message -> errorExpr tid span message
 
-    let private unresolvedImportedSystemTypeMessage (typeName: string) (span: Atla.Core.Data.Span) : string =
+    let private unresolvedImportedSystemTypeMessage (typeName: string) (_span: Atla.Core.Data.Span) : string =
         sprintf
-            "Imported system type '%s' was not found at %A. If this type is provided by a dependency, check dependency loading diagnostics."
+            "Imported system type '%s' was not found. If this type is provided by a dependency, check dependency loading diagnostics."
             typeName
-            span
 
     let private isNativeVoid (typeEnv: TypeEnv) (tid: TypeId) : bool =
         match typeEnv.resolveType tid with
@@ -360,7 +359,7 @@ module Analyze =
             |> List.mapi (fun idx tid ->
                 match resolveTypeArgToRuntimeType tid with
                 | Some runtimeType -> Result.Ok runtimeType
-                | None -> Result.Error(sprintf "Generic type argument #%d is not a runtime type at %A" (idx + 1) genericApplyExpr.span))
+                | None -> Result.Error(sprintf "Generic type argument #%d is not a runtime type" (idx + 1)))
             |> List.fold (fun acc current ->
                 match acc, current with
                 | Result.Ok items, Result.Ok item -> Result.Ok(items @ [ item ])
@@ -377,24 +376,51 @@ module Analyze =
         else
             None
 
-    // 呼び出し不可式の原因を診断へ載せるため、式種別と解決済み型を整形する。
-    let private describeNonCallableExpr (typeEnv: TypeEnv) (expr: Hir.Expr) : string =
-        let exprKind =
-            match expr with
-            | Hir.Expr.Unit _ -> "unit literal"
-            | Hir.Expr.Int _ -> "int literal"
-            | Hir.Expr.Float _ -> "float literal"
-            | Hir.Expr.String _ -> "string literal"
-            | Hir.Expr.Id _ -> "identifier"
-            | Hir.Expr.MemberAccess _ -> "member access"
-            | Hir.Expr.Call _ -> "call expression"
-            | Hir.Expr.Lambda _ -> "lambda expression"
-            | Hir.Expr.If _ -> "if expression"
-            | Hir.Expr.Block _ -> "block expression"
-            | Hir.Expr.ExprError _ -> "expression error"
+    // Format a TypeId into a user-friendly, human-readable type name.
+    let rec private formatTypeForDisplay (nameEnv: NameEnv) (typeEnv: TypeEnv) (tid: TypeId) : string =
+        match typeEnv.resolveType tid with
+        | TypeId.Unit -> "unit"
+        | TypeId.Bool -> "bool"
+        | TypeId.Int -> "int"
+        | TypeId.Float -> "float"
+        | TypeId.String -> "string"
+        | TypeId.Native t -> t.FullName
+        | TypeId.Fn (args, ret) ->
+            let argsStr = args |> List.map (formatTypeForDisplay nameEnv typeEnv) |> String.concat " -> "
+            sprintf "(%s -> %s)" argsStr (formatTypeForDisplay nameEnv typeEnv ret)
+        | TypeId.App (head, args) ->
+            let argsStr = args |> List.map (formatTypeForDisplay nameEnv typeEnv) |> String.concat ", "
+            sprintf "%s<%s>" (formatTypeForDisplay nameEnv typeEnv head) argsStr
+        | TypeId.Name sid ->
+            // Retrieve the type name from the symbol table; if unavailable, return a generic placeholder.
+            match nameEnv.resolveSym sid with
+            | Some symInfo -> symInfo.name
+            | None -> "<named type>"
+        | TypeId.Meta _ -> "unknown"
+        | TypeId.Error _ -> "<error>"
 
-        let resolvedType = typeEnv.resolveType expr.typ
-        sprintf "target kind=%s, resolvedType=%A" exprKind resolvedType
+    // Generate an overload error message with available candidates when argument count does not match.
+    let private noOverloadMessage (callable: Hir.Callable) (argCount: int) : string =
+        match callable with
+        | Hir.Callable.NativeMethodGroup methods when not methods.IsEmpty ->
+            let name = (List.head methods).Name
+            let overloads =
+                methods
+                |> List.map (fun mi ->
+                    let ps = mi.GetParameters() |> Array.map (fun p -> p.ParameterType.FullName) |> String.concat ", "
+                    sprintf "  %s(%s)" mi.Name ps)
+                |> String.concat "\n"
+            sprintf "No overload of '%s' accepts %d argument(s). Available overloads:\n%s" name argCount overloads
+        | Hir.Callable.NativeConstructorGroup ctors when not ctors.IsEmpty ->
+            let typeName = (List.head ctors).DeclaringType.FullName
+            let overloads =
+                ctors
+                |> List.map (fun ci ->
+                    let ps = ci.GetParameters() |> Array.map (fun p -> p.ParameterType.FullName) |> String.concat ", "
+                    sprintf "  new(%s)" ps)
+                |> String.concat "\n"
+            sprintf "No overload of '%s' constructor accepts %d argument(s). Available overloads:\n%s" typeName argCount overloads
+        | _ -> sprintf "No overload matched argument count %d" argCount
 
     let rec private exprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Hir.Expr): Hir.Callable option =
         match expr with
@@ -450,14 +476,14 @@ module Analyze =
                         | Result.Ok _ -> Hir.Expr.Id(sid, symInfo.typ, idExpr.span)
                         | Result.Error exprErr -> exprErr
                 | None ->
-                    Hir.Expr.ExprError(sprintf "Undefined symbol for '%s' at %A" idExpr.name idExpr.span, tid, idExpr.span)
-            | [] -> Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" idExpr.name idExpr.span, tid, idExpr.span)
-            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s' at %A" idExpr.name idExpr.span, tid, idExpr.span)
+                    Hir.Expr.ExprError(sprintf "Undefined symbol for '%s'" idExpr.name, tid, idExpr.span)
+            | [] -> Hir.Expr.ExprError(sprintf "Undefined variable '%s'" idExpr.name, tid, idExpr.span)
+            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s'" idExpr.name, tid, idExpr.span)
         | :? Ast.Expr.GenericApply as genericApplyExpr ->
             let genericArgResolutionResult = resolveGenericTypeArgs nameEnv genericApplyExpr
             match genericArgResolutionResult with
             | Result.Error message ->
-                Hir.Expr.ExprError(sprintf "%s at %A" message genericApplyExpr.span, tid, genericApplyExpr.span)
+                Hir.Expr.ExprError(message, tid, genericApplyExpr.span)
             | Result.Ok genericArgTypes ->
                 let analyzedTarget = analyzeExpr nameEnv typeEnv genericApplyExpr.func tid
                 let buildGenericMemberExpr (instanceOpt: Hir.Expr option) (methodInfo: MethodInfo) =
@@ -467,7 +493,7 @@ module Analyze =
                 | Hir.Expr.MemberAccess (Hir.Member.NativeMethod methodInfo, instanceOpt, _, _) ->
                     match closeGenericMethod genericArgTypes methodInfo with
                     | Some closedMethodInfo -> buildGenericMemberExpr instanceOpt closedMethodInfo
-                    | None -> Hir.Expr.ExprError(sprintf "Generic method arity mismatch for '%s' at %A" methodInfo.Name genericApplyExpr.span, tid, genericApplyExpr.span)
+                    | None -> Hir.Expr.ExprError(sprintf "Generic method arity mismatch for '%s'" methodInfo.Name, tid, genericApplyExpr.span)
                 | Hir.Expr.Id (sid, _, _) ->
                     match nameEnv.resolveSym sid with
                     | Some symInfo ->
@@ -476,14 +502,14 @@ module Analyze =
                             let matchedMethods = methodInfos |> List.choose (closeGenericMethod genericArgTypes)
                             match matchedMethods with
                             | [closedMethodInfo] -> buildGenericMemberExpr None closedMethodInfo
-                            | [] -> Hir.Expr.ExprError(sprintf "No generic overload matched for '%s' at %A" symInfo.name genericApplyExpr.span, tid, genericApplyExpr.span)
-                            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous generic overload for '%s' at %A" symInfo.name genericApplyExpr.span, tid, genericApplyExpr.span)
+                            | [] -> Hir.Expr.ExprError(sprintf "No generic overload matched for '%s'" symInfo.name, tid, genericApplyExpr.span)
+                            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous generic overload for '%s'" symInfo.name, tid, genericApplyExpr.span)
                         | _ ->
-                            Hir.Expr.ExprError(sprintf "Expression is not a generic callable target at %A" genericApplyExpr.span, tid, genericApplyExpr.span)
+                            Hir.Expr.ExprError("Expression is not a generic callable target", tid, genericApplyExpr.span)
                     | None ->
-                        Hir.Expr.ExprError(sprintf "Undefined symbol in generic apply at %A" genericApplyExpr.span, tid, genericApplyExpr.span)
+                        Hir.Expr.ExprError("Undefined symbol in generic apply", tid, genericApplyExpr.span)
                 | _ ->
-                    Hir.Expr.ExprError(sprintf "Expression is not a generic callable target at %A" genericApplyExpr.span, tid, genericApplyExpr.span)
+                    Hir.Expr.ExprError("Expression is not a generic callable target", tid, genericApplyExpr.span)
         | :? Ast.Expr.Block as blockExpr ->
             let blockNameEnv = nameEnv.sub()
             let stmts = blockExpr.stmts |> List.map (analyzeStmt blockNameEnv typeEnv)
@@ -604,10 +630,18 @@ module Analyze =
                     | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, callArgs, callRetType, applyExpr.span)
                     | Result.Error exprErr -> exprErr
                 | None ->
-                    Hir.Expr.ExprError(sprintf "No overload matched argument count %d at %A" allArgs.Length applyExpr.span, tid, applyExpr.span)
+                    Hir.Expr.ExprError(noOverloadMessage resolvedCallable allArgs.Length, tid, applyExpr.span)
             | None ->
-                let reason = describeNonCallableExpr typeEnv analyzedFunc
-                Hir.Expr.ExprError(sprintf "Expression is not callable (%s) at %A" reason applyExpr.span, tid, applyExpr.span)
+                // If the target expression is already an error, suppress additional diagnostics and propagate the error.
+                match analyzedFunc with
+                | Hir.Expr.ExprError _ -> analyzedFunc
+                | _ ->
+                    let resolvedType = typeEnv.resolveType analyzedFunc.typ
+                    let message =
+                        match resolvedType with
+                        | TypeId.Meta _ -> "Expression could not be resolved to a callable"
+                        | _ -> sprintf "Value of type '%s' is not callable" (formatTypeForDisplay nameEnv typeEnv resolvedType)
+                    Hir.Expr.ExprError(message, tid, applyExpr.span)
         | :? Ast.Expr.IndexAccess as indexAccessExpr ->
             let receiver = analyzeExpr nameEnv typeEnv indexAccessExpr.receiver (typeEnv.freshMeta ())
             let indexExpr = analyzeExpr nameEnv typeEnv indexAccessExpr.index TypeId.Int
@@ -624,9 +658,9 @@ module Analyze =
                             Result.Ok(Hir.Expr.Call(Hir.Callable.NativeMethod methodInfo, None, [ receiver; indexExpr ], returnType, indexAccessExpr.span))
                         | Result.Error errExpr -> Result.Error errExpr
                     | None ->
-                        Result.Error(Hir.Expr.ExprError(sprintf "Type '%A' does not support single-index access at %A" systemType indexAccessExpr.span, tid, indexAccessExpr.span))
+                        Result.Error(Hir.Expr.ExprError(sprintf "Type '%s' does not support single-index access" systemType.FullName, tid, indexAccessExpr.span))
                 | None ->
-                    Result.Error(Hir.Expr.ExprError(sprintf "Type '%A' is not a runtime indexable type at %A" resolvedReceiverType indexAccessExpr.span, tid, indexAccessExpr.span))
+                    Result.Error(Hir.Expr.ExprError(sprintf "Type '%s' does not support indexing" (formatTypeForDisplay nameEnv typeEnv resolvedReceiverType), tid, indexAccessExpr.span))
 
             match resolvedIndexResult with
             | Result.Ok resolvedExpr -> resolvedExpr
@@ -644,9 +678,9 @@ module Analyze =
                     | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, resolvedTid, memberAccessExpr.span))
                     | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, resolvedTid, memberAccessExpr.span))
                     | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, resolvedTid, memberAccessExpr.span))
-                    | _ -> Result.Error (sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span)
-                | [] -> Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span)
-                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName sysType memberAccessExpr.span)
+                    | _ -> Result.Error (sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
+                | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName sysType.FullName)
+                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName sysType.FullName)
 
             let resolveFromSymInfo (typeName: obj) (symInfo: SymbolInfo) : Result<Hir.Expr, string> =
                 match symInfo.kind with
@@ -655,7 +689,7 @@ module Analyze =
                 | SymbolKind.External(ExternalBinding.SystemTypeRef _) ->
                     Result.Error (unresolvedImportedSystemTypeMessage (string typeName) memberAccessExpr.span)
                 | _ ->
-                    Result.Error (sprintf "Type '%A' does not support member access at %A" symInfo.typ memberAccessExpr.span)
+                    Result.Error (sprintf "Type '%s' does not support member access" (formatTypeForDisplay nameEnv typeEnv symInfo.typ))
 
             let resolvedMemberResult =
                 match memberAccessExpr.receiver with
@@ -667,8 +701,8 @@ module Analyze =
                             match symInfo.kind with
                             | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemTypeResult sysType
                             | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Result.Error (unresolvedImportedSystemTypeMessage receiverId.name memberAccessExpr.span)
-                            | _ -> Result.Error (sprintf "Type '%s' is not a system type at %A" receiverId.name memberAccessExpr.span)
-                        | None -> Result.Error (sprintf "Undefined type symbol '%s' at %A" receiverId.name memberAccessExpr.span)
+                            | _ -> Result.Error (sprintf "Type '%s' is not a system type" receiverId.name)
+                        | None -> Result.Error (sprintf "Undefined type symbol '%s'" receiverId.name)
                     | _ ->
                         let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                         let receiverType = typeEnv.resolveType receiver.typ
@@ -684,7 +718,7 @@ module Analyze =
                                 | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
                                 | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some receiver, resolvedTid, memberAccessExpr.span))
                                 | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some receiver, resolvedTid, memberAccessExpr.span))
-                                | _ -> Result.Error (sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span)
+                                | _ -> Result.Error (sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
                             | [] ->
                                 let extensionMemberInfos = findExtensionMethodCandidates systemType memberAccessExpr.memberName
                                 match resolveExtensionMember typeEnv extensionMemberInfos tid with
@@ -693,17 +727,17 @@ module Analyze =
                                 | [] when systemType.IsValueType && memberAccessExpr.memberName = "ToString" ->
                                     let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
                                     if obj.ReferenceEquals(convertMethod, null) then
-                                        Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                                        Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                     else
                                         Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
                                 | [] ->
-                                    Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
-                                | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
-                            | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                                    Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                                | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                            | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                         | None ->
                             match resolveTyp nameEnv typeEnv receiver.typ with
                             | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
-                            | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
+                            | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
                 | _ ->
                     let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                     let receiverType = typeEnv.resolveType receiver.typ
@@ -719,7 +753,7 @@ module Analyze =
                             | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
                             | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some receiver, resolvedTid, memberAccessExpr.span))
                             | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some receiver, resolvedTid, memberAccessExpr.span))
-                            | _ -> Result.Error (sprintf "Unsupported member type for '%s' at %A" memberAccessExpr.memberName memberAccessExpr.span)
+                            | _ -> Result.Error (sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
                         | [] ->
                             let extensionMemberInfos = findExtensionMethodCandidates systemType memberAccessExpr.memberName
                             match resolveExtensionMember typeEnv extensionMemberInfos tid with
@@ -728,17 +762,17 @@ module Analyze =
                             | [] when systemType.IsValueType && memberAccessExpr.memberName = "ToString" ->
                                 let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
                                 if obj.ReferenceEquals(convertMethod, null) then
-                                    Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                                    Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                 else
                                     Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
                             | [] ->
-                                Result.Error (sprintf "Undefined member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
-                            | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
-                        | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%A' at %A" memberAccessExpr.memberName systemType memberAccessExpr.span)
+                                Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                            | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                        | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                     | None ->
                         match resolveTyp nameEnv typeEnv receiver.typ with
                         | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
-                        | None -> Result.Error (sprintf "Undefined type '%A' at %A" receiver.typ memberAccessExpr.span)
+                        | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
 
             resultToExpr tid memberAccessExpr.span resolvedMemberResult
         | :? Ast.Expr.StaticAccess as staticAccessExpr ->
@@ -762,13 +796,13 @@ module Analyze =
                                     | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, memberType, staticAccessExpr.span))
                                     | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, memberType, staticAccessExpr.span))
                                     | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, memberType, staticAccessExpr.span))
-                                    | _ -> Result.Error (sprintf "Unsupported member type for '%s.%s' at %A" staticAccessExpr.typeName staticAccessExpr.memberName staticAccessExpr.span)
-                                | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s' at %A" staticAccessExpr.memberName staticAccessExpr.typeName staticAccessExpr.span)
-                                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s' at %A" staticAccessExpr.memberName staticAccessExpr.typeName staticAccessExpr.span)
-                        | _ -> Result.Error (sprintf "Type '%s' is not a system type at %A" staticAccessExpr.typeName staticAccessExpr.span)
-                    | None -> Result.Error (sprintf "Undefined type symbol '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span)
-                | Some _ -> Result.Error (sprintf "Unsupported type id for '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span)
-                | None -> Result.Error (sprintf "Undefined type '%s' at %A" staticAccessExpr.typeName staticAccessExpr.span)
+                                    | _ -> Result.Error (sprintf "Unsupported member type for '%s.%s'" staticAccessExpr.typeName staticAccessExpr.memberName)
+                                | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
+                                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
+                        | _ -> Result.Error (sprintf "Type '%s' is not a system type" staticAccessExpr.typeName)
+                    | None -> Result.Error (sprintf "Undefined type symbol '%s'" staticAccessExpr.typeName)
+                | Some _ -> Result.Error (sprintf "Unsupported type id for '%s'" staticAccessExpr.typeName)
+                | None -> Result.Error (sprintf "Undefined type '%s'" staticAccessExpr.typeName)
 
             resultToExpr tid staticAccessExpr.span resolvedStaticResult
         | :? Ast.Expr.If as ifExpr ->
@@ -803,11 +837,11 @@ module Analyze =
                 match unifyOrError typeEnv (nameEnv.resolveSymType sid) rhs.typ assignStmt.span with
                 | Result.Ok _ -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)
                 | Result.Error exprErr -> Hir.Stmt.ExprStmt(exprErr, assignStmt.span)
-            | [] -> Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s' at %A" assignStmt.name assignStmt.span, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
+            | [] -> Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s'" assignStmt.name, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
             | _ ->
                 Hir.Stmt.ExprStmt(
                     Hir.Expr.ExprError(
-                        sprintf "Ambiguous variable '%s' at %A" assignStmt.name assignStmt.span,
+                        sprintf "Ambiguous variable '%s'" assignStmt.name,
                         TypeId.Error(sprintf "Ambiguous variable '%s'" assignStmt.name),
                         assignStmt.span),
                     assignStmt.span)
@@ -819,7 +853,7 @@ module Analyze =
             let resolvedIterableType = typeEnv.resolveType iterable.typ
             match resolveRuntimeSystemType nameEnv typeEnv resolvedIterableType with
             | None ->
-                Hir.Stmt.ErrorStmt(sprintf "For iterable is not a supported runtime type: %A at %A" resolvedIterableType forStmt.span, forStmt.span)
+                Hir.Stmt.ErrorStmt(sprintf "Value of type '%s' is not iterable" (formatTypeForDisplay nameEnv typeEnv resolvedIterableType), forStmt.span)
             | Some iterableSystemType ->
                 let iteratorResolution =
                     match tryResolveEnumeratorMembers iterableSystemType with
@@ -848,7 +882,7 @@ module Analyze =
                     let bodyStmts = forStmt.body |> List.map (analyzeStmt loopNameEnv typeEnv)
                     Hir.Stmt.For(loopVarSid, itemType, resolvedIteratorExpr, bodyStmts, forStmt.span)
                 | None ->
-                    Hir.Stmt.ErrorStmt(sprintf "For iterable type '%A' does not define MoveNext/Current or GetEnumerator() at %A" iterableSystemType forStmt.span, forStmt.span)
+                    Hir.Stmt.ErrorStmt(sprintf "Type '%s' does not define MoveNext/Current or GetEnumerator()" iterableSystemType.FullName, forStmt.span)
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
     let private analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =

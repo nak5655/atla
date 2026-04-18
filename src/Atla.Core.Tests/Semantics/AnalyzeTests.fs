@@ -187,15 +187,19 @@ fn main (): Int = do
 
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
-        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
-        | { succeeded = true; value = Some hirModule } ->
-            let mainSid = hirModule.scope.vars.["main"]
-            let mainMethod = hirModule.methods |> List.find (fun methodInfo -> methodInfo.sym.id = mainSid.id)
-            let diagnosticMessages = mainMethod.getDiagnostics |> List.map (fun d -> d.message)
-            Assert.Contains(diagnosticMessages, fun msg -> msg.Contains("Expression is not callable (target kind=expression error"))
-        | { diagnostics = diagnostics } ->
-            let diagnosticMessages = diagnostics |> List.map (fun d -> d.message)
-            Assert.Contains(diagnosticMessages, fun msg -> msg.Contains("Expression is not callable (target kind=expression error"))
+        let diagnosticMessages =
+            match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+            | { succeeded = true; value = Some hirModule } ->
+                let mainSid = hirModule.scope.vars.["main"]
+                let mainMethod = hirModule.methods |> List.find (fun methodInfo -> methodInfo.sym.id = mainSid.id)
+                mainMethod.getDiagnostics |> List.map (fun d -> d.message)
+            | { diagnostics = diagnostics } ->
+                diagnostics |> List.map (fun d -> d.message)
+
+        // Calling a unit literal as a function should generate a diagnostic.
+        Assert.True(diagnosticMessages.Length > 0, "No diagnostic was generated when calling a unit literal as a function.")
+        // Verify that internal compiler representations ("target kind=") do not leak into diagnostics.
+        Assert.DoesNotContain(diagnosticMessages, fun msg -> msg.Contains("target kind="))
 
     [<Fact>]
     let ``nullary function call with unit argument syntax should be allowed`` () =
