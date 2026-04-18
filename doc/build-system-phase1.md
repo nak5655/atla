@@ -28,6 +28,9 @@ package:
 - `path` と `version` の同時指定は不正とする。
 - NuGet依存は `NUGET_PACKAGES`（未設定時 `~/.nuget/packages`）配下から解決する。
 - NuGet依存の `ResolvedDependency.source` は実体ディレクトリの絶対パスとする。
+- `ResolvedDependency` は用途別に 2 系統のDLL一覧を持つ:
+  - `compileReferencePaths`（`ref > lib`）
+  - `runtimeLoadPaths`（`lib > ref`、`lib` 不在時は `ref` フォールバック）
 - 実装は `Build.fs`（manifest解析）と `Resolver.fs`（依存解決）に責務分離する。
 - 競合解決は厳密一致とし、同一依存名は `version` が一致する場合のみ統合する。
 - キャッシュ不在時は NuGet.Client API で自動取得を試行し、取得失敗時は診断付きで失敗する。

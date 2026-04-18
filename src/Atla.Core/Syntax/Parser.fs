@@ -267,6 +267,9 @@ module Parser =
             Many1 (typeExprAtom ())
             |>> fun typeExprs ->
                 match typeExprs with
+                | [] ->
+                    // Many1 により通常は到達しないが、網羅性警告を避けるため防御的に失敗させる。
+                    failwith "type expression list must not be empty"
                 | head :: [] -> head
                 | head :: tail ->
                     Ast.TypeExpr.Apply(head, tail, { left = head.span.left; right = (List.last tail).span.right }) :> Ast.TypeExpr

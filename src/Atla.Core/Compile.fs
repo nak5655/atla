@@ -13,7 +13,8 @@ module Compiler =
         { name: string
           version: string
           source: string
-          referenceAssemblyPaths: string list }
+          compileReferencePaths: string list
+          runtimeLoadPaths: string list }
 
     type CompileRequest =
         { asmName: string
@@ -49,7 +50,7 @@ module Compiler =
                     // Dependency loading
                     let dependencyInputs =
                         request.dependencies
-                        |> List.map (fun dependency -> dependency.name, dependency.referenceAssemblyPaths)
+                        |> List.map (fun dependency -> dependency.name, dependency.runtimeLoadPaths)
 
                     match DependencyLoader.loadDependencies dependencyInputs with
                     | { succeeded = false; diagnostics = dependencyDiagnostics } ->

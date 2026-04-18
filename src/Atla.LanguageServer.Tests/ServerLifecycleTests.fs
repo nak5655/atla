@@ -126,7 +126,8 @@ module ServerLifecycleTests =
                         [ { name = "Sample.Dependency"
                             version = "1.0.0"
                             source = Path.Join(tempRoot, "deps", "sample")
-                            referenceAssemblyPaths = [ Path.Join(tempRoot, "deps", "sample", "ref", "net10.0", "Sample.Dependency.dll") ] } ]
+                            compileReferencePaths = [ Path.Join(tempRoot, "deps", "sample", "ref", "net10.0", "Sample.Dependency.dll") ]
+                            runtimeLoadPaths = [ Path.Join(tempRoot, "deps", "sample", "ref", "net10.0", "Sample.Dependency.dll") ] } ]
                   }
               diagnostics = [] }
 
