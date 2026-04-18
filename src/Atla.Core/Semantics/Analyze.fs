@@ -593,8 +593,10 @@ module Analyze =
                     match applyExpr.func with
                     | :? Ast.Expr.Id as idExpr ->
                         // シンボル表から実際の宣言型を引くことで、型推論の失敗による型汚染を避ける
+                        // シンボル表から実際の宣言型を引くことで、型推論の失敗による型汚染を避ける。
+                        // resolveVar の型引数はスコープ検索にのみ使用されるため Unit を渡す。
                         let actualTypeStr =
-                            match nameEnv.resolveVar idExpr.name (typeEnv.freshMeta()) with
+                            match nameEnv.resolveVar idExpr.name TypeId.Unit with
                             | [sid] ->
                                 match nameEnv.resolveSym sid with
                                 | Some symInfo -> sprintf " (type: %A)" (typeEnv.resolveType symInfo.typ)
