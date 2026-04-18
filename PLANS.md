@@ -1,5 +1,11 @@
 # Plan
 
+## 2026-04-18 buildProject 診断順序の決定性修正（一時フォルダ名の非決定性排除）
+
+- [x] `Resolver.tryRunRestore` の一時ダウンロード先を実行ごと GUID ではなく package/version 由来の決定的なパスへ変更する。
+- [x] restore 失敗時診断に実行ごとのランダムパスが混入しないことを `Atla.Build.Tests` で回帰テストとして固定する。
+- [x] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj --filter "buildProject should keep diagnostics order deterministic across runs"` を実行して再現ケースの非退行を確認する。
+
 ## 2026-04-17 Atla.Build 自動NuGet取得の既定化（環境変数廃止）
 
 - [x] `ATLA_BUILD_ENABLE_NUGET_RESTORE` 判定を削除し、NuGetキャッシュ未存在時は常にNuGet.Client取得を試行する。
