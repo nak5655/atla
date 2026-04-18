@@ -27,6 +27,20 @@ module Resolve =
         let symInfo = { name = name; typ = TypeId.Name sid; kind = kind }
         symbolTable.Add(sid, symInfo)
         scope.DeclareType(name, TypeId.Name sid)
+
+        // import した .NET 型は値コンテキストで ctor 呼び出しできるよう、同名の変数シンボルとして ctor グループも公開する。
+        if not (obj.ReferenceEquals(resolvedType, null)) then
+            let ctorInfos =
+                resolvedType.GetConstructors(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+                |> Array.toList
+
+            if not ctorInfos.IsEmpty then
+                let ctorSid = symbolTable.NextId()
+                let ctorType = TypeId.Fn([], TypeId.fromSystemType resolvedType)
+                let ctorKind = SymbolKind.External(ExternalBinding.ConstructorGroup ctorInfos)
+                symbolTable.Add(ctorSid, { name = name; typ = ctorType; kind = ctorKind })
+                scope.DeclareVar(name, ctorSid)
+
         sid
 
     let private resolveImport (symbolTable: SymbolTable) (scope: Scope) (importDecl: Ast.Decl.Import) : unit =
