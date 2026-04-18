@@ -9,6 +9,6 @@ fn appMain (app: Application) (args: Array String): () = do
     app.Run window
 
 fn main (args: Array String): () = do
-    let config = AppBuilder.Configure<Application> ()
+    let config = AppBuilder.Configure[Application] ()
     config.UsePlatformDetect ()
     config.Start appMain args

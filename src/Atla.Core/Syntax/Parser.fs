@@ -78,8 +78,12 @@ module Parser =
                 | Failure (reason, span) -> Failure (reason, span)
         )
 
+    // 通常の二項演算子を受理する（index専用演算子 "!!" は除外する）。
     let infixOp prec : PackratParser<Token, Token.Symbol> =
-        AcceptMatch (fun t -> match t with :? Token.Symbol as sym when sym.precedence = prec -> Some(sym) | _ -> None)
+        AcceptMatch (fun t ->
+            match t with
+            | :? Token.Symbol as sym when sym.precedence = prec && sym.str <> "!!" -> Some(sym)
+            | _ -> None)
 
     let tid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id -> Some(id) | _ -> None)
 
@@ -135,22 +139,32 @@ module Parser =
                 fun receiver -> Ast.Expr.MemberAccess(receiver, id.str, { left = receiver.span.left; right = id.span.right }) :> Ast.Expr
         )
 
-    and postfixIndexAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
+    // 型引数付き呼び出しの postfix を受理する（例: receiver[Application]）。
+    and postfixGenericApply (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
         Delay (fun () ->
-            delim '[' &> expr () <&> delim ']' |>> fun (indexExpr, closeBracket) ->
-                fun receiver -> Ast.Expr.IndexAccess(receiver, indexExpr, { left = receiver.span.left; right = closeBracket.span.right }) :> Ast.Expr
+            delim '[' &> SepBy1 (typeExpr ()) (delim ',') <&> delim ']' |>> fun (typeArgs, closeBracket) ->
+                fun receiver ->
+                    Ast.Expr.GenericApply(receiver, typeArgs, { left = receiver.span.left; right = closeBracket.span.right }) :> Ast.Expr
         )
 
     and postfixExpr (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            (staticAccess () <|> factor ()) <&> Many (postfixMemberAccess () <|> postfixIndexAccess ())
+            (staticAccess () <|> factor ()) <&> Many (postfixMemberAccess () <|> postfixGenericApply ())
             |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes
         )
-        
+
     // 呼び出し式の項
     and term1 (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            postfixExpr ()
+            // TODO: 将来的には `!!` を通常の演算子解決（Id("!!") 経由）へ統一し、
+            //       term1 での IndexAccess 特別扱いを削除する。
+            postfixExpr () <&> Optional (symbol "!!" &> postfixExpr ())
+            |>> fun (receiver, optIndex) ->
+                match optIndex with
+                | Some index ->
+                    Ast.Expr.IndexAccess(receiver, index, { left = receiver.span.left; right = index.span.right }) :> Ast.Expr
+                | None ->
+                    receiver
         )
 
     // 呼び出し式

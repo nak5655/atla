@@ -9,6 +9,7 @@
     <Compile Include="Syntax\LexerTests.fs" />
     <Compile Include="Syntax\ParserTests.fs" />
     <Compile Include="Semantics\Data\DataDesignTests.fs" />
+    <Compile Include="Semantics\TestExtensions.fs" />
     <Compile Include="Semantics\AnalyzeTests.fs" />
     <Compile Include="Lowering\Gen\GenTests.fs" />
     <Compile Include="Lowering\LayoutTests.fs" />

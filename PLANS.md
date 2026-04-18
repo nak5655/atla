@@ -1,5 +1,32 @@
 # Plan
 
+## 2026-04-18 GUI向け構文更新（フェーズ4: ドキュメント/サンプル）
+
+- [x] `PLANS.md` に本バッチ（フェーズ4）の実装計画を記録する。
+- [x] `README.md` の言語メモに generic 呼び出し `target[typeArgs]` と index `expr !! index` を追記する。
+- [x] 破壊的変更として `a[b]` 廃止（`a !! b` へ移行）をドキュメントに明記する。
+- [x] `doc/semantic-phase-design.md` の index 記法説明を `expr !! index` 前提へ更新する。
+- [x] `examples/gui/src/main.atla` を `AppBuilder.Configure[Application] ()` 構文へ更新する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj --filter "FullyQualifiedName~ParserTests"` を実行する。
+
+## 2026-04-18 GUI向け呼び出し解決拡張（フェーズ2-3: Semantic/Test）
+
+- [x] `PLANS.md` に本バッチ（フェーズ2-3）の実装計画を記録する。
+- [x] `Ast.Expr.GenericApply` を Semantic で解釈し、`target[typeArgs]` が呼び出し可能な `Hir.Expr` に解決されるようにする。
+- [x] import した .NET 型に対してコンストラクタ呼び出し（`TypeName ()`）ができるよう、名前解決で ctor グループを変数シンボルとして公開する。
+- [x] メンバー解決で拡張メソッド候補を探索し、`receiver.ExtensionMethod (...)` の解決経路を追加する。
+- [x] `AnalyzeTests` に generic 呼び出し・コンストラクタ呼び出し・拡張メソッド呼び出しの回帰テストを追加する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj --filter "FullyQualifiedName~AnalyzeTests"` を実行する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj --filter "FullyQualifiedName~ParserTests"` を実行する。
+
+## 2026-04-18 GUI向け構文更新（フェーズ1: Parser/AST）
+
+- [x] `PLANS.md` に本バッチ（フェーズ1）の実装計画を記録する。
+- [x] Generic呼び出し構文を `target[typeArgs]` へ変更し、`Ast.Expr.GenericApply` として表現できるようにする。
+- [x] indexアクセス構文を `expr !! index` へ変更し、Parser で `Ast.Expr.IndexAccess` として扱う。
+- [x] 後方互換は考慮せず、既存の `a[b]` 構文を廃止する。
+- [x] `ParserTests` を新構文へ更新し、generic postfix と index `!!` の回帰テストを追加する。
+
 ## 2026-04-18 型適用の一般化（Array 専用制約の解除）
 
 - [x] `TypeId` に汎用型適用ノードを追加し、型解決/単一化/解決処理で保持できるようにする。
