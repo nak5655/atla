@@ -36,8 +36,11 @@ module TypeId =
         elif t = typeof<float> then Float
         elif t = typeof<string> then String
         elif t.IsArray then
-            let elemType = t.GetElementType()
-            if obj.ReferenceEquals(elemType, null) then Native t else App(Native typeof<System.Array>, [ fromSystemType elemType ])
+            if t.GetArrayRank() = 1 then
+                let elemType = t.GetElementType()
+                if obj.ReferenceEquals(elemType, null) then Native t else App(Native typeof<System.Array>, [ fromSystemType elemType ])
+            else
+                Native t
         else Native t
 
     let rec tryToRuntimeSystemType (tid: TypeId) : System.Type option =
