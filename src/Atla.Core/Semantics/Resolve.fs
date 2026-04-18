@@ -2,6 +2,7 @@ namespace Atla.Core.Semantics
 
 open Atla.Core.Syntax.Data
 open Atla.Core.Semantics.Data
+open System.Runtime.Loader
 
 module Resolve =
     type ResolvedModule =
@@ -12,7 +13,16 @@ module Resolve =
     let private tryResolveSystemType (classPath: string) : System.Type option =
         match System.Type.GetType(classPath) with
         | null ->
-            System.AppDomain.CurrentDomain.GetAssemblies()
+            let candidateAssemblies =
+                seq {
+                    yield! System.AppDomain.CurrentDomain.GetAssemblies()
+
+                    for context in AssemblyLoadContext.All do
+                        yield! context.Assemblies
+                }
+                |> Seq.distinct
+
+            candidateAssemblies
             |> Seq.tryPick (fun asm ->
                 match asm.GetType(classPath, false) with
                 | null -> None

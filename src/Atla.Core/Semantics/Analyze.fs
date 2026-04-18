@@ -105,6 +105,19 @@ module Analyze =
         | TypeId.Name sid -> nameEnv.resolveSym sid
         | _ -> None
 
+    // TypeId から実行時 System.Type を解決する。Name 参照はシンボル表を経由して辿る。
+    let private resolveRuntimeSystemType (nameEnv: NameEnv) (typeEnv: TypeEnv) (tid: TypeId) : System.Type option =
+        let resolveNameType (sid: SymbolId) : System.Type option =
+            match nameEnv.resolveSym sid with
+            | Some symInfo ->
+                match symInfo.kind with
+                | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> Some sysType
+                | _ -> None
+            | None -> None
+
+        typeEnv.resolveType tid
+        |> TypeId.tryResolveToSystemType resolveNameType
+
     let private resolveNativeMember (typeEnv: TypeEnv) (memberInfos: MemberInfo list) (tid: TypeId) : (MemberInfo * TypeId) list =
         let exactResult = List<MemberInfo * TypeId>()
         let optionalResult = List<MemberInfo * TypeId>()
@@ -329,12 +342,23 @@ module Analyze =
     // GenericApply で指定された型引数を runtime 型へ解決する。
     let private resolveGenericTypeArgs (nameEnv: NameEnv) (genericApplyExpr: Ast.Expr.GenericApply) : Result<System.Type array, string> =
         let resolvedTypeArgs = genericApplyExpr.typeArgs |> List.map nameEnv.resolveTypeExpr
+        let resolveTypeArgToRuntimeType (tid: TypeId) : System.Type option =
+            let resolveNameType (sid: SymbolId) : System.Type option =
+                match nameEnv.resolveSym sid with
+                | Some symInfo ->
+                    match symInfo.kind with
+                    | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> Some sysType
+                    | _ -> None
+                | None -> None
+
+            TypeId.tryResolveToSystemType resolveNameType tid
+
         match resolvedTypeArgs |> List.tryFind (function | TypeId.Error _ -> true | _ -> false) with
         | Some (TypeId.Error message) -> Result.Error message
         | _ ->
             resolvedTypeArgs
             |> List.mapi (fun idx tid ->
-                match TypeId.tryToRuntimeSystemType tid with
+                match resolveTypeArgToRuntimeType tid with
                 | Some runtimeType -> Result.Ok runtimeType
                 | None -> Result.Error(sprintf "Generic type argument #%d is not a runtime type at %A" (idx + 1) genericApplyExpr.span))
             |> List.fold (fun acc current ->
@@ -570,7 +594,7 @@ module Analyze =
             let resolvedReceiverType = typeEnv.resolveType receiver.typ
 
             let resolvedIndexResult =
-                match TypeId.tryToRuntimeSystemType resolvedReceiverType with
+                match resolveRuntimeSystemType nameEnv typeEnv resolvedReceiverType with
                 | Some systemType ->
                     match tryResolveIndexerMethod systemType with
                     | Some methodInfo ->
@@ -628,7 +652,7 @@ module Analyze =
                     | _ ->
                         let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                         let receiverType = typeEnv.resolveType receiver.typ
-                        match TypeId.tryToRuntimeSystemType receiverType with
+                        match resolveRuntimeSystemType nameEnv typeEnv receiverType with
                         | Some systemType ->
                             let memberInfos =
                                 systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
@@ -773,7 +797,7 @@ module Analyze =
         | :? Ast.Stmt.For as forStmt ->
             let iterable = analyzeExpr nameEnv typeEnv forStmt.iterable (typeEnv.freshMeta ())
             let resolvedIterableType = typeEnv.resolveType iterable.typ
-            match TypeId.tryToRuntimeSystemType resolvedIterableType with
+            match resolveRuntimeSystemType nameEnv typeEnv resolvedIterableType with
             | None ->
                 Hir.Stmt.ErrorStmt(sprintf "For iterable is not a supported runtime type: %A at %A" resolvedIterableType forStmt.span, forStmt.span)
             | Some iterableSystemType ->
