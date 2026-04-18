@@ -4,6 +4,8 @@ open System
 open System.IO
 open System.Globalization
 open System.IO.Compression
+open System.Security.Cryptography
+open System.Text
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
 open Atla.Compiler
@@ -124,14 +126,23 @@ module internal Resolver =
                     Result.Error($"{source.PackageSource.Source}: {ex.Message}; {nextError}")
 
     (* NuGet.Client API を使い、指定 package/version を packagesRoot 配下へ展開する。 *)
+    let private buildDeterministicTempRootName (packageId: string) (version: string) : string =
+        (* package/version をハッシュ化し、OS依存しない固定長のテンポラリ名へ正規化する。 *)
+        let payload = $"{toNuGetPathSegment packageId}/{toNuGetPathSegment version}"
+        let bytes = Encoding.UTF8.GetBytes(payload)
+        let hash = SHA256.HashData(bytes)
+        let hex = Convert.ToHexString(hash).ToLowerInvariant()
+        $"atla-build-nuget-download-{hex}"
+
     let private tryRunRestore (packagesRoot: string) (packageId: string) (version: string) : Result<unit, string> =
         try
             let parsedVersion = NuGetVersion.Parse(version)
             let packagePath =
                 Path.Join(packagesRoot, toNuGetPathSegment packageId, toNuGetPathSegment version)
                 |> normalizePath
-            let tempRoot = Path.Join(Path.GetTempPath(), $"atla-build-nuget-download-{Guid.NewGuid():N}")
-            Directory.CreateDirectory(tempRoot) |> ignore
+            let tempRootName = buildDeterministicTempRootName packageId (parsedVersion.ToNormalizedString())
+            let tempRoot = Path.Join(Path.GetTempPath(), tempRootName)
+            resetDirectory tempRoot
             let nupkgPath = Path.Join(tempRoot, $"{toNuGetPathSegment packageId}.{toNuGetPathSegment version}.nupkg")
             let sources = getSourceRepositories ()
 
