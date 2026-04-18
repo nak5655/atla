@@ -1,5 +1,13 @@
 # Plan
 
+## 2026-04-18 型適用の一般化（Array 専用制約の解除）
+
+- [x] `TypeId` に汎用型適用ノードを追加し、型解決/単一化/解決処理で保持できるようにする。
+- [x] `Analyze.resolveTypeExpr` を更新し、`Ast.TypeExpr.Apply` を `Array` 以外でも `TypeId.App` として解決する。
+- [x] 既存の `Array String` は引き続き `TypeId.Array` として扱い、ランタイム配列解決互換を維持する。
+- [x] セマンティクステストを更新し、`String Int` などの非Array型適用が `TypeId.App` として保持されることを検証する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
 ## 2026-04-18 Array String 対応（フェーズ7-8）
 
 - [x] フェーズ7: `Array String` の型適用に対する異常系（引数不足/引数過多）診断テストを追加する。

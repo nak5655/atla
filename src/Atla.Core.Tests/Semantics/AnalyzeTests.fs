@@ -400,7 +400,7 @@ fn main: () = do
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``non-array type application should report diagnostic`` () =
+    let ``non-array type application should be preserved as TypeId.App`` () =
         let program = "fn bad (xs: String Int): () = ()"
         let input: Input<SourceChar> = StringInput program
 
@@ -421,9 +421,8 @@ fn main: () = do
                     match badMethod with
                     | Some methodInfo ->
                         match Type.resolve subst methodInfo.typ with
-                        | TypeId.Fn ([ TypeId.Error message ], TypeId.Unit)
-                        | TypeId.Fn ([ TypeId.Error message ], TypeId.Error _) ->
-                            Assert.Contains("does not accept type arguments", message)
+                        | TypeId.Fn ([ TypeId.App (TypeId.String, [ TypeId.Int ]) ], TypeId.Unit) ->
+                            Assert.True(true)
                         | other ->
                             Assert.True(false, $"Unexpected method type: {other}")
                     | None ->

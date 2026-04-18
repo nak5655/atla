@@ -22,18 +22,30 @@ module Analyze =
             | :? Ast.TypeExpr.Id as idTypeExpr ->
                 resolveNamedType idTypeExpr.name idTypeExpr.span
             | :? Ast.TypeExpr.Apply as applyTypeExpr ->
-                let resolvedArgs = applyTypeExpr.args |> List.map this.resolveTypeExpr
-                match applyTypeExpr.head, resolvedArgs with
-                | :? Ast.TypeExpr.Id as headId, [] ->
-                    TypeId.Error(sprintf "Type '%s' requires at least one type argument at %A" headId.name applyTypeExpr.span)
-                | :? Ast.TypeExpr.Id as headId, _ when headId.name = "Array" ->
-                    match resolvedArgs with
-                    | [elemType] -> TypeId.Array elemType
-                    | _ -> TypeId.Error(sprintf "Array type expects exactly one type argument at %A" applyTypeExpr.span)
-                | :? Ast.TypeExpr.Id as headId, _ ->
-                    TypeId.Error(sprintf "Type '%s' does not accept type arguments at %A" headId.name applyTypeExpr.span)
-                | _, _ ->
-                    TypeId.Error(sprintf "Unsupported type application at %A" applyTypeExpr.span)
+                let resolveArgs () =
+                    let resolvedArgs = applyTypeExpr.args |> List.map this.resolveTypeExpr
+                    let firstArgError =
+                        resolvedArgs
+                        |> List.tryPick (fun argType ->
+                            match argType with
+                            | TypeId.Error message -> Some message
+                            | _ -> None)
+                    resolvedArgs, firstArgError
+
+                match applyTypeExpr.head with
+                | :? Ast.TypeExpr.Id as headId when headId.name = "Array" ->
+                    let resolvedArgs, firstArgError = resolveArgs ()
+                    match firstArgError, resolvedArgs with
+                    | Some message, _ -> TypeId.Error message
+                    | None, [elemType] -> TypeId.Array elemType
+                    | None, _ -> TypeId.Error(sprintf "Array type expects exactly one type argument at %A" applyTypeExpr.span)
+                | _ ->
+                    let resolvedHead = this.resolveTypeExpr applyTypeExpr.head
+                    let resolvedArgs, firstArgError = resolveArgs ()
+                    match resolvedHead, firstArgError with
+                    | TypeId.Error message, _ -> TypeId.Error message
+                    | _, Some message -> TypeId.Error message
+                    | _, None -> TypeId.App(resolvedHead, resolvedArgs)
             | _ -> TypeId.Error (sprintf "Unsupported type expression type at %A" typeExpr.span)
 
         member this.resolveArgType (arg: Ast.FnArg) : TypeId =

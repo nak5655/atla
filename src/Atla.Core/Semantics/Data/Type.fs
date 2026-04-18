@@ -21,6 +21,7 @@ type TypeId =
     | Float
     | String
     | Array of elem: TypeId
+    | App of head: TypeId * args: TypeId list
     | Name of sid: SymbolId
     | Fn of args: TypeId list * ret: TypeId
     | Meta of TypeMeta
@@ -50,6 +51,7 @@ module TypeId =
         | Array elem ->
             tryToRuntimeSystemType elem
             |> Option.map (fun elementType -> elementType.MakeArrayType())
+        | App _ -> None
         | Native t -> Some t
         | _ -> None
 
@@ -84,6 +86,7 @@ module Type =
             | true, t' -> occurs subst m t'
             | false, _ -> false
         | Array elem -> occurs subst m elem
+        | App (head, args) -> occurs subst m head || (args |> List.exists (occurs subst m))
         | Fn (args, ret) -> List.exists (occurs subst m) args || occurs subst m ret
         | _ -> false
 
@@ -97,6 +100,10 @@ module Type =
         | Float, Float -> true
         | String, String -> true
         | Array leftElem, Array rightElem -> canUnify subst leftElem rightElem
+        | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
+            List.length leftArgs = List.length rightArgs
+            && canUnify subst leftHead rightHead
+            && (List.zip leftArgs rightArgs |> List.forall (fun (leftArg, rightArg) -> canUnify subst leftArg rightArg))
         | Native t1, Native t2 when t1 = t2 -> true
         | Name id1, Name id2 when id1 = id2 -> true
         | Fn (args1, ret1), Fn (args2, ret2) ->
@@ -118,6 +125,7 @@ module Type =
             | true, t' -> resolve subst t'
             | false, _ -> tid
         | Array elem -> Array (resolve subst elem)
+        | App (head, args) -> App (resolve subst head, args |> List.map (resolve subst))
         | Fn (args, ret) -> Fn (List.map (resolve subst) args, resolve subst ret)
         | _ -> tid
 
@@ -134,6 +142,25 @@ module Type =
         | Array leftElem, Array rightElem ->
             unify subst leftElem rightElem
             |> Result.map Array
+        | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
+            if List.length leftArgs <> List.length rightArgs then
+                Result.Error(CannotUnify(tid1, tid2))
+            else
+                match unify subst leftHead rightHead with
+                | Result.Error err -> Result.Error err
+                | Result.Ok unifiedHead ->
+                    let zippedArgs = List.zip leftArgs rightArgs
+                    let rec unifyAppArgs pairs acc =
+                        match pairs with
+                        | [] -> Result.Ok(List.rev acc)
+                        | (leftArg, rightArg) :: rest ->
+                            match unify subst leftArg rightArg with
+                            | Result.Ok unifiedArg -> unifyAppArgs rest (unifiedArg :: acc)
+                            | Result.Error err -> Result.Error err
+
+                    match unifyAppArgs zippedArgs [] with
+                    | Result.Ok unifiedArgs -> Result.Ok(App(unifiedHead, unifiedArgs))
+                    | Result.Error err -> Result.Error err
         | Native t1, Native t2 when t1 = t2 -> Result.Ok (Native t1)
         | Name id1, Name id2 when id1 = id2 -> Result.Ok(Name id1)
         | Fn (args1, ret1), Fn (args2, ret2) ->
@@ -172,6 +199,7 @@ module Type =
         match tid with
         | Error _ -> true
         | Array elem -> hasError subst elem
+        | App (head, args) -> hasError subst head || (args |> List.exists (hasError subst))
         | Fn (args, ret) -> List.exists (hasError subst) args || hasError subst ret
         | Meta m ->
             match subst.TryGetValue(m) with
