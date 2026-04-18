@@ -377,6 +377,25 @@ module Analyze =
         else
             None
 
+    // 呼び出し不可式の原因を診断へ載せるため、式種別と解決済み型を整形する。
+    let private describeNonCallableExpr (typeEnv: TypeEnv) (expr: Hir.Expr) : string =
+        let exprKind =
+            match expr with
+            | Hir.Expr.Unit _ -> "unit literal"
+            | Hir.Expr.Int _ -> "int literal"
+            | Hir.Expr.Float _ -> "float literal"
+            | Hir.Expr.String _ -> "string literal"
+            | Hir.Expr.Id _ -> "identifier"
+            | Hir.Expr.MemberAccess _ -> "member access"
+            | Hir.Expr.Call _ -> "call expression"
+            | Hir.Expr.Lambda _ -> "lambda expression"
+            | Hir.Expr.If _ -> "if expression"
+            | Hir.Expr.Block _ -> "block expression"
+            | Hir.Expr.ExprError _ -> "expression error"
+
+        let resolvedType = typeEnv.resolveType expr.typ
+        sprintf "target kind=%s, resolvedType=%A" exprKind resolvedType
+
     let rec private exprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Hir.Expr): Hir.Callable option =
         match expr with
         | Hir.Expr.Id (sid, _, _) ->
@@ -587,7 +606,8 @@ module Analyze =
                 | None ->
                     Hir.Expr.ExprError(sprintf "No overload matched argument count %d at %A" allArgs.Length applyExpr.span, tid, applyExpr.span)
             | None ->
-                Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
+                let reason = describeNonCallableExpr typeEnv analyzedFunc
+                Hir.Expr.ExprError(sprintf "Expression is not callable (%s) at %A" reason applyExpr.span, tid, applyExpr.span)
         | :? Ast.Expr.IndexAccess as indexAccessExpr ->
             let receiver = analyzeExpr nameEnv typeEnv indexAccessExpr.receiver (typeEnv.freshMeta ())
             let indexExpr = analyzeExpr nameEnv typeEnv indexAccessExpr.index TypeId.Int

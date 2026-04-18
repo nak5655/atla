@@ -1,5 +1,12 @@
 # Plan
 
+## 2026-04-18 `Expression is not callable` 診断に原因情報を追加
+
+- [x] `PLANS.md` に本対応の計画を記録する。
+- [x] `Semantics/Analyze.fs` の call 解析失敗時に、非呼び出し対象の式種別と解決済み型を診断へ含める。
+- [x] `Atla.Core.Tests` に診断メッセージ回帰テストを追加する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj --filter "FullyQualifiedName~AnalyzeTests"` を実行する。
+
 ## 2026-04-18 `examples/gui` の `Expression is not callable` 原因特定と修正
 
 - [x] `examples/gui/src/main.atla` を再ビルドして、報告された診断を再現する。

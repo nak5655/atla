@@ -175,6 +175,27 @@ fn main (): Int = do
                 |> String.concat "; "
             Assert.True(false, $"semantic analysis failed unexpectedly: {message}")
 
+    [<Fact>]
+    let ``non-callable expression diagnostic should include reason`` () =
+        let span = Span.Empty
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+        let callExpr = Ast.Expr.Apply(Ast.Expr.Unit(span) :> Ast.Expr, [ Ast.Expr.Unit(span) :> Ast.Expr ], span) :> Ast.Expr
+        let callStmt = Ast.Stmt.ExprStmt(callExpr, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ callStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            let mainSid = hirModule.scope.vars.["main"]
+            let mainMethod = hirModule.methods |> List.find (fun methodInfo -> methodInfo.sym.id = mainSid.id)
+            let diagnosticMessages = mainMethod.getDiagnostics |> List.map (fun d -> d.message)
+            Assert.Contains(diagnosticMessages, fun msg -> msg.Contains("Expression is not callable (target kind=expression error"))
+        | { diagnostics = diagnostics } ->
+            let diagnosticMessages = diagnostics |> List.map (fun d -> d.message)
+            Assert.Contains(diagnosticMessages, fun msg -> msg.Contains("Expression is not callable (target kind=expression error"))
 
     [<Fact>]
     let ``nullary function call with unit argument syntax should be allowed`` () =
