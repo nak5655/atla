@@ -376,7 +376,7 @@ module Analyze =
         else
             None
 
-    // TypeId をユーザー向けの人間可読な型名へ整形する。
+    // Format a TypeId into a user-friendly, human-readable type name.
     let rec private formatTypeForDisplay (nameEnv: NameEnv) (typeEnv: TypeEnv) (tid: TypeId) : string =
         match typeEnv.resolveType tid with
         | TypeId.Unit -> "unit"
@@ -392,14 +392,14 @@ module Analyze =
             let argsStr = args |> List.map (formatTypeForDisplay nameEnv typeEnv) |> String.concat ", "
             sprintf "%s<%s>" (formatTypeForDisplay nameEnv typeEnv head) argsStr
         | TypeId.Name sid ->
-            // シンボル表から型名を取得する。取得できない場合は汎用プレースホルダーを返す。
+            // Retrieve the type name from the symbol table; if unavailable, return a generic placeholder.
             match nameEnv.resolveSym sid with
             | Some symInfo -> symInfo.name
             | None -> "<named type>"
         | TypeId.Meta _ -> "unknown"
         | TypeId.Error _ -> "<error>"
 
-    // 引数数不一致のオーバーロードエラーメッセージを候補付きで生成する。
+    // Generate an overload error message with available candidates when argument count does not match.
     let private noOverloadMessage (callable: Hir.Callable) (argCount: int) : string =
         match callable with
         | Hir.Callable.NativeMethodGroup methods when not methods.IsEmpty ->
@@ -632,7 +632,7 @@ module Analyze =
                 | None ->
                     Hir.Expr.ExprError(noOverloadMessage resolvedCallable allArgs.Length, tid, applyExpr.span)
             | None ->
-                // 対象式がすでにエラーの場合は追加診断を抑制して伝播させる。
+                // If the target expression is already an error, suppress additional diagnostics and propagate the error.
                 match analyzedFunc with
                 | Hir.Expr.ExprError _ -> analyzedFunc
                 | _ ->

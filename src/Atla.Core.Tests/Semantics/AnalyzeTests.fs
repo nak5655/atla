@@ -196,9 +196,9 @@ fn main (): Int = do
             | { diagnostics = diagnostics } ->
                 diagnostics |> List.map (fun d -> d.message)
 
-        // unit リテラルを関数として呼び出すと診断が発生する。
-        Assert.True(diagnosticMessages.Length > 0, "unit リテラルを呼び出した際に診断が生成されていません。")
-        // コンパイラ内部表現（"target kind="）が漏れていないことを確認する。
+        // Calling a unit literal as a function should generate a diagnostic.
+        Assert.True(diagnosticMessages.Length > 0, "No diagnostic was generated when calling a unit literal as a function.")
+        // Verify that internal compiler representations ("target kind=") do not leak into diagnostics.
         Assert.DoesNotContain(diagnosticMessages, fun msg -> msg.Contains("target kind="))
 
     [<Fact>]
