@@ -1,0 +1,14 @@
+import Avalonia.Application
+import Avalonia.Controls.AppBuilder
+import Avalonia.Themes.Fluent
+
+fn appMain (app: Application) (args: Array String): () = do
+    app.Styles.Add (Fluent.FluentTheme ())
+    let window = Window ()
+    window.Show ()
+    app.Run window
+
+fn main (args: Array String): () = do
+    let config = AppBuilder.Configure<Application> ()
+    config.UsePlatformDetect ()
+    config.Start appMain args
