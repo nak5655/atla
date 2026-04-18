@@ -61,7 +61,7 @@ NuGet 依存がキャッシュに存在しない場合は、NuGet.Client API 経
 ## 言語メモ（型注釈）
 
 - 空白区切りの型適用をサポートします（例: `Array String`, `String Int`）。
-- `Array <T>` はランタイム配列型へ解決されます（例: `Array String` -> `System.String[]`）。
+- `Array T` はランタイム配列型へ解決されます（例: `Array String` -> `System.String[]`）。
 - プリミティブ型名は `String` / `Int` / `Bool` / `Float` / `Unit` のように **大文字始まり**を使用してください。
 
 
