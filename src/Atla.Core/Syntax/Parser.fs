@@ -253,7 +253,6 @@ module Parser =
             Many1 (typeExprAtom ())
             |>> fun typeExprs ->
                 match typeExprs with
-                | [] -> Ast.TypeExpr.Unit(Span.Empty) :> Ast.TypeExpr
                 | head :: [] -> head
                 | head :: tail ->
                     Ast.TypeExpr.Apply(head, tail, { left = head.span.left; right = (List.last tail).span.right }) :> Ast.TypeExpr
