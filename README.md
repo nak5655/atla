@@ -63,6 +63,9 @@ NuGet 依存がキャッシュに存在しない場合は、NuGet.Client API 経
 - 空白区切りの型適用をサポートします（例: `Array String`, `String Int`）。
 - `Array T` はランタイム配列型へ解決されます（例: `Array String` -> `System.String[]`）。
 - プリミティブ型名は `String` / `Int` / `Bool` / `Float` / `Unit` のように **大文字始まり**を使用してください。
+- 型引数付き呼び出しは `target[typeArgs]` 記法を使用します（例: `AppBuilder.Configure[Application] ()`）。
+- インデックスアクセスは `expr !! index` 記法を使用します（例: `values !! i`）。
+- `a[b]` のインデックス記法は廃止されました。既存コードは `a !! b` へ移行してください。
 
 
 ## 参考ドキュメント

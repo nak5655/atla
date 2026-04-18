@@ -72,9 +72,9 @@
 - optional 引数が省略された呼び出しは、既定値を HIR 引数として補完してから `Hir.Expr.Call` を構築する。
 - これにより、`n_x.Split " "` のような 1 引数呼び出しでも `System.String.Split(string, StringSplitOptions=...)` を解決できる。
 
-## インデックスアクセス `expr[index]` の扱い
+## インデックスアクセス `expr !! index` の扱い
 
-- `Parser` は `expr[index]` を `Ast.Expr.IndexAccess` として構築する（`expr.member[index]` のような後置連結も同じ後置規則で処理する）。
+- `Parser` は `expr !! index` を `Ast.Expr.IndexAccess` として構築する。
 - `Analyze` は `IndexAccess` をネイティブ呼び出しへ正規化する。特に 1 次元配列は `System.Array.GetValue(int)` を優先して解決し、配列アクセスを安全に表現する。
 - 配列以外の型では `get_Item(int)` / `get_Chars(int)` を候補として解決する。
-- これにより、`let a = ...Split " "` の結果に対する `a[0]` のような配列アクセスでも、実行時エラーなくILを生成できる。
+- これにより、`let a = ...Split " "` の結果に対する `a !! 0` のような配列アクセスでも、実行時エラーなくILを生成できる。

@@ -1,5 +1,14 @@
 # Plan
 
+## 2026-04-18 GUI向け構文更新（フェーズ4: ドキュメント/サンプル）
+
+- [x] `PLANS.md` に本バッチ（フェーズ4）の実装計画を記録する。
+- [x] `README.md` の言語メモに generic 呼び出し `target[typeArgs]` と index `expr !! index` を追記する。
+- [x] 破壊的変更として `a[b]` 廃止（`a !! b` へ移行）をドキュメントに明記する。
+- [x] `doc/semantic-phase-design.md` の index 記法説明を `expr !! index` 前提へ更新する。
+- [x] `examples/gui/src/main.atla` を `AppBuilder.Configure[Application] ()` 構文へ更新する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj --filter "FullyQualifiedName~ParserTests"` を実行する。
+
 ## 2026-04-18 GUI向け呼び出し解決拡張（フェーズ2-3: Semantic/Test）
 
 - [x] `PLANS.md` に本バッチ（フェーズ2-3）の実装計画を記録する。
