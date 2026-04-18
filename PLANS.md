@@ -1,5 +1,49 @@
 # Plan
 
+## 2026-04-18 型適用の一般化（Array 専用制約の解除）
+
+- [x] `TypeId` に汎用型適用ノードを追加し、型解決/単一化/解決処理で保持できるようにする。
+- [x] `Analyze.resolveTypeExpr` を更新し、`Ast.TypeExpr.Apply` を `Array` 以外でも `TypeId.App` として解決する。
+- [x] 既存の `Array String` は `TypeId.App(Native System.Array, [String])` として扱い、ランタイム配列解決互換を維持する。
+- [x] セマンティクステストを更新し、`String Int` などの非Array型適用が `TypeId.App` として保持されることを検証する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
+## 2026-04-18 Array String 対応（フェーズ7-8）
+
+- [x] フェーズ7: `Array String` の型適用に対する異常系（引数不足/引数過多）診断テストを追加する。
+- [x] フェーズ7: AST/HIR/MIR 境界で `Array String` 型情報が保持されるスナップショット相当テストを追加する。
+- [x] フェーズ8: `README.md` に `Array String` 型注釈（`String` は大文字始まり）を追記する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
+## 2026-04-18 Array String 対応（フェーズ5-6）
+
+- [x] フェーズ5: `Array String` 型引数を持つ関数が HIR→MIR で配列型シグネチャを保持することを Lowering テストで検証する。
+- [x] フェーズ6: `TypeId.App(Native System.Array, [TypeId.String])` が CIL 生成時に `System.String[]` パラメータへ変換されることを Gen テストで検証する。
+- [x] フェーズ6: `Array String` 型注釈を使うプログラムの compile→run E2E テストを追加し、ランタイム挙動を確認する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
+## 2026-04-18 Array String 対応フォローアップ（小文字プリミティブ別名の撤回）
+
+- [x] フェーズ3実装から小文字プリミティブ別名解決を削除する。
+- [x] `Array String` の意味解析テストを仕様どおり検証する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
+## 2026-04-18 Array String 対応（フェーズ3-4）
+
+- [x] フェーズ3: `Analyze.resolveTypeExpr` で `Ast.TypeExpr.Apply`（`Array String`）を解決し、型引数数エラーを診断化する。
+- [x] フェーズ3: （撤回済み）小文字プリミティブ型名（`string` など）の意味解析対応は行わない。
+- [x] フェーズ4: `TypeId` に配列表現を追加し、単一化・解決・ランタイム型変換で配列型を扱えるようにする。
+- [x] フェーズ4: `Array String` の意味解析回帰テストを追加する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
+## 2026-04-18 Array String 対応（フェーズ0-2）
+
+- [x] フェーズ0: 仕様確定（文法は空白区切り、互換文法は対象外、要素アクセスは既存文法を採用）を記録する。
+- [x] フェーズ1: `Ast.TypeExpr` に型適用ノードを追加し、`Array String` を構文木で表現可能にする。
+- [x] フェーズ2: `Parser.typeExpr` を拡張し、空白区切り型適用（`Array String`）を解析可能にする。
+- [x] フェーズ2: `ParserTests` に `Array String` の回帰テストを追加する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
 ## 2026-04-18 buildProject 診断順序の決定性修正（一時フォルダ名の非決定性排除）
 
 - [x] `Resolver.tryRunRestore` の一時ダウンロード先を実行ごと GUID ではなく package/version 由来の決定的なパスへ変更する。

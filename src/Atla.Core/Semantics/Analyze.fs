@@ -10,13 +10,42 @@ module Analyze =
         member this.symbolTable = symbolTable
         member this.scope = scope
 
+        // TypeExprをTypeIdへ解決する。
         member this.resolveTypeExpr (typeExpr: Ast.TypeExpr) : TypeId =
+            let resolveNamedType (name: string) (span: Atla.Core.Data.Span) : TypeId =
+                match scope.ResolveType(name) with
+                | Some typ -> typ
+                | _ -> TypeId.Error (sprintf "Undefined type '%s' at %A" name span)
+
             match typeExpr with
             | :? Ast.TypeExpr.Unit -> TypeId.Unit
             | :? Ast.TypeExpr.Id as idTypeExpr ->
-                match scope.ResolveType(idTypeExpr.name) with
-                | Some t -> t
-                | _ -> TypeId.Error (sprintf "Undefined type '%s' at %A" idTypeExpr.name idTypeExpr.span)
+                resolveNamedType idTypeExpr.name idTypeExpr.span
+            | :? Ast.TypeExpr.Apply as applyTypeExpr ->
+                let resolveArgs () =
+                    let resolvedArgs = applyTypeExpr.args |> List.map this.resolveTypeExpr
+                    let firstArgError =
+                        resolvedArgs
+                        |> List.tryPick (fun argType ->
+                            match argType with
+                            | TypeId.Error message -> Some message
+                            | _ -> None)
+                    resolvedArgs, firstArgError
+
+                match applyTypeExpr.head with
+                | :? Ast.TypeExpr.Id as headId when headId.name = "Array" ->
+                    let resolvedArgs, firstArgError = resolveArgs ()
+                    match firstArgError, resolvedArgs with
+                    | Some message, _ -> TypeId.Error message
+                    | None, [elemType] -> TypeId.App(TypeId.Native typeof<System.Array>, [ elemType ])
+                    | None, _ -> TypeId.Error(sprintf "Array type expects exactly one type argument at %A" applyTypeExpr.span)
+                | _ ->
+                    let resolvedHead = this.resolveTypeExpr applyTypeExpr.head
+                    let resolvedArgs, firstArgError = resolveArgs ()
+                    match resolvedHead, firstArgError with
+                    | TypeId.Error message, _ -> TypeId.Error message
+                    | _, Some message -> TypeId.Error message
+                    | _, None -> TypeId.App(resolvedHead, resolvedArgs)
             | _ -> TypeId.Error (sprintf "Unsupported type expression type at %A" typeExpr.span)
 
         member this.resolveArgType (arg: Ast.FnArg) : TypeId =

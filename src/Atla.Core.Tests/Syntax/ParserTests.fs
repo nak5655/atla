@@ -171,3 +171,37 @@ fn main: () = do
             | None -> Assert.True(false, "main function declaration was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses whitespace separated array type application`` () =
+        let program = "fn join (xs: Array String): () = ()"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "join" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.args with
+                | [ (:? Ast.FnArg.Named as arg) ] ->
+                    match arg.typeExpr with
+                    | :? Ast.TypeExpr.Apply as appType ->
+                        match appType.head, appType.args with
+                        | :? Ast.TypeExpr.Id as headType, [ (:? Ast.TypeExpr.Id as argType) ] ->
+                            Assert.Equal("Array", headType.name)
+                            Assert.Equal("String", argType.name)
+                        | _ ->
+                            Assert.True(false, "type application did not preserve Array/String shape")
+                    | _ ->
+                        Assert.True(false, "argument type was not parsed as Ast.TypeExpr.Apply")
+                | _ ->
+                    Assert.True(false, "function argument list was not parsed as a single named argument")
+            | None ->
+                Assert.True(false, "join function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

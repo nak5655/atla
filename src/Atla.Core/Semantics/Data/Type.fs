@@ -20,29 +20,40 @@ type TypeId =
     | Int
     | Float
     | String
-    | Name of sid: SymbolId // TODO: App of SymbolId * TypeId list // 型コンストラクタ適用
+    | App of head: TypeId * args: TypeId list
+    | Name of sid: SymbolId
     | Fn of args: TypeId list * ret: TypeId
     | Meta of TypeMeta
     | Native of System.Type
     | Error of message: string
 
 module TypeId =
-    let fromSystemType (t: System.Type) : TypeId =
+    let rec fromSystemType (t: System.Type) : TypeId =
         if t = typeof<unit> then Unit
         elif t = typeof<System.Void> then Native typeof<System.Void>
         elif t = typeof<bool> then Bool
         elif t = typeof<int> then Int
         elif t = typeof<float> then Float
         elif t = typeof<string> then String
+        elif t.IsArray then
+            if t.GetArrayRank() = 1 then
+                let elemType = t.GetElementType()
+                if obj.ReferenceEquals(elemType, null) then Native t else App(Native typeof<System.Array>, [ fromSystemType elemType ])
+            else
+                Native t
         else Native t
 
-    let tryToRuntimeSystemType (tid: TypeId) : System.Type option =
+    let rec tryToRuntimeSystemType (tid: TypeId) : System.Type option =
         match tid with
         | Unit -> Some typeof<unit>
         | Bool -> Some typeof<bool>
         | Int -> Some typeof<int>
         | Float -> Some typeof<float>
         | String -> Some typeof<string>
+        | App (Native t, [ elem ]) when t = typeof<System.Array> ->
+            tryToRuntimeSystemType elem
+            |> Option.map (fun elementType -> elementType.MakeArrayType())
+        | App _ -> None
         | Native t -> Some t
         | _ -> None
 
@@ -76,6 +87,7 @@ module Type =
             match subst.TryGetValue(m2) with
             | true, t' -> occurs subst m t'
             | false, _ -> false
+        | App (head, args) -> occurs subst m head || (args |> List.exists (occurs subst m))
         | Fn (args, ret) -> List.exists (occurs subst m) args || occurs subst m ret
         | _ -> false
 
@@ -88,6 +100,10 @@ module Type =
         | Int, Int -> true
         | Float, Float -> true
         | String, String -> true
+        | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
+            List.length leftArgs = List.length rightArgs
+            && canUnify subst leftHead rightHead
+            && (List.zip leftArgs rightArgs |> List.forall (fun (leftArg, rightArg) -> canUnify subst leftArg rightArg))
         | Native t1, Native t2 when t1 = t2 -> true
         | Name id1, Name id2 when id1 = id2 -> true
         | Fn (args1, ret1), Fn (args2, ret2) ->
@@ -108,6 +124,7 @@ module Type =
             match subst.TryGetValue(m) with
             | true, t' -> resolve subst t'
             | false, _ -> tid
+        | App (head, args) -> App (resolve subst head, args |> List.map (resolve subst))
         | Fn (args, ret) -> Fn (List.map (resolve subst) args, resolve subst ret)
         | _ -> tid
 
@@ -121,6 +138,25 @@ module Type =
         | Int, Int -> Result.Ok Int
         | Float, Float -> Result.Ok Float
         | String, String -> Result.Ok String
+        | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
+            if List.length leftArgs <> List.length rightArgs then
+                Result.Error(CannotUnify(tid1, tid2))
+            else
+                match unify subst leftHead rightHead with
+                | Result.Error err -> Result.Error err
+                | Result.Ok unifiedHead ->
+                    let zippedArgs = List.zip leftArgs rightArgs
+                    let rec unifyAppArgs pairs acc =
+                        match pairs with
+                        | [] -> Result.Ok(List.rev acc)
+                        | (leftArg, rightArg) :: rest ->
+                            match unify subst leftArg rightArg with
+                            | Result.Ok unifiedArg -> unifyAppArgs rest (unifiedArg :: acc)
+                            | Result.Error err -> Result.Error err
+
+                    match unifyAppArgs zippedArgs [] with
+                    | Result.Ok unifiedArgs -> Result.Ok(App(unifiedHead, unifiedArgs))
+                    | Result.Error err -> Result.Error err
         | Native t1, Native t2 when t1 = t2 -> Result.Ok (Native t1)
         | Name id1, Name id2 when id1 = id2 -> Result.Ok(Name id1)
         | Fn (args1, ret1), Fn (args2, ret2) ->
@@ -158,6 +194,7 @@ module Type =
     let rec hasError (subst: TypeSubst) (tid: TypeId) : bool =
         match tid with
         | Error _ -> true
+        | App (head, args) -> hasError subst head || (args |> List.exists (hasError subst))
         | Fn (args, ret) -> List.exists (hasError subst) args || hasError subst ret
         | Meta m ->
             match subst.TryGetValue(m) with

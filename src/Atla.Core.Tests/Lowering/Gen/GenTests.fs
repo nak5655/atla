@@ -110,3 +110,50 @@ module GenTests =
         Assert.NotNull(answer)
         Assert.Equal(typeof<Void>, main.ReturnType)
         Assert.Equal(typeof<int>, answer.ReturnType)
+
+    [<Fact>]
+    let ``GenAssembly maps App(ArrayCtor, String) argument to CLR string array`` () =
+        let mainSym = SymbolId 301
+        let firstSym = SymbolId 302
+
+        let mainMethod =
+            Mir.Method(
+                "main",
+                mainSym,
+                [],
+                TypeId.Unit,
+                [ Mir.Ins.Ret ],
+                Mir.Frame())
+
+        let firstMethod =
+            Mir.Method(
+                "first",
+                firstSym,
+                [ TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.String ]) ],
+                TypeId.String,
+                [ Mir.Ins.RetValue(Mir.Value.ImmVal(Mir.Imm.String "ok")) ],
+                Mir.Frame())
+
+        let assembly =
+            Mir.Assembly(
+                "GenArrayStringArg",
+                [ Mir.Module("MainModule", [], [ mainMethod; firstMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-array-string-arg.dll")
+        match Gen.genAssembly(assembly, asmPath) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        let globalsType = loaded.GetType("MainModule.Globals")
+        let first = globalsType.GetMethod("first", BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static)
+
+        Assert.NotNull(first)
+        Assert.Equal(1, first.GetParameters().Length)
+        Assert.Equal(typeof<string[]>, first.GetParameters().[0].ParameterType)
+        Assert.Equal(typeof<string>, first.ReturnType)

@@ -105,3 +105,133 @@ fn main: () =
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``layoutAssembly preserves Array String argument type in MIR method signature`` () =
+        let program = """
+fn keep (xs: Array String): Array String = xs
+"""
+
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let mirAssemblyResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirAssembly =
+                        match mirAssemblyResult with
+                        | { succeeded = true; value = Some asm } -> asm
+                        | { diagnostics = diagnostics } ->
+                            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                            failwith $"layoutAssembly failed: {message}"
+
+                    let keepMethod =
+                        mirAssembly.modules.Head.methods
+                        |> List.tryFind (fun mirMethod -> mirMethod.name = "keep")
+
+                    match keepMethod with
+                    | Some mirMethod ->
+                        Assert.Equal<TypeId list>([ TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.String ]) ], mirMethod.args)
+                        Assert.Equal(TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.String ]), mirMethod.ret)
+                    | None ->
+                        Assert.True(false, "MIR method 'keep' was not found.")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``Array String type snapshot stays stable across AST HIR MIR`` () =
+        let program = "fn keep (xs: Array String): Array String = xs"
+        let input: Input<SourceChar> = StringInput program
+
+        let rec snapshotTypeExpr (typeExpr: Ast.TypeExpr) : string =
+            match typeExpr with
+            | :? Ast.TypeExpr.Id as idType -> $"Id({idType.name})"
+            | :? Ast.TypeExpr.Unit -> "Unit"
+            | :? Ast.TypeExpr.Apply as applyType ->
+                let argSnapshot =
+                    applyType.args
+                    |> List.map snapshotTypeExpr
+                    |> String.concat ","
+                $"Apply({snapshotTypeExpr applyType.head},[{argSnapshot}])"
+            | _ -> "Unsupported"
+
+        let rec snapshotTypeId (tid: TypeId) : string =
+            match tid with
+            | TypeId.String -> "String"
+            | TypeId.Int -> "Int"
+            | TypeId.Unit -> "Unit"
+            | TypeId.Native t when t = typeof<System.Array> -> "ArrayCtor"
+            | TypeId.App (head, args) ->
+                let argSnapshot = args |> List.map snapshotTypeId |> String.concat ","
+                $"App({snapshotTypeId head},[{argSnapshot}])"
+            | TypeId.Fn (args, ret) ->
+                let argSnapshot = args |> List.map snapshotTypeId |> String.concat ","
+                $"Fn([{argSnapshot}],{snapshotTypeId ret})"
+            | TypeId.Error message -> $"Error({message})"
+            | other -> sprintf "%A" other
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let astSnapshot =
+                    match moduleAst.decls with
+                    | [ (:? Ast.Decl.Fn as fnDecl) ] ->
+                        match fnDecl.args with
+                        | [ (:? Ast.FnArg.Named as namedArg) ] ->
+                            $"arg={snapshotTypeExpr namedArg.typeExpr};ret={snapshotTypeExpr fnDecl.ret}"
+                        | _ -> "unexpected-args"
+                    | _ -> "unexpected-decls"
+
+                Assert.Equal("arg=Apply(Id(Array),[Id(String)]);ret=Apply(Id(Array),[Id(String)])", astSnapshot)
+
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hirSnapshot =
+                        hirModule.methods
+                        |> List.tryFind (fun methodInfo -> methodInfo.sym.id = (hirModule.scope.vars.["keep"]).id)
+                        |> Option.map (fun methodInfo -> snapshotTypeId (Type.resolve subst methodInfo.typ))
+                        |> Option.defaultValue "missing"
+
+                    Assert.Equal("Fn([App(ArrayCtor,[String])],App(ArrayCtor,[String]))", hirSnapshot)
+
+                    let mirAssemblyResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirSnapshot =
+                        match mirAssemblyResult with
+                        | { succeeded = true; value = Some asm } ->
+                            asm.modules.Head.methods
+                            |> List.tryFind (fun mirMethod -> mirMethod.name = "keep")
+                            |> Option.map (fun mirMethod ->
+                                let argsSnapshot = mirMethod.args |> List.map snapshotTypeId |> String.concat ","
+                                $"args=[{argsSnapshot}];ret={snapshotTypeId mirMethod.ret}")
+                            |> Option.defaultValue "missing"
+                        | { diagnostics = diagnostics } ->
+                            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                            failwith $"layoutAssembly failed: {message}"
+
+                    Assert.Equal("args=[App(ArrayCtor,[String])];ret=App(ArrayCtor,[String])", mirSnapshot)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
