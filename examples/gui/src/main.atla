@@ -1,9 +1,9 @@
 import Avalonia.Application
 import Avalonia.Controls.AppBuilder
-import Avalonia.Themes.Fluent
+import Avalonia.Themes.Fluent.FluentTheme
 
 fn appMain (app: Application) (args: Array String): () = do
-    app.Styles.Add (Fluent.FluentTheme ())
+    app.Styles.Add (FluentTheme ())
     let window = Window ()
     window.Show ()
     app.Run window
