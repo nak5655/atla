@@ -151,3 +151,70 @@ fn keep (xs: Array String): Array String = xs
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``Array String type snapshot stays stable across AST HIR MIR`` () =
+        let program = "fn keep (xs: Array String): Array String = xs"
+        let input: Input<SourceChar> = StringInput program
+
+        let rec snapshotTypeExpr (typeExpr: Ast.TypeExpr) : string =
+            match typeExpr with
+            | :? Ast.TypeExpr.Id as idType -> $"Id({idType.name})"
+            | :? Ast.TypeExpr.Unit -> "Unit"
+            | :? Ast.TypeExpr.Apply as applyType ->
+                let argSnapshot =
+                    applyType.args
+                    |> List.map snapshotTypeExpr
+                    |> String.concat ","
+                $"Apply({snapshotTypeExpr applyType.head},[{argSnapshot}])"
+            | _ -> "Unsupported"
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let astSnapshot =
+                    match moduleAst.decls with
+                    | [ (:? Ast.Decl.Fn as fnDecl) ] ->
+                        match fnDecl.args with
+                        | [ (:? Ast.FnArg.Named as namedArg) ] ->
+                            $"arg={snapshotTypeExpr namedArg.typeExpr};ret={snapshotTypeExpr fnDecl.ret}"
+                        | _ -> "unexpected-args"
+                    | _ -> "unexpected-decls"
+
+                Assert.Equal("arg=Apply(Id(Array),[Id(String)]);ret=Apply(Id(Array),[Id(String)])", astSnapshot)
+
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hirSnapshot =
+                        hirModule.methods
+                        |> List.tryFind (fun methodInfo -> methodInfo.sym.id = (hirModule.scope.vars.["keep"]).id)
+                        |> Option.map (fun methodInfo -> sprintf "%A" (Type.resolve subst methodInfo.typ))
+                        |> Option.defaultValue "missing"
+
+                    Assert.Equal("Fn ([Array String], Array String)", hirSnapshot)
+
+                    let mirAssemblyResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirSnapshot =
+                        match mirAssemblyResult with
+                        | { succeeded = true; value = Some asm } ->
+                            asm.modules.Head.methods
+                            |> List.tryFind (fun mirMethod -> mirMethod.name = "keep")
+                            |> Option.map (fun mirMethod -> sprintf "args=%A;ret=%A" mirMethod.args mirMethod.ret)
+                            |> Option.defaultValue "missing"
+                        | { diagnostics = diagnostics } ->
+                            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                            failwith $"layoutAssembly failed: {message}"
+
+                    Assert.Equal("args=[Array String];ret=Array String", mirSnapshot)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

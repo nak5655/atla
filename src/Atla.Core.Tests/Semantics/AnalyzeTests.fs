@@ -360,6 +360,86 @@ fn main: () = do
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``array type application with too many type arguments should report diagnostic`` () =
+        let program = "fn bad (xs: Array String Int): () = ()"
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let badMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun meth -> meth.sym.id = hirModule.scope.vars.["bad"].id)
+
+                    match badMethod with
+                    | Some methodInfo ->
+                        match Type.resolve subst methodInfo.typ with
+                        | TypeId.Fn ([ TypeId.Error message ], TypeId.Unit)
+                        | TypeId.Fn ([ TypeId.Error message ], TypeId.Error _) ->
+                            Assert.Contains("Array type expects exactly one type argument", message)
+                        | other ->
+                            Assert.True(false, $"Unexpected method type: {other}")
+                    | None ->
+                        Assert.True(false, "bad method was not found")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``non-array type application should report diagnostic`` () =
+        let program = "fn bad (xs: String Int): () = ()"
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let badMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun meth -> meth.sym.id = hirModule.scope.vars.["bad"].id)
+
+                    match badMethod with
+                    | Some methodInfo ->
+                        match Type.resolve subst methodInfo.typ with
+                        | TypeId.Fn ([ TypeId.Error message ], TypeId.Unit)
+                        | TypeId.Fn ([ TypeId.Error message ], TypeId.Error _) ->
+                            Assert.Contains("does not accept type arguments", message)
+                        | other ->
+                            Assert.True(false, $"Unexpected method type: {other}")
+                    | None ->
+                        Assert.True(false, "bad method was not found")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``for range with array length and index access should be analyzed`` () =
         let program = """
 import System.Int32

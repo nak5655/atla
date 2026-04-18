@@ -1,5 +1,12 @@
 # Plan
 
+## 2026-04-18 Array String 対応（フェーズ7-8）
+
+- [x] フェーズ7: `Array String` の型適用に対する異常系（引数不足/引数過多）診断テストを追加する。
+- [x] フェーズ7: AST/HIR/MIR 境界で `Array String` 型情報が保持されるスナップショット相当テストを追加する。
+- [x] フェーズ8: `README.md` に `Array String` 型注釈（`String` は大文字始まり）を追記する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
 ## 2026-04-18 Array String 対応（フェーズ5-6）
 
 - [x] フェーズ5: `Array String` 型引数を持つ関数が HIR→MIR で配列型シグネチャを保持することを Lowering テストで検証する。
