@@ -612,3 +612,43 @@ fn addTen (): () = do
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``calling non-callable identifier should include type and name in diagnostic`` () =
+        // 引数 `x` は Int 型と明示されており、呼び出し不可能。
+        // エラーメッセージに引数名と実際の型（Int）が含まれることを確認する。
+        let program = """
+fn bad (x: Int): Int = x ()
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    // HIR 診断を収集して検証する
+                    let diagnostics = hirModule.getDiagnostics
+                    let notCallableMsg =
+                        diagnostics
+                        |> List.tryFind (fun d ->
+                            let text = d.toDisplayText()
+                            text.Contains("not callable") && text.Contains("'x'") && text.Contains("Int"))
+                    Assert.True(notCallableMsg.IsSome, sprintf "Expected 'not callable' diagnostic containing name and type, but got: %A" (diagnostics |> List.map (fun d -> d.toDisplayText())))
+                | { diagnostics = diagnostics } ->
+                    // フェーズレベル診断にある場合はそちらを検証する
+                    let notCallableMsg =
+                        diagnostics
+                        |> List.tryFind (fun d ->
+                            let text = d.toDisplayText()
+                            text.Contains("not callable") && text.Contains("'x'") && text.Contains("Int"))
+                    Assert.True(notCallableMsg.IsSome, sprintf "Expected 'not callable' diagnostic containing name and type, but got: %A" (diagnostics |> List.map (fun d -> d.toDisplayText())))
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

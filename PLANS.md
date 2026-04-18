@@ -1,5 +1,13 @@
 # Plan
 
+## 2026-04-18 `Expression is not callable` エラーメッセージへの原因出力
+
+- [x] `Analyze.fs` の `Expression is not callable` エラーメッセージを改善する。
+  - 識別子の場合は名前とシンボル表から引いた実際の型を含める。
+  - 非識別子の場合は `expression` または解決済み型を含める。
+- [x] `AnalyzeTests.fs` に回帰テスト（`calling non-callable identifier should include type and name in diagnostic`）を追加する。
+- [x] `dotnet test src/Atla.slnx` がすべて通過することを確認する。
+
 ## 2026-04-18 `examples/gui` の `Expression is not callable` 原因特定と修正
 
 - [x] `examples/gui/src/main.atla` を再ビルドして、報告された診断を再現する。

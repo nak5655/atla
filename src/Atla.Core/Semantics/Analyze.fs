@@ -587,7 +587,25 @@ module Analyze =
                 | None ->
                     Hir.Expr.ExprError(sprintf "No overload matched argument count %d at %A" allArgs.Length applyExpr.span, tid, applyExpr.span)
             | None ->
-                Hir.Expr.ExprError(sprintf "Expression is not callable at %A" applyExpr.span, tid, applyExpr.span)
+                // 呼び出し対象の名前と実際の型を診断メッセージに含めて原因を特定しやすくする。
+                // Ast から名前を取り出し、シンボル表から実際の宣言型を直接引いて報告する。
+                let funcDesc =
+                    match applyExpr.func with
+                    | :? Ast.Expr.Id as idExpr ->
+                        // シンボル表から実際の宣言型を引くことで、型推論の失敗による型汚染を避ける
+                        let actualTypeStr =
+                            match nameEnv.resolveVar idExpr.name (typeEnv.freshMeta()) with
+                            | [sid] ->
+                                match nameEnv.resolveSym sid with
+                                | Some symInfo -> sprintf " (type: %A)" (typeEnv.resolveType symInfo.typ)
+                                | None -> ""
+                            | _ -> ""
+                        sprintf "'%s'%s" idExpr.name actualTypeStr
+                    | _ ->
+                        match analyzedFunc with
+                        | Hir.Expr.ExprError _ -> "expression"
+                        | _ -> sprintf "expression of type '%A'" (typeEnv.resolveType analyzedFunc.typ)
+                Hir.Expr.ExprError(sprintf "%s is not callable at %A" funcDesc applyExpr.span, tid, applyExpr.span)
         | :? Ast.Expr.IndexAccess as indexAccessExpr ->
             let receiver = analyzeExpr nameEnv typeEnv indexAccessExpr.receiver (typeEnv.freshMeta ())
             let indexExpr = analyzeExpr nameEnv typeEnv indexAccessExpr.index TypeId.Int
