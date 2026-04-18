@@ -181,10 +181,7 @@ fn main: () = do
                                     | _ -> false)
                             | _ -> false
 
-                        if containsIndexAccess exprStmt.expr then
-                            Assert.True(true)
-                        else
-                            Assert.True(false, "index access was not found in parsed expression tree")
+                        Assert.True(containsIndexAccess exprStmt.expr, "index access was not found in parsed expression tree")
                     | _ -> Assert.True(false, "block does not end with expression statement")
                 | _ -> Assert.True(false, "main body was not parsed into block expression")
             | None -> Assert.True(false, "main function declaration was not found")
