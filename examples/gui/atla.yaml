@@ -1,0 +1,13 @@
+package:
+  name: hello
+  version: "0.1.0"
+
+dependencies:
+  Avalonia:
+    version: "12.0.1"
+  Avalonia.Desktop:
+    version: "12.0.1"
+  Avalonia.Themes.Fluent:
+    version: "12.0.1"
+  Avalonia.Fonts.Inter:
+    version: "12.0.1"
