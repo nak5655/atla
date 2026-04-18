@@ -71,13 +71,14 @@ dependencies:
                 Assert.Equal("Newtonsoft.Json", dependency.name)
                 Assert.Equal("13.0.3", dependency.version)
                 Assert.Equal(Path.GetFullPath(expectedPackagePath), dependency.source)
-                Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.referenceAssemblyPaths)
+                Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.compileReferencePaths)
+                Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.runtimeLoadPaths)
             | None ->
                 Assert.Fail("expected build plan")
         )
 
     [<Fact>]
-    let ``buildProject should normalize reference assembly paths from ref then lib for nuget and path dependencies`` () =
+    let ``buildProject should split compile and runtime assembly selection for nuget and path dependencies`` () =
         let rootProject = createTempProjectDir ()
         let depProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
@@ -124,8 +125,10 @@ dependencies:
                 let byName = plan.dependencies |> List.map (fun dep -> dep.name, dep) |> Map.ofList
                 let localDependency = byName["dep-lib"]
                 let nugetDependency = byName["Newtonsoft.Json"]
-                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(pathRefDir, "dep-lib.dll")) ], localDependency.referenceAssemblyPaths)
-                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetRefDir, "Newtonsoft.Json.dll")) ], nugetDependency.referenceAssemblyPaths)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(pathRefDir, "dep-lib.dll")) ], localDependency.compileReferencePaths)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(pathLibDir, "dep-lib-runtime.dll")) ], localDependency.runtimeLoadPaths)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetRefDir, "Newtonsoft.Json.dll")) ], nugetDependency.compileReferencePaths)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetLibDir, "Newtonsoft.Json.dll")) ], nugetDependency.runtimeLoadPaths)
             | None ->
                 Assert.Fail("expected build plan")
         )
@@ -151,11 +154,11 @@ dependencies:
 
             Assert.False(result.succeeded)
             Assert.True(result.plan.IsNone)
-            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("has no supported reference assemblies")))
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("has no supported compile reference assemblies")))
         )
 
     [<Fact>]
-    let ``buildProject should prefer highest tfm within ref over lib`` () =
+    let ``buildProject should prefer highest tfm within ref for compile and within lib for runtime`` () =
         let rootProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
         let packageRoot = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
@@ -186,7 +189,8 @@ dependencies:
             match result.plan with
             | Some plan ->
                 let dependency = Assert.Single(plan.dependencies)
-                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(refNet8, "Newtonsoft.Json.dll")) ], dependency.referenceAssemblyPaths)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(refNet8, "Newtonsoft.Json.dll")) ], dependency.compileReferencePaths)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(libNet10, "Newtonsoft.Json.dll")) ], dependency.runtimeLoadPaths)
             | None ->
                 Assert.Fail("expected build plan")
         )

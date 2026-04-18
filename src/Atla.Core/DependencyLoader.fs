@@ -40,32 +40,32 @@ module DependencyLoader =
           diagnostics = diagnostics
           loadContext = None }
 
-    (* 依存と参照DLLを決定的順序へ正規化する。 *)
-    let private normalizeReferenceAssemblyPaths (dependencies: (string * string list) list) : (string * string) list =
+    (* 依存と runtime ロード対象DLLを決定的順序へ正規化する。 *)
+    let private normalizeRuntimeLoadPaths (dependencies: (string * string list) list) : (string * string) list =
         dependencies
         |> List.sortBy (fun (dependencyName, _) -> dependencyName.ToLowerInvariant())
-        |> List.collect (fun (dependencyName, referenceAssemblyPaths) ->
-            referenceAssemblyPaths
+        |> List.collect (fun (dependencyName, runtimeLoadPaths) ->
+            runtimeLoadPaths
             |> List.sort
             |> List.map (fun path -> dependencyName, path))
 
     (* ロード前のファイル存在チェックを行い、欠損を診断に変換する。 *)
-    let private validateReferencePaths (normalizedReferences: (string * string) list) : Diagnostic list =
-        normalizedReferences
+    let private validateReferencePaths (normalizedRuntimeLoads: (string * string) list) : Diagnostic list =
+        normalizedRuntimeLoads
         |> List.choose (fun (dependencyName, path) ->
             if String.IsNullOrWhiteSpace path then
-                Some(Diagnostic.Error($"dependency `{dependencyName}` contains empty reference assembly path", Span.Empty))
+                Some(Diagnostic.Error($"dependency `{dependencyName}` contains empty runtime load path", Span.Empty))
             else
                 let normalizedPath = Path.GetFullPath(path)
 
                 if File.Exists normalizedPath then
                     None
                 else
-                    Some(Diagnostic.Error($"dependency `{dependencyName}` reference assembly not found: {normalizedPath}", Span.Empty)))
+                    Some(Diagnostic.Error($"dependency `{dependencyName}` runtime load assembly not found: {normalizedPath}", Span.Empty)))
 
     (* simple name 衝突を検出し、競合診断を返す。 *)
-    let private detectSimpleNameConflicts (normalizedReferences: (string * string) list) : Diagnostic list =
-        normalizedReferences
+    let private detectSimpleNameConflicts (normalizedRuntimeLoads: (string * string) list) : Diagnostic list =
+        normalizedRuntimeLoads
         |> List.groupBy (fun (_, path) -> Path.GetFileNameWithoutExtension(path).ToLowerInvariant())
         |> List.choose (fun (simpleName, entries) ->
             let distinctPaths =
@@ -79,7 +79,7 @@ module DependencyLoader =
                 let pathsText = String.Join(", ", distinctPaths)
                 Some(
                     Diagnostic.Error(
-                        $"reference assembly simple-name conflict `{simpleName}` detected across multiple paths: {pathsText}",
+                        $"runtime load assembly simple-name conflict `{simpleName}` detected across multiple paths: {pathsText}",
                         Span.Empty
                     )
                 )
@@ -90,7 +90,7 @@ module DependencyLoader =
     let private toLoadDiagnostic (dependencyName: string) (assemblyPath: string) (exn: exn) : Diagnostic =
         match exn with
         | :? BadImageFormatException ->
-            Diagnostic.Error($"dependency `{dependencyName}` reference assembly is not a valid .NET assembly: {assemblyPath}", Span.Empty)
+            Diagnostic.Error($"dependency `{dependencyName}` runtime load assembly is not a valid .NET assembly: {assemblyPath}", Span.Empty)
         | :? FileNotFoundException as fileNotFound ->
             let missingDetail =
                 if String.IsNullOrWhiteSpace fileNotFound.FileName then
@@ -99,32 +99,32 @@ module DependencyLoader =
                     fileNotFound.FileName
 
             Diagnostic.Error(
-                $"dependency `{dependencyName}` failed to load due to missing chained dependency while loading `{assemblyPath}`: {missingDetail}",
+                $"dependency `{dependencyName}` failed runtime load due to missing chained dependency while loading `{assemblyPath}`: {missingDetail}",
                 Span.Empty
             )
         | :? FileLoadException as fileLoad ->
             Diagnostic.Error(
-                $"dependency `{dependencyName}` failed to load assembly `{assemblyPath}` due to load error: {fileLoad.Message}",
+                $"dependency `{dependencyName}` failed runtime load for assembly `{assemblyPath}` due to load error: {fileLoad.Message}",
                 Span.Empty
             )
         | _ ->
-            Diagnostic.Error($"dependency `{dependencyName}` failed to load assembly `{assemblyPath}`: {exn.Message}", Span.Empty)
+            Diagnostic.Error($"dependency `{dependencyName}` failed runtime load for assembly `{assemblyPath}`: {exn.Message}", Span.Empty)
 
     (* 依存DLLを AssemblyLoadContext へロードし、意味解析直前に解決可能な状態を作る。 *)
     let loadDependencies (dependencies: (string * string list) list) : DependencyLoadResult =
-        let normalizedReferences = normalizeReferenceAssemblyPaths dependencies
-        let pathDiagnostics = validateReferencePaths normalizedReferences
-        let conflictDiagnostics = detectSimpleNameConflicts normalizedReferences
+        let normalizedRuntimeLoads = normalizeRuntimeLoadPaths dependencies
+        let pathDiagnostics = validateReferencePaths normalizedRuntimeLoads
+        let conflictDiagnostics = detectSimpleNameConflicts normalizedRuntimeLoads
 
         if not (List.isEmpty pathDiagnostics) then
             failed pathDiagnostics
         elif not (List.isEmpty conflictDiagnostics) then
             failed conflictDiagnostics
-        elif List.isEmpty normalizedReferences then
+        elif List.isEmpty normalizedRuntimeLoads then
             succeeded None
         else
             let assemblyIndex =
-                normalizedReferences
+                normalizedRuntimeLoads
                 |> List.map snd
                 |> List.distinct
                 |> List.map (fun path -> Path.GetFileNameWithoutExtension(path).ToLowerInvariant(), path)
@@ -143,7 +143,7 @@ module DependencyLoader =
                 else
                     (loadedPaths, diagnostics)
 
-            let _, diagnostics = normalizedReferences |> List.fold folder ([], [])
+            let _, diagnostics = normalizedRuntimeLoads |> List.fold folder ([], [])
 
             if List.isEmpty diagnostics then
                 succeeded (Some context)

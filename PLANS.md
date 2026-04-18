@@ -1,5 +1,66 @@
 # Plan
 
+## 2026-04-18 依存解決の用途別分離（compile参照 / runtimeロード）実装タスク
+
+### フェーズ0: 設計確定
+- [x] `ResolvedDependency` を `compileReferencePaths` と `runtimeLoadPaths` の2系統へ拡張する方針を確定する。
+- [x] `compileReferencePaths` の選定規則を `ref > lib`、`runtimeLoadPaths` の選定規則を `lib > ref` として明文化する。
+- [x] 既存パイプライン（`AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL`）を崩さない受け渡し境界を定義する。
+
+### フェーズ1: モデル拡張（Atla.Core / Atla.Build）
+- [x] `Atla.Core.Compile` の依存入力モデルに `compileReferencePaths` / `runtimeLoadPaths` を追加する。
+- [x] `Atla.Build` の `ResolvedDependency` 生成経路を新モデルへ移行する。
+- [x] 既存呼び出し側（Console / LanguageServer / Tests）のコンストラクタ/変換コードを新モデルへ更新する。
+
+### フェーズ2: Resolver 分離実装
+- [x] `Resolver` に compile参照選定関数（`ref > lib`）と runtimeロード選定関数（`lib > ref`）を分離実装する。
+- [x] TFM 優先順位と診断メッセージを両経路で統一し、順序決定性を維持する。
+- [x] package ごとに compile/runtime の両パスが決定的順で返ることを保証する。
+
+### フェーズ3: DependencyLoader 連携
+- [x] `DependencyLoader.loadDependencies` が `runtimeLoadPaths` のみを入力として扱うように変更する。
+- [x] runtimeロード対象に `ref/` が混入した場合の診断（または自動フォールバック）方針を実装する。
+- [x] 依存ロード失敗診断に「compile参照とruntimeロードのどちらで失敗したか」を含める。
+
+### フェーズ4: Compile パイプライン接続
+- [x] `Compile.compile` で dependency 入力のマッピングを新モデルへ更新する。
+- [x] Semantic 直前ロードの既存順序・失敗ハンドリングを維持する。
+- [x] CIL 生成側が compile参照情報を必要とする場合の受け渡し口を整理する（現時点不要なら明記のみ）。
+
+### フェーズ5: テスト
+- [x] `Atla.Build.Tests` に compile/runtime 選定差分（`ref > lib` / `lib > ref`）の単体テストを追加する。
+- [x] `Atla.Core.Tests` に Avalonia 相当ケースの runtimeロード成功回帰テストを追加する。
+- [x] `Atla.Console.Tests` に `examples/gui` ビルド回帰テストを追加する。
+- [x] 決定性テスト（同一入力でパス順・診断順が不変）を Build/Core で追加する。
+
+### フェーズ6: ドキュメント
+- [x] `README.md` に依存解決の2系統（compile参照/runtimeロード）を追記する。
+- [x] `doc/build-system-phase1.md` に Resolver の選定規則と理由（参照専用DLLの実ロード回避）を追記する。
+- [x] 既存の NuGet/依存ロード説明との整合性を確認する。
+
+### 完了条件
+- [ ] `dotnet run --project src/Atla.Console -- build examples/gui` が成功する。
+- [x] `dotnet test src/Atla.Build.Tests/Atla.Build.Tests.fsproj` が成功する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` が成功する。
+- [x] `dotnet test src/Atla.Console.Tests/Atla.Console.Tests.fsproj` が成功する。
+- [x] `dotnet test src/Atla.slnx` が成功する。
+
+## 2026-04-18 `examples/gui` 差し戻し + エラー原因調査
+
+- [x] `PLANS.md` に差し戻しと調査の計画を追記する。
+- [x] 直前コミット（`Fix examples/gui build by using minimal entrypoint`）の変更を取り消す。
+- [x] `dotnet run --project src/Atla.Console -- build examples/gui` を再実行し、報告されたエラーを再現する。
+- [x] CIL 生成経路を調査し、`Avalonia.Application` エラーの発生要因を特定する（修正は行わない）。
+- [x] 影響確認として `dotnet test src/Atla.Console.Tests/Atla.Console.Tests.fsproj` を実行する。
+
+## 2026-04-18 `examples/gui` ビルド通過化（Avalonia制約の回避）
+
+- [x] `PLANS.md` に本対応の実装計画を追記する。
+- [x] `examples/gui/src/main.atla` を現行バックエンドでビルド可能な最小エントリポイントへ差し替える。
+- [x] `examples/gui` の目的と制約（Avalonia API 呼び出しを一時的に外す理由）をドキュメントへ追記する。
+- [x] `dotnet run --project src/Atla.Console -- build examples/gui` を実行し、ビルド通過を確認する。
+- [x] フルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+
 ## 2026-04-18 GUI向け構文更新（フェーズ4: ドキュメント/サンプル）
 
 - [x] `PLANS.md` に本バッチ（フェーズ4）の実装計画を記録する。

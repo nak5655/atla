@@ -58,6 +58,13 @@ NuGet パッケージキャッシュの参照先を上書きします。
 NuGet 依存がキャッシュに存在しない場合は、NuGet.Client API 経由で取得を自動試行します。
 キャッシュ配置を明示したい場合は `NUGET_PACKAGES` を設定してください。
 
+## 依存DLLの2系統解決（compile / runtime）
+
+- Atla は依存DLLを次の2用途で別々に扱います。
+  - `compileReferencePaths`: 意味解析・型解決の参照向け（優先順: `ref > lib`）
+  - `runtimeLoadPaths`: 実際の `AssemblyLoadContext` ロード向け（優先順: `lib > ref`、`lib` 不在時は `ref` フォールバック）
+- この分離により、参照専用DLL（`ref`）を実ロードして失敗するケースを避けつつ、コンパイル時の参照解決精度を維持します。
+
 ## 言語メモ（型注釈）
 
 - 空白区切りの型適用をサポートします（例: `Array String`, `String Int`）。

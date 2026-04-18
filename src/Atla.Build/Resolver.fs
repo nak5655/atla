@@ -214,12 +214,23 @@ module internal Resolver =
         else
             Ok dlls
 
-    (* 依存ルート配下から参照DLL候補を収集する。
-       フェーズ2仕様に従い ref/ を優先し、次に lib/ を探索して、優先TFMのDLL群を採用する。 *)
-    let private tryCollectReferenceAssemblyPaths (dependencyName: string) (dependencyRoot: string) : Result<string list, Diagnostic list> =
+    (* 探索ルート優先順に従って DLL 群を収集する共通実装。
+       routeLabel は診断時に compile/runtime のどちらを解決中か識別するために使う。 *)
+    let private tryCollectAssemblyPathsByPriority
+        (routeLabel: string)
+        (dependencyName: string)
+        (dependencyRoot: string)
+        (preferredRoots: string list)
+        : Result<string list, Diagnostic list> =
         let normalizedRoot = normalizePath dependencyRoot
         let refRoot = Path.Join(normalizedRoot, "ref")
         let libRoot = Path.Join(normalizedRoot, "lib")
+
+        let rootLookup =
+            Map.ofList [
+                "ref", refRoot
+                "lib", libRoot
+            ]
 
         let tryCollectFromRoot (probeRoot: string) : Result<string list, Diagnostic list> option =
             match trySelectTfmDirectory probeRoot with
@@ -233,17 +244,57 @@ module internal Resolver =
                 | Result.Error diagnostics ->
                     Some(Result.Error diagnostics)
 
-        match tryCollectFromRoot refRoot, tryCollectFromRoot libRoot with
-        | Some(Ok dlls), _ -> Ok dlls
-        | Some(Result.Error diagnostics), _ -> Result.Error diagnostics
-        | None, Some(Ok dlls) -> Ok dlls
-        | None, Some(Result.Error diagnostics) -> Result.Error diagnostics
-        | None, None ->
-            let tfmListText = String.Join(", ", tfmPriority)
-            Result.Error [
-                error
-                    $"dependency `{dependencyName}` has no supported reference assemblies. expected under `ref/<tfm>` or `lib/<tfm>` where tfm is one of [{tfmListText}]. root: {normalizedRoot}"
-            ]
+        let resolvedCandidates =
+            preferredRoots
+            |> List.choose (fun rootKey ->
+                match rootLookup.TryFind(rootKey) with
+                | Some probeRoot ->
+                    Some(rootKey, probeRoot, tryCollectFromRoot probeRoot)
+                | None ->
+                    None)
+
+        let rec pickCandidate (candidates: (string * string * Result<string list, Diagnostic list> option) list) =
+            match candidates with
+            | [] ->
+                let tfmListText = String.Join(", ", tfmPriority)
+                Result.Error [
+                    error
+                        $"dependency `{dependencyName}` has no supported {routeLabel} assemblies. expected under `ref/<tfm>` or `lib/<tfm>` where tfm is one of [{tfmListText}]. root: {normalizedRoot}"
+                ]
+            | (_, _, Some(Ok dlls)) :: _ ->
+                Ok dlls
+            | (_, _, Some(Result.Error diagnostics)) :: _ ->
+                Result.Error diagnostics
+            | _ :: rest ->
+                pickCandidate rest
+
+        pickCandidate resolvedCandidates
+
+    (* compile 時に使用する参照 DLL 群を収集する（ref 優先）。 *)
+    let private tryCollectCompileReferenceAssemblyPaths (dependencyName: string) (dependencyRoot: string) : Result<string list, Diagnostic list> =
+        tryCollectAssemblyPathsByPriority "compile reference" dependencyName dependencyRoot [ "ref"; "lib" ]
+
+    (* runtime ロード時に使用する DLL 群を収集する（lib 優先、無ければ ref へフォールバック）。 *)
+    let private tryCollectRuntimeLoadAssemblyPaths (dependencyName: string) (dependencyRoot: string) : Result<string list, Diagnostic list> =
+        tryCollectAssemblyPathsByPriority "runtime load" dependencyName dependencyRoot [ "lib"; "ref" ]
+
+    (* 依存ルート配下から compile/runtime の両経路を収集する。 *)
+    let private tryCollectDependencyAssemblyPaths
+        (dependencyName: string)
+        (dependencyRoot: string)
+        : Result<string list * string list, Diagnostic list> =
+        match
+            tryCollectCompileReferenceAssemblyPaths dependencyName dependencyRoot,
+            tryCollectRuntimeLoadAssemblyPaths dependencyName dependencyRoot
+        with
+        | Ok compileReferencePaths, Ok runtimeLoadPaths ->
+            Ok(compileReferencePaths, runtimeLoadPaths)
+        | Result.Error diagnostics, Ok _ ->
+            Result.Error diagnostics
+        | Ok _, Result.Error diagnostics ->
+            Result.Error diagnostics
+        | Result.Error compileDiagnostics, Result.Error runtimeDiagnostics ->
+            Result.Error(compileDiagnostics @ runtimeDiagnostics)
 
     (* NuGet 依存の解決本体:
        1) キャッシュ直解決
@@ -254,25 +305,27 @@ module internal Resolver =
         let packagePath = toNuGetPackagePath packagesRoot packageId version
 
         if Directory.Exists packagePath then
-            match tryCollectReferenceAssemblyPaths packageId packagePath with
-            | Ok referenceAssemblyPaths ->
+            match tryCollectDependencyAssemblyPaths packageId packagePath with
+            | Ok(compileReferencePaths, runtimeLoadPaths) ->
                 Ok
                     { name = packageId
                       version = version
                       source = packagePath
-                      referenceAssemblyPaths = referenceAssemblyPaths }
+                      compileReferencePaths = compileReferencePaths
+                      runtimeLoadPaths = runtimeLoadPaths }
             | Result.Error diagnostics ->
                 Result.Error diagnostics
         else
             match tryRunRestore packagesRoot packageId version with
             | Ok () when Directory.Exists packagePath ->
-                match tryCollectReferenceAssemblyPaths packageId packagePath with
-                | Ok referenceAssemblyPaths ->
+                match tryCollectDependencyAssemblyPaths packageId packagePath with
+                | Ok(compileReferencePaths, runtimeLoadPaths) ->
                     Ok
                         { name = packageId
                           version = version
                           source = packagePath
-                          referenceAssemblyPaths = referenceAssemblyPaths }
+                          compileReferencePaths = compileReferencePaths
+                          runtimeLoadPaths = runtimeLoadPaths }
                 | Result.Error diagnostics ->
                     Result.Error diagnostics
             | Ok () ->
@@ -344,15 +397,16 @@ module internal Resolver =
 
                         { state with diagnostics = state.diagnostics @ wrapped }
                     | Ok dependencyManifest ->
-                        match tryCollectReferenceAssemblyPaths dependencyManifest.name dependencyRoot with
+                        match tryCollectDependencyAssemblyPaths dependencyManifest.name dependencyRoot with
                         | Result.Error diagnostics ->
                             { state with diagnostics = state.diagnostics @ diagnostics }
-                        | Ok referenceAssemblyPaths ->
+                        | Ok(compileReferencePaths, runtimeLoadPaths) ->
                             let resolved : Compiler.ResolvedDependency =
                                 { name = dependencyManifest.name
                                   version = dependencyManifest.version
                                   source = dependencyRoot
-                                  referenceAssemblyPaths = referenceAssemblyPaths }
+                                  compileReferencePaths = compileReferencePaths
+                                  runtimeLoadPaths = runtimeLoadPaths }
 
                             let enteredState =
                                 let mergedState = mergeResolvedDependency state resolved

@@ -446,7 +446,8 @@ fn main: Int = 0
             { name = "missing-dependency"
               version = "1.0.0"
               source = outDir
-              referenceAssemblyPaths = [ missingPath ] }
+              compileReferencePaths = [ missingPath ]
+              runtimeLoadPaths = [ missingPath ] }
 
         let result =
             Compiler.compile
@@ -456,7 +457,7 @@ fn main: Int = 0
                   dependencies = [ dependency ] }
 
         Assert.False(result.succeeded)
-        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("reference assembly not found"))
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("runtime load assembly not found"))
 
     [<Fact>]
     let ``compile should fail when dependency reference assembly is invalid format`` () =
@@ -473,7 +474,8 @@ fn main: Int = 0
             { name = "invalid-dependency"
               version = "1.0.0"
               source = outDir
-              referenceAssemblyPaths = [ invalidDllPath ] }
+              compileReferencePaths = [ invalidDllPath ]
+              runtimeLoadPaths = [ invalidDllPath ] }
 
         let result =
             Compiler.compile
@@ -483,7 +485,7 @@ fn main: Int = 0
                   dependencies = [ dependency ] }
 
         Assert.False(result.succeeded)
-        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("not a valid .NET assembly"))
+        Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.message.Contains("runtime load assembly is not a valid .NET assembly"))
 
     [<Fact>]
     let ``compile should resolve imported system type after dependency assembly load`` () =
@@ -505,11 +507,45 @@ fn main: () = do
             { name = "System.Text.Json"
               version = "runtime"
               source = runtimeDir
-              referenceAssemblyPaths = [ jsonAssemblyPath ] }
+              compileReferencePaths = [ jsonAssemblyPath ]
+              runtimeLoadPaths = [ jsonAssemblyPath ] }
 
         let result =
             Compiler.compile
                 { asmName = "JsonImportWithDependency"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [ dependency ] }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+
+    [<Fact>]
+    let ``compile should use runtimeLoadPaths even when compileReferencePaths are unusable`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        let program = """
+import System.Text.Json.JsonNamingPolicy
+
+fn main: () = do
+    var policy = JsonNamingPolicy.CamelCase
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+        let unusableCompileRefPath = Path.Join(outDir, "missing-compile-ref.dll")
+
+        let dependency: Compiler.ResolvedDependency =
+            { name = "System.Text.Json"
+              version = "runtime"
+              source = runtimeDir
+              compileReferencePaths = [ unusableCompileRefPath ]
+              runtimeLoadPaths = [ jsonAssemblyPath ] }
+
+        let result =
+            Compiler.compile
+                { asmName = "JsonImportRuntimePathPriority"
                   source = program.Trim()
                   outDir = outDir
                   dependencies = [ dependency ] }
@@ -566,13 +602,15 @@ fn main: () = do
             { name = "dep-a"
               version = "1.0.0"
               source = depDirA
-              referenceAssemblyPaths = [ copiedPathA ] }
+              compileReferencePaths = [ copiedPathA ]
+              runtimeLoadPaths = [ copiedPathA ] }
 
         let depB: Compiler.ResolvedDependency =
             { name = "dep-b"
               version = "1.0.0"
               source = depDirB
-              referenceAssemblyPaths = [ copiedPathB ] }
+              compileReferencePaths = [ copiedPathB ]
+              runtimeLoadPaths = [ copiedPathB ] }
 
         let result =
             Compiler.compile
@@ -593,13 +631,15 @@ fn main: () = do
             { name = "zzz-missing"
               version = "1.0.0"
               source = outDir
-              referenceAssemblyPaths = [ Path.Join(outDir, "zzz-missing.dll") ] }
+              compileReferencePaths = [ Path.Join(outDir, "zzz-missing.dll") ]
+              runtimeLoadPaths = [ Path.Join(outDir, "zzz-missing.dll") ] }
 
         let depB: Compiler.ResolvedDependency =
             { name = "aaa-missing"
               version = "1.0.0"
               source = outDir
-              referenceAssemblyPaths = [ Path.Join(outDir, "aaa-missing.dll") ] }
+              compileReferencePaths = [ Path.Join(outDir, "aaa-missing.dll") ]
+              runtimeLoadPaths = [ Path.Join(outDir, "aaa-missing.dll") ] }
 
         let compileOnce () =
             Compiler.compile
