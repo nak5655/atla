@@ -187,15 +187,19 @@ fn main (): Int = do
 
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
-        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
-        | { succeeded = true; value = Some hirModule } ->
-            let mainSid = hirModule.scope.vars.["main"]
-            let mainMethod = hirModule.methods |> List.find (fun methodInfo -> methodInfo.sym.id = mainSid.id)
-            let diagnosticMessages = mainMethod.getDiagnostics |> List.map (fun d -> d.message)
-            Assert.Contains(diagnosticMessages, fun msg -> msg.Contains("Expression is not callable (target kind=expression error"))
-        | { diagnostics = diagnostics } ->
-            let diagnosticMessages = diagnostics |> List.map (fun d -> d.message)
-            Assert.Contains(diagnosticMessages, fun msg -> msg.Contains("Expression is not callable (target kind=expression error"))
+        let diagnosticMessages =
+            match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+            | { succeeded = true; value = Some hirModule } ->
+                let mainSid = hirModule.scope.vars.["main"]
+                let mainMethod = hirModule.methods |> List.find (fun methodInfo -> methodInfo.sym.id = mainSid.id)
+                mainMethod.getDiagnostics |> List.map (fun d -> d.message)
+            | { diagnostics = diagnostics } ->
+                diagnostics |> List.map (fun d -> d.message)
+
+        // unit リテラルを関数として呼び出すと診断が発生する。
+        Assert.True(diagnosticMessages.Length > 0, "unit リテラルを呼び出した際に診断が生成されていません。")
+        // コンパイラ内部表現（"target kind="）が漏れていないことを確認する。
+        Assert.DoesNotContain(diagnosticMessages, fun msg -> msg.Contains("target kind="))
 
     [<Fact>]
     let ``nullary function call with unit argument syntax should be allowed`` () =
