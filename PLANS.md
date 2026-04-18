@@ -1,5 +1,15 @@
 # Plan
 
+## 2026-04-18 `examples/gui` の `Expression is not callable` 原因特定と修正
+
+- [x] `examples/gui/src/main.atla` を再ビルドして、報告された診断を再現する。
+- [x] `examples/gui/src/main.atla` の import パスと Avalonia API 呼び出しを点検し、コンパイラ診断との対応を確認する。
+- [x] `TypeId.Name` で保持される外部型に対する runtime 型解決経路を意味解析へ追加し、誤診断を減らす。
+- [x] generic 型引数解決でも `TypeId.Name` を runtime 型へ解決できるよう修正する。
+- [x] 回帰確認として `Atla.Core.Tests` に回帰テストを追加する。
+- [x] 回帰確認としてフルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
+- [x] 変更内容を要約し、原因と解決策を日本語で報告する。
+
 ## 2026-04-18 依存解決の用途別分離（compile参照 / runtimeロード）実装タスク
 
 ### フェーズ0: 設計確定
