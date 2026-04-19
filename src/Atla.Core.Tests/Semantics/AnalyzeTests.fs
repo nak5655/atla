@@ -780,3 +780,68 @@ fn apply (f: Int -> Int) (x: Int): Int = f x
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    // ─────────────────────────────────────────────────────────────
+    // エラーメッセージ・エラー伝播テスト
+    // ─────────────────────────────────────────────────────────────
+
+    /// 型不一致エラーのメッセージが TypeId の F# 内部表現ではなく
+    /// 人間が読みやすい型名（"int", "string" 等）を含むことを検証する。
+    [<Fact>]
+    let ``unify error message uses human readable type names`` () =
+        let span = Span.Empty
+        // fn bad (): Int = "hello"  → Int と String が不一致
+        let retTypeExpr = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let bodyExpr = Ast.Expr.String("hello", span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("bad", [], retTypeExpr, bodyExpr, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = false; diagnostics = diagnostics } ->
+            Assert.NotEmpty(diagnostics)
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            // F# 内部表現（"Int" や "String"）ではなく、短い型名が含まれるべき。
+            Assert.Contains("int", message)
+            Assert.Contains("string", message)
+            Assert.DoesNotContain("TypeId", message)
+        | { succeeded = true } ->
+            Assert.True(false, "型不一致のプログラムが成功してはならない。")
+
+    /// do ブロックの末尾式が ExprError のとき、余分な "Cannot unify" エラーが
+    /// 報告されず、根本エラーのみが診断に現れることを検証する。
+    [<Fact>]
+    let ``block with ExprError as last expression propagates root error without extra Cannot unify`` () =
+        // fn bad (): Int = do
+        //     undefinedVar
+        // ここで undefinedVar は未定義 → ExprError が末尾式となる。
+        // 従来はさらに "Cannot unify types: int and unknown" が報告されていたが、
+        // 修正後は根本エラー（未定義変数）のみが報告されるべき。
+        let program = """
+fn bad (): Int = do
+    undefinedVar
+"""
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let messages = diagnostics |> List.map (fun d -> d.toDisplayText())
+                    let combined = messages |> String.concat "; "
+                    // 根本エラー（未定義変数）が報告されるべき。
+                    Assert.Contains("undefinedVar", combined)
+                    // "Cannot unify" は根本原因ではないため報告されてはならない。
+                    Assert.DoesNotContain("Cannot unify", combined)
+                | { succeeded = true } ->
+                    Assert.True(false, "未定義変数を含むプログラムが成功してはならない。")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

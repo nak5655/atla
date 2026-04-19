@@ -221,14 +221,6 @@ module Analyze =
         | TypeId.Unit -> true
         | _ -> false
 
-    let private unifyOrError (typeEnv: TypeEnv) (expected: TypeId) (actual: TypeId) (span: Atla.Core.Data.Span) : Result<unit, Hir.Expr> =
-        if isNativeVoid typeEnv actual && not (isUnitContext typeEnv expected) then
-            Result.Error(errorExpr expected span (UnifyError.toMessage (UnifyError.CannotUnify(expected, actual))))
-        else
-            match typeEnv.unifyTypes expected actual with
-            | Result.Ok _ -> Result.Ok ()
-            | Result.Error err -> Result.Error(errorExpr expected span (UnifyError.toMessage err))
-
     let private tryDefaultArgExpr (parameterInfo: ParameterInfo) (span: Atla.Core.Data.Span) : Hir.Expr option =
         if not parameterInfo.IsOptional then
             None
@@ -408,6 +400,28 @@ module Analyze =
         | TypeId.Meta _ -> "unknown"
         | TypeId.Error _ -> "<error>"
 
+    // UnifyError を人間が読みやすいメッセージへ変換する。
+    // formatTypeForDisplay を使い、型変数（Meta）を "unknown" に、既知の型を短い名前で表示する。
+    let private formatUnifyError (nameEnv: NameEnv) (typeEnv: TypeEnv) (err: UnifyError) : string =
+        match err with
+        | UnifyError.DifferentFunctionArity (leftArity, rightArity) ->
+            sprintf "Cannot unify function types with different number of arguments: %d vs %d" leftArity rightArity
+        | UnifyError.OccursCheckFailed (meta, actual) ->
+            sprintf "Occurs check failed: %A occurs in %s" meta (formatTypeForDisplay nameEnv typeEnv actual)
+        | UnifyError.CannotUnify (left, right) ->
+            sprintf "Cannot unify types: %s and %s"
+                (formatTypeForDisplay nameEnv typeEnv left)
+                (formatTypeForDisplay nameEnv typeEnv right)
+
+    // 型の単一化を試み、失敗時は ExprError を返す。
+    let private unifyOrError (nameEnv: NameEnv) (typeEnv: TypeEnv) (expected: TypeId) (actual: TypeId) (span: Atla.Core.Data.Span) : Result<unit, Hir.Expr> =
+        if isNativeVoid typeEnv actual && not (isUnitContext typeEnv expected) then
+            Result.Error(errorExpr expected span (formatUnifyError nameEnv typeEnv (UnifyError.CannotUnify(expected, actual))))
+        else
+            match typeEnv.unifyTypes expected actual with
+            | Result.Ok _ -> Result.Ok ()
+            | Result.Error err -> Result.Error(errorExpr expected span (formatUnifyError nameEnv typeEnv err))
+
     // Generate an overload error message with available candidates when argument count does not match.
     let private noOverloadMessage (callable: Hir.Callable) (argCount: int) : string =
         match callable with
@@ -456,19 +470,19 @@ module Analyze =
     and private analyzeExpr (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Ast.Expr) (tid: TypeId) : Hir.Expr =
         match expr with
         | :? Ast.Expr.Unit as unitExpr ->
-            match unifyOrError typeEnv tid TypeId.Unit unitExpr.span with
+            match unifyOrError nameEnv typeEnv tid TypeId.Unit unitExpr.span with
             | Result.Ok _ -> Hir.Expr.Unit(unitExpr.span)
             | Result.Error exprErr -> exprErr
         | :? Ast.Expr.Int as intExpr ->
-            match unifyOrError typeEnv tid TypeId.Int intExpr.span with
+            match unifyOrError nameEnv typeEnv tid TypeId.Int intExpr.span with
             | Result.Ok _ -> Hir.Expr.Int(intExpr.value, intExpr.span)
             | Result.Error exprErr -> exprErr
         | :? Ast.Expr.Float as floatExpr ->
-            match unifyOrError typeEnv tid TypeId.Float floatExpr.span with
+            match unifyOrError nameEnv typeEnv tid TypeId.Float floatExpr.span with
             | Result.Ok _ -> Hir.Expr.Float(floatExpr.value, floatExpr.span)
             | Result.Error exprErr -> exprErr
         | :? Ast.Expr.String as stringExpr ->
-            match unifyOrError typeEnv tid TypeId.String stringExpr.span with
+            match unifyOrError nameEnv typeEnv tid TypeId.String stringExpr.span with
             | Result.Ok _ -> Hir.Expr.String(stringExpr.value, stringExpr.span)
             | Result.Error exprErr -> exprErr
         | :? Ast.Expr.Id as idExpr ->
@@ -481,7 +495,7 @@ module Analyze =
                     | SymbolKind.External(ExternalBinding.ConstructorGroup _) ->
                         Hir.Expr.Id(sid, tid, idExpr.span)
                     | _ ->
-                        match unifyOrError typeEnv tid symInfo.typ idExpr.span with
+                        match unifyOrError nameEnv typeEnv tid symInfo.typ idExpr.span with
                         | Result.Ok _ -> Hir.Expr.Id(sid, symInfo.typ, idExpr.span)
                         | Result.Error exprErr -> exprErr
                 | None ->
@@ -524,11 +538,19 @@ module Analyze =
             let stmts = blockExpr.stmts |> List.map (analyzeStmt blockNameEnv typeEnv)
             match List.last stmts with
             | Hir.Stmt.ExprStmt (expr, _) ->
-                match unifyOrError typeEnv tid expr.typ blockExpr.span with
-                | Result.Ok _ ->
+                // 末尾式が既にエラーの場合は型不一致チェックをスキップして根本エラーをそのまま伝播する。
+                // これにより "Undefined member 'Foo'" のような根本エラーの後に
+                // 症状としての "Cannot unify" エラーが余分に報告されるのを防ぐ。
+                match expr with
+                | Hir.Expr.ExprError _ ->
                     let leadingStmts = stmts |> List.take (stmts.Length - 1)
                     Hir.Expr.Block(leadingStmts, expr, tid, blockExpr.span)
-                | Result.Error exprErr -> exprErr
+                | _ ->
+                    match unifyOrError nameEnv typeEnv tid expr.typ blockExpr.span with
+                    | Result.Ok _ ->
+                        let leadingStmts = stmts |> List.take (stmts.Length - 1)
+                        Hir.Expr.Block(leadingStmts, expr, tid, blockExpr.span)
+                    | Result.Error exprErr -> exprErr
             | _ ->
                 let unitExpr = Hir.Expr.Unit ({ left = blockExpr.span.right; right = blockExpr.span.right })
                 Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
@@ -665,7 +687,7 @@ module Analyze =
                                 else arg)
                         | _ -> callArgs
 
-                    match unifyOrError typeEnv tid callRetType applyExpr.span with
+                    match unifyOrError nameEnv typeEnv tid callRetType applyExpr.span with
                     | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, specializedCallArgs, callRetType, applyExpr.span)
                     | Result.Error exprErr -> exprErr
                 | None ->
@@ -692,7 +714,7 @@ module Analyze =
                     match tryResolveIndexerMethod systemType with
                     | Some methodInfo ->
                         let returnType = TypeId.fromSystemType methodInfo.ReturnType
-                        match unifyOrError typeEnv tid returnType indexAccessExpr.span with
+                        match unifyOrError nameEnv typeEnv tid returnType indexAccessExpr.span with
                         | Result.Ok _ ->
                             Result.Ok(Hir.Expr.Call(Hir.Callable.NativeMethod methodInfo, None, [ receiver; indexExpr ], returnType, indexAccessExpr.span))
                         | Result.Error errExpr -> Result.Error errExpr
@@ -873,7 +895,7 @@ module Analyze =
             let rhs = analyzeExpr nameEnv typeEnv assignStmt.value tid
             match nameEnv.resolveVar assignStmt.name (typeEnv.freshMeta ()) with
             | [sid] ->
-                match unifyOrError typeEnv (nameEnv.resolveSymType sid) rhs.typ assignStmt.span with
+                match unifyOrError nameEnv typeEnv (nameEnv.resolveSymType sid) rhs.typ assignStmt.span with
                 | Result.Ok _ -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)
                 | Result.Error exprErr -> Hir.Stmt.ExprStmt(exprErr, assignStmt.span)
             | [] -> Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s'" assignStmt.name, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
