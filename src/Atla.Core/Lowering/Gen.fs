@@ -16,14 +16,21 @@ module Gen =
     // Genモジュール内で共有する生成コンテキスト
     type Env =
         { typeBuilders: Dictionary<SymbolId, TypeBuilder>
-          methodBuilders: Dictionary<SymbolId, MethodInfo> }
+          methodBuilders: Dictionary<SymbolId, MethodInfo>
+          // インポート型（TypeId.Name sid）を System.Type へ解決するためのシンボルテーブル。
+          symbolTable: SymbolTable }
 
     // MIRのTypeIdをCIL生成用のSystem.Typeへ解決する
     let private resolveType (env: Env) (tid: TypeId) : Type =
         let resolveName (sid: SymbolId) : Type option =
             match env.typeBuilders.TryGetValue(sid) with
             | true, builder -> Some (builder :> Type)
-            | false, _ -> None
+            | false, _ ->
+                // ユーザー定義型に見つからない場合、インポートされた外部型として SymbolTable を参照する。
+                match env.symbolTable.Get(sid) with
+                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
+                    Some sysType
+                | _ -> None
 
         match TypeId.tryResolveToSystemType resolveName tid with
         | Some resolvedType -> resolvedType
@@ -286,7 +293,7 @@ module Gen =
         |> Seq.tryFind (fun method -> method.Name = "main")
 
     // モジュール単位で型とグローバル関数を生成し、mainメソッドを返す
-    let private genModule (moduleBuilder: ModuleBuilder) (modul: Mir.Module) : MethodInfo option =
+    let private genModule (moduleBuilder: ModuleBuilder) (modul: Mir.Module) (symbolTable: SymbolTable) : MethodInfo option =
         let resolveMethodReturnType (env: Env) (tid: TypeId) : Type =
             match tid with
             | TypeId.Unit -> typeof<Void>
@@ -295,7 +302,8 @@ module Gen =
         // モジュール内型解決テーブルを初期化
         let env =
             { typeBuilders = Dictionary<SymbolId, TypeBuilder>()
-              methodBuilders = Dictionary<SymbolId, MethodInfo>() }
+              methodBuilders = Dictionary<SymbolId, MethodInfo>()
+              symbolTable = symbolTable }
 
         // 型を先に宣言してTypeId.Name解決を可能にする
         for typ in modul.types do
@@ -331,7 +339,7 @@ module Gen =
         | methodInfo -> Some methodInfo
 
     // MIRアセンブリをPEファイルとして出力する
-    let rec genAssembly (assembly: Mir.Assembly, filePath: string) : PhaseResult<unit> =
+    let rec genAssembly (assembly: Mir.Assembly, filePath: string, symbolTable: SymbolTable) : PhaseResult<unit> =
         try
             // アセンブリビルダー初期化
             assembly.builder <- PersistedAssemblyBuilder(AssemblyName(assembly.name), typeof<obj>.Assembly)
@@ -341,7 +349,7 @@ module Gen =
                 assembly.modules
                 |> List.fold (fun foundMain modul ->
                     let moduleBuilder = assembly.builder.DefineDynamicModule(modul.name)
-                    let moduleMain = genModule moduleBuilder modul
+                    let moduleMain = genModule moduleBuilder modul symbolTable
 
                     match foundMain with
                     | Some _ -> foundMain

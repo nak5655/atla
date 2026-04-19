@@ -513,6 +513,9 @@ module Analyze =
                     let resolvedType = memberMethodType instanceOpt methodInfo
                     Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, instanceOpt, resolvedType, genericApplyExpr.span)
                 match analyzedTarget with
+                | Hir.Expr.ExprError _ ->
+                    // func 式が既にエラーの場合、元のエラーをそのまま伝播して汎用メッセージで隠さない。
+                    analyzedTarget
                 | Hir.Expr.MemberAccess (Hir.Member.NativeMethod methodInfo, instanceOpt, _, _) ->
                     match closeGenericMethod genericArgTypes methodInfo with
                     | Some closedMethodInfo -> buildGenericMemberExpr instanceOpt closedMethodInfo

@@ -44,7 +44,7 @@ module GenTests =
         Directory.CreateDirectory(outputDir) |> ignore
 
         let asmPath = Path.Join(outputDir, "gen-type-resolution.dll")
-        match Gen.genAssembly(assembly, asmPath) with
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
         | { succeeded = true } -> ()
         | { diagnostics = diagnostics } ->
             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
@@ -92,7 +92,7 @@ module GenTests =
         Directory.CreateDirectory(outputDir) |> ignore
 
         let asmPath = Path.Join(outputDir, "gen-unit-void-return.dll")
-        match Gen.genAssembly(assembly, asmPath) with
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
         | { succeeded = true } -> ()
         | { diagnostics = diagnostics } ->
             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
@@ -143,7 +143,7 @@ module GenTests =
         Directory.CreateDirectory(outputDir) |> ignore
 
         let asmPath = Path.Join(outputDir, "gen-array-string-arg.dll")
-        match Gen.genAssembly(assembly, asmPath) with
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
         | { succeeded = true } -> ()
         | { diagnostics = diagnostics } ->
             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
@@ -200,7 +200,7 @@ module GenTests =
         Directory.CreateDirectory(outputDir) |> ignore
 
         let asmPath = Path.Join(outputDir, "gen-higher-order.dll")
-        match Gen.genAssembly(assembly, asmPath) with
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
         | { succeeded = true } -> ()
         | { diagnostics = diagnostics } ->
             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "

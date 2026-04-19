@@ -1,6 +1,6 @@
 import Avalonia.Application
 import Avalonia.Controls.Window
-import Avalonia.Controls.AppBuilder
+import Avalonia.AppBuilder
 import Avalonia.Controls.DesktopApplicationExtensions
 
 fn appMain (app: Application) (args: Array String): () = do
@@ -8,7 +8,7 @@ fn appMain (app: Application) (args: Array String): () = do
     window.Show ()
     DesktopApplicationExtensions.Run app window
 
-fn main (args: Array String): Int = do
+fn main (args: Array String): () = do
     let config = AppBuilder.Configure[Application] ()
     let config2 = config.UsePlatformDetect ()
     config2.Start appMain args

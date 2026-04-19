@@ -71,7 +71,7 @@ module Compiler =
                                 | { value = Some mir; diagnostics = layoutDiagnostics } ->
                                     // Code Generation
                                     let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
-                                    match Gen.genAssembly(mir, outPath) with
+                                    match Gen.genAssembly(mir, outPath, symbolTable) with
                                     | { succeeded = false; diagnostics = genDiagnostics } ->
                                         failed (analyzeDiagnostics @ layoutDiagnostics @ genDiagnostics)
                                     | { diagnostics = genDiagnostics } ->

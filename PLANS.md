@@ -1,5 +1,23 @@
 # Plan
 
+## 2026-04-19 example/gui ビルド成功に必要な機能実装
+
+### 目的
+- `examples/gui` のビルドが 3 つのエラーで失敗していた問題を解消する。
+  1. `Expression is not a generic callable target at [11:17, 11:50)` ← インポートパス誤り＋GenericApply エラー伝播欠如
+  2. `Undefined type 'unknown' at [12:18, 12:42)` ← 上記の連鎖エラー
+  3. `Undefined type 'unknown' at [13:4, 13:17)` ← 上記の連鎖エラー
+- インポート型（`TypeId.Name sid`）を関数パラメータとして使った場合に CIL 生成が失敗する問題を修正する。
+
+### 実装内容
+- [x] `examples/gui/src/main.atla`: `import Avalonia.Controls.AppBuilder` → `import Avalonia.AppBuilder`（正しい名前空間）
+- [x] `examples/gui/src/main.atla`: `fn main ... : Int` → `fn main ... : ()`（`AppBuilder.Start` は void を返す）
+- [x] `Semantics/Analyze.fs`: `GenericApply` で `analyzedTarget` が `ExprError` のとき、元のエラーをそのまま伝播する（汎用メッセージで隠さない）
+- [x] `Lowering/Gen.fs`: `Env` に `symbolTable: SymbolTable` フィールドを追加し、`resolveType` で `TypeId.Name sid` を `SymbolTable` 経由で `SystemTypeRef` → `System.Type` に解決する
+- [x] `Compile.fs`: `Gen.genAssembly` に `symbolTable` を渡すよう変更
+- [x] `Atla.Core.Tests/Lowering/LoweringTests.fs`: インポート型をパラメータに持つ関数のコンパイルテストを追加
+- [x] `Atla.Console.Tests/Build/BuildTests.fs`: gui リグレッションテストを成功期待（exit code 0）に更新
+
 ## 2026-04-19 UnifyError.toMessage を Analyze.fs へ移動・エラー伝播バグの修正
 
 ### 目的

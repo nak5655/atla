@@ -81,7 +81,7 @@ fn main: () = do
         Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.dll")))
 
     [<Fact>]
-    let ``build should keep examples gui diagnostics as failure regression`` () =
+    let ``build should succeed for examples gui`` () =
         match tryFindRepositoryRoot () with
         | Some repositoryRoot ->
             let projectRoot = Path.Join(repositoryRoot, "examples", "gui")
@@ -91,6 +91,7 @@ fn main: () = do
                 Directory.Delete(outDir, recursive = true)
 
             let code = Console.run [| "build"; projectRoot; "-o"; outDir; "--name"; "GuiExampleRegression" |]
-            Assert.Equal(1, code)
+            Assert.Equal(0, code)
+            Assert.True(File.Exists(Path.Join(outDir, "GuiExampleRegression.dll")))
         | None ->
             Assert.True(false, "Repository root was not found from current working directory.")
