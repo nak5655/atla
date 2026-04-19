@@ -1,11 +1,12 @@
 import Avalonia.Application
 import Avalonia.Controls.Window
 import Avalonia.Controls.AppBuilder
+import Avalonia.Controls.DesktopApplicationExtensions
 
 fn appMain (app: Application) (args: Array String): () = do
     let window = Window ()
     window.Show ()
-    app.Run window
+    DesktopApplicationExtensions.Run app window
 
 fn main (args: Array String): Int = do
     let config = AppBuilder.Configure[Application] ()
