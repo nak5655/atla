@@ -31,13 +31,17 @@ module Gen =
             match tid with
             // CILメンバーシグネチャに載せられない型は明示的に失敗
             | TypeId.Name sid -> failwithf "Unknown type symbol: %A" sid
-            | TypeId.Fn _ -> failwithf "Function type is not supported for CIL member signatures: %A" tid
+            // TypeId.Fn はデリゲート型（Func<>/Action<>）へ変換する。
+            | TypeId.Fn _ ->
+                match TypeId.tryToRuntimeSystemType tid with
+                | Some delegateType -> delegateType
+                | None -> failwithf "Cannot map function type to delegate: %A" tid
             | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" tid
             | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
             | _ -> failwithf "Unsupported type for CIL generation: %A" tid
 
     // MIRの値をILスタックへ積む
-    let rec private genValue (gen: ILGenerator) (value: Mir.Value) =
+    let rec private genValue (env: Env) (gen: ILGenerator) (value: Mir.Value) =
         match value with
         // 即値のロード
         | Mir.Value.ImmVal imm ->
@@ -58,10 +62,23 @@ module Gen =
             if field.IsStatic then
                 gen.Emit(OpCodes.Ldsfld, field)
             else
-                genValue gen (Mir.Value.RegVal(Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0
+                genValue env gen (Mir.Value.RegVal(Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0
                 gen.Emit(OpCodes.Ldfld, field)
         | Mir.Value.MethodVal methodInfo ->
             failwithf "Method value cannot be loaded directly: %A" methodInfo
+        // グローバル関数をデリゲートに変換してスタックへ積む。
+        // 静的メソッドの場合: ldnull; ldftn <method>; newobj <delegateType>::.ctor(object, native int)
+        | Mir.Value.FnDelegate (sid, delegateType) ->
+            match env.methodBuilders.TryGetValue(sid) with
+            | true, methodInfo ->
+                let ctor = delegateType.GetConstructor([| typeof<obj>; typeof<nativeint> |])
+                if obj.ReferenceEquals(ctor, null) then
+                    failwithf "Delegate type '%s' has no (object, native int) constructor" delegateType.FullName
+                gen.Emit(OpCodes.Ldnull)
+                gen.Emit(OpCodes.Ldftn, methodInfo)
+                gen.Emit(OpCodes.Newobj, ctor)
+            | false, _ ->
+                failwithf "Unknown method symbol for delegate creation: %A" sid
 
     // MIR命令をIL命令列へ変換する
     let private genIns (env: Env) (gen: ILGenerator) (ins: Mir.Ins) =
@@ -81,25 +98,25 @@ module Gen =
                 match receiver with
                 | Mir.Value.RegVal (Mir.Reg.Loc index) -> gen.Emit(OpCodes.Ldloca, index)
                 | Mir.Value.RegVal (Mir.Reg.Arg index) -> gen.Emit(OpCodes.Ldarga, index)
-                | _ -> genValue gen receiver
+                | _ -> genValue env gen receiver
 
                 for arg in rest do
-                    genValue gen arg
+                    genValue env gen arg
             | _ ->
                 for arg in args do
-                    genValue gen arg
+                    genValue env gen arg
 
         match ins with
         // 単純代入
         | Mir.Ins.Assign (reg, value) ->
-            genValue gen value
+            genValue env gen value
             match reg with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         // 二項演算（TAC）
         | Mir.Ins.TAC (dest, arg1, op, arg2) ->
-            genValue gen arg1
-            genValue gen arg2
+            genValue env gen arg1
+            genValue env gen arg2
             let opcode =
                 match op with
                 | Mir.OpCode.Add -> OpCodes.Add
@@ -116,7 +133,7 @@ module Gen =
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         // 戻り値付きreturn
         | Mir.Ins.RetValue value ->
-            genValue gen value
+            genValue env gen value
             gen.Emit(OpCodes.Ret)
         // 戻り値なしreturn
         | Mir.Ins.Ret ->
@@ -129,11 +146,11 @@ module Gen =
                 emitMethodCall mi
             | Choice2Of2 ci ->
                 for arg in args do
-                    genValue gen arg
+                    genValue env gen arg
                 gen.Emit(OpCodes.Call, ci)
         | Mir.Ins.CallSym (sid, args) ->
             for arg in args do
-                genValue gen arg
+                genValue env gen arg
             match env.methodBuilders.TryGetValue(sid) with
             | true, methodInfo -> gen.Emit(OpCodes.Call, methodInfo)
             | false, _ -> failwithf "Unknown method symbol: %A" sid
@@ -145,7 +162,7 @@ module Gen =
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         | Mir.Ins.CallAssignSym (dst, sid, args) ->
             for arg in args do
-                genValue gen arg
+                genValue env gen arg
             match env.methodBuilders.TryGetValue(sid) with
             | true, methodInfo -> emitMethodCall methodInfo
             | false, _ -> failwithf "Unknown method symbol: %A" sid
@@ -154,7 +171,7 @@ module Gen =
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         | Mir.Ins.New (dst, ctor, args) ->
             for arg in args do
-                genValue gen arg
+                genValue env gen arg
             gen.Emit(OpCodes.Newobj, ctor)
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
@@ -170,13 +187,13 @@ module Gen =
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Br_S else OpCodes.Br
             gen.Emit(op, label.get(gen))
         | Mir.Ins.JumpTrue (cond, label) ->
-            genValue gen cond
+            genValue env gen cond
             // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brtrue_S else OpCodes.Brtrue
             gen.Emit(op, label.get(gen))
         | Mir.Ins.JumpFalse (cond, label) ->
-            genValue gen cond
+            genValue env gen cond
             // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
             let offset = label.ilOffset - gen.ILOffset
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brfalse_S else OpCodes.Brfalse
@@ -197,8 +214,10 @@ module Gen =
                     | true, tid ->
                         match tid with
                         | TypeId.Meta _
-                        | TypeId.Fn _
                         | TypeId.Error _ -> typeof<obj>
+                        // TypeId.Fn はデリゲート型へ変換する。変換できない場合は obj にフォールバック。
+                        | TypeId.Fn _ ->
+                            TypeId.tryToRuntimeSystemType tid |> Option.defaultValue typeof<obj>
                         | _ -> resolveType _env tid
                     | false, _ -> typeof<obj>
                 gen.DeclareLocal(localType) |> ignore
@@ -221,8 +240,10 @@ module Gen =
                     | true, tid ->
                         match tid with
                         | TypeId.Meta _
-                        | TypeId.Fn _
                         | TypeId.Error _ -> typeof<obj>
+                        // TypeId.Fn はデリゲート型へ変換する。変換できない場合は obj にフォールバック。
+                        | TypeId.Fn _ ->
+                            TypeId.tryToRuntimeSystemType tid |> Option.defaultValue typeof<obj>
                         | _ -> resolveType _env tid
                     | false, _ -> typeof<obj>
                 gen.DeclareLocal(localType) |> ignore

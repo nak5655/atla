@@ -59,7 +59,10 @@ module Infer =
 
         let inferredMethods =
             hirModule.methods
-            |> List.map (fun meth -> Hir.Method(meth.sym, inferExpr typeSubst meth.body, Type.resolve typeSubst meth.typ, meth.span))
+            |> List.map (fun meth ->
+                // 引数の型も型変数が解決された具体的な型に置き換える。
+                let inferredArgs = meth.args |> List.map (fun (sid, tid) -> (sid, Type.resolve typeSubst tid))
+                Hir.Method(meth.sym, inferredArgs, inferExpr typeSubst meth.body, Type.resolve typeSubst meth.typ, meth.span))
 
         let inferredTypes =
             hirModule.types

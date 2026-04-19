@@ -43,7 +43,48 @@ module TypeId =
                 Native t
         else Native t
 
-    let rec tryToRuntimeSystemType (tid: TypeId) : System.Type option =
+    // デリゲート型かどうかを判定する。
+    let isDelegateType (t: System.Type) : bool =
+        not (obj.ReferenceEquals(t, null))
+        && typeof<System.Delegate>.IsAssignableFrom(t)
+        && t <> typeof<System.Delegate>
+        && t <> typeof<System.MulticastDelegate>
+
+    // デリゲート型の Invoke メソッドを取得する。
+    let tryGetDelegateInvoke (t: System.Type) : System.Reflection.MethodInfo option =
+        if isDelegateType t then t.GetMethod("Invoke") |> Option.ofObj
+        else None
+
+    // TypeId.Fn を .NET デリゲート型へ変換する。
+    // Fn([A, B], Unit) → Action<A, B>
+    // Fn([A], R) → Func<A, R>
+    let rec tryFnToDelegateSystemType (args: TypeId list) (ret: TypeId) : System.Type option =
+        let resolvedArgs = args |> List.map tryToRuntimeSystemType
+        let resolvedRet = tryToRuntimeSystemType ret
+        if resolvedArgs |> List.exists Option.isNone then None
+        else
+            let argTypes = resolvedArgs |> List.choose id |> List.toArray
+            match resolvedRet with
+            | None -> None
+            | Some retType ->
+                let isVoid = retType = typeof<unit> || retType = typeof<System.Void>
+                if isVoid then
+                    match argTypes.Length with
+                    | 0 -> Some typeof<System.Action>
+                    | 1 -> Some (typedefof<System.Action<_>>.MakeGenericType(argTypes))
+                    | 2 -> Some (typedefof<System.Action<_, _>>.MakeGenericType(argTypes))
+                    | 3 -> Some (typedefof<System.Action<_, _, _>>.MakeGenericType(argTypes))
+                    | _ -> None
+                else
+                    let funcArgTypes = Array.append argTypes [| retType |]
+                    match argTypes.Length with
+                    | 0 -> Some (typedefof<System.Func<_>>.MakeGenericType(funcArgTypes))
+                    | 1 -> Some (typedefof<System.Func<_, _>>.MakeGenericType(funcArgTypes))
+                    | 2 -> Some (typedefof<System.Func<_, _, _>>.MakeGenericType(funcArgTypes))
+                    | 3 -> Some (typedefof<System.Func<_, _, _, _>>.MakeGenericType(funcArgTypes))
+                    | _ -> None
+
+    and tryToRuntimeSystemType (tid: TypeId) : System.Type option =
         match tid with
         | Unit -> Some typeof<unit>
         | Bool -> Some typeof<bool>
@@ -55,6 +96,8 @@ module TypeId =
             |> Option.map (fun elementType -> elementType.MakeArrayType())
         | App _ -> None
         | Native t -> Some t
+        // TypeId.Fn は対応するデリゲート型（Func<>/Action<>）へ変換する。
+        | Fn (args, ret) -> tryFnToDelegateSystemType args ret
         | _ -> None
 
     let tryResolveToSystemType (resolveName: SymbolId -> System.Type option) (tid: TypeId) : System.Type option =
@@ -114,6 +157,17 @@ module Type =
                 false
              else
                 (List.zip args1 args2) |> List.forall (fun (a1, a2) -> canUnify subst a1 a2) && (canUnify subst ret1 ret2)
+        // TypeId.Fn と .NET デリゲート型（Native）の互換チェック。
+        | Fn (fnArgs, fnRet), Native t when TypeId.isDelegateType t ->
+            match TypeId.tryGetDelegateInvoke t with
+            | None -> false
+            | Some invoke ->
+                let dArgs = invoke.GetParameters() |> Array.toList |> List.map (fun p -> TypeId.fromSystemType p.ParameterType)
+                let dRet = TypeId.fromSystemType invoke.ReturnType
+                List.length fnArgs = List.length dArgs
+                && (List.zip fnArgs dArgs |> List.forall (fun (a, da) -> canUnify subst a da))
+                && canUnify subst fnRet dRet
+        | Native t, Fn _ when TypeId.isDelegateType t -> canUnify subst tid2 tid1
         | Meta m, tid ->
             match subst.TryGetValue(m) with
             | true, resolvedTid -> canUnify subst resolvedTid tid
@@ -187,6 +241,29 @@ module Type =
                     match unify subst ret1 ret2 with
                     | Result.Ok ret -> Result.Ok(Fn(args, ret))
                     | Result.Error err -> Result.Error err
+        // TypeId.Fn と .NET デリゲート型（Native）の単一化。
+        // 関数型とデリゲート型は互換とみなし、引数・戻り値を逐一単一化したうえで Native を採用する。
+        | Fn (fnArgs, fnRet), Native t when TypeId.isDelegateType t ->
+            match TypeId.tryGetDelegateInvoke t with
+            | None -> Result.Error(CannotUnify(tid1, tid2))
+            | Some invoke ->
+                let dArgs = invoke.GetParameters() |> Array.toList |> List.map (fun p -> TypeId.fromSystemType p.ParameterType)
+                let dRet = TypeId.fromSystemType invoke.ReturnType
+                if List.length fnArgs <> List.length dArgs then
+                    Result.Error(DifferentFunctionArity(List.length fnArgs, List.length dArgs))
+                else
+                    let argUnifyResults = List.zip fnArgs dArgs |> List.map (fun (a, da) -> unify subst a da)
+                    let retUnifyResult = unify subst fnRet dRet
+                    match argUnifyResults |> List.tryFind Result.isError, retUnifyResult with
+                    | None, Result.Ok _ -> Result.Ok (Native t)
+                    | None, Result.Error e -> Result.Error e
+                    | Some (Result.Error e), _ -> Result.Error e
+                    | Some (Result.Ok _), _ -> Result.Error(CannotUnify(tid1, tid2))
+        | Native t, Fn _ when TypeId.isDelegateType t ->
+            // 対称性のため引数を入れ替えて再帰する。
+            match unify subst tid2 tid1 with
+            | Result.Ok _ -> Result.Ok (Native t)
+            | Result.Error e -> Result.Error e
         | Meta m, tid
         | tid, Meta m ->
             let resolvedTid = resolve subst tid

@@ -637,3 +637,146 @@ fn addTen (): () = do
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    // ─────────────────────────────────────────────────────────────
+    // 第一級関数テスト
+    // ─────────────────────────────────────────────────────────────
+
+    /// パーサが `Int -> Int` を Ast.TypeExpr.Arrow としてパースできることを検証する。
+    [<Fact>]
+    let ``parser should parse arrow type expression`` () =
+        let program = """
+fn apply (f: Int -> Int) (x: Int): Int = x
+"""
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let decl = moduleAst.decls.Head :?> Ast.Decl.Fn
+                let firstArg = decl.args.Head :?> Ast.FnArg.Named
+                Assert.IsType<Ast.TypeExpr.Arrow>(firstArg.typeExpr) |> ignore
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    /// 関数型引数を持つ atla 関数の意味解析が成功することを検証する。
+    [<Fact>]
+    let ``semantic analysis supports higher-order function parameters`` () =
+        let program = """
+fn twice (x: Int): Int = x + x
+fn apply (f: Int -> Int) (x: Int): Int = f x
+"""
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "高階関数の意味解析でエラーが発生しました。")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    /// 関数型引数を持つメソッドのレイアウトが正常に完了することを検証する。
+    [<Fact>]
+    let ``layout supports higher-order function parameters`` () =
+        let program = """
+fn twice (x: Int): Int = x + x
+fn apply (f: Int -> Int) (x: Int): Int = f x
+"""
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hirAssembly = Hir.Assembly("TestAsm", [ hirModule ])
+                    match Layout.layoutAssembly("TestAsm", hirAssembly) with
+                    | { succeeded = true; value = Some mirAsm } ->
+                        let methods = mirAsm.modules.Head.methods
+                        Assert.Equal(2, methods.Length)
+                    | { diagnostics = diagnostics } ->
+                        let message =
+                            diagnostics
+                            |> List.map (fun err -> err.toDisplayText())
+                            |> String.concat "; "
+                        Assert.True(false, $"Layout failed: {message}")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    /// atla 関数を .NET メソッドへデリゲートとして渡す意味解析が成功することを検証する。
+    /// Fn([Int], Int) が Converter<int,int> などのデリゲート型と統一できることを検証する。
+    [<Fact>]
+    let ``semantic analysis supports passing atla function to .NET delegate parameter`` () =
+        // TypeId.Fn が .NET デリゲート型と canUnify できることを確認する。
+        let subst = TypeSubst()
+        let canUnify a b = Type.canUnify subst a b
+        Assert.True(canUnify (TypeId.Fn([ TypeId.Int ], TypeId.Int)) (TypeId.Native typeof<System.Converter<int, int>>), "Fn([Int], Int) は Converter<int,int> と統一できなければならない。")
+        Assert.True(canUnify (TypeId.Fn([ TypeId.Int ], TypeId.Int)) (TypeId.Native typeof<System.Func<int, int>>), "Fn([Int], Int) は Func<int,int> と統一できなければならない。")
+        Assert.True(canUnify (TypeId.Fn([ TypeId.Int ], TypeId.Unit)) (TypeId.Native typeof<System.Action<int>>), "Fn([Int], Unit) は Action<int> と統一できなければならない。")
+        Assert.False(canUnify (TypeId.Fn([ TypeId.Int ], TypeId.Int)) (TypeId.Native typeof<System.Action<int>>), "Fn([Int], Int) は戻り値の型が異なるため Action<int> と統一できてはならない。")
+
+    /// `Hir.Method.args` が宣言順で引数を保持することを検証する。
+    [<Fact>]
+    let ``Hir.Method.args preserves parameter declaration order`` () =
+        let program = """
+fn apply (f: Int -> Int) (x: Int): Int = f x
+"""
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let applyMethod = hirModule.methods.Head
+                    // apply は (f: Int -> Int, x: Int) の順で 2 引数を持つ。
+                    Assert.Equal(2, applyMethod.args.Length)
+                    let (_, firstArgType) = applyMethod.args.[0]
+                    let (_, secondArgType) = applyMethod.args.[1]
+                    Assert.Equal(TypeId.Fn([ TypeId.Int ], TypeId.Int), Type.resolve subst firstArgType)
+                    Assert.Equal(TypeId.Int, Type.resolve subst secondArgType)
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

@@ -276,9 +276,9 @@ module Parser =
             (asTypeExpr (typeExprUnit ())) <|> (asTypeExpr (typeExprId ()))
         )
 
-    and typeExpr (): PackratParser<Token, Ast.TypeExpr> =
+    // 空白区切りの型適用（例: Array String）を左結合で畳み込む。
+    and typeExprApply (): PackratParser<Token, Ast.TypeExpr> =
         Delay (fun () ->
-            // 空白区切りの型適用（例: Array String）を左結合で畳み込む。
             Many1 (typeExprAtom ())
             |>> fun typeExprs ->
                 match typeExprs with
@@ -288,6 +288,18 @@ module Parser =
                 | head :: [] -> head
                 | head :: tail ->
                     Ast.TypeExpr.Apply(head, tail, { left = head.span.left; right = (List.last tail).span.right }) :> Ast.TypeExpr
+        )
+
+    // 関数型（例: Int -> Int）を右結合でパースする。
+    // typeExpr := typeExprApply ('->' typeExpr)?
+    and typeExpr (): PackratParser<Token, Ast.TypeExpr> =
+        Delay (fun () ->
+            typeExprApply () <&> Optional (keyword "->" &> typeExpr ())
+            |>> fun (argType, retOpt) ->
+                match retOpt with
+                | None -> argType
+                | Some retType ->
+                    Ast.TypeExpr.Arrow(argType, retType, { left = argType.span.left; right = retType.span.right }) :> Ast.TypeExpr
         )
 
     // データ宣言
