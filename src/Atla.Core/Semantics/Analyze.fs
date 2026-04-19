@@ -911,14 +911,18 @@ module Analyze =
                     assignStmt.span)
         | :? Ast.Stmt.ExprStmt as exprStmt ->
             // 式文（ExprStmt）では戻り値は常に捨てられる。
-            // void を返すメソッドは TypeId.Unit コンテキストで正しく処理されるため、まず Unit で解析する。
-            // 型不一致エラー（非 void 型の戻り値が捨てられるケース）になった場合は、
-            // 型制約なし（freshMeta）で再解析して戻り値を捨てる形式の式として許容する。
+            // 二段解析方式を採用する:
+            //   1. まず TypeId.Unit で解析する（isNativeVoid チェックを通じて void 返却メソッドを正常に処理するため）。
+            //   2. ExprError になった場合のみ freshMeta で再解析し、非 void 型の戻り値を捨てる式として許容する。
+            // freshMeta で一本化しない理由: unifyOrError 内の isNativeVoid チェックが
+            //   「expected がフリーメタかつ actual が NativeVoid」のケースをエラーにするため、
+            //   Console.WriteLine 等の void 返却メソッドが失敗してしまう。
+            //   また let 束縛（void 値の代入は禁止）と同じ freshMeta を使うため区別できない。
             let unitExpr = analyzeExpr nameEnv typeEnv exprStmt.expr TypeId.Unit
             let expr =
                 match unitExpr with
                 | Hir.Expr.ExprError _ ->
-                    // Unit で失敗した場合、非 void 型を返す式が文脈として使われているかもしれない。
+                    // Unit で失敗した場合、非 void 型を返す式が式文として使われているかもしれない。
                     // フリーなメタ型で再解析して戻り値を捨てる式として許容する。
                     analyzeExpr nameEnv typeEnv exprStmt.expr (typeEnv.freshMeta())
                 | _ -> unitExpr

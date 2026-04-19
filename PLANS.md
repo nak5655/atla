@@ -11,10 +11,12 @@
 - 式文（ExprStmt）では戻り値は常に捨てられるため、任意の型が許容されるべき。
 
 ### 実装内容
-- [x] `Semantics/Analyze.fs`: `analyzeStmt` の ExprStmt ケースで `TypeId.Unit` を `typeEnv.freshMeta()` に変更する。
-- [x] `Semantics/Analyze.fs`: `unifyOrError` で `actual = NativeVoid` かつ `expected` がフリーメタ変数のとき `Result.Ok ()` を返す（void を unit 相当として扱う）。
-- [x] `Atla.Core.Tests/Semantics/AnalyzeTests.fs`: 非 void 型の式文が ExprStmt として許容されることを検証するテストを追加する。
-- [x] `dotnet test` で全テストがパスすることを確認する。
+- [x] `Semantics/Analyze.fs`: `analyzeStmt` の ExprStmt ケースを二段解析方式に変更する。
+  - まず `TypeId.Unit` で解析（void を返すメソッドの正常処理を維持）。
+  - `ExprError` になった場合のみ `typeEnv.freshMeta()` で再解析し、非 void 型の戻り値を捨てる式として許容する。
+  - `let x = Console.WriteLine "hi"` のような void 値の変数束縛は依然としてエラーとなる。
+- [x] `Atla.Core.Tests/Semantics/AnalyzeTests.fs`: 非 void 型（StringBuilder を返す Append）の式文が ExprStmt として許容されることを検証するテストを追加する。
+- [x] `dotnet test` で全テスト（Core 68件・Console 6件）がパスすることを確認する。
 
 
 
