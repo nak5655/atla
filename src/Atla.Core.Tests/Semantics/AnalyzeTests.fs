@@ -149,6 +149,46 @@ fn main (): Int = do
             Assert.NotEmpty(diagnostics)
 
     [<Fact>]
+    let ``non-void call should be allowed in expression statement`` () =
+        // StringBuilder.Append は StringBuilder を返すが、非末尾の式文として使われる場合は戻り値を捨てて許容する。
+        // テストシナリオ:
+        //   fn process (sb: StringBuilder): () = do
+        //       sb.Append "ok"                          ← 非末尾の式文（戻り値 StringBuilder を捨てる）
+        //       Console.WriteLine (sb.ToString ())      ← 末尾の式文（void を返す）
+        let span = Span.Empty
+        let importSb = Ast.Decl.Import([ "System"; "Text"; "StringBuilder" ], span) :> Ast.Decl
+        let importConsole = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+        let sbArgType = Ast.TypeExpr.Id("StringBuilder", span) :> Ast.TypeExpr
+        let sbArg = Ast.FnArg.Named("sb", sbArgType, span) :> Ast.FnArg
+        // sb.Append "ok"  ← StringBuilder を返すが非末尾式文として使う
+        let appendExpr = Ast.Expr.Apply(Ast.Expr.MemberAccess(Ast.Expr.Id("sb", span) :> Ast.Expr, "Append", span) :> Ast.Expr, [ Ast.Expr.String("ok", span) :> Ast.Expr ], span) :> Ast.Expr
+        let appendStmt = Ast.Stmt.ExprStmt(appendExpr, span) :> Ast.Stmt
+        // Console.WriteLine (sb.ToString ())  ← 末尾式文（void）
+        let toStringExpr = Ast.Expr.Apply(Ast.Expr.MemberAccess(Ast.Expr.Id("sb", span) :> Ast.Expr, "ToString", span) :> Ast.Expr, [ Ast.Expr.Unit(span) :> Ast.Expr ], span) :> Ast.Expr
+        let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
+        let writeLineCallExpr = Ast.Expr.Apply(writeLineExpr, [ toStringExpr ], span) :> Ast.Expr
+        let writeLineStmt = Ast.Stmt.ExprStmt(writeLineCallExpr, span) :> Ast.Stmt
+        let body = Ast.Expr.Block([ appendStmt; writeLineStmt ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("process", [ sbArg ], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ importSb; importConsole; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            let hasError =
+                hirModule.methods
+                |> List.exists (fun m -> m.hasError)
+            Assert.False(hasError, "非 void 型（StringBuilder）を返す式を非末尾の式文として使うことは許容されるべきです。")
+        | { diagnostics = diagnostics } ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toDisplayText())
+                |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed unexpectedly: {message}")
+
+    [<Fact>]
     let ``void call should be allowed in expression statement`` () =
         let span = Span.Empty
         let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl

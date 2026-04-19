@@ -910,7 +910,18 @@ module Analyze =
                         assignStmt.span),
                     assignStmt.span)
         | :? Ast.Stmt.ExprStmt as exprStmt ->
-            let expr = analyzeExpr nameEnv typeEnv exprStmt.expr TypeId.Unit
+            // 式文（ExprStmt）では戻り値は常に捨てられる。
+            // void を返すメソッドは TypeId.Unit コンテキストで正しく処理されるため、まず Unit で解析する。
+            // 型不一致エラー（非 void 型の戻り値が捨てられるケース）になった場合は、
+            // 型制約なし（freshMeta）で再解析して戻り値を捨てる形式の式として許容する。
+            let unitExpr = analyzeExpr nameEnv typeEnv exprStmt.expr TypeId.Unit
+            let expr =
+                match unitExpr with
+                | Hir.Expr.ExprError _ ->
+                    // Unit で失敗した場合、非 void 型を返す式が文脈として使われているかもしれない。
+                    // フリーなメタ型で再解析して戻り値を捨てる式として許容する。
+                    analyzeExpr nameEnv typeEnv exprStmt.expr (typeEnv.freshMeta())
+                | _ -> unitExpr
             Hir.Stmt.ExprStmt(expr, exprStmt.span)
         | :? Ast.Stmt.For as forStmt ->
             let iterable = analyzeExpr nameEnv typeEnv forStmt.iterable (typeEnv.freshMeta ())

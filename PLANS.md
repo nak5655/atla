@@ -1,5 +1,23 @@
 # Plan
 
+## 2026-04-19 ExprStmt 中の非 unit 型式を許容する修正
+
+### 目的
+- `fn process (sb: StringBuilder): () = do sb.Append "ok" ...` のように、`do` ブロック内で戻り値が unit でないメソッド（`StringBuilder.Append` 等）を式文（ExprStmt）として使うと "Cannot unify types: unit and System.Text.StringBuilder" エラーが発生する問題を修正する。
+
+### 根本原因
+- `analyzeStmt` の ExprStmt ケースが `analyzeExpr` を `TypeId.Unit` で呼び出していた。
+- `StringBuilder.Append(string)` は `TypeId.Native typeof<StringBuilder>` を返すため、`unify Unit (Native StringBuilder)` が失敗する。
+- 式文（ExprStmt）では戻り値は常に捨てられるため、任意の型が許容されるべき。
+
+### 実装内容
+- [x] `Semantics/Analyze.fs`: `analyzeStmt` の ExprStmt ケースで `TypeId.Unit` を `typeEnv.freshMeta()` に変更する。
+- [x] `Semantics/Analyze.fs`: `unifyOrError` で `actual = NativeVoid` かつ `expected` がフリーメタ変数のとき `Result.Ok ()` を返す（void を unit 相当として扱う）。
+- [x] `Atla.Core.Tests/Semantics/AnalyzeTests.fs`: 非 void 型の式文が ExprStmt として許容されることを検証するテストを追加する。
+- [x] `dotnet test` で全テストがパスすることを確認する。
+
+
+
 ## 2026-04-19 example/gui ビルド成功に必要な機能実装
 
 ### 目的
