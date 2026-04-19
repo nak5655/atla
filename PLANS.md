@@ -1,5 +1,23 @@
 # Plan
 
+## 2026-04-19 第一級関数（first-class functions）対応
+
+### 目的
+- atla 関数を他の atla 関数の引数として渡せるようにする。
+- インポートした .NET 関数（デリゲート型パラメータを持つメソッド）にも渡せるようにする。
+
+### 実装内容
+- [x] `Syntax/Data/Ast.fs`: `Ast.TypeExpr.Arrow` を追加（例: `Int -> Int`）。
+- [x] `Syntax/Parser.fs`: `->` キーワードを型式で右結合にパース。
+- [x] `Semantics/Data/Type.fs`: `TypeId.Fn` → .NET デリゲート型（`Func<>`, `Action<>`, `Converter<>`）への変換を追加。`canUnify` / `unify` で `Fn ↔ Native delegate` の統一を実装。
+- [x] `Semantics/Data/Hir.fs`: `Hir.Method` に `args: (SymbolId * TypeId) list` を追加。
+- [x] `Semantics/Analyze.fs`: `resolveTypeExpr` で `Ast.TypeExpr.Arrow` を処理。`analyzeMethod` で引数 SymbolId を収集。.NET デリゲート型パラメータへ渡す関数参照の型を具体化。
+- [x] `Semantics/Infer.fs`: `args` を型推論後も伝播。
+- [x] `Lowering/Data/Mir.fs`: `Mir.Value.FnDelegate` を追加（グローバル関数をデリゲートとして参照）。
+- [x] `Lowering/Layout.fs`: `layoutMethod` で宣言順に引数を frame へ事前登録。`Hir.Expr.Id` が Fn 型で frame にない場合 `FnDelegate` を生成。`Hir.Callable.Fn` が frame にある場合はデリゲート経由の `Invoke` 呼び出しを発行。
+- [x] `Lowering/Gen.fs`: `resolveType` で `TypeId.Fn` をデリゲート型へ解決。`genValue` で `FnDelegate` を処理（`ldnull; ldftn; newobj` を発行）。
+- [x] テスト: 矢印型パース、`Hir.Method.args` 順序、高階関数の意味解析・レイアウト、`Fn ↔ delegate canUnify`、CIL 生成検証。
+
 ## 2026-04-18 `Expression is not callable` 診断に原因情報を追加
 
 - [x] `PLANS.md` に本対応の計画を記録する。
