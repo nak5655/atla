@@ -1,12 +1,5 @@
 # Plan
 
-## 2026-04-19 `function with imported dotnet type as parameter compiles and runs` 失敗原因調査
-
-- [x] 失敗テストを単体実行して、診断内容と失敗箇所を再現する。
-- [x] 解析パイプライン（Lex/Parse/Semantic）を追跡し、根本原因を特定する。
-- [x] テストコードを言語仕様（`ExprStmt` は `unit` 文脈）に合わせて修正し、意図したシナリオ（import型を引数に取る関数のcompile/run）を維持する。
-- [x] 対象テストと `Atla.Core.Tests` 全体を実行して回帰を確認する。
-
 ## 2026-04-19 example/gui ビルド成功に必要な機能実装
 
 ### 目的

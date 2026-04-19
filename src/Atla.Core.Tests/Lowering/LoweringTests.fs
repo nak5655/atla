@@ -667,7 +667,7 @@ import System.Text.StringBuilder
 import System.Console
 
 fn process (sb: StringBuilder): () = do
-    let appended = sb.Append "ok"
+    sb.Append "ok"
     Console.WriteLine (sb.ToString ())
 
 fn main: () = do
