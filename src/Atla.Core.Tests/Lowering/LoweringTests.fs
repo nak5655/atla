@@ -657,3 +657,52 @@ fn main: () = do
         let messages1 = run1.diagnostics |> List.map (fun diagnostic -> diagnostic.message)
         let messages2 = run2.diagnostics |> List.map (fun diagnostic -> diagnostic.message)
         Assert.Equal<string list>(messages1, messages2)
+
+    [<Fact>]
+    let ``function with imported dotnet type as parameter compiles and runs`` () =
+        // インポート型（TypeId.Name sid）を関数パラメータに使った場合の CIL 生成を検証する。
+        // System.Text.StringBuilder を引数に取る関数を定義し、正常にコンパイル・実行できることを確認する。
+        let program = """
+import System.Text.StringBuilder
+import System.Console
+
+fn process (sb: StringBuilder): () = ()
+
+fn main: () = do
+    let sb = StringBuilder ()
+    process sb
+    Console.WriteLine "ok"
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res =
+            Compiler.compile
+                { asmName = "ImportedTypeParam"
+                  source = program.Trim()
+                  outDir = outDir
+                  dependencies = [] }
+
+        Assert.True(res.succeeded, sprintf "Compilation failed: %A" (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "ImportedTypeParam.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("ok", stdout.Trim())
