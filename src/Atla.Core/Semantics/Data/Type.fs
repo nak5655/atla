@@ -106,6 +106,9 @@ module Type =
             && (List.zip leftArgs rightArgs |> List.forall (fun (leftArg, rightArg) -> canUnify subst leftArg rightArg))
         | Native t1, Native t2 when t1 = t2 -> true
         | Name id1, Name id2 when id1 = id2 -> true
+        // Name（インポート型名）と Native（リフレクション由来の型）は互換とみなす。
+        | Name _, Native _
+        | Native _, Name _ -> true
         | Fn (args1, ret1), Fn (args2, ret2) ->
             if List.length args1 <> List.length args2 then
                 false
@@ -159,6 +162,12 @@ module Type =
                     | Result.Error err -> Result.Error err
         | Native t1, Native t2 when t1 = t2 -> Result.Ok (Native t1)
         | Name id1, Name id2 when id1 = id2 -> Result.Ok(Name id1)
+        // Name（インポート型名）と Native（リフレクション由来の型）は
+        // どちらも .NET 型を表すため相互に互換とみなして Native を採用する。
+        // Name は import 宣言で登録されたシンボル参照であり、
+        // Native は System.Reflection から取得した System.Type を直接保持する。
+        | Name _, Native t -> Result.Ok (Native t)
+        | Native t, Name _ -> Result.Ok (Native t)
         | Fn (args1, ret1), Fn (args2, ret2) ->
             if List.length args1 <> List.length args2 then
                 Result.Error(DifferentFunctionArity(List.length args1, List.length args2))

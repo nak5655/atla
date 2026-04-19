@@ -168,11 +168,26 @@ module Parser =
         )
 
     // 呼び出し式
+    // 先頭 term1（関数部分）を解析した後、引数は head.span.left を基準とした BlockInput で制限する。
+    // これにより同じインデントレベルの次の行を引数として誤って取り込まず、
+    // かつ head より深くインデントされた継続行は引数として解析できる。
     and term2 (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            Many1 (term1 ()) |>> fun terms -> if terms.Length > 1
-                                                  then Ast.Expr.Apply (terms.Head, terms.Tail, { left = terms.Head.span.left; right = (List.rev terms).Head.span.right })
-                                                  else terms.Head
+        Delay (fun () -> fun input pos ->
+            match term1 () input pos with
+            | Failure (reason, span) -> Failure (reason, span)
+            | Success (head, afterHeadPos) ->
+                // head の開始位置を基準に引数の可視範囲を制限する BlockInput を作成する。
+                let callInput = BlockInput(input, head.span.left) :> Input<Token>
+                // 引数リストを蓄積しながら最後の引数の span.right も追跡する。
+                let rec loop pos acc lastRight =
+                    match term1 () callInput pos with
+                    | Success (arg, nextPos) -> loop nextPos (arg :: acc) arg.span.right
+                    | Failure _ -> List.rev acc, pos, lastRight
+                let args, nextPos, lastRight = loop afterHeadPos [] head.span.right
+                if args.IsEmpty then
+                    Success (head, afterHeadPos)
+                else
+                    Success (Ast.Expr.Apply(head, args, { left = head.span.left; right = lastRight }) :> Ast.Expr, nextPos)
         )
 
     // 二項演算

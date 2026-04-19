@@ -46,6 +46,8 @@ module Gen =
             | Mir.Imm.Int i -> gen.Emit(OpCodes.Ldc_I4, i)
             | Mir.Imm.Float f -> gen.Emit(OpCodes.Ldc_R8, f)
             | Mir.Imm.String s -> gen.Emit(OpCodes.Ldstr, s)
+            // null リテラル: 参照型のオプショナル引数デフォルト値として CIL の ldnull を発行する
+            | Mir.Imm.Null -> gen.Emit(OpCodes.Ldnull)
         // レジスタ値のロード
         | Mir.Value.RegVal reg ->
             match reg with

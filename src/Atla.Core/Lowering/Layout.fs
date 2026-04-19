@@ -24,6 +24,8 @@ module Layout =
         | Hir.Expr.Int (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) }
         | Hir.Expr.Float (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) }
         | Hir.Expr.String (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) }
+        // null リテラル: 参照型のオプショナル引数デフォルト値として使用する
+        | Hir.Expr.Null _ -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Null)) }
         | Hir.Expr.Id (sid, tid, _) ->
             match frame.get sid with
             | Some reg -> { ins = []; res = Some(Mir.Value.RegVal reg) }

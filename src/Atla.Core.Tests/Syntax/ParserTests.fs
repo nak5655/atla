@@ -244,6 +244,57 @@ fn main: () = do
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses consecutive exprStmts in do block as separate statements`` () =
+        // 回帰テスト: 同じインデントレベルの連続する exprStmt が 1 つの Apply 式として誤解析されないことを確認する。
+        let program = """
+import System.Console
+
+fn main (): () = do
+    Console.WriteLine "hello"
+    Console.WriteLine "world"
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    // 2 つの文がそれぞれ別の exprStmt として解析されていることを確認する。
+                    Assert.Equal(2, blockExpr.stmts.Length)
+
+                    let stmtIsCallWithSingleStringArg (stmt: Ast.Stmt) (expected: string) =
+                        match stmt with
+                        | :? Ast.Stmt.ExprStmt as exprStmt ->
+                            match exprStmt.expr with
+                            | :? Ast.Expr.Apply as applyExpr ->
+                                match applyExpr.args with
+                                | [ (:? Ast.Expr.String as s) ] -> s.value = expected
+                                | _ -> false
+                            | _ -> false
+                        | _ -> false
+
+                    Assert.True(
+                        stmtIsCallWithSingleStringArg blockExpr.stmts.[0] "hello",
+                        "1 番目の文が Console.WriteLine \"hello\" の Apply として解析されていません")
+                    Assert.True(
+                        stmtIsCallWithSingleStringArg blockExpr.stmts.[1] "world",
+                        "2 番目の文が Console.WriteLine \"world\" の Apply として解析されていません")
+                | _ ->
+                    Assert.True(false, "main body was not parsed into a block expression")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses whitespace separated array type application`` () =
         let program = "fn join (xs: Array String): () = ()"
 

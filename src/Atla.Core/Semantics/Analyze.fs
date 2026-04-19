@@ -242,6 +242,10 @@ module Analyze =
                 Some(Hir.Expr.Float(unbox<float> defaultValue, span))
             elif parameterType = typeof<string> then
                 Some(Hir.Expr.String((if obj.ReferenceEquals(defaultValue, null) then "" else unbox<string> defaultValue), span))
+            elif not parameterType.IsValueType && obj.ReferenceEquals(defaultValue, null) then
+                // null デフォルト値を持つ参照型パラメータ（Action などのデリゲート型が該当）は
+                // HIR の Null リテラルとして表現し、CIL 生成時に ldnull を発行する。
+                Some(Hir.Expr.Null(TypeId.fromSystemType parameterType, span))
             else
                 None
 
@@ -584,8 +588,15 @@ module Analyze =
                                    |> Array.skip allArgs.Length
                                    |> Array.forall (fun p -> p.IsOptional && (tryDefaultArgExpr p applyExpr.span |> Option.isSome)))
                         match exactArity, optionalArity with
-                        | [ctorInfo], _ -> Some (Hir.Callable.NativeConstructor ctorInfo, callRetType)
-                        | [], [ctorInfo] -> Some (Hir.Callable.NativeConstructor ctorInfo, callRetType)
+                        // callRetType メタを宣言型に事前束縛することで、let 束縛後の変数が
+                        // runtime 型を持てるようにする。その上で callRetType（Meta）を返すことで、
+                        // 宣言戻り型が Name（インポート型名）の場合でも単一化が成功する。
+                        | [ctorInfo], _ ->
+                            typeEnv.unifyTypes callRetType (TypeId.fromSystemType ctorInfo.DeclaringType) |> ignore
+                            Some (Hir.Callable.NativeConstructor ctorInfo, callRetType)
+                        | [], [ctorInfo] ->
+                            typeEnv.unifyTypes callRetType (TypeId.fromSystemType ctorInfo.DeclaringType) |> ignore
+                            Some (Hir.Callable.NativeConstructor ctorInfo, callRetType)
                         | _ -> None
                     | Hir.Callable.NativeMethod methodInfo ->
                         if methodInfo.GetParameters().Length = suppliedParameterCount methodInfo || canApplyWithOptionalDefaults methodInfo then
@@ -597,9 +608,12 @@ module Analyze =
                             None
                         else
                             let ctorParams = ctorInfo.GetParameters()
+                            // callRetType メタを宣言型に事前束縛して runtime 型解決を可能にする。
                             if ctorParams.Length = allArgs.Length then
+                                typeEnv.unifyTypes callRetType (TypeId.fromSystemType ctorInfo.DeclaringType) |> ignore
                                 Some (resolvedCallable, callRetType)
                             elif ctorParams.Length > allArgs.Length && ctorParams |> Array.skip allArgs.Length |> Array.forall (fun p -> p.IsOptional && (tryDefaultArgExpr p applyExpr.span |> Option.isSome)) then
+                                typeEnv.unifyTypes callRetType (TypeId.fromSystemType ctorInfo.DeclaringType) |> ignore
                                 Some (resolvedCallable, callRetType)
                             else
                                 None
