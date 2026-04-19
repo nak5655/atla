@@ -30,8 +30,23 @@ module Layout =
             match frame.get sid with
             | Some reg -> { ins = []; res = Some(Mir.Value.RegVal reg) }
             | None ->
-                let argReg = frame.addArg(sid, tid)
-                { ins = []; res = Some(Mir.Value.RegVal argReg) }
+                // フレームに存在しない sid は「グローバル関数参照」として扱う。
+                // TypeId.Fn の場合はデリゲートに変換し、それ以外はメソッド引数として追加する。
+                match tid with
+                | TypeId.Fn _ ->
+                    match TypeId.tryToRuntimeSystemType tid with
+                    | Some delegateType ->
+                        // グローバル関数を対応するデリゲート（Func<>/Action<>）に包む。
+                        { ins = []; res = Some(Mir.Value.FnDelegate(sid, delegateType)) }
+                    | None ->
+                        let argReg = frame.addArg(sid, tid)
+                        { ins = []; res = Some(Mir.Value.RegVal argReg) }
+                // .NET デリゲート型（Native）で注釈された関数参照はその型のまま使用する。
+                | TypeId.Native t when TypeId.isDelegateType t ->
+                    { ins = []; res = Some(Mir.Value.FnDelegate(sid, t)) }
+                | _ ->
+                    let argReg = frame.addArg(sid, tid)
+                    { ins = []; res = Some(Mir.Value.RegVal argReg) }
         | Hir.Expr.MemberAccess (mem, instance, tid, span) ->
             match mem with
             | Hir.Member.NativeField fi -> { ins = []; res = Some(Mir.Value.FieldVal fi) }
@@ -110,12 +125,42 @@ module Layout =
                     | Builtins.OpEq -> Mir.OpCode.Eq
                 { ins = argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) }
             | Hir.Callable.Fn sid ->
-                match tid with
-                | TypeId.Unit ->
-                    { ins = argIns @ [ Mir.Ins.CallSym(sid, argValues) ]; res = None }
-                | _ ->
-                    let dst = declareTemp frame tid
-                    { ins = argIns @ [ Mir.Ins.CallAssignSym(dst, sid, argValues) ]; res = Some(Mir.Value.RegVal dst) }
+                match frame.get sid with
+                | Some delegateReg ->
+                    // sid がフレームに存在する → 引数または let 束縛されたデリゲートを介した呼び出し。
+                    // フレームから型を取得してデリゲート型の Invoke メソッドを得る。
+                    let fnType =
+                        match frame.argTypes.TryGetValue(sid) with
+                        | true, t -> t
+                        | _ ->
+                            match frame.locTypes.TryGetValue(sid) with
+                            | true, t -> t
+                            | _ -> failwithf "Unknown type for function-typed register: %A" sid
+                    match TypeId.tryToRuntimeSystemType fnType with
+                    | Some delegateType ->
+                        let invokeMethod = delegateType.GetMethod("Invoke")
+                        if obj.ReferenceEquals(invokeMethod, null) then
+                            failwithf "Delegate type '%s' has no Invoke method" delegateType.FullName
+                        // レシーバー（デリゲート自身）を先頭引数として渡す。
+                        let callArgs = (Mir.Value.RegVal delegateReg) :: argValues
+                        let returnsVoid = invokeMethod.ReturnType = typeof<System.Void>
+                        match tid, returnsVoid with
+                        | _, true
+                        | TypeId.Unit, _ ->
+                            { ins = argIns @ [ Mir.Ins.Call(Choice1Of2 invokeMethod, callArgs) ]; res = None }
+                        | _ ->
+                            let dst = declareTemp frame tid
+                            { ins = argIns @ [ Mir.Ins.CallAssign(dst, invokeMethod, callArgs) ]; res = Some(Mir.Value.RegVal dst) }
+                    | None ->
+                        failwithf "Cannot resolve delegate type for function-typed symbol: %A" sid
+                | None ->
+                    // sid がフレームに存在しない → グローバル関数への直接呼び出し。
+                    match tid with
+                    | TypeId.Unit ->
+                        { ins = argIns @ [ Mir.Ins.CallSym(sid, argValues) ]; res = None }
+                    | _ ->
+                        let dst = declareTemp frame tid
+                        { ins = argIns @ [ Mir.Ins.CallAssignSym(dst, sid, argValues) ]; res = Some(Mir.Value.RegVal dst) }
         | Hir.Expr.Block (stmts, expr, _, _) ->
             let stmtIns = stmts |> List.collect (layoutStmt frame)
             let exprKn = layoutExpr frame expr
@@ -243,6 +288,10 @@ module Layout =
 
     let private layoutMethod (methodName: string) (hirMethod: Hir.Method) : Mir.Method =
         let frame = Mir.Frame()
+        // メソッド引数を宣言順にフレームへ事前登録する。
+        // これにより、ボディ内で引数を参照したときに正しい Arg インデックスが割り当てられる。
+        for (argSid, argType) in hirMethod.args do
+            frame.addArg(argSid, argType) |> ignore
         let bodyKn = layoutExpr frame hirMethod.body
         let body =
             match hirMethod.typ with

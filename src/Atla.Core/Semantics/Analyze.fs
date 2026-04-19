@@ -48,6 +48,11 @@ module Analyze =
                     | TypeId.Error message, _ -> TypeId.Error message
                     | _, Some message -> TypeId.Error message
                     | _, None -> TypeId.App(resolvedHead, resolvedArgs)
+            // 関数型（例: Int -> Int）を TypeId.Fn([arg], ret) に変換する。
+            | :? Ast.TypeExpr.Arrow as arrowTypeExpr ->
+                let argType = this.resolveTypeExpr arrowTypeExpr.arg
+                let retType = this.resolveTypeExpr arrowTypeExpr.ret
+                TypeId.Fn([ argType ], retType)
             | _ -> TypeId.Error "Unsupported type expression type"
 
         member this.resolveArgType (arg: Ast.FnArg) : TypeId =
@@ -640,8 +645,28 @@ module Analyze =
                                 |> List.map (fun p -> tryDefaultArgExpr p applyExpr.span)
                             allArgs @ (missingDefaults |> List.choose id)
                         | _ -> allArgs
+
+                    // .NET メソッドへ関数値を渡す際に、引数の型を具体的なデリゲート型へ特殊化する。
+                    // これにより Layout フェーズで正しいデリゲート型（Action<>/Func<> 等）が使用される。
+                    let specializedCallArgs =
+                        match callableExpr with
+                        | Hir.Callable.NativeMethod mi ->
+                            let mParams = mi.GetParameters()
+                            let instanceOffset = if mi.IsStatic then 0 else 1
+                            callArgs |> List.mapi (fun i arg ->
+                                let paramIdx = i - instanceOffset
+                                if paramIdx >= 0 && paramIdx < mParams.Length then
+                                    let nativeParamType = TypeId.fromSystemType mParams.[paramIdx].ParameterType
+                                    match arg, nativeParamType with
+                                    // 関数型の引数を .NET デリゲート型で注釈し直す。
+                                    | Hir.Expr.Id(sid, TypeId.Fn _, span), TypeId.Native t when TypeId.isDelegateType t ->
+                                        Hir.Expr.Id(sid, nativeParamType, span)
+                                    | _ -> arg
+                                else arg)
+                        | _ -> callArgs
+
                     match unifyOrError typeEnv tid callRetType applyExpr.span with
-                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, callArgs, callRetType, applyExpr.span)
+                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, specializedCallArgs, callRetType, applyExpr.span)
                     | Result.Error exprErr -> exprErr
                 | None ->
                     Hir.Expr.ExprError(noOverloadMessage resolvedCallable allArgs.Length, tid, applyExpr.span)
@@ -908,20 +933,24 @@ module Analyze =
             | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
             | _ -> rawArgTypes
 
-        fnDecl.args
-        |> List.iteri (fun index arg ->
-            match arg with
-            | :? Ast.FnArg.Named as namedArg ->
-                let argType = argTypes.[index]
-                bodyNameEnv.declareArg namedArg.name argType |> ignore
-            | :? Ast.FnArg.Unit -> ()
-            | _ -> ())
+        // 引数を宣言順に bodyNameEnv へ登録し、SymbolId を収集する。
+        let argSids =
+            fnDecl.args
+            |> List.mapi (fun index arg ->
+                match arg with
+                | :? Ast.FnArg.Named as namedArg ->
+                    let argType = argTypes.[index]
+                    let sid = bodyNameEnv.declareArg namedArg.name argType
+                    Some (sid, argType)
+                | :? Ast.FnArg.Unit -> None
+                | _ -> None)
+            |> List.choose id
 
         let tid = TypeId.Fn(argTypes, retType)
         let sid = nameEnv.declareLocal fnDecl.name tid
         let body = analyzeExpr bodyNameEnv typeEnv fnDecl.body retType
 
-        Hir.Method(sid, body, tid, fnDecl.span)
+        Hir.Method(sid, argSids, body, tid, fnDecl.span)
 
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
         match Resolve.resolveModule (symbolTable, moduleName, moduleAst) with

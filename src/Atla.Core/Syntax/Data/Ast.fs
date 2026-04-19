@@ -247,6 +247,16 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        // 関数型（例: Int -> Int）を表す。右結合で再帰的に構成される。
+        type Arrow(arg: TypeExpr, ret: TypeExpr, span: Span) =
+            member this.arg = arg
+            member this.ret = ret
+            member this.span = span
+            interface TypeExpr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
     module DataItem =
         type Field(name:string, typeExpr: TypeExpr, span: Span) =
             member this.name = name

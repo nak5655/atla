@@ -116,8 +116,10 @@ module Hir =
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics
 
-    type Method(sid: SymbolId, body: Expr, tid: TypeId, span: Span) =
+    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, span: Span) =
         member this.sym = sid
+        // メソッドの引数リスト（宣言順に (SymbolId, TypeId) の組で保持）。
+        member this.args = args
         member this.body = body
         member this.typ = tid
         member this.span = span

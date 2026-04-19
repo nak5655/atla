@@ -20,6 +20,7 @@ module LayoutTests =
         let hirMethod =
             Hir.Method(
                 methodSym,
+                [],
                 Hir.Expr.Int(42, span),
                 TypeId.Fn([], TypeId.Int),
                 span)

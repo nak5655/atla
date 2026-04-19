@@ -66,12 +66,16 @@ module Mir =
         | RegVal of Reg
         | FieldVal of field: FieldInfo
         | MethodVal of method: MethodInfo
+        // グローバル関数シンボルを .NET デリゲートとして生成する値。
+        // ldnull; ldftn <sid>; newobj <delegateType>::.ctor に展開される。
+        | FnDelegate of sid: SymbolId * delegateType: System.Type
         override this.ToString() =
             match this with
             | ImmVal v -> sprintf "Imm(%s)" (v.ToString())
             | RegVal v -> sprintf "Reg(%s)" (v.ToString())
             | FieldVal (fi) -> sprintf "Field(%A)" fi
             | MethodVal (mi) -> sprintf "Method(%A)" mi
+            | FnDelegate (sid, dt) -> sprintf "FnDelegate(sid=%d, type=%s)" sid.id dt.FullName
 
     type OpCode =
         | Add
