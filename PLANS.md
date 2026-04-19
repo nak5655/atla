@@ -1,5 +1,21 @@
 # Plan
 
+## 2026-04-19 UnifyError.toMessage を Analyze.fs へ移動・エラー伝播バグの修正
+
+### 目的
+- `Type.fs` の `UnifyError.toMessage` は `Analyze.fs` からしか参照されないため移動し、`formatTypeForDisplay` を利用して人間が読みやすい型名（"int", "string" 等）でメッセージを生成する。
+- do ブロックの末尾式が既に `ExprError` の場合、余分な "Cannot unify" エラーが報告されるバグを修正する。
+
+### 実装内容
+- [x] `Semantics/Data/Type.fs`: `UnifyError.toMessage` モジュール関数を削除する。
+- [x] `Semantics/Analyze.fs`: `formatTypeForDisplay` の直後に `formatUnifyError` 関数を追加する（`nameEnv`/`typeEnv` を受け取り、`formatTypeForDisplay` で型を表示する）。
+- [x] `Semantics/Analyze.fs`: `unifyOrError` に `nameEnv` パラメータを追加し、`formatUnifyError` を使うよう更新する。
+- [x] `Semantics/Analyze.fs`: `unifyOrError` の全呼び出し箇所（9箇所）に `nameEnv` を追加する。
+- [x] `Semantics/Analyze.fs`: do ブロック解析で末尾式が `ExprError` の場合、`unifyOrError` をスキップして根本エラーを伝播する。
+- [x] `Atla.Core.Tests/Semantics/AnalyzeTests.fs`: 型不一致エラーメッセージに人間が読みやすい型名が含まれることを検証するテストを追加する。
+- [x] `Atla.Core.Tests/Semantics/AnalyzeTests.fs`: ブロック末尾が ExprError のとき余分な "Cannot unify" が出ないことを検証するテストを追加する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj --filter "FullyQualifiedName~AnalyzeTests"` を実行する。（26/26 passed）
+
 ## 2026-04-19 第一級関数（first-class functions）対応
 
 ### 目的

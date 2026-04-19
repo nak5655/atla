@@ -112,15 +112,6 @@ type UnifyError =
     | OccursCheckFailed of meta: TypeMeta * actual: TypeId
     | CannotUnify of left: TypeId * right: TypeId
 
-module UnifyError =
-    let toMessage (err: UnifyError) : string =
-        match err with
-        | DifferentFunctionArity (leftArity, rightArity) ->
-            sprintf "Cannot unify function types with different number of arguments: %d vs %d" leftArity rightArity
-        | OccursCheckFailed (meta, actual) ->
-            sprintf "Occurs check failed: %A occurs in %A" meta actual
-        | CannotUnify (left, right) ->
-            sprintf "Cannot unify types: %A and %A" left right
 
 module Type =
     let rec occurs (subst: TypeSubst) (m: TypeMeta) (tid: TypeId) : bool =
