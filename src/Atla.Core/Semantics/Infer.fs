@@ -11,6 +11,7 @@ module Infer =
         | Hir.Expr.Int _
         | Hir.Expr.Float _
         | Hir.Expr.String _ -> expr
+        | Hir.Expr.Null (tid, span) -> Hir.Expr.Null(inferType tid, span)
         | Hir.Expr.Id (sid, tid, span) -> Hir.Expr.Id(sid, inferType tid, span)
         | Hir.Expr.Call (func, instance, args, tid, span) ->
             let inferredInstance = instance |> Option.map (inferExpr typeSubst)

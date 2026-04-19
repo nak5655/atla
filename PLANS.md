@@ -17,6 +17,37 @@
 - [x] 回帰確認としてフルテストスイート（`dotnet test src/Atla.slnx`）を実行する。
 - [x] 変更内容を要約し、原因と解決策を日本語で報告する。
 
+## 2026-04-19 example/gui コンストラクタ未解決バグの修正
+
+### 根本原因
+
+1. **コンストラクタ戻り型バグ**（`Semantics/Analyze.fs`）
+   `NativeConstructorGroup` / `NativeConstructor` ケースがコンストラクタの戻り型として
+   新鮮な型メタ変数 (`callRetType`) を返していた。
+   `let window = Window ()` のように `let` で束縛すると `window` の型が未解決のまま残り、
+   その後の `window.Show ()` で `resolveRuntimeSystemType` が失敗してエラー連鎖が起きる。
+
+2. **パーサーの貪欲な関数適用**（`Syntax/Parser.fs`、確認済み・別課題）
+   `do` ブロック内の `exprStmt` は `Many1 term1` を使うため、同じインデントレベルの
+   複数行を一つの Apply 式として解析してしまう。
+   例: `window.Show ()` と `app.Run window` が `Apply(window.Show, [(), app.Run, window])` になる。
+
+3. **例示コードの不正な Avalonia API 使用**
+   - `app.Run window` → `Application` に `Run(Window)` は存在しない
+   - `config.Start appMain args` → `AppMainDelegate` デリゲートが必要（Atla の関数は渡せない）
+
+### 対応
+
+- `Analyze.fs`: `NativeConstructorGroup` / `NativeConstructor` の戻り型を
+  `TypeId.fromSystemType ctorInfo.DeclaringType` に修正
+- `Hir.fs` / `Infer.fs` / `Layout.fs` / `Mir.fs` / `Gen.fs`:
+  参照型のオプショナル引数デフォルト値 `null` を渡すため `Null` リテラルを HIR に追加
+- `Analyze.fs`: `tryDefaultArgExpr` を拡張し参照型の `null` デフォルト値を処理
+- `examples/gui/src/main.atla`: 正しい Avalonia API に書き直し
+  - `appMain`: `app.Run window` → 削除（Window.Show の後にそのまま終了）
+  - `main`: デリゲート不要の `StartWithClassicDesktopLifetime` を使用・戻り型を `Int` に変更
+- テスト追加: コンストラクタ戻り型の回帰テスト
+
 ## 2026-04-18 依存解決の用途別分離（compile参照 / runtimeロード）実装タスク
 
 ### フェーズ0: 設計確定

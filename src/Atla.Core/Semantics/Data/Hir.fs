@@ -27,6 +27,7 @@ module Hir =
         | Int of value: int * span: Span
         | Float of value: float * span: Span
         | String of value: string * span: Span
+        | Null of tid: TypeId * span: Span
         | Id of sid: SymbolId * tid: TypeId * span: Span
         | Call of func: Callable * instance: Expr option * args: Expr list * tid: TypeId * span: Span
         | Lambda of args: Arg list * ret: TypeId * body: Expr * tid: TypeId * span: Span
@@ -41,6 +42,7 @@ module Hir =
             | Int _ -> TypeId.Int
             | Float _ -> TypeId.Float
             | String _ -> TypeId.String
+            | Null (t, _) -> t
             | Id (_, t, _) -> t
             | Call (_, _, _, t, _) -> t
             | Lambda (_, _, _, t, _) -> t
@@ -55,6 +57,7 @@ module Hir =
             | Int (_, span) -> span
             | Float (_, span) -> span
             | String (_, span) -> span
+            | Null (_, span) -> span
             | Id (_, _, span) -> span
             | Call (_, _, _, _, span) -> span
             | Lambda (_, _, _, _, span) -> span

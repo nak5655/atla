@@ -242,6 +242,10 @@ module Analyze =
                 Some(Hir.Expr.Float(unbox<float> defaultValue, span))
             elif parameterType = typeof<string> then
                 Some(Hir.Expr.String((if obj.ReferenceEquals(defaultValue, null) then "" else unbox<string> defaultValue), span))
+            elif not parameterType.IsValueType && obj.ReferenceEquals(defaultValue, null) then
+                // null デフォルト値を持つ参照型パラメータ（Action などのデリゲート型が該当）は
+                // HIR の Null リテラルとして表現し、CIL 生成時に ldnull を発行する。
+                Some(Hir.Expr.Null(TypeId.fromSystemType parameterType, span))
             else
                 None
 
@@ -584,8 +588,10 @@ module Analyze =
                                    |> Array.skip allArgs.Length
                                    |> Array.forall (fun p -> p.IsOptional && (tryDefaultArgExpr p applyExpr.span |> Option.isSome)))
                         match exactArity, optionalArity with
-                        | [ctorInfo], _ -> Some (Hir.Callable.NativeConstructor ctorInfo, callRetType)
-                        | [], [ctorInfo] -> Some (Hir.Callable.NativeConstructor ctorInfo, callRetType)
+                        // Return the declaring type so the variable bound by a `let` gets the concrete native type
+                        // instead of an unresolved meta variable, enabling subsequent member access resolution.
+                        | [ctorInfo], _ -> Some (Hir.Callable.NativeConstructor ctorInfo, TypeId.fromSystemType ctorInfo.DeclaringType)
+                        | [], [ctorInfo] -> Some (Hir.Callable.NativeConstructor ctorInfo, TypeId.fromSystemType ctorInfo.DeclaringType)
                         | _ -> None
                     | Hir.Callable.NativeMethod methodInfo ->
                         if methodInfo.GetParameters().Length = suppliedParameterCount methodInfo || canApplyWithOptionalDefaults methodInfo then
@@ -597,10 +603,11 @@ module Analyze =
                             None
                         else
                             let ctorParams = ctorInfo.GetParameters()
+                            // Return the concrete declaring type so that the bound variable carries the native type.
                             if ctorParams.Length = allArgs.Length then
-                                Some (resolvedCallable, callRetType)
+                                Some (resolvedCallable, TypeId.fromSystemType ctorInfo.DeclaringType)
                             elif ctorParams.Length > allArgs.Length && ctorParams |> Array.skip allArgs.Length |> Array.forall (fun p -> p.IsOptional && (tryDefaultArgExpr p applyExpr.span |> Option.isSome)) then
-                                Some (resolvedCallable, callRetType)
+                                Some (resolvedCallable, TypeId.fromSystemType ctorInfo.DeclaringType)
                             else
                                 None
                     | _ -> Some (resolvedCallable, typeEnv.resolveType callRetType)

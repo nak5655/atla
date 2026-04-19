@@ -16,12 +16,14 @@ module Mir =
         | Int of int
         | Float of float
         | String of string
+        | Null
         override this.ToString() =
             match this with
             | Bool v -> sprintf "Bool(%b)" v
             | Int v -> sprintf "Int(%d)" v
             | Float v -> sprintf "Float(%f)" v
             | String s -> sprintf "String(%s)" s
+            | Null -> "Null"
 
     type Reg =
         | Loc of int
