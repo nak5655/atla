@@ -5,8 +5,9 @@ import Avalonia.Controls.AppBuilder
 fn appMain (app: Application) (args: Array String): () = do
     let window = Window ()
     window.Show ()
+    app.Run window
 
 fn main (args: Array String): Int = do
     let config = AppBuilder.Configure[Application] ()
     let config2 = config.UsePlatformDetect ()
-    config2.StartWithClassicDesktopLifetime args
+    config2.Start appMain args
