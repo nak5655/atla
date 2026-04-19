@@ -666,12 +666,13 @@ fn main: () = do
 import System.Text.StringBuilder
 import System.Console
 
-fn process (sb: StringBuilder): () = ()
+fn process (sb: StringBuilder): () = do
+    sb.Append "ok"
+    Console.WriteLine (sb.ToString ())
 
 fn main: () = do
     let sb = StringBuilder ()
     process sb
-    Console.WriteLine "ok"
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
