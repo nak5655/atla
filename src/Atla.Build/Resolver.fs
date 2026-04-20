@@ -280,40 +280,27 @@ module internal Resolver =
     let private tryCollectRuntimeLoadAssemblyPaths (dependencyName: string) (dependencyRoot: string) : Result<string list, Diagnostic list> =
         tryCollectAssemblyPathsByPriority "runtime load" dependencyName dependencyRoot [ "lib"; "ref" ]
 
-    (* 現在の実行環境の RID とそのフォールバック候補リストを決定する。
-       例: "win-x64" -> ["win-x64"; "win"], "linux-arm64" -> ["linux-arm64"; "linux"]。 *)
-    let private getNativeRuntimeIdCandidates () : string list =
-        let rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier
-        let parts = rid.Split('-')
-        if parts.Length > 1 then
-            [ rid; parts.[0] ]
-        else
-            [ rid ]
-
-    (* 依存ルート配下の runtimes/<rid>/native/ からネイティブファイルを収集する。
-       対応する runtimes ディレクトリが存在しない場合は空リストを返す（エラーとはしない）。
-       複数 RID で同一ファイル名が存在する場合は最初に見つかったものを採用する。 *)
+    (* 依存ルート配下の runtimes/*/native/ からすべてのプラットフォームのネイティブファイルを収集する。
+       runtimes ディレクトリが存在しない場合は空リストを返す（エラーとはしない）。
+       すべての RID サブディレクトリを対象とし、決定的順序で返す。 *)
     let private collectNativeRuntimePaths (dependencyRoot: string) : string list =
         let runtimesRoot = Path.Join(dependencyRoot, "runtimes")
 
         if not (Directory.Exists runtimesRoot) then
             []
         else
-            let ridCandidates = getNativeRuntimeIdCandidates ()
-
-            ridCandidates
-            |> List.collect (fun rid ->
-                let nativeDir = Path.Join(runtimesRoot, rid, "native")
+            Directory.GetDirectories(runtimesRoot)
+            |> Array.sort
+            |> Array.collect (fun ridDir ->
+                let nativeDir = Path.Join(ridDir, "native")
 
                 if Directory.Exists nativeDir then
                     Directory.GetFiles(nativeDir, "*", SearchOption.AllDirectories)
                     |> Array.map normalizePath
                     |> Array.sort
-                    |> Array.toList
                 else
-                    [])
-            (* 同一ファイル名が複数 RID 候補で重複する場合は先頭のものを保持する。 *)
-            |> List.distinctBy (fun path -> Path.GetFileName(path).ToLowerInvariant())
+                    [||])
+            |> Array.toList
 
     (* 依存ルート配下から compile/runtime/native の全経路を収集する。 *)
     let private tryCollectDependencyAssemblyPaths
