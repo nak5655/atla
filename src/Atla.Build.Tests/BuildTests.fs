@@ -376,3 +376,36 @@ dependencies:
         match result with
         | Ok _ -> Assert.Fail("expected error")
         | Result.Error diagnostics -> Assert.NotEmpty(diagnostics)
+
+    [<Fact>]
+    let ``copyDependencies should preserve runtimes rid native hierarchy for native runtime files`` () =
+        (* dep.source が設定されている場合、nativeRuntimePaths は runtimes/<rid>/native/ 階層を保持してコピーされる。 *)
+        let pkgRoot = createTempProjectDir ()
+        let outDir = createTempProjectDir ()
+        let winNativeDir = Path.Join(pkgRoot, "runtimes", "win-x64", "native")
+        let linuxNativeDir = Path.Join(pkgRoot, "runtimes", "linux-x64", "native")
+        Directory.CreateDirectory(winNativeDir) |> ignore
+        Directory.CreateDirectory(linuxNativeDir) |> ignore
+        let winSrc = Path.Join(winNativeDir, "libSkiaSharp.dll")
+        let linuxSrc = Path.Join(linuxNativeDir, "libSkiaSharp.so")
+        File.WriteAllText(winSrc, "fake-win-native")
+        File.WriteAllText(linuxSrc, "fake-linux-native")
+
+        let dep : Atla.Compiler.Compiler.ResolvedDependency =
+            { name = "skiasharp"
+              version = "1.0.0"
+              source = pkgRoot
+              compileReferencePaths = []
+              runtimeLoadPaths = []
+              nativeRuntimePaths = [ winSrc; linuxSrc ] }
+
+        let result = BuildSystem.copyDependencies [ dep ] outDir
+
+        match result with
+        | Ok copied ->
+            Assert.Equal(2, List.length copied)
+            Assert.True(File.Exists(Path.Join(outDir, "runtimes", "win-x64", "native", "libSkiaSharp.dll")))
+            Assert.True(File.Exists(Path.Join(outDir, "runtimes", "linux-x64", "native", "libSkiaSharp.so")))
+            Assert.Equal("fake-win-native", File.ReadAllText(Path.Join(outDir, "runtimes", "win-x64", "native", "libSkiaSharp.dll")))
+            Assert.Equal("fake-linux-native", File.ReadAllText(Path.Join(outDir, "runtimes", "linux-x64", "native", "libSkiaSharp.so")))
+        | Result.Error _ -> Assert.Fail("expected Ok")

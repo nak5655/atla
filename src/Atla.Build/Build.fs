@@ -193,6 +193,7 @@ module BuildSystem =
                     Result.Error [ error "missing required mapping `package`" ]
 
     /// ソースが宛先より新しい（または宛先が存在しない）場合のみファイルをコピーする。
+    /// 宛先の親ディレクトリが存在しない場合は自動的に作成する。
     /// ソースファイルが存在しない場合は Diagnostic.Error を返す。
     /// コピーした場合は Some destPath を、スキップした場合は None を返す。
     let private copyIfNewer (srcPath: string) (dstPath: string) : Result<string option, Diagnostic list> =
@@ -200,6 +201,7 @@ module BuildSystem =
             if not (File.Exists srcPath) then
                 Result.Error [ error $"dependency DLL not found: `{srcPath}`" ]
             elif not (File.Exists dstPath) || File.GetLastWriteTimeUtc(srcPath) > File.GetLastWriteTimeUtc(dstPath) then
+                Directory.CreateDirectory(Path.GetDirectoryName(dstPath)) |> ignore
                 File.Copy(srcPath, dstPath, overwrite = true)
                 Ok(Some dstPath)
             else
@@ -208,17 +210,39 @@ module BuildSystem =
             Result.Error [ error $"failed to copy `{srcPath}` to `{dstPath}`: {ex.Message}" ]
 
     /// 依存 DLL およびネイティブランタイムファイルを outDir へコピーする。
+    /// runtimeLoadPaths はフラットに outDir へコピーし、
+    /// nativeRuntimePaths は dep.source からの相対パスを保持して outDir 配下の
+    /// runtimes/<rid>/native/ 階層を再現する。
     /// ソースが宛先より新しい場合（または宛先が存在しない場合）のみコピーを実行する。
     /// outDir は呼び出し前に存在していなければならない。
     /// コピーしたファイルのパスリストを返す。エラーは全ファイル分まとめて返す。
     let copyDependencies (dependencies: Compiler.ResolvedDependency list) (outDir: string) : Result<string list, Diagnostic list> =
-        (* 全依存の runtimeLoadPaths と nativeRuntimePaths を flatten して各ファイルにコピーを試みる。 *)
-        let results =
+        (* runtimeLoadPaths はフラットに outDir へコピーする。 *)
+        let managedResults =
             dependencies
-            |> List.collect (fun dep -> dep.runtimeLoadPaths @ dep.nativeRuntimePaths)
+            |> List.collect (fun dep -> dep.runtimeLoadPaths)
             |> List.map (fun srcPath ->
                 let dstPath = Path.Join(outDir, Path.GetFileName(srcPath))
                 copyIfNewer srcPath dstPath)
+
+        (* nativeRuntimePaths は dep.source からの相対パスを維持して outDir 配下に配置する。
+           dep.source が空または空白のみの場合はフラットコピーにフォールバックする。
+           パスの相対計算前に両パスを絶対パスへ正規化し、OS 依存の区切り文字や相対パス混入を防ぐ。 *)
+        let nativeResults =
+            dependencies
+            |> List.collect (fun dep ->
+                dep.nativeRuntimePaths
+                |> List.map (fun srcPath ->
+                    let dstPath =
+                        if String.IsNullOrWhiteSpace dep.source then
+                            Path.Join(outDir, Path.GetFileName(srcPath))
+                        else
+                            let normalizedSource = Path.GetFullPath(dep.source)
+                            let normalizedSrc = Path.GetFullPath(srcPath)
+                            Path.Join(outDir, Path.GetRelativePath(normalizedSource, normalizedSrc))
+                    copyIfNewer srcPath dstPath))
+
+        let results = managedResults @ nativeResults
 
         (* エラーを全件収集し、ひとつでもあれば失敗を返す。 *)
         let errors =

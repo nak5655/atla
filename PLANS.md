@@ -1,5 +1,44 @@
 # Plan
 
+## 2026-04-20 native-only NuGet パッケージ（lib/ref なし）の推移的解決対応
+
+### 目的
+- `Avalonia.Win32` 等の `runtimes/*/native/` のみを提供し `lib/` や `ref/` を一切持たない NuGet パッケージ（native-only package）が推移的依存として解決されたとき、`visitTransitiveDependency` に黙って無視されてネイティブファイルがコピーされない問題を修正する。
+- `examples/gui` をビルドすると `runtimes/win-x64/native/av_libglesv2.dll` がコピーされなかった直接原因。
+
+### 根本原因
+- `tryCollectDependencyAssemblyPaths` は `tryCollectCompileReferenceAssemblyPaths`/`tryCollectRuntimeLoadAssemblyPaths` のどちらか一方でも失敗すると全体を `Result.Error` として返す。
+- `lib/` も `ref/` も持たないパッケージはどちらも失敗し `Result.Error` となる。
+- `visitTransitiveDependency` は `Result.Error` を黙って無視（`state` を返す）するため native ファイルが収集されない。
+
+### 仕様
+- `tryCollectDependencyAssemblyPaths` でマネージドアセット収集に失敗しても `runtimes/*/native/` にファイルが存在する場合は `Ok([], [], nativeFiles)` を返す（native-only パッケージとして成功扱い）。
+- `_._` プレースホルダを持つパッケージ（`lib/<tfm>/_._`）は従来通り `Ok []` を返す既存ロジックで処理される。
+
+### 実装内容
+- [x] `PLANS.md`: 仕様をドキュメントに記録する。
+- [x] `Atla.Build/Resolver.fs`: `tryCollectDependencyAssemblyPaths` に native-only フォールバックを追加する。
+- [x] `Atla.Build.Tests/ResolverTests.fs`: `lib/ref` なし native-only 推移的 NuGet パッケージの回帰テストを追加する。
+
+## 2026-04-20 すべてのプラットフォームのネイティブランタイムコピー対応
+
+### 目的
+- `atla build` でネイティブランタイム（`runtimes/*/native/` 配下のファイル）を現在の実行環境の RID のみでなく、すべてのプラットフォーム分コピーするよう変更する。
+- SkiaSharp 等のクロスプラットフォームパッケージが複数の RID（`win-x64`, `linux-x64`, `osx-x64` 等）に対してネイティブライブラリを提供する場合、すべてを収集・コピーすることで配布物が自己完結する。
+
+### 仕様
+- `collectNativeRuntimePaths` は `runtimes/*/native/` 配下のすべてのファイルを収集する（RID を絞らない）。
+- `copyDependencies` はネイティブランタイムファイルを `dep.source` からの相対パスを保持したまま `outDir` 配下に配置する（例: `outDir/runtimes/win-x64/native/libSkiaSharp.dll`）。
+  - `dep.source` が空の場合は従来通りフラットコピーにフォールバックする。
+- `copyIfNewer` は宛先の親ディレクトリを自動作成する（サブディレクトリ構造を再現するため）。
+
+### 実装内容
+- [x] `PLANS.md`: 仕様をドキュメントに記録する。
+- [x] `Atla.Build/Resolver.fs`: `collectNativeRuntimePaths` を RID 全列挙に変更する（`getNativeRuntimeIdCandidates` を削除）。
+- [x] `Atla.Build/Build.fs`: `copyIfNewer` に宛先ディレクトリ自動作成を追加し、`copyDependencies` でネイティブパスの相対パス保持コピーを実装する。
+- [x] `Atla.Build.Tests/BuildTests.fs`: `runtimes/<rid>/native/` 階層保持コピーの新テストを追加する。
+- [x] `Atla.Build.Tests/ResolverTests.fs`: 複数 RID 収集のテスト（NuGet / path 依存）を追加する。
+
 ## 2026-04-20 ネイティブのみ提供パッケージ（`lib/<tfm>/_._`）のサポート
 
 ### 目的

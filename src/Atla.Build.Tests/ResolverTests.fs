@@ -989,3 +989,158 @@ dependencies:
             Assert.Equal<string list>([ nativePath ], dependency.nativeRuntimePaths)
         | None ->
             Assert.Fail("expected build plan")
+
+    [<Fact>]
+    let ``buildProject should collect native runtime paths for all platform RIDs`` () =
+        (* runtimes/ 配下に複数の RID ディレクトリがある場合、すべてのプラットフォームのネイティブファイルを収集する。 *)
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packageRoot = Path.Join(packagesRoot, "multiplatformpkg", "1.0.0")
+        let winDir = Path.Join(packageRoot, "runtimes", "win-x64", "native")
+        let linuxDir = Path.Join(packageRoot, "runtimes", "linux-x64", "native")
+        let osxDir = Path.Join(packageRoot, "runtimes", "osx-x64", "native")
+        Directory.CreateDirectory(Path.Join(packageRoot, "ref", "net8.0")) |> ignore
+        Directory.CreateDirectory(winDir) |> ignore
+        Directory.CreateDirectory(linuxDir) |> ignore
+        Directory.CreateDirectory(osxDir) |> ignore
+        File.WriteAllText(Path.Join(packageRoot, "ref", "net8.0", "MultiPlatformPkg.dll"), "")
+        File.WriteAllText(Path.Join(winDir, "libSkiaSharp.dll"), "fake-win")
+        File.WriteAllText(Path.Join(linuxDir, "libSkiaSharp.so"), "fake-linux")
+        File.WriteAllText(Path.Join(osxDir, "libSkiaSharp.dylib"), "fake-osx")
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  multiplatformpkg:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let dependency = Assert.Single(plan.dependencies)
+                let winPath = Path.GetFullPath(Path.Join(winDir, "libSkiaSharp.dll"))
+                let linuxPath = Path.GetFullPath(Path.Join(linuxDir, "libSkiaSharp.so"))
+                let osxPath = Path.GetFullPath(Path.Join(osxDir, "libSkiaSharp.dylib"))
+                Assert.Contains(winPath, dependency.nativeRuntimePaths)
+                Assert.Contains(linuxPath, dependency.nativeRuntimePaths)
+                Assert.Contains(osxPath, dependency.nativeRuntimePaths)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should collect native runtime paths for all platform RIDs in path dependency`` () =
+        (* path 依存でも runtimes/ 配下の複数 RID ディレクトリをすべて収集する。 *)
+        let rootProject = createTempProjectDir ()
+        let depProject = createTempProjectDir ()
+        let winDir = Path.Join(depProject, "runtimes", "win-x64", "native")
+        let linuxDir = Path.Join(depProject, "runtimes", "linux-x64", "native")
+        Directory.CreateDirectory(winDir) |> ignore
+        Directory.CreateDirectory(linuxDir) |> ignore
+        File.WriteAllText(Path.Join(winDir, "native.dll"), "fake-win")
+        File.WriteAllText(Path.Join(linuxDir, "native.so"), "fake-linux")
+        writeReferenceDll depProject "dep.dll"
+
+        writeManifest depProject """
+package:
+  name: "multiplatform-dep"
+  version: "1.0.0"
+"""
+
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toYamlPath
+
+        writeManifest rootProject $"""
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  multiplatform-dep:
+    path: "{relativePath}"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+        Assert.True(result.succeeded)
+        Assert.Empty(result.diagnostics)
+
+        match result.plan with
+        | Some plan ->
+            let dependency = Assert.Single(plan.dependencies)
+            let winPath = Path.GetFullPath(Path.Join(winDir, "native.dll"))
+            let linuxPath = Path.GetFullPath(Path.Join(linuxDir, "native.so"))
+            Assert.Contains(winPath, dependency.nativeRuntimePaths)
+            Assert.Contains(linuxPath, dependency.nativeRuntimePaths)
+        | None ->
+            Assert.Fail("expected build plan")
+
+    [<Fact>]
+    let ``buildProject should resolve transitive nuget native-only package with no lib or ref directory`` () =
+        (* lib/ も ref/ も持たず runtimes/*/native/ のみを提供する NuGet パッケージ（例: Avalonia.Win32）が
+           推移的依存として解決されたとき、nativeRuntimePaths に収集されることを検証する。 *)
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        (* 直接依存パッケージ: lib DLL を持ち、native-only パッケージへの推移的依存を nuspec に記述する。 *)
+        let primaryPath = createNuGetPackage packagesRoot "AvaloniaPrimary" "1.0.0" "net8.0"
+        writeNuspec primaryPath "AvaloniaPrimary" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>AvaloniaPrimary</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="AvaloniaWin32" version="1.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        (* 推移的依存: lib/ も ref/ も持たず runtimes/win-x64/native/ のみを持つ native-only パッケージ。 *)
+        let nativeOnlyPath = Path.Join(packagesRoot, "avaloniawin32", "1.0.0")
+        let winNativeDir = Path.Join(nativeOnlyPath, "runtimes", "win-x64", "native")
+        Directory.CreateDirectory(winNativeDir) |> ignore
+        File.WriteAllText(Path.Join(winNativeDir, "av_libglesv2.dll"), "fake-native-win")
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  AvaloniaPrimary:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                (* native-only パッケージも依存リストに含まれる。 *)
+                let nativeOnlyDep =
+                    plan.dependencies
+                    |> List.tryFind (fun dep -> dep.name.ToLowerInvariant() = "avaloniawin32")
+
+                match nativeOnlyDep with
+                | Some dep ->
+                    Assert.Empty(dep.compileReferencePaths)
+                    Assert.Empty(dep.runtimeLoadPaths)
+                    let nativePath = Path.GetFullPath(Path.Join(winNativeDir, "av_libglesv2.dll"))
+                    Assert.Contains(nativePath, dep.nativeRuntimePaths)
+                | None ->
+                    Assert.Fail("expected AvaloniaWin32 native-only dependency to be resolved")
+            | None ->
+                Assert.Fail("expected build plan")
+        )
