@@ -1,5 +1,24 @@
 # Plan
 
+## 2026-04-20 NuGet 推移的依存パッケージの解決
+
+### 目的
+- NuGet パッケージが `.nuspec` に列挙する推移的依存パッケージを再帰的に解決し、出力ディレクトリへコピーする DLL が不足する問題を解消する。
+
+### 仕様
+- `Resolver.fs` に `tryReadTransitiveNuGetDependencies (packageId: string) (packagePath: string) : Result<DependencySpec list, Diagnostic list>` を追加する。
+  - `PackageFolderReader` で抽出済みパッケージディレクトリから `.nuspec` を読み取る。
+  - `tfmPriority` と同じ優先順位で最適な `<group>` を選択し、含まれる `<dependency>` を `NuGetDependency` に変換して返す。
+  - `.nuspec` に依存グループが存在しない場合は `Ok []` を返す。
+  - 例外は `Diagnostic.Error` に変換して `Result.Error` で返す。
+- `visitDependency` の `NuGetDependency` ケースで、パッケージを初めて解決したとき推移的依存を再帰的に `visitDependency` で処理する。
+  - 既に `resolvedByName` に登録済みのパッケージは再処理しない（無限ループ防止）。
+
+### 実装内容
+- [x] `PLANS.md`: 仕様をドキュメントに記録する。
+- [x] `Atla.Build/Resolver.fs`: `tryReadTransitiveNuGetDependencies` を追加し、`visitDependency` で呼び出す。
+- [x] `Atla.Build.Tests/ResolverTests.fs`: 推移的依存解決のユニットテストを追加する。
+
 ## 2026-04-20 依存 DLL コピー処理の追加
 
 ### 目的
