@@ -207,15 +207,15 @@ module BuildSystem =
         with ex ->
             Result.Error [ error $"failed to copy `{srcPath}` to `{dstPath}`: {ex.Message}" ]
 
-    /// 依存 DLL を outDir へコピーする。
+    /// 依存 DLL およびネイティブランタイムファイルを outDir へコピーする。
     /// ソースが宛先より新しい場合（または宛先が存在しない場合）のみコピーを実行する。
     /// outDir は呼び出し前に存在していなければならない。
     /// コピーしたファイルのパスリストを返す。エラーは全ファイル分まとめて返す。
     let copyDependencies (dependencies: Compiler.ResolvedDependency list) (outDir: string) : Result<string list, Diagnostic list> =
-        (* 全依存の runtimeLoadPaths を flatten して各ファイルにコピーを試みる。 *)
+        (* 全依存の runtimeLoadPaths と nativeRuntimePaths を flatten して各ファイルにコピーを試みる。 *)
         let results =
             dependencies
-            |> List.collect (fun dep -> dep.runtimeLoadPaths)
+            |> List.collect (fun dep -> dep.runtimeLoadPaths @ dep.nativeRuntimePaths)
             |> List.map (fun srcPath ->
                 let dstPath = Path.Join(outDir, Path.GetFileName(srcPath))
                 copyIfNewer srcPath dstPath)

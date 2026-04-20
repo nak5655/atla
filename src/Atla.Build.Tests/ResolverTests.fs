@@ -796,3 +796,108 @@ dependencies:
             | None ->
                 Assert.Fail("expected build plan")
         )
+
+    [<Fact>]
+    let ``buildProject should collect native runtime paths from runtimes rid native directory`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packageRoot = Path.Join(packagesRoot, "nativepkg", "1.0.0")
+        let rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier
+        let nativeDir = Path.Join(packageRoot, "runtimes", rid, "native")
+        Directory.CreateDirectory(Path.Join(packageRoot, "ref", "net8.0")) |> ignore
+        Directory.CreateDirectory(nativeDir) |> ignore
+        File.WriteAllText(Path.Join(packageRoot, "ref", "net8.0", "NativePkg.dll"), "")
+        File.WriteAllText(Path.Join(nativeDir, "native.dll"), "fake-native")
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  nativepkg:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let dependency = Assert.Single(plan.dependencies)
+                let nativePath = Path.GetFullPath(Path.Join(nativeDir, "native.dll"))
+                Assert.Contains(nativePath, dependency.nativeRuntimePaths)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should return empty nativeRuntimePaths when runtimes directory does not exist`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packageRoot = Path.Join(packagesRoot, "managedonly", "1.0.0")
+        Directory.CreateDirectory(Path.Join(packageRoot, "ref", "net8.0")) |> ignore
+        File.WriteAllText(Path.Join(packageRoot, "ref", "net8.0", "ManagedOnly.dll"), "")
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  managedonly:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+
+            match result.plan with
+            | Some plan ->
+                let dependency = Assert.Single(plan.dependencies)
+                Assert.Empty(dependency.nativeRuntimePaths)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should collect native runtime paths for path dependency with runtimes directory`` () =
+        let rootProject = createTempProjectDir ()
+        let depProject = createTempProjectDir ()
+        let rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier
+        let nativeDir = Path.Join(depProject, "runtimes", rid, "native")
+        Directory.CreateDirectory(nativeDir) |> ignore
+        File.WriteAllText(Path.Join(nativeDir, "dep-native.so"), "fake-native-so")
+        writeReferenceDll depProject "dep.dll"
+
+        writeManifest depProject """
+package:
+  name: "dep-with-native"
+  version: "1.0.0"
+"""
+
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toYamlPath
+
+        writeManifest rootProject $"""
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  dep-with-native:
+    path: "{relativePath}"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+        Assert.True(result.succeeded)
+
+        match result.plan with
+        | Some plan ->
+            let dependency = Assert.Single(plan.dependencies)
+            let nativePath = Path.GetFullPath(Path.Join(nativeDir, "dep-native.so"))
+            Assert.Contains(nativePath, dependency.nativeRuntimePaths)
+        | None ->
+            Assert.Fail("expected build plan")

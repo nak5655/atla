@@ -447,7 +447,8 @@ fn main: Int = 0
               version = "1.0.0"
               source = outDir
               compileReferencePaths = [ missingPath ]
-              runtimeLoadPaths = [ missingPath ] }
+              runtimeLoadPaths = [ missingPath ]
+              nativeRuntimePaths = [] }
 
         let result =
             Compiler.compile
@@ -475,7 +476,8 @@ fn main: Int = 0
               version = "1.0.0"
               source = outDir
               compileReferencePaths = [ invalidDllPath ]
-              runtimeLoadPaths = [ invalidDllPath ] }
+              runtimeLoadPaths = [ invalidDllPath ]
+              nativeRuntimePaths = [] }
 
         let result =
             Compiler.compile
@@ -508,7 +510,8 @@ fn main: () = do
               version = "runtime"
               source = runtimeDir
               compileReferencePaths = [ jsonAssemblyPath ]
-              runtimeLoadPaths = [ jsonAssemblyPath ] }
+              runtimeLoadPaths = [ jsonAssemblyPath ]
+              nativeRuntimePaths = [] }
 
         let result =
             Compiler.compile
@@ -541,7 +544,8 @@ fn main: () = do
               version = "runtime"
               source = runtimeDir
               compileReferencePaths = [ unusableCompileRefPath ]
-              runtimeLoadPaths = [ jsonAssemblyPath ] }
+              runtimeLoadPaths = [ jsonAssemblyPath ]
+              nativeRuntimePaths = [] }
 
         let result =
             Compiler.compile
@@ -603,14 +607,16 @@ fn main: () = do
               version = "1.0.0"
               source = depDirA
               compileReferencePaths = [ copiedPathA ]
-              runtimeLoadPaths = [ copiedPathA ] }
+              runtimeLoadPaths = [ copiedPathA ]
+              nativeRuntimePaths = [] }
 
         let depB: Compiler.ResolvedDependency =
             { name = "dep-b"
               version = "1.0.0"
               source = depDirB
               compileReferencePaths = [ copiedPathB ]
-              runtimeLoadPaths = [ copiedPathB ] }
+              runtimeLoadPaths = [ copiedPathB ]
+              nativeRuntimePaths = [] }
 
         let result =
             Compiler.compile
@@ -632,14 +638,16 @@ fn main: () = do
               version = "1.0.0"
               source = outDir
               compileReferencePaths = [ Path.Join(outDir, "zzz-missing.dll") ]
-              runtimeLoadPaths = [ Path.Join(outDir, "zzz-missing.dll") ] }
+              runtimeLoadPaths = [ Path.Join(outDir, "zzz-missing.dll") ]
+              nativeRuntimePaths = [] }
 
         let depB: Compiler.ResolvedDependency =
             { name = "aaa-missing"
               version = "1.0.0"
               source = outDir
               compileReferencePaths = [ Path.Join(outDir, "aaa-missing.dll") ]
-              runtimeLoadPaths = [ Path.Join(outDir, "aaa-missing.dll") ] }
+              runtimeLoadPaths = [ Path.Join(outDir, "aaa-missing.dll") ]
+              nativeRuntimePaths = [] }
 
         let compileOnce () =
             Compiler.compile
