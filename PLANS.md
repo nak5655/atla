@@ -1,5 +1,23 @@
 # Plan
 
+## 2026-04-20 ネイティブのみ提供パッケージ（`lib/<tfm>/_._`）のサポート
+
+### 目的
+- `lib/<tfm>/_._` プレースホルダのみを持ち `runtimes/<rid>/native/` にネイティブアセットを提供する NuGet パッケージ（例: `SkiaSharp.NativeAssets.Linux`）を `atla build` の依存として使えるようにする。
+- 現在はそのようなパッケージが `tryCollectDllsFromDirectory` で `*.dll` を見つけられずエラーとなり、依存解決に失敗する。
+
+### 仕様
+- TFM ディレクトリが存在するが `.dll` ファイルが 0 件の場合（`_._` プレースホルダのみ等）は `Ok []`（対応 TFM だがマネージドアセットなし）として扱い、エラーとしない。
+  - 以前の挙動: `Some(Result.Error "has no dll candidates")` → 依存解決失敗
+  - 変更後の挙動: `Some(Ok [])` → `compileReferencePaths = []`, `runtimeLoadPaths = []`, `nativeRuntimePaths = [native files]` で成功
+- `runtimes/<rid>/native/` のネイティブファイルは引き続き `collectNativeRuntimePaths` で収集し、`nativeRuntimePaths` に設定する。
+- `copyDependencies` がネイティブファイルを出力ディレクトリへコピーする既存ロジックはそのまま使用する。
+
+### 実装内容
+- [x] `PLANS.md`: 仕様をドキュメントに記録する。
+- [x] `Atla.Build/Resolver.fs`: `tryCollectFromRoot` 内の「TFM ディレクトリは存在するが DLL なし」のケースをエラーから `Ok []` に変更する。
+- [x] `Atla.Build.Tests/ResolverTests.fs`: ネイティブのみパッケージ（`lib/<tfm>/_._` + `runtimes/<rid>/native/`）の解決成功テストを追加する。
+
 ## 2026-04-20 ネイティブランタイム DLL のコピー対応
 
 ### 目的

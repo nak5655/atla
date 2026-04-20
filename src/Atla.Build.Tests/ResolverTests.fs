@@ -901,3 +901,91 @@ dependencies:
             Assert.Contains(nativePath, dependency.nativeRuntimePaths)
         | None ->
             Assert.Fail("expected build plan")
+
+    [<Fact>]
+    let ``buildProject should resolve nuget package with lib tfm placeholder and native runtime only`` () =
+        (* lib/<tfm>/_._（マネージドアセットなし）と runtimes/<rid>/native/ のみを持つパッケージが
+           compileReferencePaths/runtimeLoadPaths を空で解決できることを確認する。 *)
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packageRoot = Path.Join(packagesRoot, "nativeonlypkg", "1.0.0")
+        let rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier
+        let libDir = Path.Join(packageRoot, "lib", "net8.0")
+        let nativeDir = Path.Join(packageRoot, "runtimes", rid, "native")
+        Directory.CreateDirectory(libDir) |> ignore
+        Directory.CreateDirectory(nativeDir) |> ignore
+        (* NuGet 標準プレースホルダ: このTFMはサポートするがマネージドアセットは提供しないことを示す。 *)
+        File.WriteAllText(Path.Join(libDir, "_._"), "")
+        File.WriteAllText(Path.Join(nativeDir, "libnative.so"), "fake-native")
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  nativeonlypkg:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let dependency = Assert.Single(plan.dependencies)
+                Assert.Empty(dependency.compileReferencePaths)
+                Assert.Empty(dependency.runtimeLoadPaths)
+                let nativePath = Path.GetFullPath(Path.Join(nativeDir, "libnative.so"))
+                Assert.Equal<string list>([ nativePath ], dependency.nativeRuntimePaths)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should resolve path dependency with lib tfm placeholder and native runtime only`` () =
+        (* path 依存でも lib/<tfm>/_._（マネージドアセットなし）と runtimes/<rid>/native/ のみを
+           持つ依存が空の managed paths と populated な nativeRuntimePaths で解決できることを確認する。 *)
+        let rootProject = createTempProjectDir ()
+        let depProject = createTempProjectDir ()
+        let rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier
+        let libDir = Path.Join(depProject, "lib", "net8.0")
+        let nativeDir = Path.Join(depProject, "runtimes", rid, "native")
+        Directory.CreateDirectory(libDir) |> ignore
+        Directory.CreateDirectory(nativeDir) |> ignore
+        File.WriteAllText(Path.Join(libDir, "_._"), "")
+        File.WriteAllText(Path.Join(nativeDir, "dep-native.so"), "fake-dep-native")
+
+        writeManifest depProject """
+package:
+  name: "dep-native-only"
+  version: "1.0.0"
+"""
+
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toYamlPath
+
+        writeManifest rootProject $"""
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  dep-native-only:
+    path: "{relativePath}"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+        Assert.True(result.succeeded)
+        Assert.Empty(result.diagnostics)
+
+        match result.plan with
+        | Some plan ->
+            let dependency = Assert.Single(plan.dependencies)
+            Assert.Empty(dependency.compileReferencePaths)
+            Assert.Empty(dependency.runtimeLoadPaths)
+            let nativePath = Path.GetFullPath(Path.Join(nativeDir, "dep-native.so"))
+            Assert.Equal<string list>([ nativePath ], dependency.nativeRuntimePaths)
+        | None ->
+            Assert.Fail("expected build plan")

@@ -238,8 +238,9 @@ module internal Resolver =
             | None -> None
             | Some tfmDir ->
                 match tryCollectDllsFromDirectory dependencyName probeRoot tfmDir with
-                | Ok dlls when List.isEmpty dlls ->
-                    Some(Result.Error [ error $"dependency `{dependencyName}` has no dll candidates under `{probeRoot}` (tfm `{Path.GetFileName(tfmDir)}`)" ])
+                (* TFM ディレクトリが存在するが DLL が 0 件の場合（`_._` プレースホルダのみ等）は
+                   "マネージドアセットなし・ネイティブのみ提供" パッケージとして Ok [] を返す。
+                   エラーとしないことで runtimes/<rid>/native/ のみを持つパッケージが解決できる。 *)
                 | Ok dlls ->
                     Some(Ok dlls)
                 | Result.Error diagnostics ->
