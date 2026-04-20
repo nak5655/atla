@@ -302,18 +302,26 @@ module internal Resolver =
                     [||])
             |> Array.toList
 
-    (* 依存ルート配下から compile/runtime/native の全経路を収集する。 *)
+    (* 依存ルート配下から compile/runtime/native の全経路を収集する。
+       lib/ と ref/ の両方が存在せず、native ランタイムファイルのみ持つパッケージ
+       （例: Avalonia.Win32 等の native-only NuGet パッケージ）は
+       Ok([], [], nativeFiles) として成功扱いにする。 *)
     let private tryCollectDependencyAssemblyPaths
         (dependencyName: string)
         (dependencyRoot: string)
         : Result<string list * string list * string list, Diagnostic list> =
+        let nativeRuntimePaths = collectNativeRuntimePaths dependencyRoot
+
         match
             tryCollectCompileReferenceAssemblyPaths dependencyName dependencyRoot,
             tryCollectRuntimeLoadAssemblyPaths dependencyName dependencyRoot
         with
         | Ok compileReferencePaths, Ok runtimeLoadPaths ->
-            let nativeRuntimePaths = collectNativeRuntimePaths dependencyRoot
             Ok(compileReferencePaths, runtimeLoadPaths, nativeRuntimePaths)
+        | Result.Error _, _ | _, Result.Error _ when not (List.isEmpty nativeRuntimePaths) ->
+            (* マネージドアセットが存在しないが native ランタイムファイルが存在する場合は
+               native-only パッケージとして成功扱いにする。 *)
+            Ok([], [], nativeRuntimePaths)
         | Result.Error diagnostics, Ok _ ->
             Result.Error diagnostics
         | Ok _, Result.Error diagnostics ->

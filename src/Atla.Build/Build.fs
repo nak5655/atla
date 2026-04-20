@@ -226,7 +226,8 @@ module BuildSystem =
                 copyIfNewer srcPath dstPath)
 
         (* nativeRuntimePaths は dep.source からの相対パスを維持して outDir 配下に配置する。
-           dep.source が空または空白のみの場合はフラットコピーにフォールバックする。 *)
+           dep.source が空または空白のみの場合はフラットコピーにフォールバックする。
+           パスの相対計算前に両パスを絶対パスへ正規化し、OS 依存の区切り文字や相対パス混入を防ぐ。 *)
         let nativeResults =
             dependencies
             |> List.collect (fun dep ->
@@ -236,7 +237,9 @@ module BuildSystem =
                         if String.IsNullOrWhiteSpace dep.source then
                             Path.Join(outDir, Path.GetFileName(srcPath))
                         else
-                            Path.Join(outDir, Path.GetRelativePath(dep.source, srcPath))
+                            let normalizedSource = Path.GetFullPath(dep.source)
+                            let normalizedSrc = Path.GetFullPath(srcPath)
+                            Path.Join(outDir, Path.GetRelativePath(normalizedSource, normalizedSrc))
                     copyIfNewer srcPath dstPath))
 
         let results = managedResults @ nativeResults
