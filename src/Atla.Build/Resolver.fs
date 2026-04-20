@@ -11,6 +11,7 @@ open Atla.Core.Semantics.Data
 open Atla.Compiler
 open NuGet.Common
 open NuGet.Configuration
+open NuGet.Packaging
 open NuGet.Packaging.Core
 open NuGet.Protocol
 open NuGet.Protocol.Core.Types
@@ -296,6 +297,58 @@ module internal Resolver =
         | Result.Error compileDiagnostics, Result.Error runtimeDiagnostics ->
             Result.Error(compileDiagnostics @ runtimeDiagnostics)
 
+    (* NuGet パッケージの nuspec から推移的依存パッケージ仕様を読み取る。
+       tfmPriority に従って最適な依存グループを選択し、NuGetDependency リストを返す。
+       nuspec が存在しない・依存グループが空の場合は Ok [] を返す。
+       例外は Diagnostic.Error に変換して Result.Error で返す。 *)
+    let private tryReadTransitiveNuGetDependencies (packageId: string) (packagePath: string) : Result<DependencySpec list, Diagnostic list> =
+        (* nuspec ファイルが存在しない場合は推移的依存なしとして Ok [] を返す。 *)
+        let nuspecFiles = Directory.GetFiles(packagePath, "*.nuspec")
+
+        if Array.isEmpty nuspecFiles then
+            Ok []
+        else
+            try
+                use reader = new PackageFolderReader(packagePath)
+                let depGroups = reader.NuspecReader.GetDependencyGroups() |> Seq.toList
+
+                if List.isEmpty depGroups then
+                    Ok []
+                else
+                    (* tfmPriority と同じ優先順位で最適な dependency group を選択する。 *)
+                    let bestGroup =
+                        tfmPriority
+                        |> List.tryPick (fun tfm ->
+                            depGroups
+                            |> List.tryFind (fun group ->
+                                try
+                                    group.TargetFramework.GetShortFolderName().ToLowerInvariant() = tfm
+                                with _ ->
+                                    false))
+                        |> Option.orElse (
+                            depGroups
+                            |> List.tryFind (fun group -> group.TargetFramework.IsAny || group.TargetFramework.IsAgnostic))
+                        |> Option.orElse (List.tryHead depGroups)
+
+                    match bestGroup with
+                    | None -> Ok []
+                    | Some group ->
+                        let deps =
+                            group.Packages
+                            |> Seq.toList
+                            |> List.choose (fun pkg ->
+                                let minVersion = pkg.VersionRange.MinVersion
+
+                                if minVersion <> null then
+                                    Some(NuGetDependency(pkg.Id, minVersion.ToNormalizedString()))
+                                else
+                                    None)
+
+                        Ok deps
+            with ex ->
+                Result.Error [ error $"failed to read nuspec for `{packageId}`: {ex.Message}" ]
+
+
     (* NuGet 依存の解決本体:
        1) キャッシュ直解決
        2) キャッシュ不在時は自動 restore
@@ -367,15 +420,30 @@ module internal Resolver =
 
         (* 依存木 DFS:
            - path 依存は再帰的に manifest を読む
-           - nuget 依存はローカルキャッシュを解決する
+           - nuget 依存はローカルキャッシュを解決し、nuspec から推移的依存を再帰的に処理する
            - stack で循環参照を検出する *)
         let rec visitDependency (state: ResolveState) (ownerRoot: string) (dependency: DependencySpec) : ResolveState =
             match dependency with
             | NuGetDependency(packageId, version) ->
+                (* 既に resolvedByName に登録済みの場合は推移的依存を再処理しない（無限ループ防止）。 *)
+                let alreadyResolved = state.resolvedByName.ContainsKey(packageId.ToLowerInvariant())
+
                 match tryResolveNuGetDependency packageId version with
                 | Result.Error diagnostics ->
                     { state with diagnostics = state.diagnostics @ diagnostics }
-                | Ok resolved -> mergeResolvedDependency state resolved
+                | Ok resolved ->
+                    let mergedState = mergeResolvedDependency state resolved
+
+                    if alreadyResolved then
+                        mergedState
+                    else
+                        (* nuspec から推移的依存を読み取り、再帰的に解決する。 *)
+                        match tryReadTransitiveNuGetDependencies packageId resolved.source with
+                        | Result.Error diagnostics ->
+                            { mergedState with diagnostics = mergedState.diagnostics @ diagnostics }
+                        | Ok transitiveDeps ->
+                            transitiveDeps
+                            |> List.fold (fun currentState dep -> visitTransitiveDependency currentState ownerRoot dep) mergedState
             | PathDependency(name, relativePath) ->
                 let dependencyRoot = normalizePath (Path.Join(ownerRoot, relativePath))
                 let manifestPath = Path.Join(dependencyRoot, manifestFileName)
@@ -420,6 +488,33 @@ module internal Resolver =
                                 |> List.fold (fun currentState child -> visitDependency currentState dependencyRoot child) enteredState
 
                             { nestedState with stack = state.stack }
+
+        (* 推移的 NuGet 依存の DFS:
+           ユーザー指定の依存（visitDependency）と異なり、DLL を持たないビルドツール等の
+           パッケージを解決できない場合はエラーとせずスキップして続行する。
+           バージョン競合は通常どおり診断として報告する。 *)
+        and visitTransitiveDependency (state: ResolveState) (ownerRoot: string) (dependency: DependencySpec) : ResolveState =
+            match dependency with
+            | PathDependency _ ->
+                visitDependency state ownerRoot dependency
+            | NuGetDependency(packageId, version) ->
+                let alreadyResolved = state.resolvedByName.ContainsKey(packageId.ToLowerInvariant())
+
+                match tryResolveNuGetDependency packageId version with
+                | Result.Error _ ->
+                    (* DLL を持たないパッケージ（ビルドツール・アナライザー等）はスキップする。 *)
+                    state
+                | Ok resolved ->
+                    let mergedState = mergeResolvedDependency state resolved
+
+                    if alreadyResolved then
+                        mergedState
+                    else
+                        match tryReadTransitiveNuGetDependencies packageId resolved.source with
+                        | Result.Error _ -> mergedState
+                        | Ok transitiveDeps ->
+                            transitiveDeps
+                            |> List.fold (fun currentState dep -> visitTransitiveDependency currentState ownerRoot dep) mergedState
 
         let initialState =
             { stack = [ normalizePath projectRoot ]

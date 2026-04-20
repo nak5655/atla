@@ -544,3 +544,255 @@ dependencies:
             let messages2 = run2.diagnostics |> List.map (fun d -> d.message)
             Assert.Equal<string list>(messages1, messages2)
         )
+
+    /// 指定されたパッケージディレクトリに .nuspec ファイルを書き込む。
+    let private writeNuspec (packagePath: string) (packageId: string) (version: string) (nuspecBody: string) =
+        let nuspecPath = Path.Join(packagePath, $"{packageId.ToLowerInvariant()}.nuspec")
+        File.WriteAllText(nuspecPath, nuspecBody.Trim())
+
+    /// 標準的な NuGet パッケージレイアウトを作成し、指定 TFM の lib DLL を生成する。
+    let private createNuGetPackage (packagesRoot: string) (packageId: string) (version: string) (tfm: string) : string =
+        let packagePath = Path.Join(packagesRoot, packageId.ToLowerInvariant(), version)
+        let libDir = Path.Join(packagePath, "lib", tfm)
+        Directory.CreateDirectory(libDir) |> ignore
+        File.WriteAllText(Path.Join(libDir, $"{packageId}.dll"), "")
+        packagePath
+
+    [<Fact>]
+    let ``buildProject should resolve transitive nuget dependencies from nuspec`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        (* Primary パッケージを作成する。 *)
+        let primaryPath = createNuGetPackage packagesRoot "Primary" "1.0.0" "net8.0"
+
+        (* Primary の nuspec に TransitivePkg への依存を記述する。 *)
+        writeNuspec primaryPath "Primary" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Primary</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="TransitivePkg" version="2.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        (* 推移的依存パッケージを作成する。 *)
+        let _transitivePath = createNuGetPackage packagesRoot "TransitivePkg" "2.0.0" "net8.0"
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Primary:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let names = plan.dependencies |> List.map (fun dep -> dep.name) |> List.sort
+                Assert.Equal<string list>([ "Primary"; "TransitivePkg" ], names)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should not include duplicate packages when transitive deps overlap`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        (* PkgA と PkgB が同じ SharedPkg に依存するダイアモンド依存を作成する。 *)
+        let pkgAPath = createNuGetPackage packagesRoot "PkgA" "1.0.0" "net8.0"
+        let pkgBPath = createNuGetPackage packagesRoot "PkgB" "1.0.0" "net8.0"
+        let _sharedPath = createNuGetPackage packagesRoot "SharedPkg" "3.0.0" "net8.0"
+
+        writeNuspec pkgAPath "PkgA" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>PkgA</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="SharedPkg" version="3.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        writeNuspec pkgBPath "PkgB" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>PkgB</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="SharedPkg" version="3.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  PkgA:
+    version: "1.0.0"
+  PkgB:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let names = plan.dependencies |> List.map (fun dep -> dep.name) |> List.sort
+                (* SharedPkg は重複なく一度だけ含まれること。 *)
+                Assert.Equal<string list>([ "PkgA"; "PkgB"; "SharedPkg" ], names)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should report version conflict for transitive nuget dependency`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        (* PkgA と PkgB が SharedPkg の異なるバージョンに依存する。 *)
+        let pkgAPath = createNuGetPackage packagesRoot "PkgA" "1.0.0" "net8.0"
+        let pkgBPath = createNuGetPackage packagesRoot "PkgB" "1.0.0" "net8.0"
+        let _sharedV1 = createNuGetPackage packagesRoot "SharedPkg" "1.0.0" "net8.0"
+        let _sharedV2 = createNuGetPackage packagesRoot "SharedPkg" "2.0.0" "net8.0"
+
+        writeNuspec pkgAPath "PkgA" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>PkgA</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="SharedPkg" version="1.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        writeNuspec pkgBPath "PkgB" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>PkgB</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="SharedPkg" version="2.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  PkgA:
+    version: "1.0.0"
+  PkgB:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.False(result.succeeded)
+            Assert.True(result.plan.IsNone)
+            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("dependency version conflict `SharedPkg`")))
+        )
+
+    [<Fact>]
+    let ``buildProject should resolve multi-level transitive nuget dependencies`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        (* Root -> Level1 -> Level2 の3段の依存チェーンを作成する。 *)
+        let level1Path = createNuGetPackage packagesRoot "Level1" "1.0.0" "net8.0"
+        let level2Path = createNuGetPackage packagesRoot "Level2" "1.0.0" "net8.0"
+        let _level3 = createNuGetPackage packagesRoot "Level3" "1.0.0" "net8.0"
+
+        writeNuspec level1Path "Level1" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Level1</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="Level2" version="1.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        writeNuspec level2Path "Level2" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Level2</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="Level3" version="1.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  Level1:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let names = plan.dependencies |> List.map (fun dep -> dep.name) |> List.sort
+                Assert.Equal<string list>([ "Level1"; "Level2"; "Level3" ], names)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
