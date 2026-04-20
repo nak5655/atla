@@ -14,7 +14,9 @@ module Compiler =
           version: string
           source: string
           compileReferencePaths: string list
-          runtimeLoadPaths: string list }
+          runtimeLoadPaths: string list
+          /// ネイティブランタイム DLL のパスリスト（runtimes/<rid>/native/ 配下のファイル）。
+          nativeRuntimePaths: string list }
 
     type CompileRequest =
         { asmName: string

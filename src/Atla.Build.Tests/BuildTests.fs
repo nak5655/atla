@@ -222,7 +222,8 @@ dependencies:
           version = "1.0.0"
           source = ""
           compileReferencePaths = []
-          runtimeLoadPaths = runtimePaths }
+          runtimeLoadPaths = runtimePaths
+          nativeRuntimePaths = [] }
 
     [<Fact>]
     let ``copyDependencies should return empty list when dependencies are empty`` () =
@@ -305,6 +306,71 @@ dependencies:
         let missingPath = Path.Join(outDir, "nonexistent.dll")
 
         let dep = makeRuntimeDep "dep" [ missingPath ]
+        let result = BuildSystem.copyDependencies [ dep ] outDir
+
+        match result with
+        | Ok _ -> Assert.Fail("expected error")
+        | Result.Error diagnostics -> Assert.NotEmpty(diagnostics)
+
+    (* copyDependencies の native runtime DLL コピーテスト用補助: nativeRuntimePaths のみ設定した ResolvedDependency を生成する。 *)
+    let private makeNativeDep (name: string) (nativePaths: string list) : Atla.Compiler.Compiler.ResolvedDependency =
+        { name = name
+          version = "1.0.0"
+          source = ""
+          compileReferencePaths = []
+          runtimeLoadPaths = []
+          nativeRuntimePaths = nativePaths }
+
+    [<Fact>]
+    let ``copyDependencies should copy native runtime file when destination does not exist`` () =
+        let srcDir = createTempProjectDir ()
+        let outDir = createTempProjectDir ()
+        let srcPath = Path.Join(srcDir, "native.dll")
+        File.WriteAllText(srcPath, "fake-native-dll")
+
+        let dep = makeNativeDep "dep" [ srcPath ]
+        let result = BuildSystem.copyDependencies [ dep ] outDir
+
+        match result with
+        | Ok copied ->
+            let dstPath = Path.Join(outDir, "native.dll")
+            Assert.Single(copied) |> ignore
+            Assert.True(File.Exists(dstPath))
+            Assert.Equal("fake-native-dll", File.ReadAllText(dstPath))
+        | Result.Error _ -> Assert.Fail("expected Ok")
+
+    [<Fact>]
+    let ``copyDependencies should copy both runtime and native runtime files`` () =
+        let srcDir = createTempProjectDir ()
+        let outDir = createTempProjectDir ()
+        let managedPath = Path.Join(srcDir, "managed.dll")
+        let nativePath = Path.Join(srcDir, "native.dll")
+        File.WriteAllText(managedPath, "fake-managed")
+        File.WriteAllText(nativePath, "fake-native")
+
+        let dep : Atla.Compiler.Compiler.ResolvedDependency =
+            { name = "dep"
+              version = "1.0.0"
+              source = ""
+              compileReferencePaths = []
+              runtimeLoadPaths = [ managedPath ]
+              nativeRuntimePaths = [ nativePath ] }
+
+        let result = BuildSystem.copyDependencies [ dep ] outDir
+
+        match result with
+        | Ok copied ->
+            Assert.Equal(2, List.length copied)
+            Assert.True(File.Exists(Path.Join(outDir, "managed.dll")))
+            Assert.True(File.Exists(Path.Join(outDir, "native.dll")))
+        | Result.Error _ -> Assert.Fail("expected Ok")
+
+    [<Fact>]
+    let ``copyDependencies should return error when native runtime source file does not exist`` () =
+        let outDir = createTempProjectDir ()
+        let missingPath = Path.Join(outDir, "nonexistent-native.dll")
+
+        let dep = makeNativeDep "dep" [ missingPath ]
         let result = BuildSystem.copyDependencies [ dep ] outDir
 
         match result with

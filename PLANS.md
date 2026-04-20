@@ -1,5 +1,28 @@
 # Plan
 
+## 2026-04-20 ネイティブランタイム DLL のコピー対応
+
+### 目的
+- `atla build` でネイティブランタイム DLL（NuGet パッケージの `runtimes/<rid>/native/` 配下や path 依存プロジェクトの同構造ディレクトリに含まれるファイル）が出力ディレクトリにコピーされない問題を解消する。
+
+### 仕様
+- `ResolvedDependency` に `nativeRuntimePaths: string list` フィールドを追加する。
+  - NuGet / path 両依存の解決時に `runtimes/<current-rid>/native/` 配下の全ファイルを収集して設定する。
+  - `runtimes/` ディレクトリが存在しない依存では空リスト `[]` を設定する。
+  - RID フォールバック: `<os>-<arch>` 形式の場合は `<os>` を追加候補として収集する（例: `win-x64` → `["win-x64"; "win"]`）。
+  - 複数 RID 候補で同一ファイル名が存在する場合は最初に見つかったものを採用する。
+- `BuildSystem.copyDependencies` を `runtimeLoadPaths` に加えて `nativeRuntimePaths` も outDir にコピーするよう更新する。
+
+### 実装内容
+- [x] `PLANS.md`: 仕様をドキュメントに記録する。
+- [x] `Atla.Core/Compile.fs`: `ResolvedDependency` に `nativeRuntimePaths: string list` フィールドを追加する。
+- [x] `Atla.Build/Resolver.fs`: `collectNativeRuntimePaths` を追加し、`tryCollectDependencyAssemblyPaths` の返り値に含める。NuGet / path 両依存の `ResolvedDependency` 構築時に設定する。
+- [x] `Atla.Build/Build.fs`: `copyDependencies` で `nativeRuntimePaths` も outDir にコピーする。
+- [x] `Atla.Core.Tests/Lowering/LoweringTests.fs`: 既存テストの `ResolvedDependency` に `nativeRuntimePaths = []` を追加する。
+- [x] `Atla.Build.Tests/BuildTests.fs`: `makeRuntimeDep` 更新、ネイティブ DLL コピーのユニットテストを追加する。
+- [x] `Atla.Build.Tests/ResolverTests.fs`: `runtimes/<rid>/native/` からのネイティブパス収集テストを追加する。
+- [x] `Atla.LanguageServer.Tests/ServerLifecycleTests.fs`: 既存テストの `ResolvedDependency` に `nativeRuntimePaths = []` を追加する。
+
 ## 2026-04-20 NuGet 推移的依存パッケージの解決
 
 ### 目的
