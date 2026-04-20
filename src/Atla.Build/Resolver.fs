@@ -299,10 +299,10 @@ module internal Resolver =
 
     (* NuGet パッケージの nuspec から推移的依存パッケージ仕様を読み取る。
        tfmPriority に従って最適な依存グループを選択し、NuGetDependency リストを返す。
-       nuspec が存在しない・依存グループが空の場合は Ok [] を返す。
+       パッケージディレクトリに nuspec ファイルが見つからない場合は Ok [] を返す。
        例外は Diagnostic.Error に変換して Result.Error で返す。 *)
     let private tryReadTransitiveNuGetDependencies (packageId: string) (packagePath: string) : Result<DependencySpec list, Diagnostic list> =
-        (* nuspec ファイルが存在しない場合は推移的依存なしとして Ok [] を返す。 *)
+        (* パッケージディレクトリ内に nuspec ファイルが存在しない場合は推移的依存なしとして Ok [] を返す。 *)
         let nuspecFiles = Directory.GetFiles(packagePath, "*.nuspec")
 
         if Array.isEmpty nuspecFiles then
@@ -339,10 +339,10 @@ module internal Resolver =
                             |> List.choose (fun pkg ->
                                 let minVersion = pkg.VersionRange.MinVersion
 
-                                if minVersion <> null then
-                                    Some(NuGetDependency(pkg.Id, minVersion.ToNormalizedString()))
+                                if isNull minVersion then
+                                    None
                                 else
-                                    None)
+                                    Some(NuGetDependency(pkg.Id, minVersion.ToNormalizedString())))
 
                         Ok deps
             with ex ->
