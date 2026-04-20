@@ -192,6 +192,54 @@ module BuildSystem =
                 | None ->
                     Result.Error [ error "missing required mapping `package`" ]
 
+    /// ソースが宛先より新しい（または宛先が存在しない）場合のみファイルをコピーする。
+    /// ソースファイルが存在しない場合は Diagnostic.Error を返す。
+    /// コピーした場合は Some destPath を、スキップした場合は None を返す。
+    let private copyIfNewer (srcPath: string) (dstPath: string) : Result<string option, Diagnostic list> =
+        try
+            if not (File.Exists srcPath) then
+                Result.Error [ error $"dependency DLL not found: `{srcPath}`" ]
+            elif not (File.Exists dstPath) || File.GetLastWriteTimeUtc(srcPath) > File.GetLastWriteTimeUtc(dstPath) then
+                File.Copy(srcPath, dstPath, overwrite = true)
+                Ok(Some dstPath)
+            else
+                Ok None
+        with ex ->
+            Result.Error [ error $"failed to copy `{srcPath}` to `{dstPath}`: {ex.Message}" ]
+
+    /// 依存 DLL を outDir へコピーする。
+    /// ソースが宛先より新しい場合（または宛先が存在しない場合）のみコピーを実行する。
+    /// outDir は呼び出し前に存在していなければならない。
+    /// コピーしたファイルのパスリストを返す。エラーは全ファイル分まとめて返す。
+    let copyDependencies (dependencies: Compiler.ResolvedDependency list) (outDir: string) : Result<string list, Diagnostic list> =
+        (* 全依存の runtimeLoadPaths を flatten して各ファイルにコピーを試みる。 *)
+        let results =
+            dependencies
+            |> List.collect (fun dep -> dep.runtimeLoadPaths)
+            |> List.map (fun srcPath ->
+                let dstPath = Path.Join(outDir, Path.GetFileName(srcPath))
+                copyIfNewer srcPath dstPath)
+
+        (* エラーを全件収集し、ひとつでもあれば失敗を返す。 *)
+        let errors =
+            results
+            |> List.collect (fun r ->
+                match r with
+                | Result.Error diagnostics -> diagnostics
+                | Ok _ -> [])
+
+        if List.isEmpty errors then
+            let copied =
+                results
+                |> List.choose (fun r ->
+                    match r with
+                    | Ok(Some path) -> Some path
+                    | _ -> None)
+
+            Ok copied
+        else
+            Result.Error errors
+
     (* BuildRequest から最小の空 BuildPlan を組み立てる補助API。 *)
     let createEmptyPlan (request: BuildRequest) : BuildPlan =
         { projectName = ""

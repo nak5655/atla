@@ -134,7 +134,14 @@ module Console =
                                 if compileResult.succeeded then
                                     let dllPath = Path.Join(outDir, asmName + ".dll")
                                     Console.WriteLine($"Generated: {dllPath}")
-                                    0
+
+                                    match BuildSystem.copyDependencies plan.dependencies outDir with
+                                    | Result.Error diagnostics ->
+                                        printDiagnostics diagnostics
+                                        1
+                                    | Ok copied ->
+                                        copied |> List.iter (fun path -> Console.WriteLine($"Copied: {path}"))
+                                        0
                                 else
                                     1
         | command :: _ ->
