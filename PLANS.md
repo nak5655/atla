@@ -1,5 +1,28 @@
 # Plan
 
+## 2026-04-20 依存 DLL コピー処理の追加
+
+### 目的
+- `atla build` で生成された DLL と同じ出力ディレクトリに依存 DLL が存在しない問題を解消する。
+- 依存 DLL のコピーは、ソースが宛先より新しい場合（または宛先が存在しない場合）のみ実行する。
+
+### 仕様
+- `BuildSystem.copyDependencies (dependencies: Compiler.ResolvedDependency list) (outDir: string) : Result<string list, Diagnostic list>`
+  - `ResolvedDependency.runtimeLoadPaths` に含まれる全 DLL を `outDir` へコピーする。
+  - コピー条件: 宛先ファイルが存在しない、または `File.GetLastWriteTimeUtc(src) > File.GetLastWriteTimeUtc(dst)`。
+  - 成功時はコピーしたファイルのパスリストを `Ok` で返す。
+  - コピー時に IO 例外が発生した場合は `Diagnostic.Error` を含む `Result.Error` を返す。
+  - エラーは全ファイル分まとめて返す（途中でショートサーキットしない）。
+- `Atla.Console` の `build` コマンドは、コンパイル成功後に `copyDependencies` を呼び出す。
+  - コピーされた DLL のパスを `Copied: <path>` 形式で標準出力に出力する。
+  - コピー失敗時はエラーを標準エラーへ出力し終了コード 1 を返す。
+
+### 実装内容
+- [x] `PLANS.md`: 仕様をドキュメントに記録する。
+- [x] `Atla.Build/Build.fs`: `BuildSystem.copyDependencies` を追加する。
+- [x] `Atla.Console/Program.fs`: コンパイル後に `copyDependencies` を呼び出す。
+- [x] `Atla.Build.Tests/BuildTests.fs`: `copyDependencies` のユニットテストを追加する。
+
 ## 2026-04-19 example/gui ビルド成功に必要な機能実装
 
 ### 目的

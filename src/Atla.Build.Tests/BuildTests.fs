@@ -215,3 +215,98 @@ dependencies:
 
         Assert.False(result.succeeded)
         Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("dependency version conflict `common`")))
+
+    (* copyDependencies のテストで使う補助: runtime DLL のみ設定した ResolvedDependency を生成する。 *)
+    let private makeRuntimeDep (name: string) (runtimePaths: string list) : Atla.Compiler.Compiler.ResolvedDependency =
+        { name = name
+          version = "1.0.0"
+          source = ""
+          compileReferencePaths = []
+          runtimeLoadPaths = runtimePaths }
+
+    [<Fact>]
+    let ``copyDependencies should return empty list when dependencies are empty`` () =
+        let outDir = createTempProjectDir ()
+
+        let result = BuildSystem.copyDependencies [] outDir
+
+        match result with
+        | Ok copied -> Assert.Empty(copied)
+        | Result.Error _ -> Assert.Fail("expected Ok")
+
+    [<Fact>]
+    let ``copyDependencies should copy DLL when destination does not exist`` () =
+        let srcDir = createTempProjectDir ()
+        let outDir = createTempProjectDir ()
+        let srcPath = Path.Join(srcDir, "dep.dll")
+        File.WriteAllText(srcPath, "fake-dll")
+
+        let dep = makeRuntimeDep "dep" [ srcPath ]
+        let result = BuildSystem.copyDependencies [ dep ] outDir
+
+        match result with
+        | Ok copied ->
+            let dstPath = Path.Join(outDir, "dep.dll")
+            Assert.Single(copied) |> ignore
+            Assert.True(File.Exists(dstPath))
+        | Result.Error _ -> Assert.Fail("expected Ok")
+
+    [<Fact>]
+    let ``copyDependencies should skip DLL when destination is up-to-date`` () =
+        let srcDir = createTempProjectDir ()
+        let outDir = createTempProjectDir ()
+        let srcPath = Path.Join(srcDir, "dep.dll")
+        let dstPath = Path.Join(outDir, "dep.dll")
+        let oldTime = DateTime.UtcNow.AddSeconds(-10.0)
+        let newTime = DateTime.UtcNow
+
+        (* src を古い時刻、dst を新しい時刻に設定してスキップを確認する。 *)
+        File.WriteAllText(srcPath, "fake-dll-old")
+        File.SetLastWriteTimeUtc(srcPath, oldTime)
+        File.WriteAllText(dstPath, "fake-dll-new")
+        File.SetLastWriteTimeUtc(dstPath, newTime)
+
+        let dep = makeRuntimeDep "dep" [ srcPath ]
+        let result = BuildSystem.copyDependencies [ dep ] outDir
+
+        match result with
+        | Ok copied ->
+            Assert.Empty(copied)
+            Assert.Equal("fake-dll-new", File.ReadAllText(dstPath))
+        | Result.Error _ -> Assert.Fail("expected Ok")
+
+    [<Fact>]
+    let ``copyDependencies should copy DLL when source is newer than destination`` () =
+        let srcDir = createTempProjectDir ()
+        let outDir = createTempProjectDir ()
+        let srcPath = Path.Join(srcDir, "dep.dll")
+        let dstPath = Path.Join(outDir, "dep.dll")
+        let oldTime = DateTime.UtcNow.AddSeconds(-10.0)
+        let newTime = DateTime.UtcNow
+
+        (* dst を古い時刻、src を新しい時刻に設定してコピーが実行されることを確認する。 *)
+        File.WriteAllText(dstPath, "fake-dll-old")
+        File.SetLastWriteTimeUtc(dstPath, oldTime)
+        File.WriteAllText(srcPath, "fake-dll-new")
+        File.SetLastWriteTimeUtc(srcPath, newTime)
+
+        let dep = makeRuntimeDep "dep" [ srcPath ]
+        let result = BuildSystem.copyDependencies [ dep ] outDir
+
+        match result with
+        | Ok copied ->
+            Assert.Single(copied) |> ignore
+            Assert.Equal("fake-dll-new", File.ReadAllText(dstPath))
+        | Result.Error _ -> Assert.Fail("expected Ok")
+
+    [<Fact>]
+    let ``copyDependencies should return error when source file does not exist`` () =
+        let outDir = createTempProjectDir ()
+        let missingPath = Path.Join(outDir, "nonexistent.dll")
+
+        let dep = makeRuntimeDep "dep" [ missingPath ]
+        let result = BuildSystem.copyDependencies [ dep ] outDir
+
+        match result with
+        | Ok _ -> Assert.Fail("expected error")
+        | Result.Error diagnostics -> Assert.NotEmpty(diagnostics)
