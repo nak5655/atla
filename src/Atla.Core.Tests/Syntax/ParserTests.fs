@@ -327,3 +327,111 @@ fn main (): () = do
                 Assert.True(false, "join function declaration was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses lambda expression at expr top-level`` () =
+        let program = "fn main (): Int = (fn x -> x) 1"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.func with
+                    | :? Ast.Expr.Lambda as lambdaExpr ->
+                        Assert.Equal<string list>(["x"], lambdaExpr.args)
+                    | _ ->
+                        Assert.True(false, "apply target was not parsed as Ast.Expr.Lambda")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses lambda expression with explicit unit argument list`` () =
+        let program = "fn main (): Int = (fn () -> 1) ()"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as outerApply ->
+                    match outerApply.func with
+                    | :? Ast.Expr.Lambda as lambdaExpr ->
+                        Assert.Empty(lambdaExpr.args)
+                    | _ ->
+                        Assert.True(false, "outer apply target was not parsed as Ast.Expr.Lambda")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule reports duplicate lambda parameter as Ast.Expr.Error`` () =
+        let program = "fn main (): Int = fn x x -> x"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Error as errExpr ->
+                    Assert.Contains("Duplicate lambda parameter", errExpr.message)
+                | _ ->
+                    Assert.True(false, "duplicate lambda parameter should be reported as Ast.Expr.Error")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule reports missing lambda parameter list as Ast.Expr.Error`` () =
+        let program = "fn main (): Int = fn -> 1"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Error as errExpr ->
+                    Assert.Contains("Lambda parameter list is empty", errExpr.message)
+                | _ ->
+                    Assert.True(false, "missing lambda parameters should be reported as Ast.Expr.Error")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

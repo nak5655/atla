@@ -1,5 +1,30 @@
 # Plan
 
+## 2026-04-21 無名関数構文 `fn arg1 arg2 -> expr` の導入（パーサー範囲）
+
+### 目的
+- 式コンテキストで無名関数（lambda）を定義できるようにする。
+- 構文は `fn arg1 arg2 -> expr` を基本とし、明示ユニット引数 `fn () -> expr` も許可する。
+- lambda は `expr` の最上位レイヤーで受理する。
+
+### 仕様
+- `Ast.Expr` に `Lambda(args: string list, body: Expr, span: Span)` を追加する。
+- `Parser.expr` は `lambdaExpr <|> binopExpr` の順で解析する。
+- lambda の引数は次のみ許可する。
+  - `Id` の1個以上並び（例: `fn x y -> ...`）
+  - 明示ユニット引数 `()`（例: `fn () -> ...`）
+- `fn -> expr` は空引数として `Ast.Expr.Error` を返す。
+- 引数重複（例: `fn x x -> ...`）は `Ast.Expr.Error` を返す。
+- 今回はテスト範囲を `ParserTests` のみに限定する。
+- `Hir.Expr.Lambda` の Lowering は既存の `failwith` を維持する（今回非対応）。
+
+### 実装内容
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] `src/Atla.Core/Syntax/Data/Ast.fs` に `Ast.Expr.Lambda` を追加する。
+- [x] `src/Atla.Core/Syntax/Parser.fs` に lambda パーサーを追加し、`expr` 最上位で受理する。
+- [x] `src/Atla.Core.Tests/Syntax/ParserTests.fs` に lambda の正常系・異常系テストを追加する。
+- [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj --filter "FullyQualifiedName~ParserTests"` を実行する。
+
 ## 2026-04-20 native-only NuGet パッケージ（lib/ref なし）の推移的解決対応
 
 ### 目的
