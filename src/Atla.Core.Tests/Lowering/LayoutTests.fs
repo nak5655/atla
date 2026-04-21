@@ -236,3 +236,40 @@ fn keep (xs: Array String): Array String = xs
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``layoutAssembly returns explicit diagnostic for captured lambda before frame allocation`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 100
+        let capturedSym = SymbolId 101
+        let scope = Scope(None)
+        scope.DeclareVar("main", methodSym)
+        scope.DeclareVar("captured", capturedSym)
+
+        // 自由変数 `captured` を参照するラムダを構築する。
+        let lambdaExpr =
+            Hir.Expr.Lambda(
+                [ Hir.Arg("x", TypeId.Int, span) ],
+                TypeId.Int,
+                Hir.Expr.Id(capturedSym, TypeId.Int, span),
+                TypeId.Fn([ TypeId.Int ], TypeId.Int),
+                span)
+
+        // メソッド本体はラムダを返す式にする（Layout 前処理で検出されることを期待）。
+        let hirMethod =
+            Hir.Method(
+                methodSym,
+                [],
+                lambdaExpr,
+                TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
+                span)
+
+        let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
+        let hirAssembly = Hir.Assembly("test", [ hirModule ])
+        let result = Layout.layoutAssembly("TestAsm", hirAssembly)
+
+        Assert.False(result.succeeded, "captured lambda should fail in preprocessing stage")
+        let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+        Assert.Contains("Closure conversion requires env-class lowering", message)
+        Assert.Contains("methodSid=100", message)
+        Assert.Contains("captured=[101]", message)
