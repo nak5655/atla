@@ -3,11 +3,26 @@ namespace Atla.Core.Lowering
 open Atla.Core.Semantics.Data
 
 module ClosureConversion =
+    /// 捕捉変数1件分のメタデータ。
+    type private CapturedVarMetadata = {
+        sid: int
+        isMutable: bool
+        typ: TypeId
+    }
+
+    /// 1つのラムダ式に対する捕捉情報メタデータ。
+    type private LambdaCaptureMetadata = {
+        ownerMethodSid: int
+        span: Atla.Core.Data.Span
+        captured: CapturedVarMetadata list
+    }
+
     /// モジュール内で一意な SymbolId 採番を行う状態。
     type private ConversionState = {
         nextSymbolId: int
         generatedMethods: Hir.Method list
         diagnostics: Diagnostic list
+        captureMetadata: LambdaCaptureMetadata list
     }
 
     /// 変換状態へ新しい SymbolId を採番して返す。
@@ -16,13 +31,24 @@ module ClosureConversion =
         sid, { state with nextSymbolId = state.nextSymbolId + 1 }
 
     /// 捕捉ラムダの診断を決定的フォーマットで追加する。
-    let private addCapturedLambdaDiagnostic (ownerMethod: Hir.Method) (captured: int list) (state: ConversionState) : ConversionState =
-        let capturedText = captured |> List.map string |> String.concat ", "
+    let private addCapturedLambdaDiagnostic (ownerMethod: Hir.Method) (captured: CapturedVarMetadata list) (state: ConversionState) : ConversionState =
+        let capturedText = captured |> List.map (fun item -> string item.sid) |> String.concat ", "
+        let mutableCapturedText =
+            captured
+            |> List.filter (fun item -> item.isMutable)
+            |> List.map (fun item -> string item.sid)
+            |> String.concat ", "
+        let mutableText =
+            if System.String.IsNullOrWhiteSpace mutableCapturedText then
+                "[]"
+            else
+                $"[{mutableCapturedText}]"
         let diagnostic =
             Diagnostic.Error(
-                $"Closure conversion requires env-class lowering but backend support is incomplete. methodSid={ownerMethod.sym.id}, captured=[{capturedText}]",
+                $"Closure conversion requires env-class lowering but backend support is incomplete. methodSid={ownerMethod.sym.id}, captured=[{capturedText}], mutable={mutableText}",
                 ownerMethod.span)
-        { state with diagnostics = state.diagnostics @ [ diagnostic ] }
+        let metadata = { ownerMethodSid = ownerMethod.sym.id; span = ownerMethod.span; captured = captured }
+        { state with diagnostics = state.diagnostics @ [ diagnostic ]; captureMetadata = state.captureMetadata @ [ metadata ] }
 
     /// 式内の自由変数集合を収集する（globalSymbols は捕捉対象から除外）。
     let rec private collectFreeVarsExpr (bound: Set<int>) (globalSymbols: Set<int>) (expr: Hir.Expr) : Set<int> =
@@ -56,7 +82,9 @@ module ClosureConversion =
               collectFreeVarsExpr bound globalSymbols elseBranch ]
             |> List.fold Set.union Set.empty
         | Hir.Expr.Lambda (args, _, body, _, _) ->
-            let lambdaBound = args |> List.fold (fun (acc: Set<int>) arg -> acc.Add arg.sid.id) bound
+            // ラムダの自由変数判定では、外側スコープの束縛は「自由変数候補」として扱う。
+            // ここではラムダ自身の引数のみを束縛集合へ入れる。
+            let lambdaBound = args |> List.fold (fun (acc: Set<int>) arg -> acc.Add arg.sid.id) Set.empty
             collectFreeVarsExpr lambdaBound globalSymbols body
 
     /// 文列を宣言順に走査し、自由変数集合と更新後 bound を返す。
@@ -81,7 +109,7 @@ module ClosureConversion =
         | Hir.Stmt.ErrorStmt _ -> Set.empty, bound
 
     /// lambda lifting のために式を再帰変換し、必要な生成メソッドを state に蓄積する。
-    let rec private rewriteExpr (ownerMethod: Hir.Method) (bound: Set<int>) (globalSymbols: Set<int>) (expr: Hir.Expr) (state: ConversionState) : Hir.Expr * ConversionState =
+    let rec private rewriteExpr (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (expr: Hir.Expr) (state: ConversionState) : Hir.Expr * ConversionState =
         match expr with
         | Hir.Expr.Unit _
         | Hir.Expr.Int _
@@ -94,7 +122,7 @@ module ClosureConversion =
             let rewrittenInstance, nextState =
                 match instance with
                 | Some instExpr ->
-                    let rewrittenExpr, rewrittenState = rewriteExpr ownerMethod bound globalSymbols instExpr state
+                    let rewrittenExpr, rewrittenState = rewriteExpr ownerMethod bound bindings globalSymbols instExpr state
                     Some rewrittenExpr, rewrittenState
                 | None -> None, state
             Hir.Expr.MemberAccess(mem, rewrittenInstance, tid, span), nextState
@@ -102,27 +130,31 @@ module ClosureConversion =
             let rewrittenInstance, instanceState =
                 match instance with
                 | Some instExpr ->
-                    let rewrittenExpr, rewrittenState = rewriteExpr ownerMethod bound globalSymbols instExpr state
+                    let rewrittenExpr, rewrittenState = rewriteExpr ownerMethod bound bindings globalSymbols instExpr state
                     Some rewrittenExpr, rewrittenState
                 | None -> None, state
             let rewrittenArgs, finalState =
                 args
                 |> List.fold (fun (acc, st) arg ->
-                    let rewrittenArg, nextState = rewriteExpr ownerMethod bound globalSymbols arg st
+                    let rewrittenArg, nextState = rewriteExpr ownerMethod bound bindings globalSymbols arg st
                     acc @ [ rewrittenArg ], nextState) ([], instanceState)
             Hir.Expr.Call(func, rewrittenInstance, rewrittenArgs, tid, span), finalState
         | Hir.Expr.Block (stmts, body, tid, span) ->
-            let rewrittenStmts, boundAfterStmts, stateAfterStmts = rewriteStmts ownerMethod bound globalSymbols stmts state
-            let rewrittenBody, finalState = rewriteExpr ownerMethod boundAfterStmts globalSymbols body stateAfterStmts
+            let rewrittenStmts, boundAfterStmts, bindingsAfterStmts, stateAfterStmts = rewriteStmts ownerMethod bound bindings globalSymbols stmts state
+            let rewrittenBody, finalState = rewriteExpr ownerMethod boundAfterStmts bindingsAfterStmts globalSymbols body stateAfterStmts
             Hir.Expr.Block(rewrittenStmts, rewrittenBody, tid, span), finalState
         | Hir.Expr.If (cond, thenBranch, elseBranch, tid, span) ->
-            let rewrittenCond, condState = rewriteExpr ownerMethod bound globalSymbols cond state
-            let rewrittenThen, thenState = rewriteExpr ownerMethod bound globalSymbols thenBranch condState
-            let rewrittenElse, finalState = rewriteExpr ownerMethod bound globalSymbols elseBranch thenState
+            let rewrittenCond, condState = rewriteExpr ownerMethod bound bindings globalSymbols cond state
+            let rewrittenThen, thenState = rewriteExpr ownerMethod bound bindings globalSymbols thenBranch condState
+            let rewrittenElse, finalState = rewriteExpr ownerMethod bound bindings globalSymbols elseBranch thenState
             Hir.Expr.If(rewrittenCond, rewrittenThen, rewrittenElse, tid, span), finalState
         | Hir.Expr.Lambda (args, ret, body, tid, span) ->
-            let lambdaBound = args |> List.fold (fun (acc: Set<int>) arg -> acc.Add arg.sid.id) bound
-            let rewrittenBody, bodyState = rewriteExpr ownerMethod lambdaBound globalSymbols body state
+            // 捕捉判定は「ラムダ自身の引数」を束縛として扱う（外側束縛は捕捉対象）。
+            let lambdaBound = args |> List.fold (fun (acc: Set<int>) arg -> acc.Add arg.sid.id) Set.empty
+            let lambdaBindings =
+                args
+                |> List.fold (fun (acc: Map<int, bool * TypeId>) arg -> acc.Add(arg.sid.id, (false, arg.typ))) bindings
+            let rewrittenBody, bodyState = rewriteExpr ownerMethod lambdaBound lambdaBindings globalSymbols body state
             let captured =
                 collectFreeVarsExpr lambdaBound globalSymbols rewrittenBody
                 |> Set.toList
@@ -137,33 +169,41 @@ module ClosureConversion =
                 let updatedState = { sidAllocatedState with generatedMethods = sidAllocatedState.generatedMethods @ [ liftedMethod ] }
                 Hir.Expr.Id(liftedSid, tid, span), updatedState
             | _ ->
-                let diagnosticState = addCapturedLambdaDiagnostic ownerMethod captured bodyState
+                let capturedMetadata =
+                    captured
+                    |> List.map (fun sid ->
+                        match bindings.TryFind sid with
+                        | Some(isMutable, typ) -> { sid = sid; isMutable = isMutable; typ = typ }
+                        | None -> { sid = sid; isMutable = false; typ = TypeId.Error($"unknown-captured-{sid}") })
+                let diagnosticState = addCapturedLambdaDiagnostic ownerMethod capturedMetadata bodyState
                 Hir.Expr.Lambda(args, ret, rewrittenBody, tid, span), diagnosticState
 
     /// lambda lifting のために文を再帰変換し、Let の束縛を逐次反映する。
-    and private rewriteStmt (ownerMethod: Hir.Method) (bound: Set<int>) (globalSymbols: Set<int>) (stmt: Hir.Stmt) (state: ConversionState) : Hir.Stmt * Set<int> * ConversionState =
+    and private rewriteStmt (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmt: Hir.Stmt) (state: ConversionState) : Hir.Stmt * Set<int> * Map<int, bool * TypeId> * ConversionState =
         match stmt with
         | Hir.Stmt.Let (sid, isMutable, value, span) ->
-            let rewrittenValue, nextState = rewriteExpr ownerMethod bound globalSymbols value state
-            Hir.Stmt.Let(sid, isMutable, rewrittenValue, span), bound.Add sid.id, nextState
+            let rewrittenValue, nextState = rewriteExpr ownerMethod bound bindings globalSymbols value state
+            let nextBindings = bindings.Add(sid.id, (isMutable, value.typ))
+            Hir.Stmt.Let(sid, isMutable, rewrittenValue, span), bound.Add sid.id, nextBindings, nextState
         | Hir.Stmt.Assign (sid, value, span) ->
-            let rewrittenValue, nextState = rewriteExpr ownerMethod bound globalSymbols value state
-            Hir.Stmt.Assign(sid, rewrittenValue, span), bound, nextState
+            let rewrittenValue, nextState = rewriteExpr ownerMethod bound bindings globalSymbols value state
+            Hir.Stmt.Assign(sid, rewrittenValue, span), bound, bindings, nextState
         | Hir.Stmt.ExprStmt (value, span) ->
-            let rewrittenValue, nextState = rewriteExpr ownerMethod bound globalSymbols value state
-            Hir.Stmt.ExprStmt(rewrittenValue, span), bound, nextState
+            let rewrittenValue, nextState = rewriteExpr ownerMethod bound bindings globalSymbols value state
+            Hir.Stmt.ExprStmt(rewrittenValue, span), bound, bindings, nextState
         | Hir.Stmt.For (sid, tid, iterable, body, span) ->
-            let rewrittenIterable, iterableState = rewriteExpr ownerMethod bound globalSymbols iterable state
-            let rewrittenBody, _, bodyState = rewriteStmts ownerMethod (bound.Add sid.id) globalSymbols body iterableState
-            Hir.Stmt.For(sid, tid, rewrittenIterable, rewrittenBody, span), bound, bodyState
-        | Hir.Stmt.ErrorStmt _ -> stmt, bound, state
+            let rewrittenIterable, iterableState = rewriteExpr ownerMethod bound bindings globalSymbols iterable state
+            let bodyBindings = bindings.Add(sid.id, (false, tid))
+            let rewrittenBody, _, _, bodyState = rewriteStmts ownerMethod (bound.Add sid.id) bodyBindings globalSymbols body iterableState
+            Hir.Stmt.For(sid, tid, rewrittenIterable, rewrittenBody, span), bound, bindings, bodyState
+        | Hir.Stmt.ErrorStmt _ -> stmt, bound, bindings, state
 
     /// 文列を逐次変換し、最終 bound と state を返す。
-    and private rewriteStmts (ownerMethod: Hir.Method) (bound: Set<int>) (globalSymbols: Set<int>) (stmts: Hir.Stmt list) (state: ConversionState) : Hir.Stmt list * Set<int> * ConversionState =
+    and private rewriteStmts (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmts: Hir.Stmt list) (state: ConversionState) : Hir.Stmt list * Set<int> * Map<int, bool * TypeId> * ConversionState =
         stmts
-        |> List.fold (fun (rewrittenStmts, currentBound, currentState) stmt ->
-            let rewrittenStmt, nextBound, nextState = rewriteStmt ownerMethod currentBound globalSymbols stmt currentState
-            rewrittenStmts @ [ rewrittenStmt ], nextBound, nextState) ([], bound, state)
+        |> List.fold (fun (rewrittenStmts, currentBound, currentBindings, currentState) stmt ->
+            let rewrittenStmt, nextBound, nextBindings, nextState = rewriteStmt ownerMethod currentBound currentBindings globalSymbols stmt currentState
+            rewrittenStmts @ [ rewrittenStmt ], nextBound, nextBindings, nextState) ([], bound, bindings, state)
 
     /// モジュール内の既存 SymbolId の最大値を収集する（採番開始位置に使用）。
     let rec private collectMaxSymbolIdExpr (expr: Hir.Expr) : int =
@@ -200,13 +240,16 @@ module ClosureConversion =
             let maxMethodSid = hirModule.methods |> List.map (fun methodInfo -> methodInfo.sym.id) |> List.fold max -1
             let maxExprSid = hirModule.methods |> List.map (fun methodInfo -> collectMaxSymbolIdExpr methodInfo.body) |> List.fold max -1
             max maxMethodSid maxExprSid
-        let initialState = { nextSymbolId = maxInModule + 1; generatedMethods = []; diagnostics = [] }
+        let initialState = { nextSymbolId = maxInModule + 1; generatedMethods = []; diagnostics = []; captureMetadata = [] }
 
         let rewrittenMethods, finalState =
             hirModule.methods
             |> List.fold (fun (accMethods, state) methodInfo ->
                 let methodBound = methodInfo.args |> List.map fst |> List.fold (fun (acc: Set<int>) sid -> acc.Add sid.id) Set.empty
-                let rewrittenBody, bodyState = rewriteExpr methodInfo methodBound globalSymbols methodInfo.body state
+                let methodBindings =
+                    methodInfo.args
+                    |> List.fold (fun (acc: Map<int, bool * TypeId>) (sid, tid) -> acc.Add(sid.id, (false, tid))) Map.empty
+                let rewrittenBody, bodyState = rewriteExpr methodInfo methodBound methodBindings globalSymbols methodInfo.body state
                 let rewrittenMethod = Hir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.span)
                 accMethods @ [ rewrittenMethod ], bodyState) ([], initialState)
 

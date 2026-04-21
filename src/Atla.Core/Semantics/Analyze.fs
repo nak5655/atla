@@ -971,6 +971,8 @@ module Analyze =
             | None ->
                 Hir.Stmt.ErrorStmt(sprintf "Value of type '%s' is not iterable" (formatTypeForDisplay nameEnv typeEnv resolvedIterableType), forStmt.span)
             | Some iterableSystemType ->
+                // for 反復変数はボディ専用のサブスコープへ束縛する。
+                // これにより、クロージャー変換時に「ループ変数を外側へ漏らさない」前提を維持する。
                 let iteratorResolution =
                     match tryResolveEnumeratorMembers iterableSystemType with
                     | Some members -> Some(iterable, members)

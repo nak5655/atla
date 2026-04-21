@@ -1,5 +1,14 @@
 # Plan
 
+## 2026-04-21 クロージャー実装タスク（追加5件バッチ）
+
+### 実施内容
+- [x] `ClosureConversion` で捕捉変数メタデータ（`sid` / `isMutable` / `typ`）を収集する内部モデルを追加する。
+- [x] 捕捉ラムダ診断に mutable 捕捉シンボル一覧（`mutable=[...]`）を含める。
+- [x] 自由変数判定を修正し、外側束縛を捕捉対象として扱う（ラムダ引数のみを束縛集合へ入れる）。
+- [x] `Layout` に「closure conversion 後の残留 Lambda」を検出する前提チェックを追加する。
+- [x] `Atla.Core.Tests` に回帰テストを追加/更新する（mutable 捕捉診断、決定性、for-scope/mutable capture 解析）。
+
 ## 2026-04-21 C#互換寄りクロージャー仕様との差分解消タスク（env-class本実装）
 
 ### 目的

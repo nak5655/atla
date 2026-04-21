@@ -273,6 +273,7 @@ fn keep (xs: Array String): Array String = xs
         Assert.Contains("Closure conversion requires env-class lowering", message)
         Assert.Contains("methodSid=100", message)
         Assert.Contains("captured=[101]", message)
+        Assert.Contains("mutable=[]", message)
 
     [<Fact>]
     let ``layoutAssembly lowers non-captured lambda via closure conversion`` () =
@@ -382,3 +383,35 @@ fn keep (xs: Array String): Array String = xs
         Assert.False(result.succeeded, "captured lambda should still fail before env-class implementation")
         let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
         Assert.Contains("captured=[401, 402]", message)
+
+    [<Fact>]
+    let ``captured lambda diagnostic reports mutable captured symbol ids`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 500
+        let mutableSym = SymbolId 501
+        let scope = Scope(None)
+        scope.DeclareVar("main", methodSym)
+
+        // var x = 1; (fn _ -> x) という形を HIR で直接構築し、mutable 捕捉が診断に現れることを検証する。
+        let lambdaExpr =
+            Hir.Expr.Lambda(
+                [ Hir.Arg(SymbolId 502, "_", TypeId.Unit, span) ],
+                TypeId.Int,
+                Hir.Expr.Id(mutableSym, TypeId.Int, span),
+                TypeId.Fn([ TypeId.Unit ], TypeId.Int),
+                span)
+
+        let body =
+            Hir.Expr.Block(
+                [ Hir.Stmt.Let(mutableSym, true, Hir.Expr.Int(1, span), span) ],
+                lambdaExpr,
+                TypeId.Fn([ TypeId.Unit ], TypeId.Int),
+                span)
+
+        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Fn([ TypeId.Unit ], TypeId.Int)), span)
+        let result = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
+
+        Assert.False(result.succeeded, "captured mutable lambda should fail before env-class implementation")
+        let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+        Assert.Contains("captured=[501]", message)
+        Assert.Contains("mutable=[501]", message)
