@@ -18,7 +18,7 @@ module Infer =
             let inferredArgs = args |> List.map (inferExpr typeSubst)
             Hir.Expr.Call(func, inferredInstance, inferredArgs, inferType tid, span)
         | Hir.Expr.Lambda (args, ret, body, tid, span) ->
-            let inferredArgs = args |> List.map (fun arg -> Hir.Arg(arg.name, inferType arg.typ, arg.span))
+            let inferredArgs = args |> List.map (fun arg -> Hir.Arg(arg.sid, arg.name, inferType arg.typ, arg.span))
             let inferredRet = inferType ret
             let inferredBody = inferExpr typeSubst body
             Hir.Expr.Lambda(inferredArgs, inferredRet, inferredBody, inferType tid, span)

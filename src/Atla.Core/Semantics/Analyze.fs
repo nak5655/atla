@@ -879,6 +879,58 @@ module Analyze =
                 | :? Ast.IfBranch.Else as elseBranch -> analyzeExpr nameEnv typeEnv elseBranch.body tid
                 | _ -> errorExpr tid (List.head branches).span "Unsupported if branch type"
             analyzeIfBranches ifExpr.branches
+        | :? Ast.Expr.Lambda as lambdaExpr ->
+            // ラムダ本体専用のスコープを作成し、引数束縛を外側と分離する。
+            let lambdaNameEnv = nameEnv.sub()
+
+            // 期待型が関数型で引数個数が一致する場合は、その型情報を優先する。
+            // 一致しない場合は fresh meta を割り当て、後段の単一化で整合性を確定する。
+            let expectedArgTypes, expectedRetType =
+                match typeEnv.resolveType tid with
+                | TypeId.Fn(argTypes, retType) when argTypes.Length = lambdaExpr.args.Length ->
+                    argTypes, retType
+                | _ ->
+                    let argTypes = lambdaExpr.args |> List.map (fun _ -> typeEnv.freshMeta())
+                    let retType = typeEnv.freshMeta()
+                    argTypes, retType
+
+            // 引数名重複は明示的に診断として返す（AST 直構築ケースも考慮）。
+            let duplicateArgName =
+                lambdaExpr.args
+                |> List.fold (fun (seen: Set<string>, dup: string option) name ->
+                    match dup with
+                    | Some _ -> seen, dup
+                    | None ->
+                        if seen.Contains name then
+                            seen, Some name
+                        else
+                            seen.Add name, None) (Set.empty, None)
+                |> snd
+
+            match duplicateArgName with
+            | Some dupName ->
+                Hir.Expr.ExprError(sprintf "Duplicate lambda parameter '%s'" dupName, tid, lambdaExpr.span)
+            | None ->
+                // 引数を宣言順に Arg シンボルとして登録し、HIR 引数ノードを構築する。
+                let hirArgs =
+                    lambdaExpr.args
+                    |> List.mapi (fun index argName ->
+                        let argType = expectedArgTypes.[index]
+                        let argSid = lambdaNameEnv.declareArg argName argType
+                        Hir.Arg(argSid, argName, argType, lambdaExpr.span))
+
+                // 本体は期待戻り型で解析し、関数型全体を期待型へ単一化する。
+                let analyzedBody = analyzeExpr lambdaNameEnv typeEnv lambdaExpr.body expectedRetType
+                let lambdaType = TypeId.Fn(expectedArgTypes, expectedRetType)
+                match unifyOrError nameEnv typeEnv tid lambdaType lambdaExpr.span with
+                | Result.Ok _ ->
+                    let resolvedArgs =
+                        hirArgs
+                        |> List.map (fun arg -> Hir.Arg(arg.sid, arg.name, typeEnv.resolveType arg.typ, arg.span))
+                    let resolvedRetType = typeEnv.resolveType expectedRetType
+                    let resolvedLambdaType = typeEnv.resolveType lambdaType
+                    Hir.Expr.Lambda(resolvedArgs, resolvedRetType, analyzedBody, resolvedLambdaType, lambdaExpr.span)
+                | Result.Error exprErr -> exprErr
         | _ -> errorExpr tid expr.span "Unsupported expression type"
 
     and private analyzeStmt (nameEnv: NameEnv) (typeEnv: TypeEnv) (stmt: Ast.Stmt) : Hir.Stmt =

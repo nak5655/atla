@@ -222,3 +222,61 @@ module GenTests =
         let delegateTwice = System.Func<int, int>(fun x -> x + x)
         let result = applyMi.Invoke(null, [| delegateTwice; 5 |])
         Assert.Equal(10, result :?> int)
+
+    /// target 付き FnDelegate が ldarg/ldloc を使って正しく生成されることを検証する。
+    [<Fact>]
+    let ``GenAssembly creates delegate with bound target for static lifted method`` () =
+        let liftedSym = SymbolId 501
+        let mainSym = SymbolId 502
+        let envSid = SymbolId 503
+
+        // lifted(env: string, x: int): int = x
+        // target に env を束縛した Func<int,int> を生成できれば、引数1つで呼び出せる。
+        let liftedFrame = Mir.Frame()
+        liftedFrame.addArg(envSid, TypeId.String) |> ignore
+        let xSid = SymbolId 504
+        liftedFrame.addArg(xSid, TypeId.Int) |> ignore
+        let liftedMethod =
+            Mir.Method(
+                "lifted",
+                liftedSym,
+                [ TypeId.String; TypeId.Int ],
+                TypeId.Int,
+                [ Mir.Ins.RetValue(Mir.Value.RegVal(Mir.Reg.Arg 1)) ],
+                liftedFrame)
+
+        let mainFrame = Mir.Frame()
+        mainFrame.addArg(envSid, TypeId.String) |> ignore
+        let mainMethod =
+            Mir.Method(
+                "main",
+                mainSym,
+                [ TypeId.String ],
+                TypeId.Fn([ TypeId.Int ], TypeId.Int),
+                [ Mir.Ins.RetValue(Mir.Value.FnDelegate(liftedSym, typeof<System.Func<int, int>>, Some(Mir.Reg.Arg 0))) ],
+                mainFrame)
+
+        let assembly =
+            Mir.Assembly(
+                "GenBoundTargetDelegate",
+                [ Mir.Module("MainModule", [], [ liftedMethod; mainMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-bound-target-delegate.dll")
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        let globalsType = loaded.GetType("MainModule.Globals")
+        Assert.NotNull(globalsType)
+
+        let mainMi = globalsType.GetMethod("main", BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static)
+        Assert.NotNull(mainMi)
+        let delObj = mainMi.Invoke(null, [| "captured-env" |]) :?> System.Func<int, int>
+        let result = delObj.Invoke(7)
+        Assert.Equal(7, result)

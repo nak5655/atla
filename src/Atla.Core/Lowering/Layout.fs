@@ -37,13 +37,13 @@ module Layout =
                     match TypeId.tryToRuntimeSystemType tid with
                     | Some delegateType ->
                         // グローバル関数を対応するデリゲート（Func<>/Action<>）に包む。
-                        { ins = []; res = Some(Mir.Value.FnDelegate(sid, delegateType)) }
+                        { ins = []; res = Some(Mir.Value.FnDelegate(sid, delegateType, None)) }
                     | None ->
                         let argReg = frame.addArg(sid, tid)
                         { ins = []; res = Some(Mir.Value.RegVal argReg) }
                 // .NET デリゲート型（Native）で注釈された関数参照はその型のまま使用する。
                 | TypeId.Native t when TypeId.isDelegateType t ->
-                    { ins = []; res = Some(Mir.Value.FnDelegate(sid, t)) }
+                    { ins = []; res = Some(Mir.Value.FnDelegate(sid, t, None)) }
                 | _ ->
                     let argReg = frame.addArg(sid, tid)
                     { ins = []; res = Some(Mir.Value.RegVal argReg) }

@@ -249,7 +249,7 @@ fn keep (xs: Array String): Array String = xs
         // 自由変数 `captured` を参照するラムダを構築する。
         let lambdaExpr =
             Hir.Expr.Lambda(
-                [ Hir.Arg("x", TypeId.Int, span) ],
+                [ Hir.Arg(SymbolId 102, "x", TypeId.Int, span) ],
                 TypeId.Int,
                 Hir.Expr.Id(capturedSym, TypeId.Int, span),
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
@@ -273,3 +273,112 @@ fn keep (xs: Array String): Array String = xs
         Assert.Contains("Closure conversion requires env-class lowering", message)
         Assert.Contains("methodSid=100", message)
         Assert.Contains("captured=[101]", message)
+
+    [<Fact>]
+    let ``layoutAssembly lowers non-captured lambda via closure conversion`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 200
+        let lambdaArgSid = SymbolId 201
+        let scope = Scope(None)
+        scope.DeclareVar("main", methodSym)
+
+        // 非捕捉ラムダ（引数をそのまま返す）をメソッド戻り値に置く。
+        let lambdaExpr =
+            Hir.Expr.Lambda(
+                [ Hir.Arg(lambdaArgSid, "x", TypeId.Int, span) ],
+                TypeId.Int,
+                Hir.Expr.Id(lambdaArgSid, TypeId.Int, span),
+                TypeId.Fn([ TypeId.Int ], TypeId.Int),
+                span)
+
+        let hirMethod =
+            Hir.Method(
+                methodSym,
+                [],
+                lambdaExpr,
+                TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
+                span)
+
+        let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
+        let hirAssembly = Hir.Assembly("test", [ hirModule ])
+        let result = Layout.layoutAssembly("TestAsm", hirAssembly)
+
+        Assert.True(result.succeeded, "non-captured lambda should be lowered by closure conversion")
+        match result.value with
+        | Some mirAsm ->
+            let moduleMethods = mirAsm.modules |> List.head |> fun modul -> modul.methods
+            Assert.True(moduleMethods.Length >= 2, "lifted lambda method should be appended to module methods")
+            let mainMethod = moduleMethods |> List.find (fun methodInfo -> methodInfo.name = "main")
+            let hasDelegateReturn =
+                mainMethod.body
+                |> List.exists (function
+                    | Mir.Ins.RetValue(Mir.Value.FnDelegate _) -> true
+                    | _ -> false)
+            Assert.True(hasDelegateReturn, "main should return FnDelegate of lifted method")
+        | None ->
+            Assert.True(false, "layoutAssembly succeeded but returned no MIR assembly")
+
+    [<Fact>]
+    let ``closure conversion generates deterministic lifted method snapshot for identical input`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 300
+        let argSid = SymbolId 301
+        let scope = Scope(None)
+        scope.DeclareVar("main", methodSym)
+
+        // 同一入力を2回前処理し、生成メソッド列のシンボル順が一致することを検証する。
+        let lambdaExpr =
+            Hir.Expr.Lambda(
+                [ Hir.Arg(argSid, "x", TypeId.Int, span) ],
+                TypeId.Int,
+                Hir.Expr.Id(argSid, TypeId.Int, span),
+                TypeId.Fn([ TypeId.Int ], TypeId.Int),
+                span)
+        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), span)
+        let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
+
+        let snapshotOf (asm: Hir.Assembly) =
+            asm.modules.Head.methods
+            |> List.map (fun m -> $"{m.sym.id}:{m.args |> List.length}:{m.typ}")
+            |> String.concat "|"
+
+        let runOnce () =
+            match ClosureConversion.preprocessAssembly hirAssembly with
+            | { succeeded = true; value = Some preprocessed } -> snapshotOf preprocessed
+            | { diagnostics = diagnostics } ->
+                let message = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                failwith $"preprocessAssembly failed: {message}"
+
+        let first = runOnce ()
+        let second = runOnce ()
+        Assert.Equal(first, second)
+
+    [<Fact>]
+    let ``captured lambda diagnostic is deterministic and includes sorted captured ids`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 400
+        let capturedA = SymbolId 401
+        let capturedB = SymbolId 402
+        let scope = Scope(None)
+        scope.DeclareVar("main", methodSym)
+        scope.DeclareVar("a", capturedA)
+        scope.DeclareVar("b", capturedB)
+
+        // 逆順で式を配置しても、診断の captured は昇順（401, 402）になることを確認する。
+        let lambdaExpr =
+            Hir.Expr.Lambda(
+                [ Hir.Arg(SymbolId 403, "x", TypeId.Int, span) ],
+                TypeId.Int,
+                Hir.Expr.Block(
+                    [ Hir.Stmt.ExprStmt(Hir.Expr.Id(capturedB, TypeId.Int, span), span) ],
+                    Hir.Expr.Id(capturedA, TypeId.Int, span),
+                    TypeId.Int,
+                    span),
+                TypeId.Fn([ TypeId.Int ], TypeId.Int),
+                span)
+        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), span)
+        let result = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
+
+        Assert.False(result.succeeded, "captured lambda should still fail before env-class implementation")
+        let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+        Assert.Contains("captured=[401, 402]", message)

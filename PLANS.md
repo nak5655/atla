@@ -1,5 +1,101 @@
 # Plan
 
+## 2026-04-21 C#互換寄りクロージャー仕様との差分解消タスク（env-class本実装）
+
+### 目的
+- 現状の「非捕捉ラムダのみ lambda lifting / 捕捉ラムダは診断失敗」から、C#互換寄り仕様（env-class方式）へ移行する。
+- 捕捉ラムダを `AST -> Semantic -> HIR -> Frame Allocation -> MIR -> CIL` の既存パイプライン内で正しく lowering する。
+
+### 現状との差分（要解消）
+- 捕捉ラムダは `ClosureConversion` で診断失敗となり、成功パスが存在しない。
+- mutable 変数捕捉（by variable, 共有セル）仕様が未実装。
+- env-class の生成・delegate target バインド ABI が未実装。
+
+### 仕様（C#互換寄りで固定）
+- 捕捉は「値」ではなく「変数」単位で行う。
+  - immutable は値保持可。
+  - mutable は共有セル（box/ref）経由で読み書きする。
+- 捕捉順序は `SymbolId` 昇順で固定し、env フィールド順・初期化順・補助メソッド引数順へ同一順序を適用する。
+- 非捕捉ラムダは現状どおり static delegate 化する。
+- 捕捉ラムダは `env-instance + lifted invoke` で delegate を構築する。
+- ループ反復変数捕捉は反復ごとの新規束縛として扱う（C#互換）。
+
+### 実装タスク
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [ ] `Lowering/ClosureConversion.fs`
+  - [ ] 捕捉ラムダ失敗診断を成功変換へ置換する。
+  - [ ] env-class 用メタデータ（env type symbol, captured field list, mutable-cell 要否）を生成する。
+  - [ ] ラムダ本体を lifted method へ変換し、env 参照アクセスへ書き換える。
+- [ ] `Lowering/Data/Mir.fs`
+  - [ ] env-class 生成に必要な MIR 表現（型/ctor/メソッド/フィールド初期化）を拡張する。
+  - [x] target 付き delegate 生成を表現できる値/命令を追加する。
+- [ ] `Lowering/Layout.fs`
+  - [ ] env インスタンス生成・captured 値の格納・delegate 構築を出力する。
+  - [ ] 既存 `Hir.Expr.Lambda` failwith 到達を排除する（前処理後の不変条件として保証）。
+- [ ] `Lowering/Gen.fs`
+  - [x] target 付き delegate 生成 IL（`ldarg/ldloc target; ldftn; newobj`）を実装する。
+  - [ ] env-class メンバー生成と参照解決を実装する。
+- [ ] `Semantics/Analyze.fs`
+  - [ ] `for` 反復変数の捕捉時に反復ごと束縛となるようシンボル/スコープ規則を明文化し必要なら実装修正する。
+- [ ] テスト
+  - [ ] `Atla.Core.Tests/Lowering/LayoutTests.fs`: captured lambda の成功 lowering ケースを追加。
+  - [x] `Atla.Core.Tests/Lowering/Gen/GenTests.fs`: env-class + delegate target の CIL 生成テストを追加。
+  - [x] `Atla.Core.Tests/Semantics/AnalyzeTests.fs`: mutable capture / loop capture の回帰テストを追加。
+  - [x] AST/HIR/MIR の snapshot テストを closure ケースで追加（成功系・診断系）。
+- [ ] ドキュメント
+  - [x] README か design doc に closure ABI（captured順序・mutable capture・loop capture）を追記する。
+- [ ] 検証
+  - [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj`
+  - [x] `dotnet test src/Atla.slnx`
+
+## 2026-04-21 クロージャーlowering実装（非捕捉ラムダのlambda lifting）
+
+### 目的
+- `Hir.Expr.Lambda` が `Layout` で `failwith` になる現状を解消し、Frame Allocation 前段で lowering を実施する。
+- まずは決定的で安全な最小単位として「非捕捉ラムダ」を lambda lifting で lowering し、捕捉ラムダは明示診断を維持する。
+- 今後の env-class 方式拡張に必要な `Hir.Arg` の `SymbolId` 連携を導入する。
+
+### 仕様
+- `Hir.Arg` は `sid: SymbolId` を保持する。
+- `ClosureConversion.preprocessAssembly` は以下を行う。
+  - ラムダ本体を再帰変換し、非捕捉ラムダを module-level method へ lambda lifting する。
+  - 生成メソッドのシンボルは module 内で一意な連番を採番する（決定的）。
+  - ラムダ式は `Hir.Expr.Id(liftedSid, lambdaType, span)` へ置換する。
+  - 捕捉ラムダは `methodSid` と `captured` を含む診断を返して失敗する。
+- `Layout` は `ClosureConversion` 後の HIR を前提に lowering し、非捕捉ラムダを通常の `FnDelegate` 経路で MIR 化する。
+
+### 実装内容
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] `src/Atla.Core/Semantics/Data/Hir.fs` の `Hir.Arg` に `sid` を追加する。
+- [x] `src/Atla.Core/Semantics/Analyze.fs` と `src/Atla.Core/Semantics/Infer.fs` のラムダ引数生成を `sid` 対応へ更新する。
+- [x] `src/Atla.Core/Lowering/ClosureConversion.fs` を「非捕捉ラムダのlambda lifting」実装へ更新する。
+- [x] `src/Atla.Core.Tests/Lowering/LayoutTests.fs` に非捕捉ラムダlowering成功の回帰テストを追加する。
+- [x] `dotnet test src/Atla.slnx` を実行する。
+
+## 2026-04-21 C#互換を意識したクロージャー方針の明文化と `Ast.Expr.Lambda` の意味解析対応
+
+### 目的
+- C#互換を意識した env-class 方式（変数捕捉・決定的な捕捉順序）を実装方針として明文化する。
+- `Ast.Expr.Lambda` が `Analyze` フェーズで `Unsupported expression type` になる現状を解消し、HIR の `Lambda` へ変換できるようにする。
+
+### 仕様
+- クロージャー方針（実装方針として明文化）:
+  - ラムダは env-class 方式を前提とし、捕捉は「値」ではなく「変数」単位で扱う。
+  - 捕捉順序は `SymbolId` 昇順で決定的に扱う（既存前処理と整合）。
+  - 非捕捉ラムダは静的 delegate 生成、捕捉ラムダは env インスタンスをターゲットにした delegate 生成を想定する。
+- `Analyze.analyzeExpr` に `Ast.Expr.Lambda` ケースを追加する。
+  - 期待型が `Fn` かつ引数個数が一致する場合は、その引数型/戻り型をラムダ解析に利用する。
+  - それ以外の場合は引数型と戻り型に fresh meta を割り当てる。
+  - ラムダ引数はラムダ本体専用スコープに `Arg` として宣言し、本文を解析する。
+  - 最後に `tid` とラムダの関数型を `unify` し、失敗時は `ExprError` を返す。
+  - ラムダ引数名の重複は明示診断（`ExprError`）を返す。
+
+### 実装内容
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] `src/Atla.Core/Semantics/Analyze.fs` に `Ast.Expr.Lambda` の意味解析を追加する。
+- [x] `src/Atla.Core.Tests/Semantics/AnalyzeTests.fs` にラムダ解析のユニットテストを追加する。
+- [x] `dotnet test src/Atla.slnx` を実行する。
+
 ## 2026-04-21 無名関数構文 `fn arg1 arg2 -> expr` の導入（パーサー範囲）
 
 ### 目的

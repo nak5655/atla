@@ -124,6 +124,149 @@ fn main (): Int = do
             Assert.NotEmpty(diagnostics)
 
     [<Fact>]
+    let ``analyzeExpr should lower lambda expression into Hir Lambda`` () =
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let retType = Ast.TypeExpr.Arrow(intType, intType, span) :> Ast.TypeExpr
+        let lambdaBody = Ast.Expr.Id("x", span) :> Ast.Expr
+        let lambdaExpr = Ast.Expr.Lambda([ "x" ], lambdaBody, span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Lambda (args, retTid, body, lambdaTid, _) ->
+                Assert.Single(args) |> ignore
+                Assert.Equal(TypeId.Int, args.Head.typ)
+                Assert.Equal(TypeId.Int, retTid)
+                Assert.Equal(TypeId.Fn([ TypeId.Int ], TypeId.Int), lambdaTid)
+                match body with
+                | Hir.Expr.Id (_, bodyTid, _) -> Assert.Equal(TypeId.Int, bodyTid)
+                | other -> Assert.True(false, $"expected lambda body to be Id but got {other}")
+            | other ->
+                Assert.True(false, $"expected Hir.Expr.Lambda but got {other}")
+        | { diagnostics = diagnostics } ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toDisplayText())
+                |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``analyzeExpr should report duplicate lambda parameter names`` () =
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let retType = Ast.TypeExpr.Arrow(intType, intType, span) :> Ast.TypeExpr
+        let lambdaBody = Ast.Expr.Id("x", span) :> Ast.Expr
+        let lambdaExpr = Ast.Expr.Lambda([ "x"; "x" ], lambdaBody, span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        let diagnostics =
+            match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+            | { succeeded = true; value = Some hirModule } ->
+                hirModule.methods.Head.getDiagnostics
+            | { diagnostics = diagnostics } -> diagnostics
+
+        Assert.Contains(diagnostics, fun d -> d.message.Contains("Duplicate lambda parameter 'x'"))
+
+    [<Fact>]
+    let ``analyzeExpr should preserve mutable variable capture in lambda body`` () =
+        let program = """
+fn main: () =
+    do
+        var x = 1
+        let f = fn _ -> x
+        ()
+"""
+
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasMutableCaptureLambda =
+                        hirModule.methods
+                        |> List.exists (fun methodInfo ->
+                            match methodInfo.body with
+                            | Hir.Expr.Block (stmts, _, _, _) ->
+                                stmts
+                                |> List.exists (fun stmt ->
+                                    match stmt with
+                                    | Hir.Stmt.Let (_, _, Hir.Expr.Lambda (_, _, Hir.Expr.Id (_, capturedTid, _), _, _), _) ->
+                                        capturedTid = TypeId.Int
+                                    | _ -> false)
+                            | _ -> false)
+                    Assert.True(hasMutableCaptureLambda, "expected lambda capturing mutable int symbol in block")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"semantic analysis failed: {message}")
+            | Failure (reason, failureSpan) ->
+                Assert.True(false, $"parse failed: {reason} at {failureSpan.left.Line}:{failureSpan.left.Column}")
+        | Failure (reason, failureSpan) ->
+            Assert.True(false, $"tokenize failed: {reason} at {failureSpan.left.Line}:{failureSpan.left.Column}")
+
+    [<Fact>]
+    let ``analyzeExpr should allow lambda capture from for loop scope`` () =
+        let program = """
+import System.Linq.Enumerable
+
+fn main: () =
+    do
+        for i in Enumerable.Range 0 1
+            let f = fn _ -> i
+            ()
+        ()
+"""
+
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasLoopCaptureLambda =
+                        hirModule.methods
+                        |> List.exists (fun methodInfo ->
+                            match methodInfo.body with
+                            | Hir.Expr.Block (stmts, _, _, _) ->
+                                stmts
+                                |> List.exists (fun stmt ->
+                                    match stmt with
+                                    | Hir.Stmt.For (_, _, _, bodyStmts, _) ->
+                                        bodyStmts
+                                        |> List.exists (fun bodyStmt ->
+                                            match bodyStmt with
+                                            | Hir.Stmt.Let (_, _, Hir.Expr.Lambda (_, _, Hir.Expr.Id _, _, _), _) -> true
+                                            | _ -> false)
+                                    | _ -> false)
+                            | _ -> false)
+                    Assert.True(hasLoopCaptureLambda, "lambda capturing for-loop variable should be analyzed into HIR")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"semantic analysis failed: {message}")
+            | Failure (reason, failureSpan) ->
+                Assert.True(false, $"parse failed: {reason} at {failureSpan.left.Line}:{failureSpan.left.Column}")
+        | Failure (reason, failureSpan) ->
+            Assert.True(false, $"tokenize failed: {reason} at {failureSpan.left.Line}:{failureSpan.left.Column}")
+
+    [<Fact>]
     let ``void call should not be passed as argument value`` () =
         let span = Span.Empty
         let importConsole = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
