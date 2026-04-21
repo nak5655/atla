@@ -474,7 +474,7 @@ fn keep (xs: Array String): Array String = xs
             | TypeId.Bool -> "Bool"
             | TypeId.String -> "String"
             | TypeId.Fn (args, ret) ->
-                let argStr = args |> List.map (function TypeId.Int -> "Int" | t -> sprintf "%A" t) |> String.concat ","
+                let argStr = args |> List.map (fun t -> sprintf "%A" t) |> String.concat ","
                 sprintf "Fn([%s],%s)" argStr (sprintf "%A" ret)
             | other -> sprintf "%A" other
 
