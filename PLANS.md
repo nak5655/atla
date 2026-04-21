@@ -278,6 +278,20 @@ do
 ## 2026-04-18 依存解決の用途別分離（compile参照 / runtimeロード）実装タスク
 
 ### フェーズ0: 設計確定
+
+## 2026-04-21 クロージャー変換（Frame Allocation 前処理）導入
+
+### 目的
+- Frame Allocation の前処理としてクロージャー変換フェーズを追加する。
+- 「closure = 自由変数ありラムダ」を明示し、検出と前処理責務を専用モジュールへ分離する。
+- 変換前提（環境オブジェクト + invoke 関数）を踏まえ、後続フェーズへ明示的な診断を返せるようにする。
+
+### 実装内容
+- [x] `Lowering/ClosureConversion.fs` を追加し、`Hir.Assembly -> PhaseResult<Hir.Assembly>` の前処理エントリを実装する。
+- [x] 自由変数検出ロジックを追加し、自由変数ありラムダを決定的に検出する。
+- [x] `Lowering/Layout.fs` から `ClosureConversion.preprocessAssembly` を呼び出し、Frame Allocation 前に実行する。
+- [x] 自由変数ありラムダを検出した場合、対象メソッドと捕捉変数IDを含む診断を返す。
+- [x] `Atla.Core.Tests/Lowering/LayoutTests.fs` にクロージャー前処理の回帰テストを追加する。
 - [x] `ResolvedDependency` を `compileReferencePaths` と `runtimeLoadPaths` の2系統へ拡張する方針を確定する。
 - [x] `compileReferencePaths` の選定規則を `ref > lib`、`runtimeLoadPaths` の選定規則を `lib > ref` として明文化する。
 - [x] 既存パイプライン（`AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL`）を崩さない受け渡し境界を定義する。

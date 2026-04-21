@@ -336,8 +336,13 @@ module Layout =
         Mir.Module(hirModule.name, types, methods)
 
     let layoutAssembly (asmName: string, asm: Hir.Assembly) : PhaseResult<Mir.Assembly> =
-        try
-            let modules = asm.modules |> List.map layoutModule
-            PhaseResult.succeeded (Mir.Assembly(asmName, modules)) []
-        with ex ->
-            PhaseResult.failed [ Diagnostic.Error($"Lowering failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]
+        match ClosureConversion.preprocessAssembly asm with
+        | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
+        | { value = Some preprocessedAsm } ->
+            try
+                let modules = preprocessedAsm.modules |> List.map layoutModule
+                PhaseResult.succeeded (Mir.Assembly(asmName, modules)) []
+            with ex ->
+                PhaseResult.failed [ Diagnostic.Error($"Lowering failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]
+        | _ ->
+            PhaseResult.failed [ Diagnostic.Error("Closure conversion preprocessing failed with unknown state", Atla.Core.Data.Span.Empty) ]
