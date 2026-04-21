@@ -66,16 +66,22 @@ module Mir =
         | RegVal of Reg
         | FieldVal of field: FieldInfo
         | MethodVal of method: MethodInfo
-        // グローバル関数シンボルを .NET デリゲートとして生成する値。
-        // ldnull; ldftn <sid>; newobj <delegateType>::.ctor に展開される。
-        | FnDelegate of sid: SymbolId * delegateType: System.Type
+        // 関数シンボルを .NET デリゲートとして生成する値。
+        // targetReg=None:   ldnull;            ldftn <sid>; newobj <delegateType>::.ctor
+        // targetReg=Some r: ldarg/ldloc <r>;   ldftn <sid>; newobj <delegateType>::.ctor
+        | FnDelegate of sid: SymbolId * delegateType: System.Type * targetReg: Reg option
         override this.ToString() =
             match this with
             | ImmVal v -> sprintf "Imm(%s)" (v.ToString())
             | RegVal v -> sprintf "Reg(%s)" (v.ToString())
             | FieldVal (fi) -> sprintf "Field(%A)" fi
             | MethodVal (mi) -> sprintf "Method(%A)" mi
-            | FnDelegate (sid, dt) -> sprintf "FnDelegate(sid=%d, type=%s)" sid.id dt.FullName
+            | FnDelegate (sid, dt, targetReg) ->
+                let targetText =
+                    targetReg
+                    |> Option.map (fun reg -> reg.ToString())
+                    |> Option.defaultValue "null"
+                sprintf "FnDelegate(sid=%d, type=%s, target=%s)" sid.id dt.FullName targetText
 
     type OpCode =
         | Add

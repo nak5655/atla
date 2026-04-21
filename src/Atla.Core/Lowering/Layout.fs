@@ -37,13 +37,13 @@ module Layout =
                     match TypeId.tryToRuntimeSystemType tid with
                     | Some delegateType ->
                         // グローバル関数を対応するデリゲート（Func<>/Action<>）に包む。
-                        { ins = []; res = Some(Mir.Value.FnDelegate(sid, delegateType)) }
+                        { ins = []; res = Some(Mir.Value.FnDelegate(sid, delegateType, None)) }
                     | None ->
                         let argReg = frame.addArg(sid, tid)
                         { ins = []; res = Some(Mir.Value.RegVal argReg) }
                 // .NET デリゲート型（Native）で注釈された関数参照はその型のまま使用する。
                 | TypeId.Native t when TypeId.isDelegateType t ->
-                    { ins = []; res = Some(Mir.Value.FnDelegate(sid, t)) }
+                    { ins = []; res = Some(Mir.Value.FnDelegate(sid, t, None)) }
                 | _ ->
                     let argReg = frame.addArg(sid, tid)
                     { ins = []; res = Some(Mir.Value.RegVal argReg) }
@@ -335,14 +335,57 @@ module Layout =
 
         Mir.Module(hirModule.name, types, methods)
 
+    /// 式木に Lambda ノードが残っているかを判定する。
+    let rec private hasLambdaExpr (expr: Hir.Expr) : bool =
+        match expr with
+        | Hir.Expr.Lambda _ -> true
+        | Hir.Expr.Block (stmts, body, _, _) ->
+            (stmts |> List.exists hasLambdaStmt) || hasLambdaExpr body
+        | Hir.Expr.Call (_, instance, args, _, _) ->
+            let instanceHasLambda =
+                instance
+                |> Option.map hasLambdaExpr
+                |> Option.defaultValue false
+            instanceHasLambda || (args |> List.exists hasLambdaExpr)
+        | Hir.Expr.MemberAccess (_, instance, _, _) ->
+            instance
+            |> Option.map hasLambdaExpr
+            |> Option.defaultValue false
+        | Hir.Expr.If (cond, thenBranch, elseBranch, _, _) ->
+            hasLambdaExpr cond || hasLambdaExpr thenBranch || hasLambdaExpr elseBranch
+        | _ -> false
+
+    /// 文木に Lambda ノードが残っているかを判定する。
+    and private hasLambdaStmt (stmt: Hir.Stmt) : bool =
+        match stmt with
+        | Hir.Stmt.Let (_, _, value, _)
+        | Hir.Stmt.Assign (_, value, _)
+        | Hir.Stmt.ExprStmt (value, _) -> hasLambdaExpr value
+        | Hir.Stmt.For (_, _, iterable, body, _) ->
+            hasLambdaExpr iterable || (body |> List.exists hasLambdaStmt)
+        | Hir.Stmt.ErrorStmt _ -> false
+
     let layoutAssembly (asmName: string, asm: Hir.Assembly) : PhaseResult<Mir.Assembly> =
         match ClosureConversion.preprocessAssembly asm with
         | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
         | { value = Some preprocessedAsm } ->
-            try
-                let modules = preprocessedAsm.modules |> List.map layoutModule
-                PhaseResult.succeeded (Mir.Assembly(asmName, modules)) []
-            with ex ->
-                PhaseResult.failed [ Diagnostic.Error($"Lowering failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]
+            let residualLambdaDiagnostics =
+                preprocessedAsm.modules
+                |> List.collect (fun hirModule ->
+                    hirModule.methods
+                    |> List.choose (fun hirMethod ->
+                        if hasLambdaExpr hirMethod.body then
+                            Some(Diagnostic.Error($"Residual lambda remains after closure conversion. methodSid={hirMethod.sym.id}", hirMethod.span))
+                        else
+                            None))
+
+            match residualLambdaDiagnostics with
+            | residual when not residual.IsEmpty -> PhaseResult.failed residual
+            | _ ->
+                try
+                    let modules = preprocessedAsm.modules |> List.map layoutModule
+                    PhaseResult.succeeded (Mir.Assembly(asmName, modules)) []
+                with ex ->
+                    PhaseResult.failed [ Diagnostic.Error($"Lowering failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]
         | _ ->
             PhaseResult.failed [ Diagnostic.Error("Closure conversion preprocessing failed with unknown state", Atla.Core.Data.Span.Empty) ]

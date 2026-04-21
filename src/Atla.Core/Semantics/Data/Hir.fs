@@ -4,7 +4,8 @@ open System.Reflection
 open Atla.Core.Data
 
 module Hir =
-    type Arg(name: string, tid: TypeId, span: Span) =
+    type Arg(sid: SymbolId, name: string, tid: TypeId, span: Span) =
+        member this.sid = sid
         member this.name = name
         member this.typ = tid
         member this.span = span

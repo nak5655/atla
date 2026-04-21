@@ -73,15 +73,19 @@ module Gen =
                 gen.Emit(OpCodes.Ldfld, field)
         | Mir.Value.MethodVal methodInfo ->
             failwithf "Method value cannot be loaded directly: %A" methodInfo
-        // グローバル関数をデリゲートに変換してスタックへ積む。
-        // 静的メソッドの場合: ldnull; ldftn <method>; newobj <delegateType>::.ctor(object, native int)
-        | Mir.Value.FnDelegate (sid, delegateType) ->
+        // 関数シンボルをデリゲートに変換してスタックへ積む。
+        // targetReg=None:   ldnull;          ldftn <method>; newobj <delegateType>::.ctor(object, native int)
+        // targetReg=Some r: ldarg/ldloc <r>; ldftn <method>; newobj <delegateType>::.ctor(object, native int)
+        | Mir.Value.FnDelegate (sid, delegateType, targetReg) ->
             match env.methodBuilders.TryGetValue(sid) with
             | true, methodInfo ->
                 let ctor = delegateType.GetConstructor([| typeof<obj>; typeof<nativeint> |])
                 if obj.ReferenceEquals(ctor, null) then
                     failwithf "Delegate type '%s' has no (object, native int) constructor" delegateType.FullName
-                gen.Emit(OpCodes.Ldnull)
+                match targetReg with
+                | Some(Mir.Reg.Arg index) -> gen.Emit(OpCodes.Ldarg, index)
+                | Some(Mir.Reg.Loc index) -> gen.Emit(OpCodes.Ldloc, index)
+                | None -> gen.Emit(OpCodes.Ldnull)
                 gen.Emit(OpCodes.Ldftn, methodInfo)
                 gen.Emit(OpCodes.Newobj, ctor)
             | false, _ ->

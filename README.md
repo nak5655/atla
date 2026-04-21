@@ -74,6 +74,14 @@ NuGet 依存がキャッシュに存在しない場合は、NuGet.Client API 経
 - インデックスアクセスは `expr !! index` 記法を使用します（例: `values !! i`）。
 - `a[b]` のインデックス記法は廃止されました。既存コードは `a !! b` へ移行してください。
 
+## クロージャー lowering 方針（2026-04-21 時点）
+
+- 非捕捉ラムダは lambda lifting で module-level method へ変換し、static delegate として扱います。
+- 捕捉ラムダは将来的に `env-instance + lifted invoke` へ変換する方針です。
+- 捕捉順序（env フィールド順、初期化順、補助メソッド引数順）は `SymbolId` 昇順で固定します。
+- mutable 捕捉は C# 互換寄りに「変数単位（共有セル）」を目標とします。
+- 現在は env-class 本実装前の段階であり、捕捉ラムダは明示診断で失敗させます（非捕捉のみ成功パス）。
+
 
 ## 参考ドキュメント
 
