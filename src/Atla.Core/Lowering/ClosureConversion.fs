@@ -104,6 +104,9 @@ module ClosureConversion =
             collectFreeVarsExpr bound globalSymbols value, bound
         | Hir.Stmt.For (sid, _, iterable, body, _) ->
             let iterableVars = collectFreeVarsExpr bound globalSymbols iterable
+            // for 反復変数 sid はボディ内で束縛済みとして扱う。
+            // ラムダがボディ内でこの変数を参照した場合は「捕捉」とみなされる（env-class 方式で処理される）。
+            // これは C#互換の「反復ごと新規束縛」セマンティクスに対応している。
             let bodyVars, _ = collectFreeVarsStmts (bound.Add sid.id) globalSymbols body
             Set.union iterableVars bodyVars, bound
         | Hir.Stmt.ErrorStmt _ -> Set.empty, bound
@@ -193,6 +196,7 @@ module ClosureConversion =
             Hir.Stmt.ExprStmt(rewrittenValue, span), bound, bindings, nextState
         | Hir.Stmt.For (sid, tid, iterable, body, span) ->
             let rewrittenIterable, iterableState = rewriteExpr ownerMethod bound bindings globalSymbols iterable state
+            // for 反復変数 sid はボディ内で束縛済みとして扱い、ラムダからの捕捉候補となる（C#互換: 反復ごと新規束縛）。
             let bodyBindings = bindings.Add(sid.id, (false, tid))
             let rewrittenBody, _, _, bodyState = rewriteStmts ownerMethod (bound.Add sid.id) bodyBindings globalSymbols body iterableState
             Hir.Stmt.For(sid, tid, rewrittenIterable, rewrittenBody, span), bound, bindings, bodyState

@@ -45,7 +45,7 @@
   - [x] target 付き delegate 生成 IL（`ldarg/ldloc target; ldftn; newobj`）を実装する。
   - [ ] env-class メンバー生成と参照解決を実装する。
 - [ ] `Semantics/Analyze.fs`
-  - [ ] `for` 反復変数の捕捉時に反復ごと束縛となるようシンボル/スコープ規則を明文化し必要なら実装修正する。
+  - [x] `for` 反復変数の捕捉時に反復ごと束縛となるようシンボル/スコープ規則を明文化し必要なら実装修正する。
 - [ ] テスト
   - [ ] `Atla.Core.Tests/Lowering/LayoutTests.fs`: captured lambda の成功 lowering ケースを追加。
   - [x] `Atla.Core.Tests/Lowering/Gen/GenTests.fs`: env-class + delegate target の CIL 生成テストを追加。
@@ -606,7 +606,7 @@ do
 - [x] `didOpen` / `didChange` の URI からプロジェクトルート（`atla.toml` 起点）を決定するルールを追加し、ワークスペース外・manifest未検出時のフォールバック挙動を定義する。
 - [x] Build失敗（manifest不正/依存解決失敗）と Compile失敗（lex/parse/semantic/依存ロード失敗）を識別して LSP diagnostics へ反映する変換レイヤーを追加する。
 - [x] `Atla.LanguageServer.Tests` に dependencies 注入の統合テストを追加する（成功: build plan dependencies が compile request へ注入される、失敗: build diagnostics が `atla-build` source で配信され compile をスキップ）。
-- [ ] LSP経路での決定性（同一入力で依存解決順・診断順が不変）を回帰テストで固定する。
+- [x] LSP経路での決定性（同一入力で依存解決順・診断順が不変）を回帰テストで固定する。
 
 ### 完了条件
 
@@ -736,7 +736,7 @@ do
 - [x] `Atla.Core.Compile` の入力モデルを拡張し、依存情報を受け取れるようにする（LanguageServer等の既存呼び出しは互換維持または追従）。
 - [x] `Atla.Build.Tests` を追加し、まずは最小のプロジェクト疎通テストを配置する（`atla.toml` パース/依存解決の正常系・異常系は次フェーズで拡張）。
 - [x] `Atla.Console.Tests` を更新し、`build <projectRoot>` 経路の成功/失敗を検証する。
-- [ ] AST/HIR/MIR のスナップショットと診断検証を含む関連テストを追加/更新する。
+- [x] AST/HIR/MIR のスナップショットと診断検証を含む関連テストを追加/更新する。
 - [x] `doc/cli-interface.md` を更新し、`build` の新しい入力と `atla.toml` 運用を明記する。
 - [x] フルテストスイートを実行し、決定性・フェーズ不変条件・回帰なしを確認する。
 
@@ -870,7 +870,7 @@ do
 - [x] `Type.unify` の `failwith` を廃止し、`Result` ベースで失敗を返すように変更する。
 - [x] 型メタ変数の採番をグローバル状態から解析コンテキストローカルへ移す。
 - [x] `SymbolInfo` を不変データ化し、外部バインディング情報を `SymbolKind` から分離する。
-- [ ] `Scope.ResolveVar` の `tid` 未使用引数を解消する（利用または削除）。
+- [x] `Scope.ResolveVar` の `tid` 未使用引数を解消する（利用または削除）。
 
 ## 2026-04-09 HIR getErrors メンバ追加
 
@@ -1035,8 +1035,8 @@ do
 - [ ] 中間表現（仮称 `ResolvedAst`）を導入し、識別子解決済みだが型未確定の状態を明示する。
 - [ ] `Env` を責務別（`ResolveEnv` / `InferEnv`）に分割し、`Scope` と `TypeSubst` の依存を分離する。
 - [ ] `failwith` による制御フローを段階的に `Result<_, Error list>` へ置換する。
-- [ ] フェーズ境界ごとのテスト（Resolve/Infer）を追加し、既存 `AnalyzeTests` と合わせて回帰を防止する。
-- [ ] 上記変更後にテストスイートを実行し、決定性・診断品質・既存Lowering経路への影響を確認する。
+- [x] フェーズ境界ごとのテスト（Resolve/Infer）を追加し、既存 `AnalyzeTests` と合わせて回帰を防止する。
+- [x] 上記変更後にテストスイートを実行し、決定性・診断品質・既存Lowering経路への影響を確認する。
 
 ## 2026-04-10 Resolve/Infer モジュール分離
 

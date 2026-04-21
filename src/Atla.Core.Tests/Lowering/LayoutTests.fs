@@ -415,3 +415,174 @@ fn keep (xs: Array String): Array String = xs
         let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
         Assert.Contains("captured=[501]", message)
         Assert.Contains("mutable=[501]", message)
+
+    [<Fact>]
+    let ``for loop variable captured by inner lambda is flagged as captured lambda diagnostic`` () =
+        // for 反復変数をラムダ内で参照すると「捕捉ラムダ」として診断が返ることを検証する。
+        // C#互換の「反復ごと新規束縛」セマンティクス：lambda が for-loop 変数を使う場合は env-class が必要。
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 600
+        let iterSym = SymbolId 601
+        let lambdaArgSym = SymbolId 602
+        let scope = Scope(None)
+        scope.DeclareVar("main", methodSym)
+
+        // for i in ...; fn _ -> i という形を HIR で直接構築する。
+        let lambdaExpr =
+            Hir.Expr.Lambda(
+                [ Hir.Arg(lambdaArgSym, "_", TypeId.Unit, span) ],
+                TypeId.Int,
+                Hir.Expr.Id(iterSym, TypeId.Int, span),
+                TypeId.Fn([ TypeId.Unit ], TypeId.Int),
+                span)
+
+        // iterable はダミーの Unit 式（実際の MIR 変換は実施しない）。
+        let body =
+            Hir.Expr.Block(
+                [ Hir.Stmt.For(
+                    iterSym,
+                    TypeId.Int,
+                    Hir.Expr.Unit(span),
+                    [ Hir.Stmt.ExprStmt(lambdaExpr, span) ],
+                    span) ],
+                Hir.Expr.Unit(span),
+                TypeId.Unit,
+                span)
+
+        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Unit), span)
+        let result = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
+
+        // 反復変数 601 は for-loop ボディ内で束縛されているが、lambda 内部から見ると捕捉対象となる。
+        Assert.False(result.succeeded, "lambda capturing a for-loop variable should fail before env-class implementation")
+        let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+        Assert.Contains("captured=[601]", message)
+
+    // ─────────────────────────────────────────────────────────────
+    // AST/HIR/MIR スナップショット + 診断検証テスト（Task 3: line 739）
+    // ─────────────────────────────────────────────────────────────
+
+    /// 単純な整数加算関数の型表現が AST→HIR→MIR を通じて安定していることを検証するスナップショットテスト。
+    [<Fact>]
+    let ``HIR and MIR type snapshot is stable for simple int addition function`` () =
+        let program = "fn add (x: Int) (y: Int): Int = x + y"
+        let input: Input<SourceChar> = StringInput program
+
+        let snapshotTypeId (tid: TypeId) : string =
+            match tid with
+            | TypeId.Int -> "Int"
+            | TypeId.Unit -> "Unit"
+            | TypeId.Bool -> "Bool"
+            | TypeId.String -> "String"
+            | TypeId.Fn (args, ret) ->
+                let argStr = args |> List.map (function TypeId.Int -> "Int" | t -> sprintf "%A" t) |> String.concat ","
+                sprintf "Fn([%s],%s)" argStr (sprintf "%A" ret)
+            | other -> sprintf "%A" other
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                // AST スナップショット: 引数名の確認。
+                match moduleAst.decls with
+                | [ (:? Ast.Decl.Fn as fnDecl) ] ->
+                    Assert.Equal("add", fnDecl.name)
+                    Assert.Equal(2, fnDecl.args.Length)
+                | _ -> Assert.True(false, "expected single fn decl")
+
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    // HIR スナップショット: add メソッドの型は Fn([Int,Int],Int) であるべき。
+                    let addMethod = hirModule.methods |> List.tryFind (fun m -> m.sym.id = hirModule.scope.vars.["add"].id)
+                    match addMethod with
+                    | Some meth ->
+                        match Type.resolve subst meth.typ with
+                        | TypeId.Fn ([ TypeId.Int; TypeId.Int ], TypeId.Int) ->
+                            Assert.True(true)
+                        | other ->
+                            Assert.True(false, sprintf "HIR add method type mismatch: %A" other)
+                    | None -> Assert.True(false, "HIR add method not found")
+
+                    // MIR スナップショット: add の MIR メソッドが args/ret を正しく持つことを確認。
+                    let mirResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    match mirResult with
+                    | { succeeded = true; value = Some mirAsm } ->
+                        let mirAdd = mirAsm.modules.Head.methods |> List.tryFind (fun m -> m.name = "add")
+                        match mirAdd with
+                        | Some m ->
+                            Assert.Equal<TypeId list>([ TypeId.Int; TypeId.Int ], m.args)
+                            Assert.Equal(TypeId.Int, m.ret)
+                        | None -> Assert.True(false, "MIR add method not found")
+                    | { diagnostics = diagnostics } ->
+                        let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                        Assert.True(false, sprintf "layoutAssembly failed: %s" message)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun err -> err.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, sprintf "Semantic analysis failed: %s" message)
+            | Failure (reason, span) ->
+                Assert.True(false, sprintf "Parsing failed: %s at %d:%d" reason span.left.Line span.left.Column)
+        | Failure (reason, span) ->
+            Assert.True(false, sprintf "Lexing failed: %s at %d:%d" reason span.left.Line span.left.Column)
+
+    /// 未定義変数を参照するプログラムの診断メッセージが安定していることを検証するスナップショットテスト。
+    [<Fact>]
+    let ``diagnostic snapshot is stable for undefined variable reference`` () =
+        let program = """
+fn bad (): Int = undefinedVar
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let combined = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                    // 未定義変数エラーメッセージが含まれるべき。
+                    Assert.Contains("undefinedVar", combined)
+                | { succeeded = true } ->
+                    Assert.True(false, "program with undefined variable must not succeed")
+            | Failure (reason, span) ->
+                Assert.True(false, sprintf "Parsing failed: %s at %d:%d" reason span.left.Line span.left.Column)
+        | Failure (reason, span) ->
+            Assert.True(false, sprintf "Lexing failed: %s at %d:%d" reason span.left.Line span.left.Column)
+
+    /// 同一入力を2回レイアウトしたとき MIR スナップショットが一致することを検証する（決定性テスト）。
+    [<Fact>]
+    let ``MIR snapshot is deterministic across repeated layoutAssembly calls for identical input`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 700
+        let argSid = SymbolId 701
+        let scope = Scope(None)
+        scope.DeclareVar("compute", methodSym)
+
+        let hirMethod =
+            Hir.Method(
+                methodSym,
+                [ argSid, TypeId.Int ],
+                Hir.Expr.Id(argSid, TypeId.Int, span),
+                TypeId.Fn([ TypeId.Int ], TypeId.Int),
+                span)
+        let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
+
+        let snapshotOf (result: PhaseResult<Mir.Assembly>) =
+            match result with
+            | { succeeded = true; value = Some mirAsm } ->
+                mirAsm.modules.Head.methods
+                |> List.map (fun m -> sprintf "%s|args=%d|ret=%A" m.name m.args.Length m.ret)
+                |> String.concat ";"
+            | { diagnostics = diagnostics } ->
+                let message = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                failwith (sprintf "layoutAssembly failed: %s" message)
+
+        let first = snapshotOf (Layout.layoutAssembly("TestAsm", hirAssembly))
+        let second = snapshotOf (Layout.layoutAssembly("TestAsm", hirAssembly))
+        Assert.Equal(first, second)
