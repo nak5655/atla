@@ -151,6 +151,16 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        // 無名関数式（例: fn x y -> x + y）を表す。
+        type Lambda(args: string list, body: Expr, span: Span) =
+            member this.args = args
+            member this.body = body
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type Error(message: string, span: Span) =
             member this.message = message
             member this.span = span

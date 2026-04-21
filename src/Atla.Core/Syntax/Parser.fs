@@ -202,9 +202,63 @@ module Parser =
             ) (term2 ()) [9 .. -1 .. 0]
         )
 
+    // lambda 引数名の重複を検証し、最初に見つかった重複名を返す。
+    and private tryFindDuplicateArgName (argNames: string list) : string option =
+        let folder (seen, duplicated) argName =
+            match duplicated with
+            | Some _ -> seen, duplicated
+            | None when Set.contains argName seen -> seen, Some argName
+            | None -> Set.add argName seen, None
+        let _, duplicated = List.fold folder (Set.empty, None) argNames
+        duplicated
+
+    // 無名関数式（例: fn x y -> expr, fn () -> expr）を解析する。
+    // 仕様:
+    // - 引数は Id の並び、または明示ユニット引数 `()` のみを許可する。
+    // - `fn -> expr` は空引数エラーとして Ast.Expr.Error を返す。
+    // - 引数重複は Ast.Expr.Error を返す。
+    and lambdaExpr (): PackratParser<Token, Ast.Expr> =
+        Delay (fun () -> fun input pos ->
+            match (keyword "fn") input pos with
+            | Failure (reason, span) -> Failure (reason, span)
+            | Success (fnKw, afterFnPos) ->
+                let lambdaInput = BlockInput(input, fnKw.span.left) :> Input<Token>
+                let unitArgParse = (delim '(' <&> delim ')') lambdaInput afterFnPos
+
+                // 引数列を（Id* もしくは `()`）として読み取る。
+                let (argNames, afterArgsPos, usedUnitSyntax) =
+                    match unitArgParse with
+                    | Success (_, afterUnitPos) -> [], afterUnitPos, true
+                    | Failure _ ->
+                        let rec collectArgNames (currentPos: Position) (acc: string list) =
+                            match tid lambdaInput currentPos with
+                            | Success (id, nextPos) -> collectArgNames nextPos (id.str :: acc)
+                            | Failure _ -> List.rev acc, currentPos
+                        let names, endPos = collectArgNames afterFnPos []
+                        names, endPos, false
+
+                match (keyword "->") lambdaInput afterArgsPos with
+                | Failure (reason, span) -> Failure (reason, span)
+                | Success (_, afterArrowPos) ->
+                    match (expr ()) lambdaInput afterArrowPos with
+                    | Failure (msg, span) ->
+                        Success (Ast.Expr.Error(msg, span) :> Ast.Expr, afterArrowPos)
+                    | Success (bodyExpr, nextPos) ->
+                        let lambdaSpan = { left = fnKw.span.left; right = bodyExpr.span.right }
+                        match usedUnitSyntax, argNames with
+                        | false, [] ->
+                            Success (Ast.Expr.Error("Lambda parameter list is empty. Use at least one identifier or explicit unit argument list '()'.", lambdaSpan) :> Ast.Expr, nextPos)
+                        | _ ->
+                            match tryFindDuplicateArgName argNames with
+                            | Some duplicatedName ->
+                                Success (Ast.Expr.Error(sprintf "Duplicate lambda parameter '%s'" duplicatedName, lambdaSpan) :> Ast.Expr, nextPos)
+                            | None ->
+                                Success (Ast.Expr.Lambda(argNames, bodyExpr, lambdaSpan) :> Ast.Expr, nextPos)
+        )
+
     and expr (): PackratParser<Token, Ast.Expr> =
         Delay (fun () -> 
-            binopExpr ()
+            lambdaExpr () <|> binopExpr ()
         )
 
     // 文
