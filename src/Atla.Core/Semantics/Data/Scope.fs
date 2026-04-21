@@ -14,14 +14,14 @@ type Scope(parent: Scope option) =
     member this.DeclareVar(name: string, sid: SymbolId) =
         _vars.Add(name, sid)
 
-    member this.ResolveVar(name: string, _tid: TypeId) : SymbolId list =
+    member this.ResolveVar(name: string) : SymbolId list =
         let mutable sid = Unchecked.defaultof<SymbolId>
 
         if _vars.TryGetValue(name, &sid) then
             [ sid ]
         else
             match parent with
-            | Some parentScope -> parentScope.ResolveVar(name, _tid)
+            | Some parentScope -> parentScope.ResolveVar(name)
             | None -> []
 
     member this.DeclareType(name: string, tid: TypeId) =

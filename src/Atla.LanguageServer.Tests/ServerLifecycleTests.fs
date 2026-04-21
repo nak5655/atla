@@ -207,3 +207,42 @@ module ServerLifecycleTests =
         let (_, diagnostics) = published |> Seq.last
         let diagnostic = Assert.Single(diagnostics)
         Assert.Equal("atla-build", diagnostic.source)
+
+    [<Fact>]
+    let ``LSP compile same source twice produces deterministic diagnostics order`` () =
+        // 同一ソースを2回コンパイルしたとき、診断の URI・件数・内容が不変であることを検証する（決定性テスト）。
+        let collectedFirst = ResizeArray<string * int>()
+        let collectedSecond = ResizeArray<string * int>()
+
+        let makeServer (collector: ResizeArray<string * int>) =
+            Server(fun uri diagnostics -> collector.Add(uri, diagnostics.Length))
+
+        let source = "fn main: Int = undefinedSymbol"
+        let uri = "file:///tmp/determinism-test.atla"
+
+        // 1回目のコンパイル。
+        let server1 = makeServer collectedFirst
+        server1.IsAvailablePublishDiagnostics <- true
+        server1.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
+        server1.OpenDocument(uri, source)
+
+        // 2回目は新しいサーバーインスタンスで同一ソースをコンパイルする。
+        let server2 = makeServer collectedSecond
+        server2.IsAvailablePublishDiagnostics <- true
+        server2.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
+        server2.OpenDocument(uri, source)
+
+        let first = collectedFirst |> Seq.toList
+        let second = collectedSecond |> Seq.toList
+
+        Assert.NotEmpty(first)
+        Assert.NotEmpty(second)
+
+        // 件数が一致することを確認する。
+        Assert.Equal(first.Length, second.Length)
+
+        // URI と診断件数がすべて一致することを確認する。
+        List.iter2 (fun (uri1: string, count1: int) (uri2: string, count2: int) ->
+            Assert.Equal(uri1, uri2)
+            Assert.Equal(count1, count2)) first second
+

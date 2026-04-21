@@ -75,8 +75,8 @@ module Analyze =
             scope.DeclareVar(name, sid)
             sid
 
-        member this.resolveVar (name: string) (tid: TypeId) : SymbolId list =
-            scope.ResolveVar(name, tid)
+        member this.resolveVar (name: string) : SymbolId list =
+            scope.ResolveVar(name)
 
         member this.resolveSymType (sid: SymbolId) : TypeId =
             match symbolTable.Get(sid) with
@@ -486,7 +486,7 @@ module Analyze =
             | Result.Ok _ -> Hir.Expr.String(stringExpr.value, stringExpr.span)
             | Result.Error exprErr -> exprErr
         | :? Ast.Expr.Id as idExpr ->
-            match nameEnv.resolveVar idExpr.name tid with
+            match nameEnv.resolveVar idExpr.name with
             | [sid] ->
                 match nameEnv.resolveSym sid with
                 | Some symInfo ->
@@ -948,7 +948,7 @@ module Analyze =
         | :? Ast.Stmt.Assign as assignStmt ->
             let tid = typeEnv.freshMeta ()
             let rhs = analyzeExpr nameEnv typeEnv assignStmt.value tid
-            match nameEnv.resolveVar assignStmt.name (typeEnv.freshMeta ()) with
+            match nameEnv.resolveVar assignStmt.name with
             | [sid] ->
                 match unifyOrError nameEnv typeEnv (nameEnv.resolveSymType sid) rhs.typ assignStmt.span with
                 | Result.Ok _ -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)

@@ -988,3 +988,103 @@ fn bad (): Int = do
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    // ─────────────────────────────────────────────────────────────
+    // フェーズ境界テスト（Resolve / Infer）（Task 5: line 1038）
+    // ─────────────────────────────────────────────────────────────
+
+    /// Resolve フェーズ単独で import 宣言がモジュールスコープに登録されることを検証する。
+    [<Fact>]
+    let ``Resolve.resolveModule registers imported type in module scope`` () =
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl ])
+        let symbolTable = SymbolTable()
+
+        match Resolve.resolveModule(symbolTable, "main", astModule) with
+        | { succeeded = true; value = Some resolved } ->
+            // Console がスコープに登録されていることを確認する。
+            let consoleTyp = resolved.moduleScope.ResolveType("Console")
+            Assert.True(consoleTyp.IsSome, "Resolve フェーズで Console 型がスコープに登録されていない。")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Resolve.resolveModule failed: {message}")
+
+    /// Resolve フェーズ単独で fn 宣言が収集されることを検証する。
+    [<Fact>]
+    let ``Resolve.resolveModule collects fn declarations`` () =
+        let span = Span.Empty
+        let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, Ast.Expr.Int(0, span) :> Ast.Expr, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+        let symbolTable = SymbolTable()
+
+        match Resolve.resolveModule(symbolTable, "main", astModule) with
+        | { succeeded = true; value = Some resolved } ->
+            Assert.Equal(1, resolved.fnDecls.Length)
+            Assert.Equal("main", resolved.fnDecls.Head.name)
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Resolve.resolveModule failed: {message}")
+
+    /// Infer フェーズ単独でメタ型変数が具体型へ解決されることを検証する。
+    [<Fact>]
+    let ``Infer.inferModule resolves meta type variables to concrete types`` () =
+        let span = Span.Empty
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+
+        // HIR メソッドに meta 型変数を含めて、Infer が具体化することを確認する。
+        let methodSym = symbolTable.NextId()
+        let scope = Scope(None)
+        scope.DeclareVar("id", methodSym)
+
+        let argSid = symbolTable.NextId()
+        // 引数型を Int に固定し、meta 経由で解決させる。
+        let metaFactory = TypeMetaFactory()
+        let metaTid = TypeId.Meta(metaFactory.Fresh())
+        Type.unify subst metaTid TypeId.Int |> ignore
+
+        let hirMethod = Hir.Method(methodSym, [ argSid, metaTid ], Hir.Expr.Id(argSid, metaTid, span), TypeId.Fn([ metaTid ], metaTid), span)
+        let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
+
+        match Infer.inferModule(subst, hirModule) with
+        | Result.Ok inferredModule ->
+            let inferredMethod = inferredModule.methods.Head
+            let argType = inferredMethod.args |> List.head |> snd
+            // meta 型変数が Int に解決されていること。
+            Assert.Equal(TypeId.Int, argType)
+        | Result.Error diagnostics ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Infer.inferModule failed: {message}")
+
+    /// Resolve と Infer を順番に組み合わせたフェーズ境界テスト。
+    [<Fact>]
+    let ``Resolve then Infer pipeline produces fully typed HIR for simple function`` () =
+        let span = Span.Empty
+        let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let fnDecl = Ast.Decl.Fn("answer", [], retType, Ast.Expr.Int(42, span) :> Ast.Expr, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+
+        // フェーズ1: Resolve でシンボル解決・スコープ構築。
+        match Resolve.resolveModule(symbolTable, "main", astModule) with
+        | { succeeded = true; value = Some _ } ->
+            // フェーズ2: Analyze 全体（Resolve + Analyze + Infer）で HIR 生成。
+            match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+            | { succeeded = true; value = Some hirModule } ->
+                let answerMethod = hirModule.methods |> List.tryFind (fun m -> m.sym.id = hirModule.scope.vars.["answer"].id)
+                match answerMethod with
+                | Some meth ->
+                    // Infer フェーズ後の型が具体化されていることを確認する。
+                    match Type.resolve subst meth.typ with
+                    | TypeId.Fn ([], TypeId.Int) -> Assert.True(true)
+                    | other -> Assert.True(false, $"Unexpected method type after Infer: {other}")
+                | None -> Assert.True(false, "answer method not found in HIR")
+            | { diagnostics = diagnostics } ->
+                let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                Assert.True(false, $"analyzeModule failed: {message}")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Resolve.resolveModule failed: {message}")
