@@ -36,15 +36,6 @@ module Hir =
         | Block of stmts: Stmt list * expr: Expr * tid: TypeId * span: Span
         | If of cond: Expr * thenBranch: Expr * elseBranch: Expr * tid: TypeId * span: Span
         | ExprError of message: string * errTyp: TypeId * span: Span
-        // env-class クロージャーフィールド参照。lifted invoke method の第一引数（env インスタンス）からフィールドを読む。
-        // envArgSid: env インスタンスが格納された引数の SymbolId（lifted method 内の Arg(0)）
-        // capturedSid: 捕捉変数（= env フィールド）の SymbolId
-        | EnvFieldLoad of envArgSid: SymbolId * capturedSid: SymbolId * tid: TypeId * span: Span
-        // env-class クロージャー生成式。env インスタンスを生成し、捕捉変数を格納し、bound delegate を返す。
-        // envTypeSid: env クラスの型 SymbolId
-        // methodSid: lifted invoke メソッドの SymbolId
-        // captured: 捕捉変数の (SymbolId * TypeId * isMutable) リスト（SymbolId 昇順）
-        | ClosureCreate of envTypeSid: SymbolId * methodSid: SymbolId * captured: (SymbolId * TypeId * bool) list * tid: TypeId * span: Span
 
         member this.typ =
             match this with
@@ -60,8 +51,6 @@ module Hir =
             | Block (_, _, t, _) -> t
             | If (_, _, _, t, _) -> t
             | ExprError (_, t, _) -> t
-            | EnvFieldLoad (_, _, t, _) -> t
-            | ClosureCreate (_, _, _, t, _) -> t
 
         member this.span =
             match this with
@@ -77,8 +66,6 @@ module Hir =
             | Block (_, _, _, span) -> span
             | If (_, _, _, _, span) -> span
             | ExprError (_, _, span) -> span
-            | EnvFieldLoad (_, _, _, span) -> span
-            | ClosureCreate (_, _, _, _, span) -> span
 
         member this.hasError =
             this.getDiagnostics |> List.exists (fun diagnostic -> diagnostic.isError)
@@ -101,8 +88,6 @@ module Hir =
                 instance
                 |> Option.map (fun expr -> expr.getDiagnostics)
                 |> Option.defaultValue []
-            | EnvFieldLoad _ -> []
-            | ClosureCreate _ -> []
             | _ -> []
 
     and Stmt =
