@@ -70,73 +70,70 @@ module ClosureConversion =
             ClosedHir.Stmt.For(sid, tid, convertHirExpr iterable, body |> List.map convertHirStmt, span)
         | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span)
 
-    /// 式内の自由変数集合を収集する（globalSymbols は捕捉対象から除外）。
-    /// `rewriteExpr` で `Hir.Expr` から変換済みの `ClosedHir.Expr` に対して呼び出す。
-    /// Lambda ノードは `rewriteExpr` 内でネストしたラムダの捕捉判定に使用する。
-    let rec private collectFreeVarsExpr (bound: Set<int>) (globalSymbols: Set<int>) (expr: ClosedHir.Expr) : Set<int> =
-        match expr with
-        | ClosedHir.Expr.Unit _
-        | ClosedHir.Expr.Int _
-        | ClosedHir.Expr.Float _
-        | ClosedHir.Expr.String _
-        | ClosedHir.Expr.Null _
-        | ClosedHir.Expr.ExprError _ -> Set.empty
-        | ClosedHir.Expr.Id (sid, _, _) ->
-            if bound.Contains sid.id || globalSymbols.Contains sid.id then Set.empty else Set.singleton sid.id
-        | ClosedHir.Expr.MemberAccess (_, instance, _, _) ->
-            instance
-            |> Option.map (collectFreeVarsExpr bound globalSymbols)
-            |> Option.defaultValue Set.empty
-        | ClosedHir.Expr.Call (_, instance, args, _, _) ->
-            let instanceVars =
-                instance
-                |> Option.map (collectFreeVarsExpr bound globalSymbols)
-                |> Option.defaultValue Set.empty
-            let argVars = args |> List.map (collectFreeVarsExpr bound globalSymbols) |> List.fold Set.union Set.empty
-            Set.union instanceVars argVars
-        | ClosedHir.Expr.Block (stmts, body, _, _) ->
-            let freeInStmts, boundAfterStmts = collectFreeVarsStmts bound globalSymbols stmts
-            let freeInBody = collectFreeVarsExpr boundAfterStmts globalSymbols body
-            Set.union freeInStmts freeInBody
-        | ClosedHir.Expr.If (cond, thenBranch, elseBranch, _, _) ->
-            [ collectFreeVarsExpr bound globalSymbols cond
-              collectFreeVarsExpr bound globalSymbols thenBranch
-              collectFreeVarsExpr bound globalSymbols elseBranch ]
-            |> List.fold Set.union Set.empty
-        | ClosedHir.Expr.Lambda (args, _, body, _, _) ->
-            // ラムダの自由変数判定では、外側スコープの束縛は「自由変数候補」として扱う。
-            // ここではラムダ自身の引数のみを束縛集合へ入れる。
-            let lambdaBound = args |> List.fold (fun (acc: Set<int>) arg -> acc.Add arg.sid.id) Set.empty
-            collectFreeVarsExpr lambdaBound globalSymbols body
-        // EnvFieldLoad は env インスタンス引数へのアクセスで、外側スコープの自由変数ではない。
-        | ClosedHir.Expr.EnvFieldLoad _ -> Set.empty
-        // ClosureCreate が捕捉している変数 sid は外側スコープで参照が必要。
-        | ClosedHir.Expr.ClosureCreate (_, _, captured, _, _) ->
-            captured |> List.map (fun (sid, _, _) -> sid.id) |> Set.ofList
+    // ─────────────────────────────────────────────
+    // 自由変数収集インフラ
+    // ─────────────────────────────────────────────
 
-    /// 文列を宣言順に走査し、自由変数集合と更新後 bound を返す。
-    and private collectFreeVarsStmts (bound: Set<int>) (globalSymbols: Set<int>) (stmts: ClosedHir.Stmt list) : Set<int> * Set<int> =
-        stmts
-        |> List.fold (fun (freeVars, currentBound) stmt ->
-            let stmtFree, nextBound = collectFreeVarsStmt currentBound globalSymbols stmt
-            Set.union freeVars stmtFree, nextBound) (Set.empty, bound)
+    /// 自由変数収集に用いる束縛変数集合を保持する文脈レコード。
+    type private FreeVarCtx = { bound: Set<int> }
 
-    /// 単一文の自由変数集合と更新後 bound を返す。
-    and private collectFreeVarsStmt (bound: Set<int>) (globalSymbols: Set<int>) (stmt: ClosedHir.Stmt) : Set<int> * Set<int> =
-        match stmt with
-        | ClosedHir.Stmt.Let (sid, _, value, _) ->
-            collectFreeVarsExpr bound globalSymbols value, bound.Add sid.id
-        | ClosedHir.Stmt.Assign (_, value, _)
-        | ClosedHir.Stmt.ExprStmt (value, _) ->
-            collectFreeVarsExpr bound globalSymbols value, bound
-        | ClosedHir.Stmt.For (sid, _, iterable, body, _) ->
-            let iterableVars = collectFreeVarsExpr bound globalSymbols iterable
-            // for 反復変数 sid はボディ内で束縛済みとして扱う。
-            // ラムダがボディ内でこの変数を参照した場合は「捕捉」とみなされる（env-class 方式で処理される）。
-            // これは C#互換の「反復ごと新規束縛」セマンティクスに対応している。
-            let bodyVars, _ = collectFreeVarsStmts (bound.Add sid.id) globalSymbols body
-            Set.union iterableVars bodyVars, bound
-        | ClosedHir.Stmt.ErrorStmt _ -> Set.empty, bound
+    /// HIR 式内の自由変数集合を収集する（globalSymbols は捕捉対象から除外）。
+    /// `Hir.foldExprWithCtx` を用いてトラバーサルをインフラに委譲する。
+    /// Lambda 境界では bound をリセットし、Block 内の Let は逐次追加する。
+    /// Phase 1 の buildCaptureMap で各ラムダ本体の自由変数計算に使用する。
+    let private collectFreeVarsHirExpr (bound: Set<int>) (globalSymbols: Set<int>) (expr: Hir.Expr) : Set<int> =
+        Hir.foldExprWithCtx
+            (fun ctx e ->
+                match e with
+                | Hir.Expr.Lambda (args, _, _, _, _) ->
+                    // Lambda 境界: bound をリセットしてラムダ自身の引数のみを束縛とする。
+                    { ctx with bound = args |> List.fold (fun acc arg -> acc.Add arg.sid.id) Set.empty }
+                | _ -> ctx)
+            (fun ctx s ->
+                match s with
+                | Hir.Stmt.Let (sid, _, _, _) -> { ctx with bound = ctx.bound.Add sid.id }
+                | _ -> ctx)
+            (fun ctx e ->
+                match e with
+                | Hir.Expr.Id (sid, _, _) ->
+                    if ctx.bound.Contains sid.id || globalSymbols.Contains sid.id then Set.empty
+                    else Set.singleton sid.id
+                | _ -> Set.empty)
+            Set.union
+            Set.empty
+            { bound = bound }
+            expr
+
+    /// ClosedHir 式内の自由変数集合を収集する（globalSymbols は捕捉対象から除外）。
+    /// `ClosedHir.foldExprWithCtx` を用いてトラバーサルをインフラに委譲する。
+    /// Lambda 境界では bound をリセットし、Block 内の Let は逐次追加する。
+    let private collectFreeVarsExpr (bound: Set<int>) (globalSymbols: Set<int>) (expr: ClosedHir.Expr) : Set<int> =
+        ClosedHir.foldExprWithCtx
+            (fun ctx e ->
+                match e with
+                | ClosedHir.Expr.Lambda (args, _, _, _, _) ->
+                    // Lambda 境界: bound をリセットしてラムダ自身の引数のみを束縛とする。
+                    { ctx with bound = args |> List.fold (fun acc arg -> acc.Add arg.sid.id) Set.empty }
+                | _ -> ctx)
+            (fun ctx s ->
+                match s with
+                | ClosedHir.Stmt.Let (sid, _, _, _) -> { ctx with bound = ctx.bound.Add sid.id }
+                | _ -> ctx)
+            (fun ctx e ->
+                match e with
+                | ClosedHir.Expr.Id (sid, _, _) ->
+                    if ctx.bound.Contains sid.id || globalSymbols.Contains sid.id then Set.empty
+                    else Set.singleton sid.id
+                // EnvFieldLoad は env インスタンス引数へのアクセスで、外側スコープの自由変数ではない。
+                | ClosedHir.Expr.EnvFieldLoad _ -> Set.empty
+                // ClosureCreate が捕捉している変数 sid は外側スコープで参照が必要。
+                | ClosedHir.Expr.ClosureCreate (_, _, captured, _, _) ->
+                    captured |> List.map (fun (sid, _, _) -> sid.id) |> Set.ofList
+                | _ -> Set.empty)
+            Set.union
+            Set.empty
+            { bound = bound }
+            expr
 
     /// lifted invoke method 本体内の捕捉変数参照（ClosedHir.Expr.Id）を EnvFieldLoad へ書き換える。
     /// `ClosedHir.mapExpr` を用いて構造的再帰をインフラに委譲する。
@@ -156,10 +153,114 @@ module ClosureConversion =
                 ClosedHir.Expr.EnvFieldLoad(envArgSid, sid, tid, span)
             | _ -> e) stmt
 
-    /// lambda lifting のために式を再帰変換し（入力: `Hir.Expr`、出力: `ClosedHir.Expr`）、
+    // ─────────────────────────────────────────────
+    // Phase 1: キャプチャー解析
+    // HIR を走査して各 Lambda の捕捉変数メタデータを CaptureMap として構築する。
+    // bound / bindings のスレッドはこのフェーズに閉じ込め、Phase 2 から除去する。
+    // ─────────────────────────────────────────────
+
+    /// Phase 1 の解析文脈: 束縛変数集合と型情報マップを保持する。
+    type private AnalysisCtx = {
+        bound: Set<int>
+        bindings: Map<int, bool * TypeId>
+    }
+
+    /// Phase 1: メソッド本体を走査し、各 Lambda の捕捉変数メタデータを CaptureMap として構築する。
+    /// `collectFreeVarsHirExpr`（`Hir.foldExprWithCtx` ベース）で各ラムダ本体の自由変数を算出し、
+    /// 外側スコープの bindings と照合して CapturedVarMetadata リストに変換する。
+    /// CaptureMap のキーは Lambda ノードの Span（ソース中で一意）。
+    /// 戻り値の int list は型情報が解決できなかった捕捉変数 sid（エラー報告用）。
+    let private buildCaptureMap
+        (globalSymbols: Set<int>)
+        (method: Hir.Method) : Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list> =
+
+        // 外側スコープの bindings から捕捉変数の型情報を解決し、CaptureMap エントリを構築する。
+        let buildCaptureEntries (outerBindings: Map<int, bool * TypeId>) (freeVars: Set<int>) : CapturedVarMetadata list * int list =
+            let pairs =
+                freeVars |> Set.toList |> List.sort
+                |> List.map (fun sid ->
+                    match outerBindings.TryFind sid with
+                    | Some(isMut, typ) -> Some { sid = sid; isMutable = isMut; typ = typ }, None
+                    | None -> None, Some sid)
+            List.choose fst pairs, List.choose snd pairs
+
+        // HIR を再帰走査して各 Lambda の CaptureMap エントリを構築する。
+        // bound / bindings は Let・For 宣言に従い逐次更新する。
+        let rec traverseExpr
+            (ctx: AnalysisCtx)
+            (captureMap: Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list>)
+            (expr: Hir.Expr) : Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list> =
+            match expr with
+            | Hir.Expr.Lambda (args, _, body, _, span) ->
+                let lambdaBound = args |> List.fold (fun (acc: Set<int>) arg -> acc.Add arg.sid.id) Set.empty
+                let lambdaBindings =
+                    args |> List.fold (fun (acc: Map<int, bool * TypeId>) arg -> acc.Add(arg.sid.id, (false, arg.typ))) ctx.bindings
+                // 自由変数をラムダ引数のみを束縛として計算し、外側 bindings で型情報を解決する。
+                let freeVars = collectFreeVarsHirExpr lambdaBound globalSymbols body
+                let known, unknown = buildCaptureEntries ctx.bindings freeVars
+                let map' = captureMap |> Map.add span (known, unknown)
+                // ラムダ本体を再帰走査してネストしたラムダも登録する。
+                traverseExpr { bound = lambdaBound; bindings = lambdaBindings } map' body
+            | Hir.Expr.Block (stmts, body, _, _) ->
+                let map', ctx' =
+                    stmts
+                    |> List.fold
+                        (fun (m, c) stmt -> traverseStmt c m stmt, afterStmtCtx c stmt)
+                        (captureMap, ctx)
+                traverseExpr ctx' map' body
+            | Hir.Expr.Call (_, instance, args, _, _) ->
+                let m' = instance |> Option.fold (traverseExpr ctx) captureMap
+                args |> List.fold (traverseExpr ctx) m'
+            | Hir.Expr.If (cond, thenBranch, elseBranch, _, _) ->
+                [ cond; thenBranch; elseBranch ] |> List.fold (traverseExpr ctx) captureMap
+            | Hir.Expr.MemberAccess (_, instance, _, _) ->
+                instance |> Option.fold (traverseExpr ctx) captureMap
+            | _ -> captureMap
+
+        and traverseStmt
+            (ctx: AnalysisCtx)
+            (captureMap: Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list>)
+            (stmt: Hir.Stmt) : Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list> =
+            match stmt with
+            | Hir.Stmt.Let (_, _, value, _) | Hir.Stmt.Assign (_, value, _) | Hir.Stmt.ExprStmt (value, _) ->
+                traverseExpr ctx captureMap value
+            | Hir.Stmt.For (sid, tid, iterable, body, _) ->
+                let m' = traverseExpr ctx captureMap iterable
+                let innerCtx =
+                    { ctx with
+                        bound = ctx.bound.Add sid.id
+                        bindings = ctx.bindings.Add(sid.id, (false, tid)) }
+                body
+                |> List.fold (fun (m, c) s -> traverseStmt c m s, afterStmtCtx c s) (m', innerCtx)
+                |> fst
+            | Hir.Stmt.ErrorStmt _ -> captureMap
+
+        and afterStmtCtx (ctx: AnalysisCtx) (stmt: Hir.Stmt) : AnalysisCtx =
+            match stmt with
+            | Hir.Stmt.Let (sid, isMut, value, _) ->
+                { ctx with bound = ctx.bound.Add sid.id; bindings = ctx.bindings.Add(sid.id, (isMut, value.typ)) }
+            | _ -> ctx
+
+        let methodBound = method.args |> List.map fst |> List.fold (fun (acc: Set<int>) sid -> acc.Add sid.id) Set.empty
+        let methodBindings =
+            method.args |> List.fold (fun (acc: Map<int, bool * TypeId>) (sid, tid) -> acc.Add(sid.id, (false, tid))) Map.empty
+        traverseExpr { bound = methodBound; bindings = methodBindings } Map.empty method.body
+
+    // ─────────────────────────────────────────────
+    // Phase 2: 構造的変換（Hir.Expr → ClosedHir.Expr）
+    // Phase 1 で構築済みの CaptureMap を参照するため、bound / bindings / globalSymbols の
+    // スレッドが不要になり、シグネチャが単純化される。
+    // ─────────────────────────────────────────────
+
+    /// Phase 2: lambda lifting のために式を再帰変換し（入力: `Hir.Expr`、出力: `ClosedHir.Expr`）、
     /// 必要な生成メソッドを state に蓄積する。
-    /// `symbolTable` は SymbolId の一元採番に使用する。
-    let rec private rewriteExpr (symbolTable: SymbolTable) (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (expr: Hir.Expr) (state: ConversionState) : ClosedHir.Expr * ConversionState =
+    /// `captureMap` は Phase 1 で構築済みのため、bound / bindings / globalSymbols のスレッドが不要。
+    let rec private rewriteExpr
+        (symbolTable: SymbolTable)
+        (ownerMethod: Hir.Method)
+        (captureMap: Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list>)
+        (expr: Hir.Expr)
+        (state: ConversionState) : ClosedHir.Expr * ConversionState =
         match expr with
         | Hir.Expr.Unit span -> ClosedHir.Expr.Unit span, state
         | Hir.Expr.Int (v, span) -> ClosedHir.Expr.Int(v, span), state
@@ -172,76 +273,62 @@ module ClosureConversion =
             let rewrittenInstance, nextState =
                 match instance with
                 | Some instExpr ->
-                    let rewrittenExpr, rewrittenState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols instExpr state
-                    Some rewrittenExpr, rewrittenState
+                    let r, s = rewriteExpr symbolTable ownerMethod captureMap instExpr state
+                    Some r, s
                 | None -> None, state
             ClosedHir.Expr.MemberAccess(mem, rewrittenInstance, tid, span), nextState
         | Hir.Expr.Call (func, instance, args, tid, span) ->
             let rewrittenInstance, instanceState =
                 match instance with
                 | Some instExpr ->
-                    let rewrittenExpr, rewrittenState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols instExpr state
-                    Some rewrittenExpr, rewrittenState
+                    let r, s = rewriteExpr symbolTable ownerMethod captureMap instExpr state
+                    Some r, s
                 | None -> None, state
             let rewrittenArgs, finalState =
                 args
-                |> List.fold (fun (acc, st) arg ->
-                    let rewrittenArg, nextState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols arg st
-                    acc @ [ rewrittenArg ], nextState) ([], instanceState)
+                |> List.fold
+                    (fun (acc, st) arg ->
+                        let r, s = rewriteExpr symbolTable ownerMethod captureMap arg st
+                        acc @ [ r ], s)
+                    ([], instanceState)
             ClosedHir.Expr.Call(func, rewrittenInstance, rewrittenArgs, tid, span), finalState
         | Hir.Expr.Block (stmts, body, tid, span) ->
-            let rewrittenStmts, boundAfterStmts, bindingsAfterStmts, stateAfterStmts = rewriteStmts symbolTable ownerMethod bound bindings globalSymbols stmts state
-            let rewrittenBody, finalState = rewriteExpr symbolTable ownerMethod boundAfterStmts bindingsAfterStmts globalSymbols body stateAfterStmts
+            let rewrittenStmts, stateAfterStmts = rewriteStmts symbolTable ownerMethod captureMap stmts state
+            let rewrittenBody, finalState = rewriteExpr symbolTable ownerMethod captureMap body stateAfterStmts
             ClosedHir.Expr.Block(rewrittenStmts, rewrittenBody, tid, span), finalState
         | Hir.Expr.If (cond, thenBranch, elseBranch, tid, span) ->
-            let rewrittenCond, condState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols cond state
-            let rewrittenThen, thenState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols thenBranch condState
-            let rewrittenElse, finalState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols elseBranch thenState
-            ClosedHir.Expr.If(rewrittenCond, rewrittenThen, rewrittenElse, tid, span), finalState
+            let rc, cs = rewriteExpr symbolTable ownerMethod captureMap cond state
+            let rt, ts = rewriteExpr symbolTable ownerMethod captureMap thenBranch cs
+            let re, es = rewriteExpr symbolTable ownerMethod captureMap elseBranch ts
+            ClosedHir.Expr.If(rc, rt, re, tid, span), es
         | Hir.Expr.Lambda (args, ret, body, tid, span) ->
-            // 捕捉判定は「ラムダ自身の引数」を束縛として扱う（外側束縛は捕捉対象）。
-            let lambdaBound = args |> List.fold (fun (acc: Set<int>) arg -> acc.Add arg.sid.id) Set.empty
-            let lambdaBindings =
-                args
-                |> List.fold (fun (acc: Map<int, bool * TypeId>) arg -> acc.Add(arg.sid.id, (false, arg.typ))) bindings
-            let rewrittenBody, bodyState = rewriteExpr symbolTable ownerMethod lambdaBound lambdaBindings globalSymbols body state
-            let captured =
-                collectFreeVarsExpr lambdaBound globalSymbols rewrittenBody
-                |> Set.toList
-                |> List.sort
-
-            match captured with
+            // Phase 1 で構築済みの captureMap を参照して捕捉変数メタデータを取得する。
+            let capturedMetadata, unknownSids =
+                captureMap |> Map.tryFind span |> Option.defaultValue ([], [])
+            let rewrittenBody, bodyState = rewriteExpr symbolTable ownerMethod captureMap body state
+            match unknownSids with
+            | _ :: _ ->
+                // 型情報を持たない捕捉変数が存在する（不正な HIR）。
+                let unknownText = unknownSids |> List.map string |> String.concat ", "
+                let diagnostic =
+                    Diagnostic.Error(
+                        $"Closure conversion failed: captured variable(s) have no type information. sids=[{unknownText}], ownerMethodSid={ownerMethod.sym.id}",
+                        ownerMethod.span)
+                { bodyState with diagnostics = bodyState.diagnostics @ [ diagnostic ] }
+                |> fun s -> ClosedHir.Expr.Lambda(args, ret, rewrittenBody, tid, span), s
             | [] ->
-                // 非捕捉ラムダ: static delegate として lambda lifting する。
-                let methodArgs = args |> List.map (fun arg -> arg.sid, arg.typ)
-                let liftedMethodType = TypeId.Fn(methodArgs |> List.map snd, ret)
-                // SymbolTable を使って一元採番し、lifted メソッドの SymbolId を確保する。
-                let liftedSid = allocateSymbolId symbolTable liftedMethodType
-                let liftedMethod = ClosedHir.Method(liftedSid, methodArgs, rewrittenBody, liftedMethodType, span)
-                let updatedState = { bodyState with generatedMethods = bodyState.generatedMethods @ [ liftedMethod ] }
-                ClosedHir.Expr.Id(liftedSid, tid, span), updatedState
-            | _ ->
-                // 捕捉ラムダ: env-class 方式でクロージャーを生成する。
-                let capturedWithBindings =
-                    captured
-                    |> List.map (fun sid ->
-                        match bindings.TryFind sid with
-                        | Some(isMutable, typ) -> Some { sid = sid; isMutable = isMutable; typ = typ }, None
-                        | None -> None, Some sid)
-                let unknownSids = capturedWithBindings |> List.choose snd
-                let capturedMetadata = capturedWithBindings |> List.choose fst
-
-                match unknownSids with
-                | _ :: _ ->
-                    // 型情報を持たない捕捉変数が存在する（不正な HIR）。
-                    let unknownText = unknownSids |> List.map string |> String.concat ", "
-                    let diagnostic =
-                        Diagnostic.Error(
-                            $"Closure conversion failed: captured variable(s) have no type information. sids=[{unknownText}], ownerMethodSid={ownerMethod.sym.id}",
-                            ownerMethod.span)
-                    { bodyState with diagnostics = bodyState.diagnostics @ [ diagnostic ] }
-                    |> fun s -> ClosedHir.Expr.Lambda(args, ret, rewrittenBody, tid, span), s
+                match capturedMetadata with
                 | [] ->
+                    // 非捕捉ラムダ: static delegate として lambda lifting する。
+                    let methodArgs = args |> List.map (fun arg -> arg.sid, arg.typ)
+                    let liftedMethodType = TypeId.Fn(methodArgs |> List.map snd, ret)
+                    // SymbolTable を使って一元採番し、lifted メソッドの SymbolId を確保する。
+                    let liftedSid = allocateSymbolId symbolTable liftedMethodType
+                    let liftedMethod = ClosedHir.Method(liftedSid, methodArgs, rewrittenBody, liftedMethodType, span)
+                    let updatedState = { bodyState with generatedMethods = bodyState.generatedMethods @ [ liftedMethod ] }
+                    ClosedHir.Expr.Id(liftedSid, tid, span), updatedState
+                | _ ->
+                    // 捕捉ラムダ: env-class 方式でクロージャーを生成する。
                     // env クラスの SymbolId を採番する（SymbolTable で一元管理）。
                     // env クラスはコンパイラ生成のクラス型であり、SymbolTable の型情報は Gen.fs が
                     // typeBuilders で管理するため、ここでの型はプレースホルダー（TypeId.Unit）で十分。
@@ -261,7 +348,7 @@ module ClosureConversion =
                     let envFields =
                         capturedMetadata
                         |> List.map (fun cm ->
-                    // フィールドの body は Unit で代用する（実際の値は外側スコープから StoreEnvField で格納される）。
+                            // フィールドの body は Unit で代用する（実際の値は外側スコープから StoreEnvField で格納される）。
                             ClosedHir.Field(SymbolId cm.sid, cm.typ, ClosedHir.Expr.Unit span, span))
 
                     // ラムダ本体内の捕捉変数参照を EnvFieldLoad へ書き換える。
@@ -287,37 +374,46 @@ module ClosureConversion =
 
                     closureExpr, updatedState
 
-    /// lambda lifting のために文を再帰変換し（入力: `Hir.Stmt`、出力: `ClosedHir.Stmt`）、
-    /// Let の束縛を逐次反映する。
-    and private rewriteStmt (symbolTable: SymbolTable) (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmt: Hir.Stmt) (state: ConversionState) : ClosedHir.Stmt * Set<int> * Map<int, bool * TypeId> * ConversionState =
+    /// Phase 2: lambda lifting のために文を再帰変換し（入力: `Hir.Stmt`、出力: `ClosedHir.Stmt`）。
+    and private rewriteStmt
+        (symbolTable: SymbolTable)
+        (ownerMethod: Hir.Method)
+        (captureMap: Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list>)
+        (stmt: Hir.Stmt)
+        (state: ConversionState) : ClosedHir.Stmt * ConversionState =
         match stmt with
         | Hir.Stmt.Let (sid, isMutable, value, span) ->
-            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols value state
-            let nextBindings = bindings.Add(sid.id, (isMutable, value.typ))
-            ClosedHir.Stmt.Let(sid, isMutable, rewrittenValue, span), bound.Add sid.id, nextBindings, nextState
+            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod captureMap value state
+            ClosedHir.Stmt.Let(sid, isMutable, rewrittenValue, span), nextState
         | Hir.Stmt.Assign (sid, value, span) ->
-            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols value state
-            ClosedHir.Stmt.Assign(sid, rewrittenValue, span), bound, bindings, nextState
+            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod captureMap value state
+            ClosedHir.Stmt.Assign(sid, rewrittenValue, span), nextState
         | Hir.Stmt.ExprStmt (value, span) ->
-            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols value state
-            ClosedHir.Stmt.ExprStmt(rewrittenValue, span), bound, bindings, nextState
+            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod captureMap value state
+            ClosedHir.Stmt.ExprStmt(rewrittenValue, span), nextState
         | Hir.Stmt.For (sid, tid, iterable, body, span) ->
-            let rewrittenIterable, iterableState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols iterable state
+            let rewrittenIterable, iterableState = rewriteExpr symbolTable ownerMethod captureMap iterable state
             // for 反復変数 sid はボディ内で束縛済みとして扱い、ラムダからの捕捉候補となる（C#互換: 反復ごと新規束縛）。
-            let bodyBindings = bindings.Add(sid.id, (false, tid))
-            let rewrittenBody, _, _, bodyState = rewriteStmts symbolTable ownerMethod (bound.Add sid.id) bodyBindings globalSymbols body iterableState
-            ClosedHir.Stmt.For(sid, tid, rewrittenIterable, rewrittenBody, span), bound, bindings, bodyState
-        | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span), bound, bindings, state
+            let rewrittenBody, bodyState = rewriteStmts symbolTable ownerMethod captureMap body iterableState
+            ClosedHir.Stmt.For(sid, tid, rewrittenIterable, rewrittenBody, span), bodyState
+        | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span), state
 
-    /// 文列を逐次変換し、最終 bound と state を返す。
-    and private rewriteStmts (symbolTable: SymbolTable) (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmts: Hir.Stmt list) (state: ConversionState) : ClosedHir.Stmt list * Set<int> * Map<int, bool * TypeId> * ConversionState =
+    /// Phase 2: 文列を逐次変換し、最終 state を返す。
+    and private rewriteStmts
+        (symbolTable: SymbolTable)
+        (ownerMethod: Hir.Method)
+        (captureMap: Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list>)
+        (stmts: Hir.Stmt list)
+        (state: ConversionState) : ClosedHir.Stmt list * ConversionState =
         stmts
-        |> List.fold (fun (rewrittenStmts, currentBound, currentBindings, currentState) stmt ->
-            let rewrittenStmt, nextBound, nextBindings, nextState = rewriteStmt symbolTable ownerMethod currentBound currentBindings globalSymbols stmt currentState
-            rewrittenStmts @ [ rewrittenStmt ], nextBound, nextBindings, nextState) ([], bound, bindings, state)
+        |> List.fold
+            (fun (rewrittenStmts, currentState) stmt ->
+                let rewrittenStmt, nextState = rewriteStmt symbolTable ownerMethod captureMap stmt currentState
+                rewrittenStmts @ [ rewrittenStmt ], nextState)
+            ([], state)
 
     /// モジュール内 method を順序保持で変換し、生成メソッドと型を末尾追加した一覧を返す。
-    /// `symbolTable` は SymbolId の一元採番に使用する（SymbolTable がすでに意味解析で採番済みの ID を持つ）。
+    /// Phase 1 で各メソッドの CaptureMap を構築し、Phase 2 でラムダを lambda lifting / env-class 方式で lower する。
     let private rewriteMethods (symbolTable: SymbolTable) (hirModule: Hir.Module) : ClosedHir.Method list * ClosedHir.Type list * Map<int, int> * Diagnostic list =
         let globalSymbols = hirModule.methods |> List.map (fun methodInfo -> methodInfo.sym.id) |> Set.ofList
         let initialState =
@@ -330,11 +426,10 @@ module ClosureConversion =
         let rewrittenMethods, finalState =
             hirModule.methods
             |> List.fold (fun (accMethods, state) methodInfo ->
-                let methodBound = methodInfo.args |> List.map fst |> List.fold (fun (acc: Set<int>) sid -> acc.Add sid.id) Set.empty
-                let methodBindings =
-                    methodInfo.args
-                    |> List.fold (fun (acc: Map<int, bool * TypeId>) (sid, tid) -> acc.Add(sid.id, (false, tid))) Map.empty
-                let rewrittenBody, bodyState = rewriteExpr symbolTable methodInfo methodBound methodBindings globalSymbols methodInfo.body state
+                // Phase 1: メソッド本体の全ラムダについて捕捉変数を解析し CaptureMap を構築する。
+                let captureMap = buildCaptureMap globalSymbols methodInfo
+                // Phase 2: CaptureMap を参照してラムダを lambda lifting / env-class へ変換する。
+                let rewrittenBody, bodyState = rewriteExpr symbolTable methodInfo captureMap methodInfo.body state
                 let rewrittenMethod = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.span)
                 accMethods @ [ rewrittenMethod ], bodyState) ([], initialState)
 

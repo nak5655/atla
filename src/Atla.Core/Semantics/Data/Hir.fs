@@ -229,3 +229,88 @@ module Hir =
             let acc' = foldExpr f acc iterable
             body |> List.fold (foldStmt f) acc'
         | ErrorStmt _ -> acc
+
+    // ─────────────────────────────────────────────
+    // Reader 文脈付き畳み込みインフラ
+    // foldExpr と異なり「上から下（Reader 方向）」に文脈を伝搬できる。
+    // Lambda 境界で bound をリセットする等のコンテキスト依存走査に使用する。
+    // ─────────────────────────────────────────────
+
+    /// `Expr` ツリーを Reader 文脈（`ctx`）を保持しながら畳み込む。
+    /// - `descend`: 各 Expr ノードに降りる前に文脈を更新（例: Lambda 境界で bound をリセット）
+    /// - `afterStmt`: Block 内 Stmt 処理後に文脈を更新（例: Let 束縛の逐次追加）
+    /// - `leaf`: リーフノード（Unit / Int / Float / String / Null / Id / ExprError）で値を生成
+    /// - `merge` / `zero`: 兄弟ノードの結果を合成
+    let rec foldExprWithCtx
+        (descend: 'ctx -> Expr -> 'ctx)
+        (afterStmt: 'ctx -> Stmt -> 'ctx)
+        (leaf: 'ctx -> Expr -> 'acc)
+        (merge: 'acc -> 'acc -> 'acc)
+        (zero: 'acc)
+        (ctx: 'ctx)
+        (expr: Expr) : 'acc =
+        let ctx' = descend ctx expr
+        match expr with
+        | Unit _ | Int _ | Float _ | String _ | Null _ | Id _ | ExprError _ ->
+            leaf ctx' expr
+        | Call (_, instance, args, _, _) ->
+            let instAcc =
+                instance
+                |> Option.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
+                |> Option.defaultValue zero
+            let argsAcc =
+                args
+                |> List.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
+                |> List.fold merge zero
+            merge instAcc argsAcc
+        | Lambda (_, _, body, _, _) ->
+            // ctx' はこの Lambda ノードへ `descend` を適用した後の文脈（例: bound がリセット済み）
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' body
+        | MemberAccess (_, instance, _, _) ->
+            instance
+            |> Option.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
+            |> Option.defaultValue zero
+        | Block (stmts, body, _, _) ->
+            // Stmt を逐次処理し、afterStmt で文脈を更新しながら結果を蓄積する。
+            let stmtsAcc, ctxAfterStmts =
+                stmts
+                |> List.fold
+                    (fun (acc, c) stmt ->
+                        let stmtAcc = foldStmtWithCtx descend afterStmt leaf merge zero c stmt
+                        merge acc stmtAcc, afterStmt c stmt)
+                    (zero, ctx')
+            let bodyAcc = foldExprWithCtx descend afterStmt leaf merge zero ctxAfterStmts body
+            merge stmtsAcc bodyAcc
+        | If (cond, thenBranch, elseBranch, _, _) ->
+            [ cond; thenBranch; elseBranch ]
+            |> List.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
+            |> List.fold merge zero
+
+    /// `Stmt` 内の全 `Expr` を Reader 文脈（`ctx`）を保持しながら畳み込む。
+    /// For ループの反復変数は `afterStmt` に合成 `Let` を渡してボディの文脈へ追加する。
+    and foldStmtWithCtx
+        (descend: 'ctx -> Expr -> 'ctx)
+        (afterStmt: 'ctx -> Stmt -> 'ctx)
+        (leaf: 'ctx -> Expr -> 'acc)
+        (merge: 'acc -> 'acc -> 'acc)
+        (zero: 'acc)
+        (ctx: 'ctx)
+        (stmt: Stmt) : 'acc =
+        match stmt with
+        | Let (_, _, value, _) | Assign (_, value, _) | ExprStmt (value, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx value
+        | For (sid, _, iterable, body, span) ->
+            let iterAcc = foldExprWithCtx descend afterStmt leaf merge zero ctx iterable
+            // For 反復変数 sid をボディ用の文脈へ追加する。
+            // `afterStmt` が `Let` を認識して bound を拡張するため、合成 Let でトリガーする。
+            // 値は `Expr.Unit span` をプレースホルダーとして使用し、sid の束縛追加のみが目的。
+            let innerCtx = afterStmt ctx (Let(sid, false, Expr.Unit span, span))
+            let bodyAcc =
+                body
+                |> List.fold
+                    (fun (acc, c) s ->
+                        merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s)
+                    (zero, innerCtx)
+                |> fst
+            merge iterAcc bodyAcc
+        | ErrorStmt _ -> zero
