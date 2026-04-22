@@ -133,15 +133,12 @@ module Hir =
         member this.hasError = fields |> List.exists (fun field -> field.hasError)
         member this.getDiagnostics = fields |> List.collect (fun field -> field.getDiagnostics)
 
-    type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope, ?closureInvokeMethods: Map<int, int>) =
+    type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope) =
         member this.name = name
         member this.types = types
         member this.fields = fields
         member this.methods = methods
         member this.scope = scope
-        // クロージャー変換で生成された invoke メソッドの (liftedMethodSid -> envTypeSid) マッピング。
-        // Layout で invoke メソッドを env-class の Mir.Type.methods へルーティングするために使用する。
-        member this.closureInvokeMethods = defaultArg closureInvokeMethods Map.empty
         member this.hasError =
             (fields |> List.exists (fun field -> field.hasError))
             || (methods |> List.exists (fun method -> method.hasError))
