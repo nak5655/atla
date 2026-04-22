@@ -24,7 +24,7 @@ module GenTests =
                 [],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
-                Mir.Frame())
+                Mir.Frame.empty)
 
         let useFooMethod =
             Mir.Method(
@@ -33,7 +33,7 @@ module GenTests =
                 [ TypeId.Name typeSym ],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
-                Mir.Frame())
+                Mir.Frame.empty)
 
         let assembly =
             Mir.Assembly(
@@ -72,7 +72,7 @@ module GenTests =
                 [],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
-                Mir.Frame())
+                Mir.Frame.empty)
 
         let intMethod =
             Mir.Method(
@@ -81,7 +81,7 @@ module GenTests =
                 [],
                 TypeId.Int,
                 [ Mir.Ins.RetValue(Mir.Value.ImmVal(Mir.Imm.Int 42)) ],
-                Mir.Frame())
+                Mir.Frame.empty)
 
         let assembly =
             Mir.Assembly(
@@ -123,7 +123,7 @@ module GenTests =
                 [],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
-                Mir.Frame())
+                Mir.Frame.empty)
 
         let firstMethod =
             Mir.Method(
@@ -132,7 +132,7 @@ module GenTests =
                 [ TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.String ]) ],
                 TypeId.String,
                 [ Mir.Ins.RetValue(Mir.Value.ImmVal(Mir.Imm.String "ok")) ],
-                Mir.Frame())
+                Mir.Frame.empty)
 
         let assembly =
             Mir.Assembly(
@@ -168,12 +168,11 @@ module GenTests =
         let xSid = SymbolId 403
 
         // apply の frame: f=Arg(0): Func<int,int>, x=Arg(1): int, retVal=Loc(0): int
-        let applyFrame = Mir.Frame()
-        applyFrame.addArg(fSid, TypeId.Fn([ TypeId.Int ], TypeId.Int)) |> ignore
-        applyFrame.addArg(xSid, TypeId.Int) |> ignore
+        let _, applyFrame0 = Mir.Frame.addArg fSid (TypeId.Fn([ TypeId.Int ], TypeId.Int)) Mir.Frame.empty
+        let _, applyFrame1 = Mir.Frame.addArg xSid TypeId.Int applyFrame0
         // 戻り値を保持するローカル変数を登録する。
         let retLocSid = SymbolId 404
-        applyFrame.addLoc(retLocSid, TypeId.Int) |> ignore
+        let _, applyFrame = Mir.Frame.addLoc retLocSid TypeId.Int applyFrame1
 
         // Func<int,int>::Invoke(int):int を取得する。
         let funcIntInt = typeof<System.Func<int, int>>
@@ -232,10 +231,9 @@ module GenTests =
 
         // lifted(env: string, x: int): int = x
         // target に env を束縛した Func<int,int> を生成できれば、引数1つで呼び出せる。
-        let liftedFrame = Mir.Frame()
-        liftedFrame.addArg(envSid, TypeId.String) |> ignore
+        let _, liftedFrame0 = Mir.Frame.addArg envSid TypeId.String Mir.Frame.empty
         let xSid = SymbolId 504
-        liftedFrame.addArg(xSid, TypeId.Int) |> ignore
+        let _, liftedFrame = Mir.Frame.addArg xSid TypeId.Int liftedFrame0
         let liftedMethod =
             Mir.Method(
                 "lifted",
@@ -245,8 +243,7 @@ module GenTests =
                 [ Mir.Ins.RetValue(Mir.Value.RegVal(Mir.Reg.Arg 1)) ],
                 liftedFrame)
 
-        let mainFrame = Mir.Frame()
-        mainFrame.addArg(envSid, TypeId.String) |> ignore
+        let _, mainFrame = Mir.Frame.addArg envSid TypeId.String Mir.Frame.empty
         let mainMethod =
             Mir.Method(
                 "main",

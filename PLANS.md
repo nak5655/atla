@@ -70,14 +70,14 @@ AGENTS.md §6「mutable bindings MUST NOT be used in compiler phases」に直接
 副作用ベースのレジスタ割り当てにより、フェーズの純粋性が保証できない。
 
 **実装内容**:
-- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
-- [ ] `Mir.Frame` を不変レコードに置き換える。
+- [x] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [x] `Mir.Frame` を不変レコードに置き換える。
   - `addArg` / `addLoc` は新しいフレームを返す純粋関数として再定義する。
   - `Layout.fs` 内でフレームを引き回している箇所を、状態渡し（fold パターン）で書き直す。
-- [ ] `Mir.Label` の可変フィールド（`_label`, `_ilOffset`）を、
+- [x] `Mir.Label` の可変フィールド（`_label`, `_ilOffset`）を、
   ラベル解決を後段（Gen フェーズ）の責務として切り出す形に変更する。
   - Gen フェーズで `Dictionary<LabelId, Label>` を管理し、命令生成時に解決する。
-- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+- [x] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
 
 ---
 

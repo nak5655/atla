@@ -3,7 +3,6 @@ namespace Atla.Core.Lowering.Data
 open System
 open System.Reflection
 open System.Reflection.Emit
-open System.Collections.Generic
 open Atla.Core.Semantics.Data
 
 // MIRでは
@@ -33,32 +32,51 @@ module Mir =
             | Loc index -> sprintf "Loc(%d)" index
             | Arg index -> sprintf "Arg(%d)" index
 
-    type Frame() =
-        let mutable _args: Dictionary<SymbolId, Reg> = Dictionary()
-        let mutable _locs: Dictionary<SymbolId, Reg> = Dictionary()
-        let mutable _argTypes: Dictionary<SymbolId, TypeId> = Dictionary()
-        let mutable _locTypes: Dictionary<SymbolId, TypeId> = Dictionary()
-        member this.args = _args
-        member this.locs = _locs
-        member this.argTypes = _argTypes
-        member this.locTypes = _locTypes
+    /// MIR メソッドフレームのレジスタ割り当てを保持する不変レコード。
+    /// 変数シンボル ID からレジスタ（引数/ローカル変数）および型へのマッピングを管理する。
+    type Frame = {
+        args: Map<SymbolId, Reg>
+        locs: Map<SymbolId, Reg>
+        argTypes: Map<SymbolId, TypeId>
+        locTypes: Map<SymbolId, TypeId>
+    }
 
-        member this.addArg(sid: SymbolId, tid: TypeId): Reg =
-            let reg = Reg.Arg(_args.Count)
-            _args.Add(sid, reg)
-            _argTypes.Add(sid, tid)
-            reg
+    /// Frame の構築・検索を行う純粋関数群。
+    [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+    module Frame =
+        /// 空フレームを返す。
+        let empty: Frame = {
+            args = Map.empty
+            locs = Map.empty
+            argTypes = Map.empty
+            locTypes = Map.empty
+        }
 
-        member this.addLoc(sid: SymbolId, tid: TypeId): Reg =
-            let reg = Reg.Loc(_locs.Count)
-            _locs.Add(sid, reg)
-            _locTypes.Add(sid, tid)
-            reg
+        /// 引数シンボルを次の引数インデックスに割り当て、登録済みレジスタと更新フレームを返す。
+        let addArg (sid: SymbolId) (tid: TypeId) (frame: Frame) : Reg * Frame =
+            let reg = Reg.Arg(frame.args.Count)
+            let newFrame = {
+                frame with
+                    args = frame.args |> Map.add sid reg
+                    argTypes = frame.argTypes |> Map.add sid tid
+            }
+            reg, newFrame
 
-        member this.get(sid: SymbolId): Reg option =
-            if _args.ContainsKey(sid) then Some _args.[sid]
-            elif _locs.ContainsKey(sid) then Some _locs.[sid]
-            else None
+        /// ローカル変数シンボルを次のローカルインデックスに割り当て、登録済みレジスタと更新フレームを返す。
+        let addLoc (sid: SymbolId) (tid: TypeId) (frame: Frame) : Reg * Frame =
+            let reg = Reg.Loc(frame.locs.Count)
+            let newFrame = {
+                frame with
+                    locs = frame.locs |> Map.add sid reg
+                    locTypes = frame.locTypes |> Map.add sid tid
+            }
+            reg, newFrame
+
+        /// シンボル ID に対応するレジスタを検索する（引数を優先）。
+        let get (sid: SymbolId) (frame: Frame) : Reg option =
+            match frame.args |> Map.tryFind sid with
+            | Some reg -> Some reg
+            | None -> frame.locs |> Map.tryFind sid
 
     // Values in MIR
     type Value =
@@ -93,22 +111,10 @@ module Mir =
         | And
         | Eq
 
-    type Label() =
-        let mutable _label: System.Reflection.Emit.Label option = None
-        let mutable _ilOffset: int = -1
-
-        member this.label
-            with get() = _label
-            and set(value) = _label <- value
-
-        member this.ilOffset
-            with get() = _ilOffset
-            and set(value) = _ilOffset <- value
-
-        member this.get(gen: ILGenerator): System.Reflection.Emit.Label =
-            if _label.IsNone then
-                _label <- Some (gen.DefineLabel())
-            _label.Value
+    /// 分岐先ラベルの識別子。Layout フェーズで連番で払い出し、Gen フェーズで ILGenerator.Label へ解決する。
+    [<Struct>]
+    type LabelId = LabelId of int
+        with override this.ToString() = let (LabelId id) = this in sprintf "Label(%d)" id
 
     // Instructions
     type Ins =
@@ -128,10 +134,10 @@ module Mir =
         | LoadEnvField of dst: Reg * inst: Reg * typeSid: SymbolId * fieldSid: SymbolId
         | Ret
         | RetValue of value: Value
-        | Jump of label: Label
-        | JumpTrue of value: Value * label: Label
-        | JumpFalse of value: Value * label: Label
-        | MarkLabel of label: Label
+        | Jump of label: LabelId
+        | JumpTrue of value: Value * label: LabelId
+        | JumpFalse of value: Value * label: LabelId
+        | MarkLabel of label: LabelId
         | Try of body: Ins list * finallyBody: Ins list
         override this.ToString() =
             match this with
