@@ -12,8 +12,10 @@ open Atla.Core.Data
 module LayoutTests =
     /// `Hir.Assembly` に対してクロージャー変換とレイアウトを連続して適用するヘルパー。
     /// テストコードで `ClosureConversion → Layout` の2段パイプラインを簡潔に呼び出せるようにする。
+    /// 新規 `SymbolTable` を生成して採番の独立性を保証する。
     let private layoutHirAssembly (asmName: string, asm: Hir.Assembly) : PhaseResult<Mir.Assembly> =
-        match ClosureConversion.preprocessAssembly asm with
+        let symbolTable = SymbolTable()
+        match ClosureConversion.preprocessAssembly(symbolTable, asm) with
         | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
         | { value = Some closedAsm } -> Layout.layoutAssembly(asmName, closedAsm)
         | _ -> PhaseResult.failed [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ]
@@ -352,7 +354,9 @@ fn keep (xs: Array String): Array String = xs
             |> String.concat "|"
 
         let runOnce () =
-            match ClosureConversion.preprocessAssembly hirAssembly with
+            // 決定性を検証するため、各実行ごとに独立した SymbolTable を生成する。
+            let symbolTable = SymbolTable()
+            match ClosureConversion.preprocessAssembly(symbolTable, hirAssembly) with
             | { succeeded = true; value = Some preprocessed } -> snapshotOf preprocessed
             | { diagnostics = diagnostics } ->
                 let message = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
@@ -477,7 +481,7 @@ fn keep (xs: Array String): Array String = xs
         // ClosureConversion は env-class 変換に成功する。
         // ClosureConversion レベルでは診断なし（変換成功）であることを検証する。
         let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
-        let ccResult = ClosureConversion.preprocessAssembly hirAssembly
+        let ccResult = ClosureConversion.preprocessAssembly(SymbolTable(), hirAssembly)
         Assert.True(ccResult.succeeded, "ClosureConversion should succeed for for-loop variable capture (variable is in bindings)")
 
         // ClosureConversion 後のモジュールに env-class 型が生成されていることを確認する。

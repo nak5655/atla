@@ -17,9 +17,8 @@ module ClosureConversion =
         captured: CapturedVarMetadata list
     }
 
-    /// モジュール内で一意な SymbolId 採番を行う状態。
+    /// モジュール内の変換状態（生成メソッド・型・診断の蓄積）。
     type private ConversionState = {
-        nextSymbolId: int
         generatedMethods: ClosedHir.Method list
         generatedTypes: ClosedHir.Type list
         // クロージャー invoke メソッドの (liftedMethodSid -> envTypeSid) マッピング。
@@ -28,10 +27,14 @@ module ClosureConversion =
         captureMetadata: LambdaCaptureMetadata list
     }
 
-    /// 変換状態へ新しい SymbolId を採番して返す。
-    let private allocateSymbolId (state: ConversionState) : SymbolId * ConversionState =
-        let sid = SymbolId state.nextSymbolId
-        sid, { state with nextSymbolId = state.nextSymbolId + 1 }
+    /// `SymbolTable` を使って新しい SymbolId を採番し、コンパイラ生成シンボル情報を登録して返す。
+    /// 採番はコンパイル全体で一元管理されるため、フェーズ間の ID 衝突が型レベルで防止される。
+    /// `SymbolKind.Local()` は Gen.fs が `typeBuilders`/`methodBuilders` で型・メソッドを管理するため、
+    /// SymbolTable のキャラクター情報（kind）はコード生成に影響しない。将来的に専用 kind 変種を導入可。
+    let private allocateSymbolId (symbolTable: SymbolTable) (typ: TypeId) : SymbolId =
+        let sid = symbolTable.NextId()
+        symbolTable.Add(sid, { name = "<compiler_generated>"; typ = typ; kind = SymbolKind.Local() })
+        sid
 
     /// `Hir.Expr` を構造的に `ClosedHir.Expr` へ変換する（クロージャー変換なし）。
     /// ソース HIR の型フィールド初期化式やモジュールフィールドなど、
@@ -155,7 +158,8 @@ module ClosureConversion =
 
     /// lambda lifting のために式を再帰変換し（入力: `Hir.Expr`、出力: `ClosedHir.Expr`）、
     /// 必要な生成メソッドを state に蓄積する。
-    let rec private rewriteExpr (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (expr: Hir.Expr) (state: ConversionState) : ClosedHir.Expr * ConversionState =
+    /// `symbolTable` は SymbolId の一元採番に使用する。
+    let rec private rewriteExpr (symbolTable: SymbolTable) (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (expr: Hir.Expr) (state: ConversionState) : ClosedHir.Expr * ConversionState =
         match expr with
         | Hir.Expr.Unit span -> ClosedHir.Expr.Unit span, state
         | Hir.Expr.Int (v, span) -> ClosedHir.Expr.Int(v, span), state
@@ -168,7 +172,7 @@ module ClosureConversion =
             let rewrittenInstance, nextState =
                 match instance with
                 | Some instExpr ->
-                    let rewrittenExpr, rewrittenState = rewriteExpr ownerMethod bound bindings globalSymbols instExpr state
+                    let rewrittenExpr, rewrittenState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols instExpr state
                     Some rewrittenExpr, rewrittenState
                 | None -> None, state
             ClosedHir.Expr.MemberAccess(mem, rewrittenInstance, tid, span), nextState
@@ -176,23 +180,23 @@ module ClosureConversion =
             let rewrittenInstance, instanceState =
                 match instance with
                 | Some instExpr ->
-                    let rewrittenExpr, rewrittenState = rewriteExpr ownerMethod bound bindings globalSymbols instExpr state
+                    let rewrittenExpr, rewrittenState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols instExpr state
                     Some rewrittenExpr, rewrittenState
                 | None -> None, state
             let rewrittenArgs, finalState =
                 args
                 |> List.fold (fun (acc, st) arg ->
-                    let rewrittenArg, nextState = rewriteExpr ownerMethod bound bindings globalSymbols arg st
+                    let rewrittenArg, nextState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols arg st
                     acc @ [ rewrittenArg ], nextState) ([], instanceState)
             ClosedHir.Expr.Call(func, rewrittenInstance, rewrittenArgs, tid, span), finalState
         | Hir.Expr.Block (stmts, body, tid, span) ->
-            let rewrittenStmts, boundAfterStmts, bindingsAfterStmts, stateAfterStmts = rewriteStmts ownerMethod bound bindings globalSymbols stmts state
-            let rewrittenBody, finalState = rewriteExpr ownerMethod boundAfterStmts bindingsAfterStmts globalSymbols body stateAfterStmts
+            let rewrittenStmts, boundAfterStmts, bindingsAfterStmts, stateAfterStmts = rewriteStmts symbolTable ownerMethod bound bindings globalSymbols stmts state
+            let rewrittenBody, finalState = rewriteExpr symbolTable ownerMethod boundAfterStmts bindingsAfterStmts globalSymbols body stateAfterStmts
             ClosedHir.Expr.Block(rewrittenStmts, rewrittenBody, tid, span), finalState
         | Hir.Expr.If (cond, thenBranch, elseBranch, tid, span) ->
-            let rewrittenCond, condState = rewriteExpr ownerMethod bound bindings globalSymbols cond state
-            let rewrittenThen, thenState = rewriteExpr ownerMethod bound bindings globalSymbols thenBranch condState
-            let rewrittenElse, finalState = rewriteExpr ownerMethod bound bindings globalSymbols elseBranch thenState
+            let rewrittenCond, condState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols cond state
+            let rewrittenThen, thenState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols thenBranch condState
+            let rewrittenElse, finalState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols elseBranch thenState
             ClosedHir.Expr.If(rewrittenCond, rewrittenThen, rewrittenElse, tid, span), finalState
         | Hir.Expr.Lambda (args, ret, body, tid, span) ->
             // 捕捉判定は「ラムダ自身の引数」を束縛として扱う（外側束縛は捕捉対象）。
@@ -200,7 +204,7 @@ module ClosureConversion =
             let lambdaBindings =
                 args
                 |> List.fold (fun (acc: Map<int, bool * TypeId>) arg -> acc.Add(arg.sid.id, (false, arg.typ))) bindings
-            let rewrittenBody, bodyState = rewriteExpr ownerMethod lambdaBound lambdaBindings globalSymbols body state
+            let rewrittenBody, bodyState = rewriteExpr symbolTable ownerMethod lambdaBound lambdaBindings globalSymbols body state
             let captured =
                 collectFreeVarsExpr lambdaBound globalSymbols rewrittenBody
                 |> Set.toList
@@ -209,11 +213,12 @@ module ClosureConversion =
             match captured with
             | [] ->
                 // 非捕捉ラムダ: static delegate として lambda lifting する。
-                let liftedSid, sidAllocatedState = allocateSymbolId bodyState
                 let methodArgs = args |> List.map (fun arg -> arg.sid, arg.typ)
                 let liftedMethodType = TypeId.Fn(methodArgs |> List.map snd, ret)
+                // SymbolTable を使って一元採番し、lifted メソッドの SymbolId を確保する。
+                let liftedSid = allocateSymbolId symbolTable liftedMethodType
                 let liftedMethod = ClosedHir.Method(liftedSid, methodArgs, rewrittenBody, liftedMethodType, span)
-                let updatedState = { sidAllocatedState with generatedMethods = sidAllocatedState.generatedMethods @ [ liftedMethod ] }
+                let updatedState = { bodyState with generatedMethods = bodyState.generatedMethods @ [ liftedMethod ] }
                 ClosedHir.Expr.Id(liftedSid, tid, span), updatedState
             | _ ->
                 // 捕捉ラムダ: env-class 方式でクロージャーを生成する。
@@ -237,12 +242,20 @@ module ClosureConversion =
                     { bodyState with diagnostics = bodyState.diagnostics @ [ diagnostic ] }
                     |> fun s -> ClosedHir.Expr.Lambda(args, ret, rewrittenBody, tid, span), s
                 | [] ->
-                    // env クラスの SymbolId を採番する。
-                    let envTypeSid, state1 = allocateSymbolId bodyState
-                    // lifted invoke メソッドの SymbolId を採番する。
-                    let liftedMethodSid, state2 = allocateSymbolId state1
+                    // env クラスの SymbolId を採番する（SymbolTable で一元管理）。
+                    // env クラスはコンパイラ生成のクラス型であり、SymbolTable の型情報は Gen.fs が
+                    // typeBuilders で管理するため、ここでの型はプレースホルダー（TypeId.Unit）で十分。
+                    let envTypeSid = allocateSymbolId symbolTable TypeId.Unit
                     // lifted method 内で env インスタンス引数として使う SymbolId を採番する。
-                    let envArgSid, state3 = allocateSymbolId state2
+                    // envTypeSid が確定した後に採番し、実際の引数型（TypeId.Name envTypeSid）を登録する。
+                    let envArgSid = allocateSymbolId symbolTable (TypeId.Name envTypeSid)
+
+                    // lifted invoke method の引数型・メソッド型を確定してから SymbolId を採番する。
+                    // 第一引数は env インスタンス（TypeId.Name envTypeSid）、残りはラムダ引数。
+                    let methodArgs = (envArgSid, TypeId.Name envTypeSid) :: (args |> List.map (fun arg -> arg.sid, arg.typ))
+                    let liftedMethodType = TypeId.Fn(methodArgs |> List.map snd, ret)
+                    // liftedMethodSid を採番するときに実際のメソッド型を SymbolTable に登録する。
+                    let liftedMethodSid = allocateSymbolId symbolTable liftedMethodType
 
                     // env クラスの ClosedHir.Field エントリを生成（各捕捉変数に対して 1 フィールド）。
                     let envFields =
@@ -255,10 +268,6 @@ module ClosureConversion =
                     let capturedSidSet = capturedMetadata |> List.map (fun cm -> cm.sid) |> Set.ofList
                     let rewrittenBodyWithEnv = rewriteCapturedRefs envArgSid capturedSidSet rewrittenBody
 
-                    // lifted invoke method を生成する。
-                    // 第一引数は env インスタンス（TypeId.Name envTypeSid）、残りはラムダ引数。
-                    let methodArgs = (envArgSid, TypeId.Name envTypeSid) :: (args |> List.map (fun arg -> arg.sid, arg.typ))
-                    let liftedMethodType = TypeId.Fn(methodArgs |> List.map snd, ret)
                     let liftedMethod = ClosedHir.Method(liftedMethodSid, methodArgs, rewrittenBodyWithEnv, liftedMethodType, span)
 
                     // env-class の ClosedHir.Type を生成する。
@@ -270,80 +279,49 @@ module ClosureConversion =
 
                     let captureInfo = { ownerMethodSid = ownerMethod.sym.id; span = ownerMethod.span; captured = capturedMetadata }
                     let updatedState =
-                        { state3 with
-                            generatedMethods = state3.generatedMethods @ [ liftedMethod ]
-                            generatedTypes = state3.generatedTypes @ [ envType ]
-                            closureInvokeMethods = state3.closureInvokeMethods |> Map.add liftedMethodSid.id envTypeSid.id
-                            captureMetadata = state3.captureMetadata @ [ captureInfo ] }
+                        { bodyState with
+                            generatedMethods = bodyState.generatedMethods @ [ liftedMethod ]
+                            generatedTypes = bodyState.generatedTypes @ [ envType ]
+                            closureInvokeMethods = bodyState.closureInvokeMethods |> Map.add liftedMethodSid.id envTypeSid.id
+                            captureMetadata = bodyState.captureMetadata @ [ captureInfo ] }
 
                     closureExpr, updatedState
 
     /// lambda lifting のために文を再帰変換し（入力: `Hir.Stmt`、出力: `ClosedHir.Stmt`）、
     /// Let の束縛を逐次反映する。
-    and private rewriteStmt (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmt: Hir.Stmt) (state: ConversionState) : ClosedHir.Stmt * Set<int> * Map<int, bool * TypeId> * ConversionState =
+    and private rewriteStmt (symbolTable: SymbolTable) (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmt: Hir.Stmt) (state: ConversionState) : ClosedHir.Stmt * Set<int> * Map<int, bool * TypeId> * ConversionState =
         match stmt with
         | Hir.Stmt.Let (sid, isMutable, value, span) ->
-            let rewrittenValue, nextState = rewriteExpr ownerMethod bound bindings globalSymbols value state
+            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols value state
             let nextBindings = bindings.Add(sid.id, (isMutable, value.typ))
             ClosedHir.Stmt.Let(sid, isMutable, rewrittenValue, span), bound.Add sid.id, nextBindings, nextState
         | Hir.Stmt.Assign (sid, value, span) ->
-            let rewrittenValue, nextState = rewriteExpr ownerMethod bound bindings globalSymbols value state
+            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols value state
             ClosedHir.Stmt.Assign(sid, rewrittenValue, span), bound, bindings, nextState
         | Hir.Stmt.ExprStmt (value, span) ->
-            let rewrittenValue, nextState = rewriteExpr ownerMethod bound bindings globalSymbols value state
+            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols value state
             ClosedHir.Stmt.ExprStmt(rewrittenValue, span), bound, bindings, nextState
         | Hir.Stmt.For (sid, tid, iterable, body, span) ->
-            let rewrittenIterable, iterableState = rewriteExpr ownerMethod bound bindings globalSymbols iterable state
+            let rewrittenIterable, iterableState = rewriteExpr symbolTable ownerMethod bound bindings globalSymbols iterable state
             // for 反復変数 sid はボディ内で束縛済みとして扱い、ラムダからの捕捉候補となる（C#互換: 反復ごと新規束縛）。
             let bodyBindings = bindings.Add(sid.id, (false, tid))
-            let rewrittenBody, _, _, bodyState = rewriteStmts ownerMethod (bound.Add sid.id) bodyBindings globalSymbols body iterableState
+            let rewrittenBody, _, _, bodyState = rewriteStmts symbolTable ownerMethod (bound.Add sid.id) bodyBindings globalSymbols body iterableState
             ClosedHir.Stmt.For(sid, tid, rewrittenIterable, rewrittenBody, span), bound, bindings, bodyState
         | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span), bound, bindings, state
 
     /// 文列を逐次変換し、最終 bound と state を返す。
-    and private rewriteStmts (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmts: Hir.Stmt list) (state: ConversionState) : ClosedHir.Stmt list * Set<int> * Map<int, bool * TypeId> * ConversionState =
+    and private rewriteStmts (symbolTable: SymbolTable) (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmts: Hir.Stmt list) (state: ConversionState) : ClosedHir.Stmt list * Set<int> * Map<int, bool * TypeId> * ConversionState =
         stmts
         |> List.fold (fun (rewrittenStmts, currentBound, currentBindings, currentState) stmt ->
-            let rewrittenStmt, nextBound, nextBindings, nextState = rewriteStmt ownerMethod currentBound currentBindings globalSymbols stmt currentState
+            let rewrittenStmt, nextBound, nextBindings, nextState = rewriteStmt symbolTable ownerMethod currentBound currentBindings globalSymbols stmt currentState
             rewrittenStmts @ [ rewrittenStmt ], nextBound, nextBindings, nextState) ([], bound, bindings, state)
 
-    /// モジュール内の既存 SymbolId の最大値を収集する（採番開始位置に使用）。
-    /// `Hir.foldExpr` を用いて構造的再帰をインフラに委譲する。
-    /// Lambda の引数 SymbolId も対象に含める。
-    let private collectMaxSymbolIdExpr (expr: Hir.Expr) : int =
-        Hir.foldExpr (fun acc e ->
-            match e with
-            | Hir.Expr.Id (sid, _, _) -> max acc sid.id
-            | Hir.Expr.Lambda (args, _, _, _, _) ->
-                args |> List.fold (fun a arg -> max a arg.sid.id) acc
-            | _ -> acc) -1 expr
-
-    /// モジュール内の文に含まれる SymbolId の最大値を収集する。
-    /// Let / Assign / For の束縛サイト sid も対象に含める。
-    let private collectMaxSymbolIdStmt (stmt: Hir.Stmt) : int =
-        let bindSid =
-            match stmt with
-            | Hir.Stmt.Let (sid, _, _, _)
-            | Hir.Stmt.Assign (sid, _, _)
-            | Hir.Stmt.For (sid, _, _, _, _) -> sid.id
-            | _ -> -1
-        max bindSid (Hir.foldStmt (fun acc e ->
-            match e with
-            | Hir.Expr.Id (sid, _, _) -> max acc sid.id
-            | Hir.Expr.Lambda (args, _, _, _, _) ->
-                args |> List.fold (fun a arg -> max a arg.sid.id) acc
-            | _ -> acc) -1 stmt)
-
     /// モジュール内 method を順序保持で変換し、生成メソッドと型を末尾追加した一覧を返す。
-    let private rewriteMethods (hirModule: Hir.Module) : ClosedHir.Method list * ClosedHir.Type list * Map<int, int> * Diagnostic list =
+    /// `symbolTable` は SymbolId の一元採番に使用する（SymbolTable がすでに意味解析で採番済みの ID を持つ）。
+    let private rewriteMethods (symbolTable: SymbolTable) (hirModule: Hir.Module) : ClosedHir.Method list * ClosedHir.Type list * Map<int, int> * Diagnostic list =
         let globalSymbols = hirModule.methods |> List.map (fun methodInfo -> methodInfo.sym.id) |> Set.ofList
-        let maxInModule =
-            let maxMethodSid = hirModule.methods |> List.map (fun methodInfo -> methodInfo.sym.id) |> List.fold max -1
-            let maxExprSid = hirModule.methods |> List.map (fun methodInfo -> collectMaxSymbolIdExpr methodInfo.body) |> List.fold max -1
-            max maxMethodSid maxExprSid
         let initialState =
-            { nextSymbolId = maxInModule + 1
-              generatedMethods = []
+            { generatedMethods = []
               generatedTypes = []
               closureInvokeMethods = Map.empty
               diagnostics = []
@@ -356,7 +334,7 @@ module ClosureConversion =
                 let methodBindings =
                     methodInfo.args
                     |> List.fold (fun (acc: Map<int, bool * TypeId>) (sid, tid) -> acc.Add(sid.id, (false, tid))) Map.empty
-                let rewrittenBody, bodyState = rewriteExpr methodInfo methodBound methodBindings globalSymbols methodInfo.body state
+                let rewrittenBody, bodyState = rewriteExpr symbolTable methodInfo methodBound methodBindings globalSymbols methodInfo.body state
                 let rewrittenMethod = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.span)
                 accMethods @ [ rewrittenMethod ], bodyState) ([], initialState)
 
@@ -366,12 +344,14 @@ module ClosureConversion =
         finalState.diagnostics
 
     /// クロージャー変換前処理を行い、ラムダを lambda lifting / env-class 方式で lower する。
-    /// 入力: `Hir.Assembly`（ソース意味論 IR）、出力: `ClosedHir.Assembly`（変換後 IR）。
-    let preprocessAssembly (asm: Hir.Assembly) : PhaseResult<ClosedHir.Assembly> =
+    /// 入力: `Hir.Assembly`（ソース意味論 IR）および意味解析で構築済みの `SymbolTable`。
+    /// 出力: `ClosedHir.Assembly`（変換後 IR）。
+    /// `symbolTable` を使って新しいシンボル ID を採番することで、意味解析との ID 空間を統一する。
+    let preprocessAssembly (symbolTable: SymbolTable, asm: Hir.Assembly) : PhaseResult<ClosedHir.Assembly> =
         let rewrittenModules, diagnostics =
             asm.modules
             |> List.fold (fun (modules, allDiagnostics) hirModule ->
-                let rewrittenMethods, generatedTypes, closureInvokeMethods, moduleDiagnostics = rewriteMethods hirModule
+                let rewrittenMethods, generatedTypes, closureInvokeMethods, moduleDiagnostics = rewriteMethods symbolTable hirModule
                 // 元の HIR 型定義を ClosedHir.Type へ構造的に変換する。
                 let convertedTypes =
                     hirModule.types

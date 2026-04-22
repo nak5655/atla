@@ -67,7 +67,7 @@ module Compiler =
                                 failed diagnostics
                             | { value = Some hir; diagnostics = analyzeDiagnostics } ->
                                 // Closure Conversion
-                                match ClosureConversion.preprocessAssembly (Hir.Assembly("hello", [ hir ])) with
+                                match ClosureConversion.preprocessAssembly(symbolTable, Hir.Assembly("hello", [ hir ])) with
                                 | { succeeded = false; diagnostics = closureDiagnostics } ->
                                     failed (analyzeDiagnostics @ closureDiagnostics)
                                 | { value = Some closedAsm; diagnostics = closureDiagnostics } ->

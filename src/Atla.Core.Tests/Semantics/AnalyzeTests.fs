@@ -83,7 +83,7 @@ fn main (): Int = do
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
                     let hirAsm = Hir.Assembly("test", [ hirModule ])
-                    match ClosureConversion.preprocessAssembly hirAsm with
+                    match ClosureConversion.preprocessAssembly(symbolTable, hirAsm) with
                     | { succeeded = true; value = Some closedAsm } ->
                         match Layout.layoutAssembly("TestAsm", closedAsm) with
                         | { succeeded = true; value = Some mirAsm } -> Assert.Single(mirAsm.modules) |> ignore
@@ -865,7 +865,7 @@ fn apply (f: Int -> Int) (x: Int): Int = f x
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
                     let hirAssembly = Hir.Assembly("TestAsm", [ hirModule ])
-                    match ClosureConversion.preprocessAssembly hirAssembly with
+                    match ClosureConversion.preprocessAssembly(symbolTable, hirAssembly) with
                     | { succeeded = true; value = Some closedAsm } ->
                         match Layout.layoutAssembly("TestAsm", closedAsm) with
                         | { succeeded = true; value = Some mirAsm } ->
