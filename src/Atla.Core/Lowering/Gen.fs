@@ -281,7 +281,7 @@ module Gen =
         let ilOffsets = Dictionary<Mir.LabelId, int>()
 
         // ローカル変数スロットを Loc インデックス昇順に確保する。
-        for (sid, reg) in ctor.frame.locs |> Map.toSeq |> Seq.sortBy (fun (_, r) -> match r with | Mir.Reg.Loc i -> i | _ -> 0) do
+        for (sid, reg) in ctor.frame.locs |> Map.toSeq |> Seq.sortBy (fun (_, r) -> match r with | Mir.Reg.Loc i -> i | Mir.Reg.Arg _ -> failwith "Unexpected Arg register in frame.locs") do
             match reg with
             | Mir.Reg.Loc _ ->
                 let localType =
@@ -310,7 +310,7 @@ module Gen =
         let ilOffsets = Dictionary<Mir.LabelId, int>()
 
         // ローカル変数スロットを Loc インデックス昇順に確保する。
-        for (sid, reg) in method.frame.locs |> Map.toSeq |> Seq.sortBy (fun (_, r) -> match r with | Mir.Reg.Loc i -> i | _ -> 0) do
+        for (sid, reg) in method.frame.locs |> Map.toSeq |> Seq.sortBy (fun (_, r) -> match r with | Mir.Reg.Loc i -> i | Mir.Reg.Arg _ -> failwith "Unexpected Arg register in frame.locs") do
             match reg with
             | Mir.Reg.Loc _ ->
                 let localType =
