@@ -33,14 +33,14 @@ HIR のデータ定義がクロージャー変換の産物（`liftedMethodSid ->
 これは HIR の責務を超えた変換フェーズ固有情報である。
 
 **実装内容**:
-- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
-- [ ] フェーズ 1 完了後、`ClosedHir.Module` に `closureInvokeMethods: Map<int, int>` を正式フィールドとして定義する
+- [x] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [x] フェーズ 1 完了後、`ClosedHir.Module` に `closureInvokeMethods: Map<int, int>` を正式フィールドとして定義する
   （`Hir.Module` のオプション引数は削除する）。
-- [ ] `ClosureConversion.preprocessAssembly` の戻り値（`ClosedHir.Assembly`）が
+- [x] `ClosureConversion.preprocessAssembly` の戻り値（`ClosedHir.Assembly`）が
   `closureInvokeMethods` を `ClosedHir.Module` フィールドとして返すよう変更する。
-- [ ] `Layout.layoutModule` が `ClosedHir.Module.closureInvokeMethods` を参照するよう変更する
+- [x] `Layout.layoutModule` が `ClosedHir.Module.closureInvokeMethods` を参照するよう変更する
   （`hirModule.closureInvokeMethods` の参照先を `ClosedHir.Module` に切り替える）。
-- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+- [x] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
 
 ---
 
