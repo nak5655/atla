@@ -136,59 +136,22 @@ module ClosureConversion =
         | ClosedHir.Stmt.ErrorStmt _ -> Set.empty, bound
 
     /// lifted invoke method 本体内の捕捉変数参照（ClosedHir.Expr.Id）を EnvFieldLoad へ書き換える。
-    let rec private rewriteCapturedRefs (envArgSid: SymbolId) (capturedSids: Set<int>) (expr: ClosedHir.Expr) : ClosedHir.Expr =
-        match expr with
-        | ClosedHir.Expr.Id (sid, tid, span) when capturedSids.Contains sid.id ->
-            // 捕捉変数参照を env インスタンスのフィールドアクセスへ変換する。
-            ClosedHir.Expr.EnvFieldLoad(envArgSid, sid, tid, span)
-        | ClosedHir.Expr.Unit _
-        | ClosedHir.Expr.Int _
-        | ClosedHir.Expr.Float _
-        | ClosedHir.Expr.String _
-        | ClosedHir.Expr.Null _
-        | ClosedHir.Expr.ExprError _
-        | ClosedHir.Expr.Id _ -> expr
-        | ClosedHir.Expr.EnvFieldLoad _ -> expr
-        | ClosedHir.Expr.ClosureCreate _ -> expr
-        | ClosedHir.Expr.MemberAccess (mem, instance, tid, span) ->
-            ClosedHir.Expr.MemberAccess(mem, instance |> Option.map (rewriteCapturedRefs envArgSid capturedSids), tid, span)
-        | ClosedHir.Expr.Call (func, instance, args, tid, span) ->
-            ClosedHir.Expr.Call(
-                func,
-                instance |> Option.map (rewriteCapturedRefs envArgSid capturedSids),
-                args |> List.map (rewriteCapturedRefs envArgSid capturedSids),
-                tid, span)
-        | ClosedHir.Expr.Block (stmts, body, tid, span) ->
-            ClosedHir.Expr.Block(
-                stmts |> List.map (rewriteCapturedRefsStmt envArgSid capturedSids),
-                rewriteCapturedRefs envArgSid capturedSids body,
-                tid, span)
-        | ClosedHir.Expr.If (cond, thenBranch, elseBranch, tid, span) ->
-            ClosedHir.Expr.If(
-                rewriteCapturedRefs envArgSid capturedSids cond,
-                rewriteCapturedRefs envArgSid capturedSids thenBranch,
-                rewriteCapturedRefs envArgSid capturedSids elseBranch,
-                tid, span)
-        | ClosedHir.Expr.Lambda (args, ret, body, tid, span) ->
-            // Lambda ノードは rewriteExpr で処理済みのはず（ここには到達しないはず）。
-            ClosedHir.Expr.Lambda(args, ret, rewriteCapturedRefs envArgSid capturedSids body, tid, span)
+    /// `ClosedHir.mapExpr` を用いて構造的再帰をインフラに委譲する。
+    let private rewriteCapturedRefs (envArgSid: SymbolId) (capturedSids: Set<int>) (expr: ClosedHir.Expr) : ClosedHir.Expr =
+        ClosedHir.mapExpr (fun e ->
+            match e with
+            | ClosedHir.Expr.Id (sid, tid, span) when capturedSids.Contains sid.id ->
+                // 捕捉変数参照を env インスタンスのフィールドアクセスへ変換する。
+                ClosedHir.Expr.EnvFieldLoad(envArgSid, sid, tid, span)
+            | _ -> e) expr
 
     /// 捕捉変数参照の書き換えを文に適用する。
-    and private rewriteCapturedRefsStmt (envArgSid: SymbolId) (capturedSids: Set<int>) (stmt: ClosedHir.Stmt) : ClosedHir.Stmt =
-        match stmt with
-        | ClosedHir.Stmt.Let (sid, isMutable, value, span) ->
-            ClosedHir.Stmt.Let(sid, isMutable, rewriteCapturedRefs envArgSid capturedSids value, span)
-        | ClosedHir.Stmt.Assign (sid, value, span) ->
-            ClosedHir.Stmt.Assign(sid, rewriteCapturedRefs envArgSid capturedSids value, span)
-        | ClosedHir.Stmt.ExprStmt (value, span) ->
-            ClosedHir.Stmt.ExprStmt(rewriteCapturedRefs envArgSid capturedSids value, span)
-        | ClosedHir.Stmt.For (sid, tid, iterable, body, span) ->
-            ClosedHir.Stmt.For(
-                sid, tid,
-                rewriteCapturedRefs envArgSid capturedSids iterable,
-                body |> List.map (rewriteCapturedRefsStmt envArgSid capturedSids),
-                span)
-        | ClosedHir.Stmt.ErrorStmt _ -> stmt
+    let private rewriteCapturedRefsStmt (envArgSid: SymbolId) (capturedSids: Set<int>) (stmt: ClosedHir.Stmt) : ClosedHir.Stmt =
+        ClosedHir.mapStmt (fun e ->
+            match e with
+            | ClosedHir.Expr.Id (sid, tid, span) when capturedSids.Contains sid.id ->
+                ClosedHir.Expr.EnvFieldLoad(envArgSid, sid, tid, span)
+            | _ -> e) stmt
 
     /// lambda lifting のために式を再帰変換し（入力: `Hir.Expr`、出力: `ClosedHir.Expr`）、
     /// 必要な生成メソッドを state に蓄積する。
@@ -345,32 +308,31 @@ module ClosureConversion =
             rewrittenStmts @ [ rewrittenStmt ], nextBound, nextBindings, nextState) ([], bound, bindings, state)
 
     /// モジュール内の既存 SymbolId の最大値を収集する（採番開始位置に使用）。
-    let rec private collectMaxSymbolIdExpr (expr: Hir.Expr) : int =
-        let fromOption (value: Hir.Expr option) =
-            value |> Option.map collectMaxSymbolIdExpr |> Option.defaultValue -1
-        match expr with
-        | Hir.Expr.Id (sid, _, _) -> sid.id
-        | Hir.Expr.Call (_, instance, args, _, _) ->
-            List.max ((fromOption instance) :: (args |> List.map collectMaxSymbolIdExpr))
-        | Hir.Expr.MemberAccess (_, instance, _, _) -> fromOption instance
-        | Hir.Expr.Block (stmts, body, _, _) ->
-            List.max ((collectMaxSymbolIdExpr body) :: (stmts |> List.map collectMaxSymbolIdStmt))
-        | Hir.Expr.If (cond, thenBranch, elseBranch, _, _) ->
-            [ cond; thenBranch; elseBranch ] |> List.map collectMaxSymbolIdExpr |> List.max
-        | Hir.Expr.Lambda (args, _, body, _, _) ->
-            let maxArgSid = args |> List.map (fun arg -> arg.sid.id) |> List.fold max -1
-            max maxArgSid (collectMaxSymbolIdExpr body)
-        | _ -> -1
+    /// `Hir.foldExpr` を用いて構造的再帰をインフラに委譲する。
+    /// Lambda の引数 SymbolId も対象に含める。
+    let private collectMaxSymbolIdExpr (expr: Hir.Expr) : int =
+        Hir.foldExpr (fun acc e ->
+            match e with
+            | Hir.Expr.Id (sid, _, _) -> max acc sid.id
+            | Hir.Expr.Lambda (args, _, _, _, _) ->
+                args |> List.fold (fun a arg -> max a arg.sid.id) acc
+            | _ -> acc) -1 expr
 
     /// モジュール内の文に含まれる SymbolId の最大値を収集する。
-    and private collectMaxSymbolIdStmt (stmt: Hir.Stmt) : int =
-        match stmt with
-        | Hir.Stmt.Let (sid, _, value, _) -> max sid.id (collectMaxSymbolIdExpr value)
-        | Hir.Stmt.Assign (sid, value, _) -> max sid.id (collectMaxSymbolIdExpr value)
-        | Hir.Stmt.ExprStmt (value, _) -> collectMaxSymbolIdExpr value
-        | Hir.Stmt.For (sid, _, iterable, body, _) ->
-            max sid.id (max (collectMaxSymbolIdExpr iterable) (body |> List.map collectMaxSymbolIdStmt |> List.fold max -1))
-        | Hir.Stmt.ErrorStmt _ -> -1
+    /// Let / Assign / For の束縛サイト sid も対象に含める。
+    let private collectMaxSymbolIdStmt (stmt: Hir.Stmt) : int =
+        let bindSid =
+            match stmt with
+            | Hir.Stmt.Let (sid, _, _, _)
+            | Hir.Stmt.Assign (sid, _, _)
+            | Hir.Stmt.For (sid, _, _, _, _) -> sid.id
+            | _ -> -1
+        max bindSid (Hir.foldStmt (fun acc e ->
+            match e with
+            | Hir.Expr.Id (sid, _, _) -> max acc sid.id
+            | Hir.Expr.Lambda (args, _, _, _, _) ->
+                args |> List.fold (fun a arg -> max a arg.sid.id) acc
+            | _ -> acc) -1 stmt)
 
     /// モジュール内 method を順序保持で変換し、生成メソッドと型を末尾追加した一覧を返す。
     let private rewriteMethods (hirModule: Hir.Module) : ClosedHir.Method list * ClosedHir.Type list * Map<int, int> * Diagnostic list =

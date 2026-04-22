@@ -153,3 +153,79 @@ module Hir =
         member this.modules = modules
         member this.hasError = modules |> List.exists (fun modul -> modul.hasError)
         member this.getDiagnostics = modules |> List.collect (fun modul -> modul.getDiagnostics)
+
+    // ─────────────────────────────────────────────
+    // 共通トラバーサルインフラ
+    // 新しい Expr / Stmt ケースを追加した場合はこの2関数のみを更新すれば良い。
+    // ─────────────────────────────────────────────
+
+    /// `Expr` ツリー全体を bottom-up で変換する。
+    /// 各ノードの子を再帰変換した後、`f` を適用して新しいノードを返す。
+    let rec mapExpr (f: Expr -> Expr) (expr: Expr) : Expr =
+        let mapped =
+            match expr with
+            | Unit _
+            | Int _
+            | Float _
+            | String _
+            | Null _
+            | Id _
+            | ExprError _ -> expr
+            | Call (func, instance, args, tid, span) ->
+                Call(func, instance |> Option.map (mapExpr f), args |> List.map (mapExpr f), tid, span)
+            | Lambda (args, ret, body, tid, span) ->
+                Lambda(args, ret, mapExpr f body, tid, span)
+            | MemberAccess (mem, instance, tid, span) ->
+                MemberAccess(mem, instance |> Option.map (mapExpr f), tid, span)
+            | Block (stmts, body, tid, span) ->
+                Block(stmts |> List.map (mapStmt f), mapExpr f body, tid, span)
+            | If (cond, thenBranch, elseBranch, tid, span) ->
+                If(mapExpr f cond, mapExpr f thenBranch, mapExpr f elseBranch, tid, span)
+        f mapped
+
+    /// `Stmt` に含まれる全 `Expr` を bottom-up で変換する。
+    and mapStmt (f: Expr -> Expr) (stmt: Stmt) : Stmt =
+        match stmt with
+        | Let (sid, isMutable, value, span) -> Let(sid, isMutable, mapExpr f value, span)
+        | Assign (sid, value, span) -> Assign(sid, mapExpr f value, span)
+        | ExprStmt (expr, span) -> ExprStmt(mapExpr f expr, span)
+        | For (sid, tid, iterable, body, span) ->
+            For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
+        | ErrorStmt _ -> stmt
+
+    /// `Expr` ツリー全体を pre-order（トップダウン）で畳み込む。
+    /// 各ノードを訪問した順に `f` を累積し、最終アキュムレーターを返す。
+    let rec foldExpr (f: 'a -> Expr -> 'a) (acc: 'a) (expr: Expr) : 'a =
+        let acc' = f acc expr
+        match expr with
+        | Unit _
+        | Int _
+        | Float _
+        | String _
+        | Null _
+        | Id _
+        | ExprError _ -> acc'
+        | Call (_, instance, args, _, _) ->
+            let acc'' = instance |> Option.fold (foldExpr f) acc'
+            args |> List.fold (foldExpr f) acc''
+        | Lambda (_, _, body, _, _) -> foldExpr f acc' body
+        | MemberAccess (_, instance, _, _) ->
+            instance |> Option.fold (foldExpr f) acc'
+        | Block (stmts, body, _, _) ->
+            let acc'' = stmts |> List.fold (foldStmt f) acc'
+            foldExpr f acc'' body
+        | If (cond, thenBranch, elseBranch, _, _) ->
+            let acc'' = foldExpr f acc' cond
+            let acc''' = foldExpr f acc'' thenBranch
+            foldExpr f acc''' elseBranch
+
+    /// `Stmt` に含まれる全 `Expr` を pre-order で畳み込む。
+    and foldStmt (f: 'a -> Expr -> 'a) (acc: 'a) (stmt: Stmt) : 'a =
+        match stmt with
+        | Let (_, _, value, _)
+        | Assign (_, value, _)
+        | ExprStmt (value, _) -> foldExpr f acc value
+        | For (_, _, iterable, body, _) ->
+            let acc' = foldExpr f acc iterable
+            body |> List.fold (foldStmt f) acc'
+        | ErrorStmt _ -> acc
