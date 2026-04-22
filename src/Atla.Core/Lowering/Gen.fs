@@ -95,8 +95,9 @@ module Gen =
             | false, _ ->
                 failwithf "Unknown method symbol for delegate creation: %A" sid
 
-    // MIR命令をIL命令列へ変換する
-    let private genIns (env: Env) (gen: ILGenerator) (ins: Mir.Ins) =
+    // MIR命令をIL命令列へ変換する。
+    // ilLabels/ilOffsets はメソッドごとに作成したラベル解決状態を受け取る。
+    let private genIns (env: Env) (gen: ILGenerator) (ilLabels: Dictionary<Mir.LabelId, Label>) (ilOffsets: Dictionary<Mir.LabelId, int>) (ins: Mir.Ins) =
         let emitMethodCall (methodInfo: MethodInfo) =
             if methodInfo.IsStatic then
                 gen.Emit(OpCodes.Call, methodInfo)
@@ -192,27 +193,58 @@ module Gen =
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         // ラベル定義とジャンプ
-        | Mir.Ins.MarkLabel label ->
-            // ジャンプ距離を計算するためにオフセットを保持しておく
-            label.ilOffset <- gen.ILOffset
-            gen.MarkLabel(label.get(gen))
-        | Mir.Ins.Jump label ->
+        | Mir.Ins.MarkLabel labelId ->
+            // labelId に対応する ILLabel を取得または新規定義し、現在の ILOffset を記録する。
+            let ilLabel =
+                match ilLabels.TryGetValue(labelId) with
+                | true, l -> l
+                | false, _ ->
+                    let l = gen.DefineLabel()
+                    ilLabels.[labelId] <- l
+                    l
+            ilOffsets.[labelId] <- gen.ILOffset
+            gen.MarkLabel(ilLabel)
+        | Mir.Ins.Jump labelId ->
+            let ilLabel =
+                match ilLabels.TryGetValue(labelId) with
+                | true, l -> l
+                | false, _ ->
+                    let l = gen.DefineLabel()
+                    ilLabels.[labelId] <- l
+                    l
             // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
-            let offset = label.ilOffset - gen.ILOffset
-            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Br_S else OpCodes.Br
-            gen.Emit(op, label.get(gen))
-        | Mir.Ins.JumpTrue (cond, label) ->
+            let ilOffset = match ilOffsets.TryGetValue(labelId) with | true, o -> o | false, _ -> -1
+            let offset = ilOffset - gen.ILOffset
+            let op = if (0 < ilOffset && -120 < offset && offset < 120) then OpCodes.Br_S else OpCodes.Br
+            gen.Emit(op, ilLabel)
+        | Mir.Ins.JumpTrue (cond, labelId) ->
             genValue env gen cond
+            let ilLabel =
+                match ilLabels.TryGetValue(labelId) with
+                | true, l -> l
+                | false, _ ->
+                    let l = gen.DefineLabel()
+                    ilLabels.[labelId] <- l
+                    l
             // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
-            let offset = label.ilOffset - gen.ILOffset
-            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brtrue_S else OpCodes.Brtrue
-            gen.Emit(op, label.get(gen))
-        | Mir.Ins.JumpFalse (cond, label) ->
+            let ilOffset = match ilOffsets.TryGetValue(labelId) with | true, o -> o | false, _ -> -1
+            let offset = ilOffset - gen.ILOffset
+            let op = if (0 < ilOffset && -120 < offset && offset < 120) then OpCodes.Brtrue_S else OpCodes.Brtrue
+            gen.Emit(op, ilLabel)
+        | Mir.Ins.JumpFalse (cond, labelId) ->
             genValue env gen cond
+            let ilLabel =
+                match ilLabels.TryGetValue(labelId) with
+                | true, l -> l
+                | false, _ ->
+                    let l = gen.DefineLabel()
+                    ilLabels.[labelId] <- l
+                    l
             // ジャンプ距離が十分短いときは省略形が使える(1byteまで) labelのILOffsetが未確定(負数)の場合に注意
-            let offset = label.ilOffset - gen.ILOffset
-            let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brfalse_S else OpCodes.Brfalse
-            gen.Emit(op, label.get(gen))
+            let ilOffset = match ilOffsets.TryGetValue(labelId) with | true, o -> o | false, _ -> -1
+            let offset = ilOffset - gen.ILOffset
+            let op = if (0 < ilOffset && -120 < offset && offset < 120) then OpCodes.Brfalse_S else OpCodes.Brfalse
+            gen.Emit(op, ilLabel)
         // 未対応命令は明示的に失敗
         | Mir.Ins.NewEnv (dst, typeSid) ->
             // env-class の新規インスタンスを生成する（デフォルトコンストラクタ使用）。
@@ -244,14 +276,17 @@ module Gen =
     // コンストラクタ本体を生成する
     let private genConstructor (_env: Env) (ctor: Mir.Constructor) =
         let gen = ctor.builder.GetILGenerator()
+        // メソッドごとのラベル解決状態を初期化する。
+        let ilLabels = Dictionary<Mir.LabelId, Label>()
+        let ilOffsets = Dictionary<Mir.LabelId, int>()
 
-        // ローカル変数スロットを確保
-        for KeyValue(sid, reg) in ctor.frame.locs do
+        // ローカル変数スロットを Loc インデックス昇順に確保する。
+        for (sid, reg) in ctor.frame.locs |> Map.toSeq |> Seq.sortBy (fun (_, r) -> match r with | Mir.Reg.Loc i -> i | _ -> 0) do
             match reg with
             | Mir.Reg.Loc _ ->
                 let localType =
-                    match ctor.frame.locTypes.TryGetValue(sid) with
-                    | true, tid ->
+                    match ctor.frame.locTypes |> Map.tryFind sid with
+                    | Some tid ->
                         match tid with
                         | TypeId.Meta _
                         | TypeId.Error _ -> typeof<obj>
@@ -259,25 +294,28 @@ module Gen =
                         | TypeId.Fn _ ->
                             TypeId.tryToRuntimeSystemType tid |> Option.defaultValue typeof<obj>
                         | _ -> resolveType _env tid
-                    | false, _ -> typeof<obj>
+                    | None -> typeof<obj>
                 gen.DeclareLocal(localType) |> ignore
             | Mir.Reg.Arg _ -> ()
 
         // 本体命令を順に生成
         for ins in ctor.body do
-            genIns _env gen ins
+            genIns _env gen ilLabels ilOffsets ins
 
     // メソッド本体を生成する
     let private genMethod (_env: Env) (method: Mir.Method) =
         let gen = method.builder.GetILGenerator()
+        // メソッドごとのラベル解決状態を初期化する。
+        let ilLabels = Dictionary<Mir.LabelId, Label>()
+        let ilOffsets = Dictionary<Mir.LabelId, int>()
 
-        // ローカル変数スロットを確保
-        for KeyValue(sid, reg) in method.frame.locs do
+        // ローカル変数スロットを Loc インデックス昇順に確保する。
+        for (sid, reg) in method.frame.locs |> Map.toSeq |> Seq.sortBy (fun (_, r) -> match r with | Mir.Reg.Loc i -> i | _ -> 0) do
             match reg with
             | Mir.Reg.Loc _ ->
                 let localType =
-                    match method.frame.locTypes.TryGetValue(sid) with
-                    | true, tid ->
+                    match method.frame.locTypes |> Map.tryFind sid with
+                    | Some tid ->
                         match tid with
                         | TypeId.Meta _
                         | TypeId.Error _ -> typeof<obj>
@@ -285,13 +323,13 @@ module Gen =
                         | TypeId.Fn _ ->
                             TypeId.tryToRuntimeSystemType tid |> Option.defaultValue typeof<obj>
                         | _ -> resolveType _env tid
-                    | false, _ -> typeof<obj>
+                    | None -> typeof<obj>
                 gen.DeclareLocal(localType) |> ignore
             | Mir.Reg.Arg _ -> ()
 
         // 本体命令を順に生成
         for ins in method.body do
-            genIns _env gen ins
+            genIns _env gen ilLabels ilOffsets ins
 
     // 型メンバー（フィールド/コンストラクタ/メソッド）を生成し、mainメソッドがあれば返す
     let private genType (env: Env) (typ: Mir.Type) : MethodInfo option =
