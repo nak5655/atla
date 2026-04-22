@@ -680,3 +680,110 @@ fn bad (): Int = undefinedVar
         let first = snapshotOf (layoutHirAssembly("TestAsm", hirAssembly))
         let second = snapshotOf (layoutHirAssembly("TestAsm", hirAssembly))
         Assert.Equal(first, second)
+
+    /// ExprError ノードを lower しようとすると、そのスパン付きの Diagnostic.Error が返ることを検証する。
+    [<Fact>]
+    let ``layoutAssembly returns span-attached diagnostic for ExprError node`` () =
+        let errorSpan = { left = { Line = 3; Column = 5 }; right = { Line = 3; Column = 20 } }
+        let methodSym = SymbolId 900
+        let scope = Scope(None)
+        scope.DeclareVar("bad", methodSym)
+
+        // ExprError をメソッド本体に持つメソッドを直接 ClosedHir で構築する。
+        let closedMethod =
+            ClosedHir.Method(
+                methodSym,
+                [],
+                ClosedHir.Expr.ExprError("type mismatch in test", TypeId.Int, errorSpan),
+                TypeId.Fn([], TypeId.Int),
+                errorSpan)
+
+        let closedModule =
+            ClosedHir.Module("Main", [], [], [ closedMethod ], scope, Map.empty)
+        let closedAsm = ClosedHir.Assembly("test", [ closedModule ])
+
+        let result = Layout.layoutAssembly("TestAsm", closedAsm)
+
+        Assert.False(result.succeeded, "lowering ExprError should produce a failure")
+        let diag = result.diagnostics |> List.tryFind (fun d -> d.message.Contains("type mismatch in test"))
+        Assert.True(diag.IsSome, "diagnostic message should reference the original error text")
+        match diag with
+        | Some d ->
+            Assert.Equal(errorSpan.left.Line, d.span.left.Line)
+            Assert.Equal(errorSpan.left.Column, d.span.left.Column)
+        | None -> ()
+
+    /// ErrorStmt ノードを lower しようとすると、そのスパン付きの Diagnostic.Error が返ることを検証する。
+    [<Fact>]
+    let ``layoutAssembly returns span-attached diagnostic for ErrorStmt node`` () =
+        let stmtSpan = { left = { Line = 7; Column = 2 }; right = { Line = 7; Column = 15 } }
+        let bodySpan = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 901
+        let scope = Scope(None)
+        scope.DeclareVar("withError", methodSym)
+
+        // ErrorStmt を含む Block をメソッド本体に持つメソッドを直接 ClosedHir で構築する。
+        let closedMethod =
+            ClosedHir.Method(
+                methodSym,
+                [],
+                ClosedHir.Expr.Block(
+                    [ ClosedHir.Stmt.ErrorStmt("stmt error in test", stmtSpan) ],
+                    ClosedHir.Expr.Unit bodySpan,
+                    TypeId.Unit,
+                    bodySpan),
+                TypeId.Fn([], TypeId.Unit),
+                bodySpan)
+
+        let closedModule =
+            ClosedHir.Module("Main", [], [], [ closedMethod ], scope, Map.empty)
+        let closedAsm = ClosedHir.Assembly("test", [ closedModule ])
+
+        let result = Layout.layoutAssembly("TestAsm", closedAsm)
+
+        Assert.False(result.succeeded, "lowering ErrorStmt should produce a failure")
+        let diag = result.diagnostics |> List.tryFind (fun d -> d.message.Contains("stmt error in test"))
+        Assert.True(diag.IsSome, "diagnostic message should reference the original error text")
+        match diag with
+        | Some d ->
+            Assert.Equal(stmtSpan.left.Line, d.span.left.Line)
+            Assert.Equal(stmtSpan.left.Column, d.span.left.Column)
+        | None -> ()
+
+    /// 未定義変数への代入文を lower しようとすると、そのスパン付きの Diagnostic.Error が返ることを検証する。
+    [<Fact>]
+    let ``layoutAssembly returns span-attached diagnostic for undefined variable in assignment`` () =
+        let assignSpan = { left = { Line = 5; Column = 4 }; right = { Line = 5; Column = 18 } }
+        let bodySpan = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 902
+        let undefinedSym = SymbolId 999
+        let scope = Scope(None)
+        scope.DeclareVar("badAssign", methodSym)
+
+        // フレームに存在しない undefinedSym への代入文を直接 ClosedHir で構築する。
+        let closedMethod =
+            ClosedHir.Method(
+                methodSym,
+                [],
+                ClosedHir.Expr.Block(
+                    [ ClosedHir.Stmt.Assign(undefinedSym, ClosedHir.Expr.Int(42, bodySpan), assignSpan) ],
+                    ClosedHir.Expr.Unit bodySpan,
+                    TypeId.Unit,
+                    bodySpan),
+                TypeId.Fn([], TypeId.Unit),
+                bodySpan)
+
+        let closedModule =
+            ClosedHir.Module("Main", [], [], [ closedMethod ], scope, Map.empty)
+        let closedAsm = ClosedHir.Assembly("test", [ closedModule ])
+
+        let result = Layout.layoutAssembly("TestAsm", closedAsm)
+
+        Assert.False(result.succeeded, "assigning to an undefined variable should produce a failure")
+        let diag = result.diagnostics |> List.tryFind (fun d -> d.message.Contains("Undefined variable in assignment"))
+        Assert.True(diag.IsSome, "diagnostic should indicate undefined variable")
+        match diag with
+        | Some d ->
+            Assert.Equal(assignSpan.left.Line, d.span.left.Line)
+            Assert.Equal(assignSpan.left.Column, d.span.left.Column)
+        | None -> ()

@@ -34,17 +34,46 @@ module Layout =
         let reg, newFrame = Mir.Frame.addLoc sid tid state.frame
         reg, { state with frame = newFrame }
 
-    let rec private layoutExpr (state: LayoutState) (expr: ClosedHir.Expr) : LayoutState * KNormal =
+    /// Result を考慮した mapFold: エラーが発生したら最初のエラーを即座に返す。
+    /// 各要素を状態と共に変換し、全成功時は (最終状態, 結果リスト) を返す。
+    /// 結果リストは宣言順に保持される（内部では逆順に蓄積し最後に反転）。
+    let private mapFoldResult
+        (f: 'S -> 'T -> Result<'S * 'U, Diagnostic>)
+        (state: 'S)
+        (items: 'T list)
+        : Result<'S * 'U list, Diagnostic> =
+        items
+        |> List.fold (fun acc item ->
+            match acc with
+            | Result.Error e -> Result.Error e
+            | Ok (st, results) ->
+                match f st item with
+                | Result.Error e -> Result.Error e
+                | Ok (st', result) -> Ok (st', result :: results)) (Ok (state, []))
+        |> Result.map (fun (st, results) -> st, List.rev results)
+
+    /// Result リストから全 Ok 値を収集する。最初の Error が見つかった時点で Error を返す。
+    /// 結果リストは入力順に保持される（内部では逆順に蓄積し最後に反転）。
+    let private collectResults (results: Result<'T, Diagnostic> list) : Result<'T list, Diagnostic> =
+        results
+        |> List.fold (fun acc r ->
+            match acc, r with
+            | Result.Error e, _ -> Result.Error e
+            | _, Result.Error e -> Result.Error e
+            | Ok vs, Ok v -> Ok (v :: vs)) (Ok [])
+        |> Result.map List.rev
+
+    let rec private layoutExpr (state: LayoutState) (expr: ClosedHir.Expr) : Result<LayoutState * KNormal, Diagnostic> =
         match expr with
-        | ClosedHir.Expr.Unit _ -> state, { ins = []; res = None }
-        | ClosedHir.Expr.Int (value, _) -> state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) }
-        | ClosedHir.Expr.Float (value, _) -> state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) }
-        | ClosedHir.Expr.String (value, _) -> state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) }
+        | ClosedHir.Expr.Unit _ -> Ok (state, { ins = []; res = None })
+        | ClosedHir.Expr.Int (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) })
+        | ClosedHir.Expr.Float (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) })
+        | ClosedHir.Expr.String (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) })
         // null リテラル: 参照型のオプショナル引数デフォルト値として使用する
-        | ClosedHir.Expr.Null _ -> state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Null)) }
+        | ClosedHir.Expr.Null _ -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Null)) })
         | ClosedHir.Expr.Id (sid, tid, _) ->
             match Mir.Frame.get sid state.frame with
-            | Some reg -> state, { ins = []; res = Some(Mir.Value.RegVal reg) }
+            | Some reg -> Ok (state, { ins = []; res = Some(Mir.Value.RegVal reg) })
             | None ->
                 // フレームに存在しない sid は「グローバル関数参照」として扱う。
                 // TypeId.Fn の場合はデリゲートに変換し、それ以外はメソッド引数として追加する。
@@ -53,193 +82,211 @@ module Layout =
                     match TypeId.tryToRuntimeSystemType tid with
                     | Some delegateType ->
                         // グローバル関数を対応するデリゲート（Func<>/Action<>）に包む。
-                        state, { ins = []; res = Some(Mir.Value.FnDelegate(sid, delegateType, None)) }
+                        Ok (state, { ins = []; res = Some(Mir.Value.FnDelegate(sid, delegateType, None)) })
                     | None ->
                         let argReg, newFrame = Mir.Frame.addArg sid tid state.frame
-                        { state with frame = newFrame }, { ins = []; res = Some(Mir.Value.RegVal argReg) }
+                        Ok ({ state with frame = newFrame }, { ins = []; res = Some(Mir.Value.RegVal argReg) })
                 // .NET デリゲート型（Native）で注釈された関数参照はその型のまま使用する。
                 | TypeId.Native t when TypeId.isDelegateType t ->
-                    state, { ins = []; res = Some(Mir.Value.FnDelegate(sid, t, None)) }
+                    Ok (state, { ins = []; res = Some(Mir.Value.FnDelegate(sid, t, None)) })
                 | _ ->
                     let argReg, newFrame = Mir.Frame.addArg sid tid state.frame
-                    { state with frame = newFrame }, { ins = []; res = Some(Mir.Value.RegVal argReg) }
+                    Ok ({ state with frame = newFrame }, { ins = []; res = Some(Mir.Value.RegVal argReg) })
         | ClosedHir.Expr.MemberAccess (mem, instance, tid, span) ->
             match mem with
-            | Hir.Member.NativeField fi -> state, { ins = []; res = Some(Mir.Value.FieldVal fi) }
-            | Hir.Member.NativeMethod mi -> state, { ins = []; res = Some(Mir.Value.MethodVal mi) }
+            | Hir.Member.NativeField fi -> Ok (state, { ins = []; res = Some(Mir.Value.FieldVal fi) })
+            | Hir.Member.NativeMethod mi -> Ok (state, { ins = []; res = Some(Mir.Value.MethodVal mi) })
             | Hir.Member.NativeProperty pi ->
                 match pi.GetMethod with
-                | null -> failwithf "Property has no getter: %s" pi.Name
+                | null -> Result.Error (Diagnostic.Error($"Property has no getter: {pi.Name}", span))
                 | getter ->
-                    let state1, instanceKnOpt =
+                    let instanceResult =
                         match instance with
-                        | Some expr ->
-                            let s1, kn = layoutExpr state expr
-                            s1, Some kn
-                        | None -> state, None
+                        | Some expr -> layoutExpr state expr |> Result.map (fun (s1, kn) -> s1, Some kn)
+                        | None -> Ok (state, None)
+                    match instanceResult with
+                    | Result.Error e -> Result.Error e
+                    | Ok (state1, instanceKnOpt) ->
+                        let instanceIns =
+                            instanceKnOpt
+                            |> Option.map (fun kn -> kn.ins)
+                            |> Option.defaultValue []
 
-                    let instanceIns =
-                        instanceKnOpt
-                        |> Option.map (fun kn -> kn.ins)
-                        |> Option.defaultValue []
+                        let instanceArg =
+                            instanceKnOpt
+                            |> Option.bind (fun kn -> kn.res)
+                            |> Option.map List.singleton
+                            |> Option.defaultValue []
 
-                    let instanceArg =
-                        instanceKnOpt
-                        |> Option.bind (fun kn -> kn.res)
-                        |> Option.map List.singleton
-                        |> Option.defaultValue []
-
-                    if tid = TypeId.Unit || getter.ReturnType = typeof<System.Void> then
-                        state1, { ins = instanceIns @ [ Mir.Ins.Call(Choice1Of2 getter, instanceArg) ]; res = None }
-                    else
-                        let dst, state2 = declareTemp state1 tid
-                        state2, { ins = instanceIns @ [ Mir.Ins.CallAssign(dst, getter, instanceArg) ]; res = Some(Mir.Value.RegVal dst) }
-        | ClosedHir.Expr.Call (func, _, args, tid, _) ->
-            let argKnList, state1 =
-                args |> List.mapFold (fun st arg -> let s, kn = layoutExpr st arg in kn, s) state
-            let argIns = argKnList |> List.collect (fun k -> k.ins)
-            let argValues =
-                argKnList
-                |> List.map (fun k ->
-                    match k.res with
-                    | Some value -> value
-                    | None -> failwith "Argument expression did not produce a value")
-
-            // MethodInfo を使った呼び出しを発行するヘルパー。
-            let emitCall (st: LayoutState) (mi: System.Reflection.MethodInfo) =
-                let returnsUnit = (mi.ReturnType = typeof<System.Void>)
-                match tid, returnsUnit with
-                | _, true
-                | TypeId.Unit, _ ->
-                    st, { ins = argIns @ [ Mir.Ins.Call(Choice1Of2 mi, argValues) ]; res = None }
-                | _ ->
-                    let dst, st' = declareTemp st tid
-                    st', { ins = argIns @ [ Mir.Ins.CallAssign(dst, mi, argValues) ]; res = Some(Mir.Value.RegVal dst) }
-
-            match func with
-            | Hir.Callable.NativeMethod mi -> emitCall state1 mi
-            | Hir.Callable.NativeMethodGroup methods ->
-                match methods |> List.tryFind (fun m -> m.GetParameters().Length = argValues.Length) with
-                | Some mi -> emitCall state1 mi
-                | None -> failwithf "No overload matched argument count %d" argValues.Length
-            | Hir.Callable.NativeConstructor ctor ->
-                let dst, state2 = declareTemp state1 tid
-                state2, { ins = argIns @ [ Mir.Ins.New(dst, ctor, argValues) ]; res = Some(Mir.Value.RegVal dst) }
-            | Hir.Callable.NativeConstructorGroup ctors ->
-                match ctors |> List.tryFind (fun c -> c.GetParameters().Length = argValues.Length) with
-                | Some ctor ->
-                    let dst, state2 = declareTemp state1 tid
-                    state2, { ins = argIns @ [ Mir.Ins.New(dst, ctor, argValues) ]; res = Some(Mir.Value.RegVal dst) }
-                | None -> failwithf "No constructor matched argument count %d" argValues.Length
-            | Hir.Callable.BuiltinOperator op ->
-                let dst, state2 = declareTemp state1 tid
-                let lhs = argValues |> List.tryItem 0 |> Option.defaultWith (fun () -> failwith "Missing lhs")
-                let rhs = argValues |> List.tryItem 1 |> Option.defaultWith (fun () -> failwith "Missing rhs")
-                let opcode =
-                    match op with
-                    | Builtins.OpAdd -> Mir.OpCode.Add
-                    | Builtins.OpSub -> Mir.OpCode.Sub
-                    | Builtins.OpMul -> Mir.OpCode.Mul
-                    | Builtins.OpDiv -> Mir.OpCode.Div
-                    | Builtins.OpMod -> Mir.OpCode.Mod
-                    | Builtins.OpEq -> Mir.OpCode.Eq
-                state2, { ins = argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) }
-            | Hir.Callable.Fn sid ->
-                match Mir.Frame.get sid state1.frame with
-                | Some delegateReg ->
-                    // sid がフレームに存在する → 引数または let 束縛されたデリゲートを介した呼び出し。
-                    // フレームから型を取得してデリゲート型の Invoke メソッドを得る。
-                    let fnType =
-                        match state1.frame.argTypes |> Map.tryFind sid with
-                        | Some t -> t
-                        | None ->
-                            match state1.frame.locTypes |> Map.tryFind sid with
-                            | Some t -> t
-                            | None -> failwithf "Unknown type for function-typed register: %A" sid
-                    match TypeId.tryToRuntimeSystemType fnType with
-                    | Some delegateType ->
-                        let invokeMethod = delegateType.GetMethod("Invoke")
-                        if obj.ReferenceEquals(invokeMethod, null) then
-                            failwithf "Delegate type '%s' has no Invoke method" delegateType.FullName
-                        // レシーバー（デリゲート自身）を先頭引数として渡す。
-                        let callArgs = (Mir.Value.RegVal delegateReg) :: argValues
-                        let returnsVoid = invokeMethod.ReturnType = typeof<System.Void>
-                        match tid, returnsVoid with
+                        if tid = TypeId.Unit || getter.ReturnType = typeof<System.Void> then
+                            Ok (state1, { ins = instanceIns @ [ Mir.Ins.Call(Choice1Of2 getter, instanceArg) ]; res = None })
+                        else
+                            let dst, state2 = declareTemp state1 tid
+                            Ok (state2, { ins = instanceIns @ [ Mir.Ins.CallAssign(dst, getter, instanceArg) ]; res = Some(Mir.Value.RegVal dst) })
+        | ClosedHir.Expr.Call (func, _, args, tid, callSpan) ->
+            match mapFoldResult layoutExpr state args with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, argKnList) ->
+                let argIns = argKnList |> List.collect (fun k -> k.ins)
+                let argValuesResult =
+                    argKnList
+                    |> List.map (fun k ->
+                        match k.res with
+                        | Some value -> Ok value
+                        | None -> Result.Error (Diagnostic.Error("Argument expression did not produce a value", callSpan)))
+                    |> collectResults
+                match argValuesResult with
+                | Result.Error e -> Result.Error e
+                | Ok argValues ->
+                    // MethodInfo を使った呼び出しを発行するヘルパー。
+                    let emitCall (st: LayoutState) (mi: System.Reflection.MethodInfo) =
+                        let returnsUnit = (mi.ReturnType = typeof<System.Void>)
+                        match tid, returnsUnit with
                         | _, true
                         | TypeId.Unit, _ ->
-                            state1, { ins = argIns @ [ Mir.Ins.Call(Choice1Of2 invokeMethod, callArgs) ]; res = None }
+                            Ok (st, { ins = argIns @ [ Mir.Ins.Call(Choice1Of2 mi, argValues) ]; res = None })
                         | _ ->
-                            let dst, state2 = declareTemp state1 tid
-                            state2, { ins = argIns @ [ Mir.Ins.CallAssign(dst, invokeMethod, callArgs) ]; res = Some(Mir.Value.RegVal dst) }
-                    | None ->
-                        failwithf "Cannot resolve delegate type for function-typed symbol: %A" sid
-                | None ->
-                    // sid がフレームに存在しない → グローバル関数への直接呼び出し。
-                    match tid with
-                    | TypeId.Unit ->
-                        state1, { ins = argIns @ [ Mir.Ins.CallSym(sid, argValues) ]; res = None }
-                    | _ ->
-                        let dst, state2 = declareTemp state1 tid
-                        state2, { ins = argIns @ [ Mir.Ins.CallAssignSym(dst, sid, argValues) ]; res = Some(Mir.Value.RegVal dst) }
-        | ClosedHir.Expr.Block (stmts, expr, _, _) ->
-            let stmtInsList, state1 =
-                stmts |> List.mapFold (fun st stmt -> let s, ins = layoutStmt st stmt in ins, s) state
-            let stmtIns = List.concat stmtInsList
-            let state2, exprKn = layoutExpr state1 expr
-            state2, { ins = stmtIns @ exprKn.ins; res = exprKn.res }
-        | ClosedHir.Expr.If (cond, thenBranch, elseBranch, tid, _) ->
-            let state1, condKn = layoutExpr state cond
-            let state2, thenKn = layoutExpr state1 thenBranch
-            let state3, elseKn = layoutExpr state2 elseBranch
-            let thenLabelId, state4 = freshLabel state3
-            let elseLabelId, state5 = freshLabel state4
-            let endLabelId, state6 = freshLabel state5
+                            let dst, st' = declareTemp st tid
+                            Ok (st', { ins = argIns @ [ Mir.Ins.CallAssign(dst, mi, argValues) ]; res = Some(Mir.Value.RegVal dst) })
 
-            match tid with
-            | TypeId.Unit ->
-                state6, {
-                    ins =
-                        condKn.ins
-                        @ [ Mir.Ins.JumpTrue(condKn.res.Value, thenLabelId); Mir.Ins.JumpFalse(condKn.res.Value, elseLabelId) ]
-                        @ [ Mir.Ins.MarkLabel thenLabelId ] @ thenKn.ins @ [ Mir.Ins.Jump endLabelId ]
-                        @ [ Mir.Ins.MarkLabel elseLabelId ] @ elseKn.ins @ [ Mir.Ins.Jump endLabelId ]
-                        @ [ Mir.Ins.MarkLabel endLabelId ]
-                    res = None
-                }
-            | _ ->
-                let dst, state7 = declareTemp state6 tid
-                state7, {
-                    ins =
-                        condKn.ins
-                        @ [ Mir.Ins.JumpTrue(condKn.res.Value, thenLabelId); Mir.Ins.JumpFalse(condKn.res.Value, elseLabelId) ]
-                        @ [ Mir.Ins.MarkLabel thenLabelId ]
-                        @ thenKn.ins
-                        @ [ Mir.Ins.Assign(dst, thenKn.res.Value); Mir.Ins.Jump endLabelId ]
-                        @ [ Mir.Ins.MarkLabel elseLabelId ]
-                        @ elseKn.ins
-                        @ [ Mir.Ins.Assign(dst, elseKn.res.Value); Mir.Ins.Jump endLabelId ]
-                        @ [ Mir.Ins.MarkLabel endLabelId ]
-                    res = Some(Mir.Value.RegVal dst)
-                }
-        | ClosedHir.Expr.ExprError (message, _, _) ->
-            failwithf "Cannot lower erroneous expression: %s" message
-        | ClosedHir.Expr.Lambda _ ->
-            failwith "Lambda lowering is not implemented"
+                    match func with
+                    | Hir.Callable.NativeMethod mi -> emitCall state1 mi
+                    | Hir.Callable.NativeMethodGroup methods ->
+                        match methods |> List.tryFind (fun m -> m.GetParameters().Length = argValues.Length) with
+                        | Some mi -> emitCall state1 mi
+                        | None -> Result.Error (Diagnostic.Error($"No overload matched argument count {argValues.Length}", callSpan))
+                    | Hir.Callable.NativeConstructor ctor ->
+                        let dst, state2 = declareTemp state1 tid
+                        Ok (state2, { ins = argIns @ [ Mir.Ins.New(dst, ctor, argValues) ]; res = Some(Mir.Value.RegVal dst) })
+                    | Hir.Callable.NativeConstructorGroup ctors ->
+                        match ctors |> List.tryFind (fun c -> c.GetParameters().Length = argValues.Length) with
+                        | Some ctor ->
+                            let dst, state2 = declareTemp state1 tid
+                            Ok (state2, { ins = argIns @ [ Mir.Ins.New(dst, ctor, argValues) ]; res = Some(Mir.Value.RegVal dst) })
+                        | None -> Result.Error (Diagnostic.Error($"No constructor matched argument count {argValues.Length}", callSpan))
+                    | Hir.Callable.BuiltinOperator op ->
+                        let dst, state2 = declareTemp state1 tid
+                        match argValues |> List.tryItem 0, argValues |> List.tryItem 1 with
+                        | Some lhs, Some rhs ->
+                            let opcode =
+                                match op with
+                                | Builtins.OpAdd -> Mir.OpCode.Add
+                                | Builtins.OpSub -> Mir.OpCode.Sub
+                                | Builtins.OpMul -> Mir.OpCode.Mul
+                                | Builtins.OpDiv -> Mir.OpCode.Div
+                                | Builtins.OpMod -> Mir.OpCode.Mod
+                                | Builtins.OpEq -> Mir.OpCode.Eq
+                            Ok (state2, { ins = argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) })
+                        | None, _ -> Result.Error (Diagnostic.Error("Missing lhs operand for builtin operator", callSpan))
+                        | _, None -> Result.Error (Diagnostic.Error("Missing rhs operand for builtin operator", callSpan))
+                    | Hir.Callable.Fn sid ->
+                        match Mir.Frame.get sid state1.frame with
+                        | Some delegateReg ->
+                            // sid がフレームに存在する → 引数または let 束縛されたデリゲートを介した呼び出し。
+                            // フレームから型を取得してデリゲート型の Invoke メソッドを得る。
+                            let fnTypeResult =
+                                match state1.frame.argTypes |> Map.tryFind sid with
+                                | Some t -> Ok t
+                                | None ->
+                                    match state1.frame.locTypes |> Map.tryFind sid with
+                                    | Some t -> Ok t
+                                    | None -> Result.Error (Diagnostic.Error($"Unknown type for function-typed register: {sid}", callSpan))
+                            match fnTypeResult with
+                            | Result.Error e -> Result.Error e
+                            | Ok fnType ->
+                                match TypeId.tryToRuntimeSystemType fnType with
+                                | Some delegateType ->
+                                    let invokeMethod = delegateType.GetMethod("Invoke")
+                                    if obj.ReferenceEquals(invokeMethod, null) then
+                                        Result.Error (Diagnostic.Error($"Delegate type '{delegateType.FullName}' has no Invoke method", callSpan))
+                                    else
+                                        // レシーバー（デリゲート自身）を先頭引数として渡す。
+                                        let callArgs = (Mir.Value.RegVal delegateReg) :: argValues
+                                        let returnsVoid = invokeMethod.ReturnType = typeof<System.Void>
+                                        match tid, returnsVoid with
+                                        | _, true
+                                        | TypeId.Unit, _ ->
+                                            Ok (state1, { ins = argIns @ [ Mir.Ins.Call(Choice1Of2 invokeMethod, callArgs) ]; res = None })
+                                        | _ ->
+                                            let dst, state2 = declareTemp state1 tid
+                                            Ok (state2, { ins = argIns @ [ Mir.Ins.CallAssign(dst, invokeMethod, callArgs) ]; res = Some(Mir.Value.RegVal dst) })
+                                | None ->
+                                    Result.Error (Diagnostic.Error($"Cannot resolve delegate type for function-typed symbol: {sid}", callSpan))
+                        | None ->
+                            // sid がフレームに存在しない → グローバル関数への直接呼び出し。
+                            match tid with
+                            | TypeId.Unit ->
+                                Ok (state1, { ins = argIns @ [ Mir.Ins.CallSym(sid, argValues) ]; res = None })
+                            | _ ->
+                                let dst, state2 = declareTemp state1 tid
+                                Ok (state2, { ins = argIns @ [ Mir.Ins.CallAssignSym(dst, sid, argValues) ]; res = Some(Mir.Value.RegVal dst) })
+        | ClosedHir.Expr.Block (stmts, expr, _, _) ->
+            match mapFoldResult layoutStmt state stmts with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, stmtInsList) ->
+                let stmtIns = List.concat stmtInsList
+                match layoutExpr state1 expr with
+                | Result.Error e -> Result.Error e
+                | Ok (state2, exprKn) ->
+                    Ok (state2, { ins = stmtIns @ exprKn.ins; res = exprKn.res })
+        | ClosedHir.Expr.If (cond, thenBranch, elseBranch, tid, _) ->
+            match layoutExpr state cond with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, condKn) ->
+                match layoutExpr state1 thenBranch with
+                | Result.Error e -> Result.Error e
+                | Ok (state2, thenKn) ->
+                    match layoutExpr state2 elseBranch with
+                    | Result.Error e -> Result.Error e
+                    | Ok (state3, elseKn) ->
+                        let thenLabelId, state4 = freshLabel state3
+                        let elseLabelId, state5 = freshLabel state4
+                        let endLabelId, state6 = freshLabel state5
+                        match tid with
+                        | TypeId.Unit ->
+                            Ok (state6, {
+                                ins =
+                                    condKn.ins
+                                    @ [ Mir.Ins.JumpTrue(condKn.res.Value, thenLabelId); Mir.Ins.JumpFalse(condKn.res.Value, elseLabelId) ]
+                                    @ [ Mir.Ins.MarkLabel thenLabelId ] @ thenKn.ins @ [ Mir.Ins.Jump endLabelId ]
+                                    @ [ Mir.Ins.MarkLabel elseLabelId ] @ elseKn.ins @ [ Mir.Ins.Jump endLabelId ]
+                                    @ [ Mir.Ins.MarkLabel endLabelId ]
+                                res = None
+                            })
+                        | _ ->
+                            let dst, state7 = declareTemp state6 tid
+                            Ok (state7, {
+                                ins =
+                                    condKn.ins
+                                    @ [ Mir.Ins.JumpTrue(condKn.res.Value, thenLabelId); Mir.Ins.JumpFalse(condKn.res.Value, elseLabelId) ]
+                                    @ [ Mir.Ins.MarkLabel thenLabelId ]
+                                    @ thenKn.ins
+                                    @ [ Mir.Ins.Assign(dst, thenKn.res.Value); Mir.Ins.Jump endLabelId ]
+                                    @ [ Mir.Ins.MarkLabel elseLabelId ]
+                                    @ elseKn.ins
+                                    @ [ Mir.Ins.Assign(dst, elseKn.res.Value); Mir.Ins.Jump endLabelId ]
+                                    @ [ Mir.Ins.MarkLabel endLabelId ]
+                                res = Some(Mir.Value.RegVal dst)
+                            })
+        | ClosedHir.Expr.ExprError (message, _, span) ->
+            Result.Error (Diagnostic.Error($"Cannot lower erroneous expression: {message}", span))
+        | ClosedHir.Expr.Lambda (_, _, _, _, span) ->
+            Result.Error (Diagnostic.Error("Lambda lowering is not implemented", span))
         // env-class クロージャーフィールド参照: env インスタンス引数からフィールドを読み込む。
-        | ClosedHir.Expr.EnvFieldLoad (envArgSid, capturedSid, tid, _) ->
-            let envReg =
-                match Mir.Frame.get envArgSid state.frame with
-                | Some reg -> reg
-                | None -> failwithf "Env arg %A not found in frame for EnvFieldLoad" envArgSid
-            let envTypeSid =
+        | ClosedHir.Expr.EnvFieldLoad (envArgSid, capturedSid, tid, span) ->
+            match Mir.Frame.get envArgSid state.frame with
+            | None -> Result.Error (Diagnostic.Error($"Env arg {envArgSid} not found in frame for EnvFieldLoad", span))
+            | Some envReg ->
                 match state.frame.argTypes |> Map.tryFind envArgSid with
-                | Some (TypeId.Name sid) -> sid
-                | Some t -> failwithf "Env arg %A has unexpected type %A; expected TypeId.Name" envArgSid t
-                | None -> failwithf "Env arg type not found in frame for %A" envArgSid
-            let dst, state1 = declareTemp state tid
-            state1, { ins = [ Mir.Ins.LoadEnvField(dst, envReg, envTypeSid, capturedSid) ]; res = Some(Mir.Value.RegVal dst) }
+                | Some (TypeId.Name envTypeSid) ->
+                    let dst, state1 = declareTemp state tid
+                    Ok (state1, { ins = [ Mir.Ins.LoadEnvField(dst, envReg, envTypeSid, capturedSid) ]; res = Some(Mir.Value.RegVal dst) })
+                | Some t ->
+                    Result.Error (Diagnostic.Error($"Env arg {envArgSid} has unexpected type {t}; expected TypeId.Name", span))
+                | None ->
+                    Result.Error (Diagnostic.Error($"Env arg type not found in frame for {envArgSid}", span))
         // env-class クロージャー生成式: env インスタンスを生成し、捕捉変数を格納し、bound delegate を返す。
-        | ClosedHir.Expr.ClosureCreate (envTypeSid, methodSid, captured, tid, _) ->
+        | ClosedHir.Expr.ClosureCreate (envTypeSid, methodSid, captured, tid, span) ->
             // 1. env インスタンス用レジスタを確保し、NewEnv 命令を生成する。
             let envTyp = TypeId.Name envTypeSid
             let envReg, state1 = declareTemp state envTyp
@@ -255,100 +302,104 @@ module Layout =
             // 3. env インスタンスにバインドしたデリゲートを生成する値を返す。
             match TypeId.tryToRuntimeSystemType tid with
             | Some delegateType ->
-                state1, { ins = [ newEnvIns ] @ storeIns; res = Some(Mir.Value.FnDelegate(methodSid, delegateType, Some envReg)) }
+                Ok (state1, { ins = [ newEnvIns ] @ storeIns; res = Some(Mir.Value.FnDelegate(methodSid, delegateType, Some envReg)) })
             | None ->
-                failwithf "Cannot resolve delegate type for ClosureCreate: %A" tid
+                Result.Error (Diagnostic.Error($"Cannot resolve delegate type for ClosureCreate: {tid}", span))
 
-    and private layoutStmt (state: LayoutState) (stmt: ClosedHir.Stmt) : LayoutState * Mir.Ins list =
+    and private layoutStmt (state: LayoutState) (stmt: ClosedHir.Stmt) : Result<LayoutState * Mir.Ins list, Diagnostic> =
         match stmt with
         | ClosedHir.Stmt.Let (sid, _, value, _) ->
-            let state1, valueKn = layoutExpr state value
-            let dst, newFrame = Mir.Frame.addLoc sid value.typ state1.frame
-            let state2 = { state1 with frame = newFrame }
-            match valueKn.res with
-            | Some v -> state2, valueKn.ins @ [ Mir.Ins.Assign(dst, v) ]
-            | None -> state2, valueKn.ins
-        | ClosedHir.Stmt.Assign (sid, value, _) ->
-            let state1, valueKn = layoutExpr state value
-            match Mir.Frame.get sid state1.frame, valueKn.res with
-            | Some dst, Some v -> state1, valueKn.ins @ [ Mir.Ins.Assign(dst, v) ]
-            | Some _, None -> state1, valueKn.ins
-            | None, _ -> failwithf "Undefined variable in assignment: %A" sid
+            match layoutExpr state value with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, valueKn) ->
+                let dst, newFrame = Mir.Frame.addLoc sid value.typ state1.frame
+                let state2 = { state1 with frame = newFrame }
+                match valueKn.res with
+                | Some v -> Ok (state2, valueKn.ins @ [ Mir.Ins.Assign(dst, v) ])
+                | None -> Ok (state2, valueKn.ins)
+        | ClosedHir.Stmt.Assign (sid, value, span) ->
+            match layoutExpr state value with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, valueKn) ->
+                match Mir.Frame.get sid state1.frame, valueKn.res with
+                | Some dst, Some v -> Ok (state1, valueKn.ins @ [ Mir.Ins.Assign(dst, v) ])
+                | Some _, None -> Ok (state1, valueKn.ins)
+                | None, _ -> Result.Error (Diagnostic.Error($"Undefined variable in assignment: {sid}", span))
         | ClosedHir.Stmt.ExprStmt (expr, _) ->
-            let state1, kn = layoutExpr state expr
-            state1, kn.ins
+            match layoutExpr state expr with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, kn) -> Ok (state1, kn.ins)
         | ClosedHir.Stmt.For (sid, tid, iterable, body, span) ->
-            let state1, iterableKn = layoutExpr state iterable
-            let iterReg, state2 = declareTemp state1 iterable.typ
-            let iterAssignIns =
+            match layoutExpr state iterable with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, iterableKn) ->
+                let iterReg, state2 = declareTemp state1 iterable.typ
                 match iterableKn.res with
-                | Some value -> [ Mir.Ins.Assign(iterReg, value) ]
-                | None -> failwithf "For iterable expression did not produce a value at %A" span
+                | None -> Result.Error (Diagnostic.Error($"For iterable expression did not produce a value", span))
+                | Some iterValue ->
+                    let iterAssignIns = [ Mir.Ins.Assign(iterReg, iterValue) ]
+                    match TypeId.tryToRuntimeSystemType iterable.typ with
+                    | None -> Result.Error (Diagnostic.Error($"For iterable type is not a runtime type: {iterable.typ}", span))
+                    | Some iterType ->
+                        let iterCandidateTypes = iterType :: (iterType.GetInterfaces() |> Array.toList)
+                        let moveNextMethod =
+                            iterCandidateTypes
+                            |> List.tryPick (fun t ->
+                                t.GetMethods(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+                                |> Array.tryFind (fun methodInfo -> methodInfo.Name = "MoveNext" && methodInfo.GetParameters().Length = 0))
+                            |> Option.toObj
+                        let currentProperty =
+                            iterCandidateTypes
+                            |> List.collect (fun t ->
+                                t.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+                                |> Array.filter (fun propertyInfo -> propertyInfo.Name = "Current")
+                                |> Array.toList)
+                            |> List.tryFind (fun propertyInfo -> propertyInfo.PropertyType <> typeof<obj>)
+                            |> Option.orElseWith (fun () ->
+                                iterCandidateTypes
+                                |> List.tryPick (fun t ->
+                                    t.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+                                    |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current")))
+                            |> Option.toObj
+                        let currentGetter =
+                            match currentProperty with
+                            | null -> null
+                            | propertyInfo -> propertyInfo.GetMethod
 
-            let iterType =
-                match TypeId.tryToRuntimeSystemType iterable.typ with
-                | Some t -> t
-                | None -> failwithf "For iterable type is not a runtime type: %A at %A" iterable.typ span
+                        if obj.ReferenceEquals(moveNextMethod, null) then
+                            Result.Error (Diagnostic.Error($"For iterable type '{iterType}' does not define MoveNext()", span))
+                        elif obj.ReferenceEquals(currentGetter, null) then
+                            Result.Error (Diagnostic.Error($"For iterable type '{iterType}' does not define Current getter", span))
+                        else
+                            let loopVarReg, loopVarFrame = Mir.Frame.addLoc sid tid state2.frame
+                            let state3 = { state2 with frame = loopVarFrame }
+                            let condReg, state4 = declareTemp state3 TypeId.Bool
+                            let currentReg, state5 = declareTemp state4 tid
+                            let loopStartId, state6 = freshLabel state5
+                            let loopBodyId, state7 = freshLabel state6
+                            let loopEndId, state8 = freshLabel state7
+                            match mapFoldResult layoutStmt state8 body with
+                            | Result.Error e -> Result.Error e
+                            | Ok (state9, bodyInsList) ->
+                                let bodyIns = List.concat bodyInsList
+                                Ok (state9, (
+                                    iterableKn.ins
+                                    @ iterAssignIns
+                                    @ [ Mir.Ins.MarkLabel loopStartId
+                                        Mir.Ins.CallAssign(condReg, moveNextMethod, [ Mir.Value.RegVal iterReg ])
+                                        Mir.Ins.JumpTrue(Mir.Value.RegVal condReg, loopBodyId)
+                                        Mir.Ins.JumpFalse(Mir.Value.RegVal condReg, loopEndId)
+                                        Mir.Ins.MarkLabel loopBodyId
+                                        Mir.Ins.CallAssign(currentReg, currentGetter, [ Mir.Value.RegVal iterReg ])
+                                        Mir.Ins.Assign(loopVarReg, Mir.Value.RegVal currentReg) ]
+                                    @ bodyIns
+                                    @ [ Mir.Ins.Jump loopStartId
+                                        Mir.Ins.MarkLabel loopEndId ]
+                                ))
+        | ClosedHir.Stmt.ErrorStmt (message, span) ->
+            Result.Error (Diagnostic.Error($"Cannot lower erroneous statement: {message}", span))
 
-            let iterCandidateTypes = iterType :: (iterType.GetInterfaces() |> Array.toList)
-            let moveNextMethod =
-                iterCandidateTypes
-                |> List.tryPick (fun t ->
-                    t.GetMethods(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
-                    |> Array.tryFind (fun methodInfo -> methodInfo.Name = "MoveNext" && methodInfo.GetParameters().Length = 0))
-                |> Option.toObj
-            let currentProperty =
-                iterCandidateTypes
-                |> List.collect (fun t ->
-                    t.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
-                    |> Array.filter (fun propertyInfo -> propertyInfo.Name = "Current")
-                    |> Array.toList)
-                |> List.tryFind (fun propertyInfo -> propertyInfo.PropertyType <> typeof<obj>)
-                |> Option.orElseWith (fun () ->
-                    iterCandidateTypes
-                    |> List.tryPick (fun t ->
-                        t.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
-                        |> Array.tryFind (fun propertyInfo -> propertyInfo.Name = "Current")))
-                |> Option.toObj
-            let currentGetter =
-                match currentProperty with
-                | null -> null
-                | propertyInfo -> propertyInfo.GetMethod
-
-            if obj.ReferenceEquals(moveNextMethod, null) then
-                failwithf "For iterable type '%A' does not define MoveNext() at %A" iterType span
-            elif obj.ReferenceEquals(currentGetter, null) then
-                failwithf "For iterable type '%A' does not define Current getter at %A" iterType span
-            else
-                let loopVarReg, loopVarFrame = Mir.Frame.addLoc sid tid state2.frame
-                let state3 = { state2 with frame = loopVarFrame }
-                let condReg, state4 = declareTemp state3 TypeId.Bool
-                let currentReg, state5 = declareTemp state4 tid
-                let loopStartId, state6 = freshLabel state5
-                let loopBodyId, state7 = freshLabel state6
-                let loopEndId, state8 = freshLabel state7
-                let bodyInsList, state9 =
-                    body |> List.mapFold (fun st stmt -> let s, ins = layoutStmt st stmt in ins, s) state8
-                let bodyIns = List.concat bodyInsList
-
-                state9, (
-                    iterableKn.ins
-                    @ iterAssignIns
-                    @ [ Mir.Ins.MarkLabel loopStartId
-                        Mir.Ins.CallAssign(condReg, moveNextMethod, [ Mir.Value.RegVal iterReg ])
-                        Mir.Ins.JumpTrue(Mir.Value.RegVal condReg, loopBodyId)
-                        Mir.Ins.JumpFalse(Mir.Value.RegVal condReg, loopEndId)
-                        Mir.Ins.MarkLabel loopBodyId
-                        Mir.Ins.CallAssign(currentReg, currentGetter, [ Mir.Value.RegVal iterReg ])
-                        Mir.Ins.Assign(loopVarReg, Mir.Value.RegVal currentReg) ]
-                    @ bodyIns
-                    @ [ Mir.Ins.Jump loopStartId
-                        Mir.Ins.MarkLabel loopEndId ]
-                )
-        | ClosedHir.Stmt.ErrorStmt (message, _) ->
-            failwithf "Cannot lower erroneous statement: %s" message
-
-    let private layoutMethod (methodName: string) (hirMethod: ClosedHir.Method) : Mir.Method =
+    let private layoutMethod (methodName: string) (hirMethod: ClosedHir.Method) : Result<Mir.Method, Diagnostic> =
         // メソッド引数を宣言順にフレームへ事前登録する。
         // これにより、ボディ内で引数を参照したときに正しい Arg インデックスが割り当てられる。
         let initFrame =
@@ -356,27 +407,27 @@ module Layout =
                 let _, newFrame = Mir.Frame.addArg argSid argType frame
                 newFrame) Mir.Frame.empty
         let initState = { emptyState with frame = initFrame }
-        let finalState, bodyKn = layoutExpr initState hirMethod.body
-        let body =
-            match hirMethod.typ with
-            | TypeId.Fn (_, TypeId.Unit) -> bodyKn.ins @ [ Mir.Ins.Ret ]
-            | TypeId.Fn (_, _) ->
-                match bodyKn.res with
-                | Some v -> bodyKn.ins @ [ Mir.Ins.RetValue v ]
-                | None -> bodyKn.ins @ [ Mir.Ins.Ret ]
-            | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
-
         match hirMethod.typ with
-        | TypeId.Fn (args, ret) -> Mir.Method(methodName, hirMethod.sym, args, ret, body, finalState.frame)
-        | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
+        | TypeId.Fn (args, ret) ->
+            match layoutExpr initState hirMethod.body with
+            | Result.Error e -> Result.Error e
+            | Ok (finalState, bodyKn) ->
+                let body =
+                    if ret = TypeId.Unit then bodyKn.ins @ [ Mir.Ins.Ret ]
+                    else
+                        match bodyKn.res with
+                        | Some v -> bodyKn.ins @ [ Mir.Ins.RetValue v ]
+                        | None -> bodyKn.ins @ [ Mir.Ins.Ret ]
+                Ok (Mir.Method(methodName, hirMethod.sym, args, ret, body, finalState.frame))
+        | _ -> Result.Error (Diagnostic.Error($"Expected function type for method: {hirMethod.typ}", hirMethod.span))
 
     let private layoutType (typeName: string) (hirType: ClosedHir.Type) : Mir.Type =
         let fields = hirType.fields |> List.map (fun field -> Mir.Field(field.sym, field.typ))
         Mir.Type(typeName, hirType.sym, fields, [], [])
 
     /// env-class の invoke メソッドとして使用するインスタンスメソッドを生成する。
-    /// 通常の layoutMethod との違い: 第一引数（env インスタンス）は TypeId.Name の場合のみ除去する。
-    let private layoutInvokeMethod (methodName: string) (hirMethod: ClosedHir.Method) : Mir.Method =
+    /// 通常の layoutMethod との違い: 第一引数（env インスタンス）を CIL arg リストから除去する。
+    let private layoutInvokeMethod (methodName: string) (hirMethod: ClosedHir.Method) : Result<Mir.Method, Diagnostic> =
         // invoke method の全引数をフレームへ事前登録する（第一引数 = env インスタンスを含む）。
         // インスタンスメソッドでは Arg(0) が 'this' に対応するため、第一引数 sid を Arg(0) に割り当てる。
         let initFrame =
@@ -384,29 +435,27 @@ module Layout =
                 let _, newFrame = Mir.Frame.addArg argSid argType frame
                 newFrame) Mir.Frame.empty
         let initState = { emptyState with frame = initFrame }
-        let finalState, bodyKn = layoutExpr initState hirMethod.body
-        let body =
-            match hirMethod.typ with
-            | TypeId.Fn (_, TypeId.Unit) -> bodyKn.ins @ [ Mir.Ins.Ret ]
-            | TypeId.Fn (_, _) ->
-                match bodyKn.res with
-                | Some v -> bodyKn.ins @ [ Mir.Ins.RetValue v ]
-                | None -> bodyKn.ins @ [ Mir.Ins.Ret ]
-            | _ -> failwithf "Expected function type for invoke method: %A" hirMethod.typ
+        match hirMethod.typ with
+        | TypeId.Fn (_, ret) ->
+            match layoutExpr initState hirMethod.body with
+            | Result.Error e -> Result.Error e
+            | Ok (finalState, bodyKn) ->
+                let body =
+                    if ret = TypeId.Unit then bodyKn.ins @ [ Mir.Ins.Ret ]
+                    else
+                        match bodyKn.res with
+                        | Some v -> bodyKn.ins @ [ Mir.Ins.RetValue v ]
+                        | None -> bodyKn.ins @ [ Mir.Ins.Ret ]
+                // CIL インスタンスメソッドの arg 型リストは 'this' を除いた明示引数のみ。
+                // hirMethod.args の先頭要素 (envArgSid, TypeId.Name envTypeSid) を除外する。
+                let explicitArgs =
+                    match hirMethod.args with
+                    | _ :: rest -> rest |> List.map snd
+                    | [] -> []
+                Ok (Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, finalState.frame))
+        | _ -> Result.Error (Diagnostic.Error($"Expected function type for invoke method: {hirMethod.typ}", hirMethod.span))
 
-        // CIL インスタンスメソッドの arg 型リストは 'this' を除いた明示引数のみ。
-        // hirMethod.args の先頭要素 (envArgSid, TypeId.Name envTypeSid) を除外する。
-        let explicitArgs =
-            match hirMethod.args with
-            | _ :: rest -> rest |> List.map snd
-            | [] -> []
-        let ret =
-            match hirMethod.typ with
-            | TypeId.Fn (_, r) -> r
-            | _ -> failwithf "Expected function type for invoke method: %A" hirMethod.typ
-        Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, finalState.frame)
-
-    let private layoutModule (hirModule: ClosedHir.Module) : Mir.Module =
+    let private layoutModule (hirModule: ClosedHir.Module) : Result<Mir.Module, Diagnostic list> =
         let resolveTypeName (sid: SymbolId) =
             hirModule.scope.types
             |> Seq.tryPick (fun (KeyValue(name, tid)) ->
@@ -424,27 +473,55 @@ module Layout =
         let closureInvokeMap = hirModule.closureInvokeMethods
 
         // 型を生成する。クロージャー invoke メソッドがあれば env-class の Mir.Type.methods に追加する。
-        let types =
+        // 各型と invoke メソッドの Result を収集し、失敗があれば診断リストを返す。
+        let typeResults =
             hirModule.types
             |> List.map (fun hirType ->
                 let baseType = layoutType (resolveTypeName hirType.sym) hirType
                 // この型に属するクロージャー invoke メソッドを収集し、インスタンスメソッドとして生成する。
-                let invokeMethods =
+                let invokeMethodResults =
                     hirModule.methods
                     |> List.choose (fun hirMethod ->
                         match closureInvokeMap |> Map.tryFind hirMethod.sym.id with
                         | Some envTypeSid when envTypeSid = hirType.sym.id ->
                             Some(layoutInvokeMethod (resolveMethodName hirMethod.sym) hirMethod)
                         | _ -> None)
-                Mir.Type(baseType.name, baseType.sym, baseType.fields, baseType.ctors, invokeMethods))
+                // invoke メソッドの成功・失敗を分類する（単一走査）。
+                let invokeErrors, invokeSuccesses =
+                    invokeMethodResults
+                    |> List.fold (fun (errs, oks) r ->
+                        match r with
+                        | Result.Error e -> (e :: errs, oks)
+                        | Ok m -> (errs, m :: oks)) ([], [])
+                if List.isEmpty invokeErrors then
+                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.fields, baseType.ctors, List.rev invokeSuccesses))
+                else
+                    Result.Error (List.rev invokeErrors))
 
         // クロージャー invoke メソッドはすでに型内に配置したため、モジュールレベルからは除外する。
-        let methods =
+        let methodResults =
             hirModule.methods
             |> List.filter (fun hirMethod -> not (closureInvokeMap |> Map.containsKey hirMethod.sym.id))
             |> List.map (fun hirMethod -> layoutMethod (resolveMethodName hirMethod.sym) hirMethod)
 
-        Mir.Module(hirModule.name, types, methods)
+        // 型とメソッドの全エラーを収集し、エラーがなければ成功を返す（単一走査）。
+        let typeErrors, typeSuccesses =
+            typeResults
+            |> List.fold (fun (errs, oks) r ->
+                match r with
+                | Result.Error es -> (errs @ es, oks)
+                | Ok t -> (errs, t :: oks)) ([], [])
+        let methodErrors, methodSuccesses =
+            methodResults
+            |> List.fold (fun (errs, oks) r ->
+                match r with
+                | Result.Error e -> (e :: errs, oks)
+                | Ok m -> (errs, m :: oks)) ([], [])
+        let allErrors = typeErrors @ methodErrors
+        if List.isEmpty allErrors then
+            Ok (Mir.Module(hirModule.name, List.rev typeSuccesses, List.rev methodSuccesses))
+        else
+            Result.Error allErrors
 
     /// 式木に Lambda ノードが残っているかを判定する。
     let rec private hasLambdaExpr (expr: ClosedHir.Expr) : bool =
@@ -496,8 +573,15 @@ module Layout =
         match residualLambdaDiagnostics with
         | residual when not residual.IsEmpty -> PhaseResult.failed residual
         | _ ->
-            try
-                let modules = asm.modules |> List.map layoutModule
-                PhaseResult.succeeded (Mir.Assembly(asmName, modules)) []
-            with ex ->
-                PhaseResult.failed [ Diagnostic.Error($"Lowering failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]
+            let moduleResults = asm.modules |> List.map layoutModule
+            // 全モジュールの成功・失敗を単一走査で分類する。
+            let allErrors, moduleSuccesses =
+                moduleResults
+                |> List.fold (fun (errs, oks) r ->
+                    match r with
+                    | Result.Error es -> (errs @ es, oks)
+                    | Ok m -> (errs, m :: oks)) ([], [])
+            if List.isEmpty allErrors then
+                PhaseResult.succeeded (Mir.Assembly(asmName, List.rev moduleSuccesses)) []
+            else
+                PhaseResult.failed allErrors
