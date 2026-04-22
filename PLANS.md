@@ -1,5 +1,154 @@
 # Plan
 
+## 2026-04-22 保守性・責務分離の改善（フェーズ単位タスク）
+
+前セッションの設計調査で特定された問題を、コンパイラパイプラインのフェーズ順に整理したタスク一覧。
+各タスクは独立したコミット単位として実装する。
+
+---
+
+### フェーズ 1: HIR 型から変換後ノードを分離する
+
+**問題**: `Hir.Expr` に `EnvFieldLoad` / `ClosureCreate` という変換後専用ノードが混在しており、
+HIR が「型付きソース意味論 IR」という役割を逸脱している（AGENTS.md §5 HIR Rules 違反）。
+意味解析フェーズ（`Infer.fs` 等）がクロージャー変換の実装詳細を知らなければならない状態になっている。
+
+**実装内容**:
+- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [ ] `src/Atla.Core/Semantics/Data/` 配下に `ClosedHir.fs` を新設し、
+  `ClosedHir.Expr` 型を定義する（`Hir.Expr` の全ケース＋`EnvFieldLoad`/`ClosureCreate`）。
+- [ ] `Hir.Expr` から `EnvFieldLoad` / `ClosureCreate` を削除し、`Hir.Expr` をソース意味論のみに戻す。
+- [ ] `ClosureConversion` の入力型を `Hir.Assembly`、出力型を `ClosedHir.Assembly` に変更する。
+  - `rewriteExpr` / `rewriteStmt` の戻り型を `ClosedHir.Expr` / `ClosedHir.Stmt` に変える。
+- [ ] `Infer.fs` の `EnvFieldLoad` / `ClosureCreate` に対するパターンマッチ pass-through を削除する。
+- [ ] `Layout.fs` の入力型を `ClosedHir.Assembly` に変更し、`layoutExpr` が `ClosedHir.Expr` を受け取るよう更新する。
+- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+
+---
+
+### フェーズ 2: `closureInvokeMethods` を HIR から分離する
+
+**問題**: `Hir.Module` のオプション引数として `closureInvokeMethods: Map<int, int>` が混入しており、
+HIR のデータ定義がクロージャー変換の産物（`liftedMethodSid -> envTypeSid` マッピング）を保持している。
+これは HIR の責務を超えた変換フェーズ固有情報である。
+
+**実装内容**:
+- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [ ] フェーズ 1 完了後、`ClosedHir.Module` に `closureInvokeMethods: Map<int, int>` を正式フィールドとして定義する
+  （`Hir.Module` のオプション引数は削除する）。
+- [ ] `ClosureConversion.preprocessAssembly` の戻り値（`ClosedHir.Assembly`）が
+  `closureInvokeMethods` を `ClosedHir.Module` フィールドとして返すよう変更する。
+- [ ] `Layout.layoutModule` が `ClosedHir.Module.closureInvokeMethods` を参照するよう変更する
+  （`hirModule.closureInvokeMethods` の参照先を `ClosedHir.Module` に切り替える）。
+- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+
+---
+
+### フェーズ 3: `ClosureConversion` をコンパイルパイプラインへ明示的に組み込む
+
+**問題**: `Layout.layoutAssembly` 内部で `ClosureConversion.preprocessAssembly` を直接呼び出しており、
+クロージャー変換フェーズがパイプライン上から不可視になっている（AGENTS.md §3「All phase boundaries MUST be explicit module boundaries」違反）。
+
+**実装内容**:
+- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [ ] `Layout.layoutAssembly` から `ClosureConversion.preprocessAssembly` の呼び出しを削除する。
+  - `Layout.layoutAssembly` の入力型を `ClosedHir.Assembly`（フェーズ 1・2 の成果物）に変更する。
+  - 残留 Lambda チェック（`hasLambdaExpr`）は `ClosedHir.Expr` に対して実行するよう修正する。
+- [ ] `Compile.fs` のパイプラインに `ClosureConversion.preprocessAssembly` を明示的に追加する。
+  ```fsharp
+  |> Result.bind ClosureConversion.preprocessAssembly
+  |> Result.bind (Layout.layoutAssembly request.asmName)
+  ```
+- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+
+---
+
+### フェーズ 4: `Mir.Frame` / `Mir.Label` の可変状態を解消する
+
+**問題**: `Mir.Frame` は `mutable` フィールドを持つクラス、`Mir.Label` も内部状態が可変であり、
+AGENTS.md §6「mutable bindings MUST NOT be used in compiler phases」に直接違反している。
+副作用ベースのレジスタ割り当てにより、フェーズの純粋性が保証できない。
+
+**実装内容**:
+- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [ ] `Mir.Frame` を不変レコードに置き換える。
+  - `addArg` / `addLoc` は新しいフレームを返す純粋関数として再定義する。
+  - `Layout.fs` 内でフレームを引き回している箇所を、状態渡し（fold パターン）で書き直す。
+- [ ] `Mir.Label` の可変フィールド（`_label`, `_ilOffset`）を、
+  ラベル解決を後段（Gen フェーズ）の責務として切り出す形に変更する。
+  - Gen フェーズで `Dictionary<LabelId, Label>` を管理し、命令生成時に解決する。
+- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+
+---
+
+### フェーズ 5: `Layout.fs` / `ClosureConversion.fs` のエラー処理を `Result` へ統一する
+
+**問題**: `Layout.fs` と `ClosureConversion.fs` 全体で `failwith` / `failwithf` が制御フローに多用されており、
+AGENTS.md §8「Exceptions MUST NOT be used for control flow」に違反している。
+エラー箇所のスパン情報が失われ、診断品質が低下する。
+
+**実装内容**:
+- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [ ] `Layout.fs` の `layoutExpr` / `layoutStmt` の戻り型を `Result<KNormal, Diagnostic>` に変更する。
+  - `failwith` を `Error (Diagnostic.Error(..., span))` に置き換える。
+  - 呼び出し側を `Result.bind` / `Result.map` でチェーンする。
+- [ ] `ClosureConversion.fs` の `rewriteExpr` 系で `failwith` が残っている箇所を
+  `Diagnostic` 返却に置き換える。
+- [ ] `Atla.Core.Tests` に診断スパン付きエラーを検証するテストを追加する。
+- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+
+---
+
+### フェーズ 6: HIR トラバーサルを共通 fold/map インフラで統合する
+
+**問題**: `ClosureConversion.fs` に `collectFreeVarsExpr`・`rewriteExpr`・`rewriteCapturedRefs`・
+`collectMaxSymbolIdExpr` の4系統の式ツリートラバーサルが独立して実装されており、
+新しい `Hir.Expr` ケースを追加するたびに4箇所すべての修正が必要になる。
+
+**実装内容**:
+- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [ ] `src/Atla.Core/Semantics/Data/Hir.fs`（またはヘルパーモジュール）に
+  `mapExpr : (Expr -> Expr) -> Expr -> Expr` および
+  `foldExpr : ('a -> Expr -> 'a) -> 'a -> Expr -> 'a` を追加する。
+  - 対応する `mapStmt` / `foldStmt` も追加する。
+- [ ] `ClosureConversion.fs` の各トラバーサルを上記インフラを用いて書き直す。
+  - `collectFreeVarsExpr` → `foldExpr` ベースに変更する。
+  - `rewriteExpr` → `mapExpr` ベースに変更する（状態渡しが必要な部分は fold パターンを継続）。
+  - `collectMaxSymbolIdExpr` → `foldExpr` ベースに変更する。
+- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+
+---
+
+### フェーズ 7: SymbolId 採番器を一元化する
+
+**問題**: `Analyze.fs` が `SymbolTable.NextId()` を使い、
+`ClosureConversion` が `ConversionState.nextSymbolId`（`maxInModule + 1` から独立採番）を管理している。
+型で衝突防止が保証されておらず、フェーズ追加時にリスクになる。
+
+**実装内容**:
+- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [ ] `ClosureConversion.preprocessAssembly` の引数に `SymbolTable` を追加し、
+  `allocateSymbolId` が `SymbolTable.NextId()` を使うよう変更する。
+- [ ] `ConversionState.nextSymbolId` フィールドと `collectMaxSymbolId` 系の関数を削除する。
+- [ ] `Compile.fs` で `ClosureConversion.preprocessAssembly` の呼び出しに `symbolTable` を渡す。
+- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+
+---
+
+### フェーズ 8: リスト蓄積の O(n²) パターンを修正する
+
+**問題**: `rewriteStmts` / `rewriteMethods` で `@ [item]` 形式の末尾追加を繰り返しており、
+文数・メソッド数に対して O(n²) のリスト連結コストが発生している。
+
+**実装内容**:
+- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [ ] `ClosureConversion.fs` の `rewriteStmts` / `rewriteMethods` を
+  逆順蓄積＋`List.rev` パターンへ書き直す。
+- [ ] 同様のパターンが他のファイル（`Layout.fs` 等）に存在しないか確認し、あれば同様に修正する。
+- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+
+---
+
 ## 2026-04-21 クロージャー実装タスク（追加5件バッチ）
 
 ### 実施内容
