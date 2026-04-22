@@ -446,27 +446,25 @@ module Layout =
             hasLambdaExpr iterable || (body |> List.exists hasLambdaStmt)
         | ClosedHir.Stmt.ErrorStmt _ -> false
 
-    let layoutAssembly (asmName: string, asm: Hir.Assembly) : PhaseResult<Mir.Assembly> =
-        match ClosureConversion.preprocessAssembly asm with
-        | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
-        | { value = Some preprocessedAsm } ->
-            let residualLambdaDiagnostics =
-                preprocessedAsm.modules
-                |> List.collect (fun closedModule ->
-                    closedModule.methods
-                    |> List.choose (fun closedMethod ->
-                        if hasLambdaExpr closedMethod.body then
-                            Some(Diagnostic.Error($"Residual lambda remains after closure conversion. methodSid={closedMethod.sym.id}", closedMethod.span))
-                        else
-                            None))
+    /// クロージャー変換済み `ClosedHir.Assembly` を受け取り、MIR へ変換する。
+    /// 入力は `ClosureConversion.preprocessAssembly` の出力であることが前提であり、
+    /// 残留 Lambda ノードが存在する場合は診断エラーを返す。
+    let layoutAssembly (asmName: string, asm: ClosedHir.Assembly) : PhaseResult<Mir.Assembly> =
+        let residualLambdaDiagnostics =
+            asm.modules
+            |> List.collect (fun closedModule ->
+                closedModule.methods
+                |> List.choose (fun closedMethod ->
+                    if hasLambdaExpr closedMethod.body then
+                        Some(Diagnostic.Error($"Residual lambda remains after closure conversion. methodSid={closedMethod.sym.id}", closedMethod.span))
+                    else
+                        None))
 
-            match residualLambdaDiagnostics with
-            | residual when not residual.IsEmpty -> PhaseResult.failed residual
-            | _ ->
-                try
-                    let modules = preprocessedAsm.modules |> List.map layoutModule
-                    PhaseResult.succeeded (Mir.Assembly(asmName, modules)) []
-                with ex ->
-                    PhaseResult.failed [ Diagnostic.Error($"Lowering failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]
+        match residualLambdaDiagnostics with
+        | residual when not residual.IsEmpty -> PhaseResult.failed residual
         | _ ->
-            PhaseResult.failed [ Diagnostic.Error("Closure conversion preprocessing failed with unknown state", Atla.Core.Data.Span.Empty) ]
+            try
+                let modules = asm.modules |> List.map layoutModule
+                PhaseResult.succeeded (Mir.Assembly(asmName, modules)) []
+            with ex ->
+                PhaseResult.failed [ Diagnostic.Error($"Lowering failed: {ex.Message}", Atla.Core.Data.Span.Empty) ]

@@ -66,20 +66,27 @@ module Compiler =
                             | { succeeded = false; diagnostics = diagnostics } ->
                                 failed diagnostics
                             | { value = Some hir; diagnostics = analyzeDiagnostics } ->
-                                // Lowering
-                                match Layout.layoutAssembly(request.asmName, Hir.Assembly("hello", [ hir ])) with
-                                | { succeeded = false; diagnostics = layoutDiagnostics } ->
-                                    failed (analyzeDiagnostics @ layoutDiagnostics)
-                                | { value = Some mir; diagnostics = layoutDiagnostics } ->
-                                    // Code Generation
-                                    let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
-                                    match Gen.genAssembly(mir, outPath, symbolTable) with
-                                    | { succeeded = false; diagnostics = genDiagnostics } ->
-                                        failed (analyzeDiagnostics @ layoutDiagnostics @ genDiagnostics)
-                                    | { diagnostics = genDiagnostics } ->
-                                        succeeded (analyzeDiagnostics @ layoutDiagnostics @ genDiagnostics)
+                                // Closure Conversion
+                                match ClosureConversion.preprocessAssembly (Hir.Assembly("hello", [ hir ])) with
+                                | { succeeded = false; diagnostics = closureDiagnostics } ->
+                                    failed (analyzeDiagnostics @ closureDiagnostics)
+                                | { value = Some closedAsm; diagnostics = closureDiagnostics } ->
+                                    // Lowering
+                                    match Layout.layoutAssembly(request.asmName, closedAsm) with
+                                    | { succeeded = false; diagnostics = layoutDiagnostics } ->
+                                        failed (analyzeDiagnostics @ closureDiagnostics @ layoutDiagnostics)
+                                    | { value = Some mir; diagnostics = layoutDiagnostics } ->
+                                        // Code Generation
+                                        let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
+                                        match Gen.genAssembly(mir, outPath, symbolTable) with
+                                        | { succeeded = false; diagnostics = genDiagnostics } ->
+                                            failed (analyzeDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics)
+                                        | { diagnostics = genDiagnostics } ->
+                                            succeeded (analyzeDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics)
+                                    | _ ->
+                                        failed (analyzeDiagnostics @ closureDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ])
                                 | _ ->
-                                    failed (analyzeDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ])
+                                    failed (analyzeDiagnostics @ [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ])
                             | _ ->
                                 failed [ Diagnostic.Error("Semantic analysis failed with unknown state", Span.Empty) ]
                         finally

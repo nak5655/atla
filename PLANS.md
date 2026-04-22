@@ -50,16 +50,16 @@ HIR のデータ定義がクロージャー変換の産物（`liftedMethodSid ->
 クロージャー変換フェーズがパイプライン上から不可視になっている（AGENTS.md §3「All phase boundaries MUST be explicit module boundaries」違反）。
 
 **実装内容**:
-- [ ] `PLANS.md` に本タスク計画を追記する（このエントリ）。
-- [ ] `Layout.layoutAssembly` から `ClosureConversion.preprocessAssembly` の呼び出しを削除する。
+- [x] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [x] `Layout.layoutAssembly` から `ClosureConversion.preprocessAssembly` の呼び出しを削除する。
   - `Layout.layoutAssembly` の入力型を `ClosedHir.Assembly`（フェーズ 1・2 の成果物）に変更する。
   - 残留 Lambda チェック（`hasLambdaExpr`）は `ClosedHir.Expr` に対して実行するよう修正する。
-- [ ] `Compile.fs` のパイプラインに `ClosureConversion.preprocessAssembly` を明示的に追加する。
+- [x] `Compile.fs` のパイプラインに `ClosureConversion.preprocessAssembly` を明示的に追加する。
   ```fsharp
   |> Result.bind ClosureConversion.preprocessAssembly
   |> Result.bind (Layout.layoutAssembly request.asmName)
   ```
-- [ ] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
+- [x] `Atla.Core.Tests` をビルド・テスト実行して全テストが通ることを確認する。
 
 ---
 
