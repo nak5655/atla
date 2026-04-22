@@ -21,6 +21,9 @@ module ClosureConversion =
     type private ConversionState = {
         nextSymbolId: int
         generatedMethods: Hir.Method list
+        generatedTypes: Hir.Type list
+        // クロージャー invoke メソッドの (liftedMethodSid -> envTypeSid) マッピング。
+        closureInvokeMethods: Map<int, int>
         diagnostics: Diagnostic list
         captureMetadata: LambdaCaptureMetadata list
     }
@@ -29,26 +32,6 @@ module ClosureConversion =
     let private allocateSymbolId (state: ConversionState) : SymbolId * ConversionState =
         let sid = SymbolId state.nextSymbolId
         sid, { state with nextSymbolId = state.nextSymbolId + 1 }
-
-    /// 捕捉ラムダの診断を決定的フォーマットで追加する。
-    let private addCapturedLambdaDiagnostic (ownerMethod: Hir.Method) (captured: CapturedVarMetadata list) (state: ConversionState) : ConversionState =
-        let capturedText = captured |> List.map (fun item -> string item.sid) |> String.concat ", "
-        let mutableCapturedText =
-            captured
-            |> List.filter (fun item -> item.isMutable)
-            |> List.map (fun item -> string item.sid)
-            |> String.concat ", "
-        let mutableText =
-            if System.String.IsNullOrWhiteSpace mutableCapturedText then
-                "[]"
-            else
-                $"[{mutableCapturedText}]"
-        let diagnostic =
-            Diagnostic.Error(
-                $"Closure conversion requires env-class lowering but backend support is incomplete. methodSid={ownerMethod.sym.id}, captured=[{capturedText}], mutable={mutableText}",
-                ownerMethod.span)
-        let metadata = { ownerMethodSid = ownerMethod.sym.id; span = ownerMethod.span; captured = captured }
-        { state with diagnostics = state.diagnostics @ [ diagnostic ]; captureMetadata = state.captureMetadata @ [ metadata ] }
 
     /// 式内の自由変数集合を収集する（globalSymbols は捕捉対象から除外）。
     let rec private collectFreeVarsExpr (bound: Set<int>) (globalSymbols: Set<int>) (expr: Hir.Expr) : Set<int> =
@@ -86,6 +69,11 @@ module ClosureConversion =
             // ここではラムダ自身の引数のみを束縛集合へ入れる。
             let lambdaBound = args |> List.fold (fun (acc: Set<int>) arg -> acc.Add arg.sid.id) Set.empty
             collectFreeVarsExpr lambdaBound globalSymbols body
+        // EnvFieldLoad は env インスタンス引数へのアクセスで、外側スコープの自由変数ではない。
+        | Hir.Expr.EnvFieldLoad _ -> Set.empty
+        // ClosureCreate が捕捉している変数 sid は外側スコープで参照が必要。
+        | Hir.Expr.ClosureCreate (_, _, captured, _, _) ->
+            captured |> List.map (fun (sid, _, _) -> sid.id) |> Set.ofList
 
     /// 文列を宣言順に走査し、自由変数集合と更新後 bound を返す。
     and private collectFreeVarsStmts (bound: Set<int>) (globalSymbols: Set<int>) (stmts: Hir.Stmt list) : Set<int> * Set<int> =
@@ -111,6 +99,61 @@ module ClosureConversion =
             Set.union iterableVars bodyVars, bound
         | Hir.Stmt.ErrorStmt _ -> Set.empty, bound
 
+    /// lifted invoke method 本体内の捕捉変数参照（Hir.Expr.Id）を EnvFieldLoad へ書き換える。
+    let rec private rewriteCapturedRefs (envArgSid: SymbolId) (capturedSids: Set<int>) (expr: Hir.Expr) : Hir.Expr =
+        match expr with
+        | Hir.Expr.Id (sid, tid, span) when capturedSids.Contains sid.id ->
+            // 捕捉変数参照を env インスタンスのフィールドアクセスへ変換する。
+            Hir.Expr.EnvFieldLoad(envArgSid, sid, tid, span)
+        | Hir.Expr.Unit _
+        | Hir.Expr.Int _
+        | Hir.Expr.Float _
+        | Hir.Expr.String _
+        | Hir.Expr.Null _
+        | Hir.Expr.ExprError _
+        | Hir.Expr.Id _ -> expr
+        | Hir.Expr.EnvFieldLoad _ -> expr
+        | Hir.Expr.ClosureCreate _ -> expr
+        | Hir.Expr.MemberAccess (mem, instance, tid, span) ->
+            Hir.Expr.MemberAccess(mem, instance |> Option.map (rewriteCapturedRefs envArgSid capturedSids), tid, span)
+        | Hir.Expr.Call (func, instance, args, tid, span) ->
+            Hir.Expr.Call(
+                func,
+                instance |> Option.map (rewriteCapturedRefs envArgSid capturedSids),
+                args |> List.map (rewriteCapturedRefs envArgSid capturedSids),
+                tid, span)
+        | Hir.Expr.Block (stmts, body, tid, span) ->
+            Hir.Expr.Block(
+                stmts |> List.map (rewriteCapturedRefsStmt envArgSid capturedSids),
+                rewriteCapturedRefs envArgSid capturedSids body,
+                tid, span)
+        | Hir.Expr.If (cond, thenBranch, elseBranch, tid, span) ->
+            Hir.Expr.If(
+                rewriteCapturedRefs envArgSid capturedSids cond,
+                rewriteCapturedRefs envArgSid capturedSids thenBranch,
+                rewriteCapturedRefs envArgSid capturedSids elseBranch,
+                tid, span)
+        | Hir.Expr.Lambda (args, ret, body, tid, span) ->
+            // Lambda ノードは rewriteExpr で処理済みのはず（ここには到達しないはず）。
+            Hir.Expr.Lambda(args, ret, rewriteCapturedRefs envArgSid capturedSids body, tid, span)
+
+    /// 捕捉変数参照の書き換えを文に適用する。
+    and private rewriteCapturedRefsStmt (envArgSid: SymbolId) (capturedSids: Set<int>) (stmt: Hir.Stmt) : Hir.Stmt =
+        match stmt with
+        | Hir.Stmt.Let (sid, isMutable, value, span) ->
+            Hir.Stmt.Let(sid, isMutable, rewriteCapturedRefs envArgSid capturedSids value, span)
+        | Hir.Stmt.Assign (sid, value, span) ->
+            Hir.Stmt.Assign(sid, rewriteCapturedRefs envArgSid capturedSids value, span)
+        | Hir.Stmt.ExprStmt (value, span) ->
+            Hir.Stmt.ExprStmt(rewriteCapturedRefs envArgSid capturedSids value, span)
+        | Hir.Stmt.For (sid, tid, iterable, body, span) ->
+            Hir.Stmt.For(
+                sid, tid,
+                rewriteCapturedRefs envArgSid capturedSids iterable,
+                body |> List.map (rewriteCapturedRefsStmt envArgSid capturedSids),
+                span)
+        | Hir.Stmt.ErrorStmt _ -> stmt
+
     /// lambda lifting のために式を再帰変換し、必要な生成メソッドを state に蓄積する。
     let rec private rewriteExpr (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (expr: Hir.Expr) (state: ConversionState) : Hir.Expr * ConversionState =
         match expr with
@@ -120,7 +163,10 @@ module ClosureConversion =
         | Hir.Expr.String _
         | Hir.Expr.Null _
         | Hir.Expr.Id _
-        | Hir.Expr.ExprError _ -> expr, state
+        | Hir.Expr.ExprError _
+        // 変換済みノードはそのまま返す。
+        | Hir.Expr.EnvFieldLoad _
+        | Hir.Expr.ClosureCreate _ -> expr, state
         | Hir.Expr.MemberAccess (mem, instance, tid, span) ->
             let rewrittenInstance, nextState =
                 match instance with
@@ -165,6 +211,7 @@ module ClosureConversion =
 
             match captured with
             | [] ->
+                // 非捕捉ラムダ: static delegate として lambda lifting する。
                 let liftedSid, sidAllocatedState = allocateSymbolId bodyState
                 let methodArgs = args |> List.map (fun arg -> arg.sid, arg.typ)
                 let liftedMethodType = TypeId.Fn(methodArgs |> List.map snd, ret)
@@ -172,14 +219,67 @@ module ClosureConversion =
                 let updatedState = { sidAllocatedState with generatedMethods = sidAllocatedState.generatedMethods @ [ liftedMethod ] }
                 Hir.Expr.Id(liftedSid, tid, span), updatedState
             | _ ->
-                let capturedMetadata =
+                // 捕捉ラムダ: env-class 方式でクロージャーを生成する。
+                let capturedWithBindings =
                     captured
                     |> List.map (fun sid ->
                         match bindings.TryFind sid with
-                        | Some(isMutable, typ) -> { sid = sid; isMutable = isMutable; typ = typ }
-                        | None -> { sid = sid; isMutable = false; typ = TypeId.Error($"unknown-captured-{sid}") })
-                let diagnosticState = addCapturedLambdaDiagnostic ownerMethod capturedMetadata bodyState
-                Hir.Expr.Lambda(args, ret, rewrittenBody, tid, span), diagnosticState
+                        | Some(isMutable, typ) -> Some { sid = sid; isMutable = isMutable; typ = typ }, None
+                        | None -> None, Some sid)
+                let unknownSids = capturedWithBindings |> List.choose snd
+                let capturedMetadata = capturedWithBindings |> List.choose fst
+
+                match unknownSids with
+                | _ :: _ ->
+                    // 型情報を持たない捕捉変数が存在する（不正な HIR）。
+                    let unknownText = unknownSids |> List.map string |> String.concat ", "
+                    let diagnostic =
+                        Diagnostic.Error(
+                            $"Closure conversion failed: captured variable(s) have no type information. sids=[{unknownText}], ownerMethodSid={ownerMethod.sym.id}",
+                            ownerMethod.span)
+                    { bodyState with diagnostics = bodyState.diagnostics @ [ diagnostic ] }
+                    |> fun s -> Hir.Expr.Lambda(args, ret, rewrittenBody, tid, span), s
+                | [] ->
+                    // env クラスの SymbolId を採番する。
+                    let envTypeSid, state1 = allocateSymbolId bodyState
+                    // lifted invoke メソッドの SymbolId を採番する。
+                    let liftedMethodSid, state2 = allocateSymbolId state1
+                    // lifted method 内で env インスタンス引数として使う SymbolId を採番する。
+                    let envArgSid, state3 = allocateSymbolId state2
+
+                    // env クラスの Hir.Field エントリを生成（各捕捉変数に対して 1 フィールド）。
+                    let envFields =
+                        capturedMetadata
+                        |> List.map (fun cm ->
+                            // フィールドの body は Unit で代用（実際の値は外側スコープから格納される）。
+                            Hir.Field(SymbolId cm.sid, cm.typ, Hir.Expr.Unit span, span))
+
+                    // ラムダ本体内の捕捉変数参照を EnvFieldLoad へ書き換える。
+                    let capturedSidSet = capturedMetadata |> List.map (fun cm -> cm.sid) |> Set.ofList
+                    let rewrittenBodyWithEnv = rewriteCapturedRefs envArgSid capturedSidSet rewrittenBody
+
+                    // lifted invoke method を生成する。
+                    // 第一引数は env インスタンス（TypeId.Name envTypeSid）、残りはラムダ引数。
+                    let methodArgs = (envArgSid, TypeId.Name envTypeSid) :: (args |> List.map (fun arg -> arg.sid, arg.typ))
+                    let liftedMethodType = TypeId.Fn(methodArgs |> List.map snd, ret)
+                    let liftedMethod = Hir.Method(liftedMethodSid, methodArgs, rewrittenBodyWithEnv, liftedMethodType, span)
+
+                    // env-class の Hir.Type を生成する。
+                    let envType = Hir.Type(envTypeSid, envFields)
+
+                    // ClosureCreate 式を生成する。
+                    let capturedForCreate = capturedMetadata |> List.map (fun cm -> SymbolId cm.sid, cm.typ, cm.isMutable)
+                    let closureExpr = Hir.Expr.ClosureCreate(envTypeSid, liftedMethodSid, capturedForCreate, tid, span)
+
+                    let captureInfo = { ownerMethodSid = ownerMethod.sym.id; span = ownerMethod.span; captured = capturedMetadata }
+                    let updatedState =
+                        { state3 with
+                            generatedMethods = state3.generatedMethods @ [ liftedMethod ]
+                            generatedTypes = state3.generatedTypes @ [ envType ]
+                            closureInvokeMethods = state3.closureInvokeMethods |> Map.add liftedMethodSid.id envTypeSid.id
+                            captureMetadata = state3.captureMetadata @ [ captureInfo ] }
+
+                    closureExpr, updatedState
 
     /// lambda lifting のために文を再帰変換し、Let の束縛を逐次反映する。
     and private rewriteStmt (ownerMethod: Hir.Method) (bound: Set<int>) (bindings: Map<int, bool * TypeId>) (globalSymbols: Set<int>) (stmt: Hir.Stmt) (state: ConversionState) : Hir.Stmt * Set<int> * Map<int, bool * TypeId> * ConversionState =
@@ -225,6 +325,11 @@ module ClosureConversion =
         | Hir.Expr.Lambda (args, _, body, _, _) ->
             let maxArgSid = args |> List.map (fun arg -> arg.sid.id) |> List.fold max -1
             max maxArgSid (collectMaxSymbolIdExpr body)
+        | Hir.Expr.EnvFieldLoad (envArgSid, capturedSid, _, _) ->
+            max envArgSid.id capturedSid.id
+        | Hir.Expr.ClosureCreate (envTypeSid, methodSid, captured, _, _) ->
+            let maxCapturedSid = captured |> List.map (fun (sid, _, _) -> sid.id) |> List.fold max -1
+            [ envTypeSid.id; methodSid.id; maxCapturedSid ] |> List.max
         | _ -> -1
 
     /// モジュール内の文に含まれる SymbolId の最大値を収集する。
@@ -237,14 +342,20 @@ module ClosureConversion =
             max sid.id (max (collectMaxSymbolIdExpr iterable) (body |> List.map collectMaxSymbolIdStmt |> List.fold max -1))
         | Hir.Stmt.ErrorStmt _ -> -1
 
-    /// モジュール内 method を順序保持で変換し、生成メソッドを末尾追加した method 一覧を返す。
-    let private rewriteMethods (hirModule: Hir.Module) : Hir.Method list * Diagnostic list =
+    /// モジュール内 method を順序保持で変換し、生成メソッドと型を末尾追加した一覧を返す。
+    let private rewriteMethods (hirModule: Hir.Module) : Hir.Method list * Hir.Type list * Map<int, int> * Diagnostic list =
         let globalSymbols = hirModule.methods |> List.map (fun methodInfo -> methodInfo.sym.id) |> Set.ofList
         let maxInModule =
             let maxMethodSid = hirModule.methods |> List.map (fun methodInfo -> methodInfo.sym.id) |> List.fold max -1
             let maxExprSid = hirModule.methods |> List.map (fun methodInfo -> collectMaxSymbolIdExpr methodInfo.body) |> List.fold max -1
             max maxMethodSid maxExprSid
-        let initialState = { nextSymbolId = maxInModule + 1; generatedMethods = []; diagnostics = []; captureMetadata = [] }
+        let initialState =
+            { nextSymbolId = maxInModule + 1
+              generatedMethods = []
+              generatedTypes = []
+              closureInvokeMethods = Map.empty
+              diagnostics = []
+              captureMetadata = [] }
 
         let rewrittenMethods, finalState =
             hirModule.methods
@@ -257,15 +368,26 @@ module ClosureConversion =
                 let rewrittenMethod = Hir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.span)
                 accMethods @ [ rewrittenMethod ], bodyState) ([], initialState)
 
-        rewrittenMethods @ finalState.generatedMethods, finalState.diagnostics
+        rewrittenMethods @ finalState.generatedMethods,
+        finalState.generatedTypes,
+        finalState.closureInvokeMethods,
+        finalState.diagnostics
 
-    /// クロージャー変換前処理を行い、非捕捉ラムダを lambda lifting で lower する。
+    /// クロージャー変換前処理を行い、ラムダを lambda lifting / env-class 方式で lower する。
     let preprocessAssembly (asm: Hir.Assembly) : PhaseResult<Hir.Assembly> =
         let rewrittenModules, diagnostics =
             asm.modules
             |> List.fold (fun (modules, allDiagnostics) hirModule ->
-                let rewrittenMethods, moduleDiagnostics = rewriteMethods hirModule
-                let rewrittenModule = Hir.Module(hirModule.name, hirModule.types, hirModule.fields, rewrittenMethods, hirModule.scope)
+                let rewrittenMethods, generatedTypes, closureInvokeMethods, moduleDiagnostics = rewriteMethods hirModule
+                let allTypes = hirModule.types @ generatedTypes
+                let rewrittenModule =
+                    Hir.Module(
+                        hirModule.name,
+                        allTypes,
+                        hirModule.fields,
+                        rewrittenMethods,
+                        hirModule.scope,
+                        closureInvokeMethods)
                 modules @ [ rewrittenModule ], allDiagnostics @ moduleDiagnostics) ([], [])
 
         match diagnostics with

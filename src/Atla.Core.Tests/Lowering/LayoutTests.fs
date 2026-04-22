@@ -268,12 +268,12 @@ fn keep (xs: Array String): Array String = xs
         let hirAssembly = Hir.Assembly("test", [ hirModule ])
         let result = Layout.layoutAssembly("TestAsm", hirAssembly)
 
-        Assert.False(result.succeeded, "captured lambda should fail in preprocessing stage")
+        // capturedSym は外側メソッドの引数でも let 束縛でもないため、ClosureConversion が型情報不明診断を出す。
+        Assert.False(result.succeeded, "captured lambda with no binding info should fail in preprocessing stage")
         let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
-        Assert.Contains("Closure conversion requires env-class lowering", message)
-        Assert.Contains("methodSid=100", message)
-        Assert.Contains("captured=[101]", message)
-        Assert.Contains("mutable=[]", message)
+        Assert.Contains("Closure conversion failed: captured variable(s) have no type information", message)
+        Assert.Contains("ownerMethodSid=100", message)
+        Assert.Contains("sids=[101]", message)
 
     [<Fact>]
     let ``layoutAssembly lowers non-captured lambda via closure conversion`` () =
@@ -380,9 +380,10 @@ fn keep (xs: Array String): Array String = xs
         let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), span)
         let result = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
-        Assert.False(result.succeeded, "captured lambda should still fail before env-class implementation")
+        Assert.False(result.succeeded, "captured lambda with no binding info should still fail before env-class implementation")
         let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
-        Assert.Contains("captured=[401, 402]", message)
+        // 捕捉変数の sids が昇順に並んでいることを検証する（決定性チェック）。
+        Assert.Contains("sids=[401, 402]", message)
 
     [<Fact>]
     let ``captured lambda diagnostic reports mutable captured symbol ids`` () =
@@ -411,10 +412,23 @@ fn keep (xs: Array String): Array String = xs
         let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Fn([ TypeId.Unit ], TypeId.Int)), span)
         let result = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
-        Assert.False(result.succeeded, "captured mutable lambda should fail before env-class implementation")
-        let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
-        Assert.Contains("captured=[501]", message)
-        Assert.Contains("mutable=[501]", message)
+        // mutableSym は let 束縛でメソッドの bindings に入るため、env-class 変換が成功すべき。
+        Assert.True(result.succeeded, "mutable captured lambda should be successfully lowered via env-class conversion")
+        match result.value with
+        | Some mirAsm ->
+            // env-class 型がモジュールの types に追加されていることを確認する。
+            let hasEnvType = mirAsm.modules.Head.types.Length > 0
+            Assert.True(hasEnvType, "env-class type should be generated for mutable captured lambda")
+            // 外側メソッドの body に NewEnv 命令が含まれていることを確認する。
+            let mainMethodBody = mirAsm.modules.Head.methods.Head.body
+            let hasNewEnv =
+                mainMethodBody
+                |> List.exists (function
+                    | Mir.Ins.NewEnv _ -> true
+                    | _ -> false)
+            Assert.True(hasNewEnv, "outer method body should contain NewEnv instruction for env-class creation")
+        | None ->
+            Assert.True(false, "layoutAssembly succeeded but returned no MIR assembly")
 
     [<Fact>]
     let ``for loop variable captured by inner lambda is flagged as captured lambda diagnostic`` () =
@@ -450,16 +464,88 @@ fn keep (xs: Array String): Array String = xs
                 span)
 
         let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Unit), span)
-        let result = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
-        // 反復変数 601 は for-loop ボディ内で束縛されているが、lambda 内部から見ると捕捉対象となる。
-        Assert.False(result.succeeded, "lambda capturing a for-loop variable should fail before env-class implementation")
-        let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
-        Assert.Contains("captured=[601]", message)
+        // 新しい動作: iterSym は for 文のボディ内で bindings に登録されるため、
+        // ClosureConversion は env-class 変換に成功する。
+        // ClosureConversion レベルでは診断なし（変換成功）であることを検証する。
+        let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
+        let ccResult = ClosureConversion.preprocessAssembly hirAssembly
+        Assert.True(ccResult.succeeded, "ClosureConversion should succeed for for-loop variable capture (variable is in bindings)")
 
-    // ─────────────────────────────────────────────────────────────
-    // AST/HIR/MIR スナップショット + 診断検証テスト（Task 3: line 739）
-    // ─────────────────────────────────────────────────────────────
+        // ClosureConversion 後のモジュールに env-class 型が生成されていることを確認する。
+        match ccResult.value with
+        | Some preprocessed ->
+            let envTypes = preprocessed.modules.Head.types
+            Assert.True(envTypes.Length > 0, "env-class type should be generated for for-loop variable capture")
+        | None ->
+            Assert.True(false, "preprocessAssembly succeeded but returned no assembly")
+
+    [<Fact>]
+    let ``layoutAssembly lowers captured lambda via env-class conversion`` () =
+        // 外側メソッドの引数を捕捉するラムダを env-class 変換で lower できることを検証する。
+        // 外側メソッド: fn main (n: Int): Func<int,int> = fn x -> n + x
+        // → env-class に n を格納し、invoke メソッドが n + x を計算する。
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 800
+        let outerArgSid = SymbolId 801
+        let lambdaArgSid = SymbolId 802
+        let scope = Scope(None)
+        scope.DeclareVar("main", methodSym)
+
+        // ラムダ本体: outerArgSid + lambdaArgSid（実際の計算は GenTests で検証するため、ここでは型構造を確認）。
+        let lambdaExpr =
+            Hir.Expr.Lambda(
+                [ Hir.Arg(lambdaArgSid, "x", TypeId.Int, span) ],
+                TypeId.Int,
+                // 本体は outerArgSid を参照するシンプルな式（capturedSid のみ）
+                Hir.Expr.Id(outerArgSid, TypeId.Int, span),
+                TypeId.Fn([ TypeId.Int ], TypeId.Int),
+                span)
+
+        let hirMethod =
+            Hir.Method(
+                methodSym,
+                [ outerArgSid, TypeId.Int ],
+                lambdaExpr,
+                TypeId.Fn([ TypeId.Int ], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
+                span)
+
+        let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
+        let hirAssembly = Hir.Assembly("test", [ hirModule ])
+        let result = Layout.layoutAssembly("TestAsm", hirAssembly)
+
+        Assert.True(result.succeeded, "captured lambda should be lowered successfully via env-class conversion")
+        match result.value with
+        | Some mirAsm ->
+            let mirModule = mirAsm.modules.Head
+
+            // env-class 型がモジュールの types に追加されていることを確認する。
+            Assert.True(mirModule.types.Length > 0, "env-class type should be generated for captured lambda")
+            let envType = mirModule.types.Head
+
+            // env-class 型にフィールドが 1 件（捕捉変数 outerArgSid = 801）あることを確認する。
+            Assert.Equal(1, envType.fields.Length)
+            Assert.Equal(outerArgSid, envType.fields.Head.sym)
+            Assert.Equal(TypeId.Int, envType.fields.Head.typ)
+
+            // env-class 型に invoke インスタンスメソッドが 1 件あることを確認する。
+            Assert.Equal(1, envType.methods.Length)
+            let invokeMethod = envType.methods.Head
+            // invoke メソッドのシグネチャ: 明示引数 = [TypeId.Int]（env インスタンスは除外済み）。
+            Assert.Equal<TypeId list>([ TypeId.Int ], invokeMethod.args)
+            Assert.Equal(TypeId.Int, invokeMethod.ret)
+
+            // 外側メソッドの body に NewEnv・StoreEnvField・FnDelegate が含まれることを確認する。
+            let mainMethod = mirModule.methods.Head
+            let hasNewEnv = mainMethod.body |> List.exists (function Mir.Ins.NewEnv _ -> true | _ -> false)
+            let hasStoreEnvField = mainMethod.body |> List.exists (function Mir.Ins.StoreEnvField _ -> true | _ -> false)
+            let hasFnDelegate = mainMethod.body |> List.exists (function Mir.Ins.RetValue(Mir.Value.FnDelegate(_, _, Some _)) -> true | _ -> false)
+
+            Assert.True(hasNewEnv, "outer method should contain NewEnv instruction")
+            Assert.True(hasStoreEnvField, "outer method should contain StoreEnvField instruction")
+            Assert.True(hasFnDelegate, "outer method should return FnDelegate bound to env instance")
+        | None ->
+            Assert.True(false, "layoutAssembly succeeded but returned no MIR assembly")
 
     /// 単純な整数加算関数の型表現が AST→HIR→MIR を通じて安定していることを検証するスナップショットテスト。
     [<Fact>]

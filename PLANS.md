@@ -31,31 +31,29 @@
 
 ### 実装タスク
 - [x] `PLANS.md` に本タスク計画を追記する。
-- [ ] `Lowering/ClosureConversion.fs`
-  - [ ] 捕捉ラムダ失敗診断を成功変換へ置換する。
-  - [ ] env-class 用メタデータ（env type symbol, captured field list, mutable-cell 要否）を生成する。
-  - [ ] ラムダ本体を lifted method へ変換し、env 参照アクセスへ書き換える。
-- [ ] `Lowering/Data/Mir.fs`
-  - [ ] env-class 生成に必要な MIR 表現（型/ctor/メソッド/フィールド初期化）を拡張する。
+- [x] `Lowering/ClosureConversion.fs`
+  - [x] 捕捉ラムダ失敗診断を成功変換へ置換する。
+  - [x] env-class 用メタデータ（env type symbol, captured field list, mutable-cell 要否）を生成する。
+  - [x] ラムダ本体を lifted method へ変換し、env 参照アクセスへ書き換える（`EnvFieldLoad`）。
+- [x] `Lowering/Data/Mir.fs`
+  - [x] env-class 生成に必要な MIR 表現（`NewEnv` / `StoreEnvField` / `LoadEnvField`）を拡張する。
   - [x] target 付き delegate 生成を表現できる値/命令を追加する。
-- [ ] `Lowering/Layout.fs`
-  - [ ] env インスタンス生成・captured 値の格納・delegate 構築を出力する。
-  - [ ] 既存 `Hir.Expr.Lambda` failwith 到達を排除する（前処理後の不変条件として保証）。
-- [ ] `Lowering/Gen.fs`
+- [x] `Lowering/Layout.fs`
+  - [x] env インスタンス生成・captured 値の格納・delegate 構築を出力する（`ClosureCreate` / `EnvFieldLoad` lowering）。
+  - [x] closure invoke メソッドを `Mir.Type.methods` にルーティングする（`closureInvokeMethods` マップ使用）。
+  - [x] 既存 `Hir.Expr.Lambda` failwith 到達を排除する（前処理後の不変条件として保証）。
+- [x] `Lowering/Gen.fs`
   - [x] target 付き delegate 生成 IL（`ldarg/ldloc target; ldftn; newobj`）を実装する。
-  - [ ] env-class メンバー生成と参照解決を実装する。
-- [ ] `Semantics/Analyze.fs`
-  - [x] `for` 反復変数の捕捉時に反復ごと束縛となるようシンボル/スコープ規則を明文化し必要なら実装修正する。
-- [ ] テスト
-  - [ ] `Atla.Core.Tests/Lowering/LayoutTests.fs`: captured lambda の成功 lowering ケースを追加。
-  - [x] `Atla.Core.Tests/Lowering/Gen/GenTests.fs`: env-class + delegate target の CIL 生成テストを追加。
-  - [x] `Atla.Core.Tests/Semantics/AnalyzeTests.fs`: mutable capture / loop capture の回帰テストを追加。
-  - [x] AST/HIR/MIR の snapshot テストを closure ケースで追加（成功系・診断系）。
-- [ ] ドキュメント
-  - [x] README か design doc に closure ABI（captured順序・mutable capture・loop capture）を追記する。
-- [ ] 検証
-  - [x] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj`
-  - [x] `dotnet test src/Atla.slnx`
+  - [x] env-class メンバー生成と参照解決を実装する（`typeCtors` / `fieldBuilders`）。
+  - [x] env-class invoke インスタンスメソッド定義（`MethodAttributes.Public`）と `methodBuilders` 登録を実装する。
+- [x] `Semantics/Data/Hir.fs`
+  - [x] `Hir.Expr.EnvFieldLoad` と `Hir.Expr.ClosureCreate` を追加する。
+  - [x] `Hir.Module` に `closureInvokeMethods: Map<int,int>` をオプション引数で追加する。
+- [x] `Semantics/Infer.fs`
+  - [x] 新 HIR ノード（`EnvFieldLoad` / `ClosureCreate`）の pass-through を追加する。
+- [x] テスト
+  - [x] `Atla.Core.Tests/Lowering/LayoutTests.fs`: captured lambda の成功 lowering ケースを追加。
+  - [x] 既存テストを新動作（env-class 変換成功）に合わせて更新する。
 
 ## 2026-04-21 クロージャーlowering実装（非捕捉ラムダのlambda lifting）
 
