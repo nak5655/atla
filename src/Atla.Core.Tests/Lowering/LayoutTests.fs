@@ -338,7 +338,7 @@ fn keep (xs: Array String): Array String = xs
         let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), span)
         let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
 
-        let snapshotOf (asm: Hir.Assembly) =
+        let snapshotOf (asm: ClosedHir.Assembly) =
             asm.modules.Head.methods
             |> List.map (fun m -> $"{m.sym.id}:{m.args |> List.length}:{m.typ}")
             |> String.concat "|"

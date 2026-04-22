@@ -18,15 +18,15 @@ module Layout =
         let sid = freshTempSid -1
         frame.addLoc(sid, tid)
 
-    let rec private layoutExpr (frame: Mir.Frame) (expr: Hir.Expr) : KNormal =
+    let rec private layoutExpr (frame: Mir.Frame) (expr: ClosedHir.Expr) : KNormal =
         match expr with
-        | Hir.Expr.Unit _ -> { ins = []; res = None }
-        | Hir.Expr.Int (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) }
-        | Hir.Expr.Float (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) }
-        | Hir.Expr.String (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) }
+        | ClosedHir.Expr.Unit _ -> { ins = []; res = None }
+        | ClosedHir.Expr.Int (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) }
+        | ClosedHir.Expr.Float (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) }
+        | ClosedHir.Expr.String (value, _) -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) }
         // null リテラル: 参照型のオプショナル引数デフォルト値として使用する
-        | Hir.Expr.Null _ -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Null)) }
-        | Hir.Expr.Id (sid, tid, _) ->
+        | ClosedHir.Expr.Null _ -> { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Null)) }
+        | ClosedHir.Expr.Id (sid, tid, _) ->
             match frame.get sid with
             | Some reg -> { ins = []; res = Some(Mir.Value.RegVal reg) }
             | None ->
@@ -47,7 +47,7 @@ module Layout =
                 | _ ->
                     let argReg = frame.addArg(sid, tid)
                     { ins = []; res = Some(Mir.Value.RegVal argReg) }
-        | Hir.Expr.MemberAccess (mem, instance, tid, span) ->
+        | ClosedHir.Expr.MemberAccess (mem, instance, tid, span) ->
             match mem with
             | Hir.Member.NativeField fi -> { ins = []; res = Some(Mir.Value.FieldVal fi) }
             | Hir.Member.NativeMethod mi -> { ins = []; res = Some(Mir.Value.MethodVal mi) }
@@ -76,7 +76,7 @@ module Layout =
                     else
                         let dst = declareTemp frame tid
                         { ins = instanceIns @ [ Mir.Ins.CallAssign(dst, getter, instanceArg) ]; res = Some(Mir.Value.RegVal dst) }
-        | Hir.Expr.Call (func, _, args, tid, _) ->
+        | ClosedHir.Expr.Call (func, _, args, tid, _) ->
             let argKn = args |> List.map (layoutExpr frame)
             let argIns = argKn |> List.collect (fun k -> k.ins)
             let argValues =
@@ -161,11 +161,11 @@ module Layout =
                     | _ ->
                         let dst = declareTemp frame tid
                         { ins = argIns @ [ Mir.Ins.CallAssignSym(dst, sid, argValues) ]; res = Some(Mir.Value.RegVal dst) }
-        | Hir.Expr.Block (stmts, expr, _, _) ->
+        | ClosedHir.Expr.Block (stmts, expr, _, _) ->
             let stmtIns = stmts |> List.collect (layoutStmt frame)
             let exprKn = layoutExpr frame expr
             { ins = stmtIns @ exprKn.ins; res = exprKn.res }
-        | Hir.Expr.If (cond, thenBranch, elseBranch, tid, _) ->
+        | ClosedHir.Expr.If (cond, thenBranch, elseBranch, tid, _) ->
             let condKn = layoutExpr frame cond
             let thenKn = layoutExpr frame thenBranch
             let elseKn = layoutExpr frame elseBranch
@@ -199,12 +199,12 @@ module Layout =
                         @ [ Mir.Ins.MarkLabel endLabel ]
                     res = Some(Mir.Value.RegVal dst)
                 }
-        | Hir.Expr.ExprError (message, _, _) ->
+        | ClosedHir.Expr.ExprError (message, _, _) ->
             failwithf "Cannot lower erroneous expression: %s" message
-        | Hir.Expr.Lambda _ ->
+        | ClosedHir.Expr.Lambda _ ->
             failwith "Lambda lowering is not implemented"
         // env-class クロージャーフィールド参照: env インスタンス引数からフィールドを読み込む。
-        | Hir.Expr.EnvFieldLoad (envArgSid, capturedSid, tid, _) ->
+        | ClosedHir.Expr.EnvFieldLoad (envArgSid, capturedSid, tid, _) ->
             let envReg =
                 match frame.get envArgSid with
                 | Some reg -> reg
@@ -217,7 +217,7 @@ module Layout =
             let dst = declareTemp frame tid
             { ins = [ Mir.Ins.LoadEnvField(dst, envReg, envTypeSid, capturedSid) ]; res = Some(Mir.Value.RegVal dst) }
         // env-class クロージャー生成式: env インスタンスを生成し、捕捉変数を格納し、bound delegate を返す。
-        | Hir.Expr.ClosureCreate (envTypeSid, methodSid, captured, tid, _) ->
+        | ClosedHir.Expr.ClosureCreate (envTypeSid, methodSid, captured, tid, _) ->
             // 1. env インスタンス用レジスタを確保し、NewEnv 命令を生成する。
             let envTyp = TypeId.Name envTypeSid
             let envReg = declareTemp frame envTyp
@@ -237,23 +237,23 @@ module Layout =
             | None ->
                 failwithf "Cannot resolve delegate type for ClosureCreate: %A" tid
 
-    and private layoutStmt (frame: Mir.Frame) (stmt: Hir.Stmt) : Mir.Ins list =
+    and private layoutStmt (frame: Mir.Frame) (stmt: ClosedHir.Stmt) : Mir.Ins list =
         match stmt with
-        | Hir.Stmt.Let (sid, _, value, _) ->
+        | ClosedHir.Stmt.Let (sid, _, value, _) ->
             let valueKn = layoutExpr frame value
             let dst = frame.addLoc(sid, value.typ)
             match valueKn.res with
             | Some v -> valueKn.ins @ [ Mir.Ins.Assign(dst, v) ]
             | None -> valueKn.ins
-        | Hir.Stmt.Assign (sid, value, _) ->
+        | ClosedHir.Stmt.Assign (sid, value, _) ->
             let valueKn = layoutExpr frame value
             match frame.get sid, valueKn.res with
             | Some dst, Some v -> valueKn.ins @ [ Mir.Ins.Assign(dst, v) ]
             | Some _, None -> valueKn.ins
             | None, _ -> failwithf "Undefined variable in assignment: %A" sid
-        | Hir.Stmt.ExprStmt (expr, _) ->
+        | ClosedHir.Stmt.ExprStmt (expr, _) ->
             (layoutExpr frame expr).ins
-        | Hir.Stmt.For (sid, tid, iterable, body, span) ->
+        | ClosedHir.Stmt.For (sid, tid, iterable, body, span) ->
             let iterableKn = layoutExpr frame iterable
             let iterReg = declareTemp frame iterable.typ
             let iterAssignIns =
@@ -316,10 +316,10 @@ module Layout =
                 @ bodyIns
                 @ [ Mir.Ins.Jump loopStart
                     Mir.Ins.MarkLabel loopEnd ]
-        | Hir.Stmt.ErrorStmt (message, _) ->
+        | ClosedHir.Stmt.ErrorStmt (message, _) ->
             failwithf "Cannot lower erroneous statement: %s" message
 
-    let private layoutMethod (methodName: string) (hirMethod: Hir.Method) : Mir.Method =
+    let private layoutMethod (methodName: string) (hirMethod: ClosedHir.Method) : Mir.Method =
         let frame = Mir.Frame()
         // メソッド引数を宣言順にフレームへ事前登録する。
         // これにより、ボディ内で引数を参照したときに正しい Arg インデックスが割り当てられる。
@@ -339,13 +339,13 @@ module Layout =
         | TypeId.Fn (args, ret) -> Mir.Method(methodName, hirMethod.sym, args, ret, body, frame)
         | _ -> failwithf "Expected function type for method: %A" hirMethod.typ
 
-    let private layoutType (typeName: string) (hirType: Hir.Type) : Mir.Type =
+    let private layoutType (typeName: string) (hirType: ClosedHir.Type) : Mir.Type =
         let fields = hirType.fields |> List.map (fun field -> Mir.Field(field.sym, field.typ))
         Mir.Type(typeName, hirType.sym, fields, [], [])
 
     /// env-class の invoke メソッドとして使用するインスタンスメソッドを生成する。
     /// 通常の layoutMethod との違い: 第一引数（env インスタンス）は TypeId.Name の場合のみ除去する。
-    let private layoutInvokeMethod (methodName: string) (hirMethod: Hir.Method) : Mir.Method =
+    let private layoutInvokeMethod (methodName: string) (hirMethod: ClosedHir.Method) : Mir.Method =
         let frame = Mir.Frame()
         // invoke method の全引数をフレームへ事前登録する（第一引数 = env インスタンスを含む）。
         // インスタンスメソッドでは Arg(0) が 'this' に対応するため、第一引数 sid を Arg(0) に割り当てる。
@@ -373,7 +373,7 @@ module Layout =
             | _ -> failwithf "Expected function type for invoke method: %A" hirMethod.typ
         Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, frame)
 
-    let private layoutModule (hirModule: Hir.Module) : Mir.Module =
+    let private layoutModule (hirModule: ClosedHir.Module) : Mir.Module =
         let resolveTypeName (sid: SymbolId) =
             hirModule.scope.types
             |> Seq.tryPick (fun (KeyValue(name, tid)) ->
@@ -414,37 +414,37 @@ module Layout =
         Mir.Module(hirModule.name, types, methods)
 
     /// 式木に Lambda ノードが残っているかを判定する。
-    let rec private hasLambdaExpr (expr: Hir.Expr) : bool =
+    let rec private hasLambdaExpr (expr: ClosedHir.Expr) : bool =
         match expr with
-        | Hir.Expr.Lambda _ -> true
-        | Hir.Expr.Block (stmts, body, _, _) ->
+        | ClosedHir.Expr.Lambda _ -> true
+        | ClosedHir.Expr.Block (stmts, body, _, _) ->
             (stmts |> List.exists hasLambdaStmt) || hasLambdaExpr body
-        | Hir.Expr.Call (_, instance, args, _, _) ->
+        | ClosedHir.Expr.Call (_, instance, args, _, _) ->
             let instanceHasLambda =
                 instance
                 |> Option.map hasLambdaExpr
                 |> Option.defaultValue false
             instanceHasLambda || (args |> List.exists hasLambdaExpr)
-        | Hir.Expr.MemberAccess (_, instance, _, _) ->
+        | ClosedHir.Expr.MemberAccess (_, instance, _, _) ->
             instance
             |> Option.map hasLambdaExpr
             |> Option.defaultValue false
-        | Hir.Expr.If (cond, thenBranch, elseBranch, _, _) ->
+        | ClosedHir.Expr.If (cond, thenBranch, elseBranch, _, _) ->
             hasLambdaExpr cond || hasLambdaExpr thenBranch || hasLambdaExpr elseBranch
         // EnvFieldLoad と ClosureCreate は変換済みノードなので Lambda ではない。
-        | Hir.Expr.EnvFieldLoad _ -> false
-        | Hir.Expr.ClosureCreate _ -> false
+        | ClosedHir.Expr.EnvFieldLoad _ -> false
+        | ClosedHir.Expr.ClosureCreate _ -> false
         | _ -> false
 
     /// 文木に Lambda ノードが残っているかを判定する。
-    and private hasLambdaStmt (stmt: Hir.Stmt) : bool =
+    and private hasLambdaStmt (stmt: ClosedHir.Stmt) : bool =
         match stmt with
-        | Hir.Stmt.Let (_, _, value, _)
-        | Hir.Stmt.Assign (_, value, _)
-        | Hir.Stmt.ExprStmt (value, _) -> hasLambdaExpr value
-        | Hir.Stmt.For (_, _, iterable, body, _) ->
+        | ClosedHir.Stmt.Let (_, _, value, _)
+        | ClosedHir.Stmt.Assign (_, value, _)
+        | ClosedHir.Stmt.ExprStmt (value, _) -> hasLambdaExpr value
+        | ClosedHir.Stmt.For (_, _, iterable, body, _) ->
             hasLambdaExpr iterable || (body |> List.exists hasLambdaStmt)
-        | Hir.Stmt.ErrorStmt _ -> false
+        | ClosedHir.Stmt.ErrorStmt _ -> false
 
     let layoutAssembly (asmName: string, asm: Hir.Assembly) : PhaseResult<Mir.Assembly> =
         match ClosureConversion.preprocessAssembly asm with
@@ -452,11 +452,11 @@ module Layout =
         | { value = Some preprocessedAsm } ->
             let residualLambdaDiagnostics =
                 preprocessedAsm.modules
-                |> List.collect (fun hirModule ->
-                    hirModule.methods
-                    |> List.choose (fun hirMethod ->
-                        if hasLambdaExpr hirMethod.body then
-                            Some(Diagnostic.Error($"Residual lambda remains after closure conversion. methodSid={hirMethod.sym.id}", hirMethod.span))
+                |> List.collect (fun closedModule ->
+                    closedModule.methods
+                    |> List.choose (fun closedMethod ->
+                        if hasLambdaExpr closedMethod.body then
+                            Some(Diagnostic.Error($"Residual lambda remains after closure conversion. methodSid={closedMethod.sym.id}", closedMethod.span))
                         else
                             None))
 
