@@ -203,6 +203,39 @@ module Layout =
             failwithf "Cannot lower erroneous expression: %s" message
         | Hir.Expr.Lambda _ ->
             failwith "Lambda lowering is not implemented"
+        // env-class クロージャーフィールド参照: env インスタンス引数からフィールドを読み込む。
+        | Hir.Expr.EnvFieldLoad (envArgSid, capturedSid, tid, _) ->
+            let envReg =
+                match frame.get envArgSid with
+                | Some reg -> reg
+                | None -> failwithf "Env arg %A not found in frame for EnvFieldLoad" envArgSid
+            let envTypeSid =
+                match frame.argTypes.TryGetValue(envArgSid) with
+                | true, TypeId.Name sid -> sid
+                | true, t -> failwithf "Env arg %A has unexpected type %A; expected TypeId.Name" envArgSid t
+                | false, _ -> failwithf "Env arg type not found in frame for %A" envArgSid
+            let dst = declareTemp frame tid
+            { ins = [ Mir.Ins.LoadEnvField(dst, envReg, envTypeSid, capturedSid) ]; res = Some(Mir.Value.RegVal dst) }
+        // env-class クロージャー生成式: env インスタンスを生成し、捕捉変数を格納し、bound delegate を返す。
+        | Hir.Expr.ClosureCreate (envTypeSid, methodSid, captured, tid, _) ->
+            // 1. env インスタンス用レジスタを確保し、NewEnv 命令を生成する。
+            let envTyp = TypeId.Name envTypeSid
+            let envReg = declareTemp frame envTyp
+            let newEnvIns = Mir.Ins.NewEnv(envReg, envTypeSid)
+            // 2. 各捕捉変数を env フィールドへ格納する命令を生成する。
+            let storeIns =
+                captured
+                |> List.choose (fun (capturedSid, _, _) ->
+                    match frame.get capturedSid with
+                    | Some capturedReg ->
+                        Some(Mir.Ins.StoreEnvField(envReg, envTypeSid, capturedSid, Mir.Value.RegVal capturedReg))
+                    | None -> None)
+            // 3. env インスタンスにバインドしたデリゲートを生成する値を返す。
+            match TypeId.tryToRuntimeSystemType tid with
+            | Some delegateType ->
+                { ins = [ newEnvIns ] @ storeIns; res = Some(Mir.Value.FnDelegate(methodSid, delegateType, Some envReg)) }
+            | None ->
+                failwithf "Cannot resolve delegate type for ClosureCreate: %A" tid
 
     and private layoutStmt (frame: Mir.Frame) (stmt: Hir.Stmt) : Mir.Ins list =
         match stmt with
@@ -310,6 +343,36 @@ module Layout =
         let fields = hirType.fields |> List.map (fun field -> Mir.Field(field.sym, field.typ))
         Mir.Type(typeName, hirType.sym, fields, [], [])
 
+    /// env-class の invoke メソッドとして使用するインスタンスメソッドを生成する。
+    /// 通常の layoutMethod との違い: 第一引数（env インスタンス）は TypeId.Name の場合のみ除去する。
+    let private layoutInvokeMethod (methodName: string) (hirMethod: Hir.Method) : Mir.Method =
+        let frame = Mir.Frame()
+        // invoke method の全引数をフレームへ事前登録する（第一引数 = env インスタンスを含む）。
+        // インスタンスメソッドでは Arg(0) が 'this' に対応するため、第一引数 sid を Arg(0) に割り当てる。
+        for (argSid, argType) in hirMethod.args do
+            frame.addArg(argSid, argType) |> ignore
+        let bodyKn = layoutExpr frame hirMethod.body
+        let body =
+            match hirMethod.typ with
+            | TypeId.Fn (_, TypeId.Unit) -> bodyKn.ins @ [ Mir.Ins.Ret ]
+            | TypeId.Fn (_, _) ->
+                match bodyKn.res with
+                | Some v -> bodyKn.ins @ [ Mir.Ins.RetValue v ]
+                | None -> bodyKn.ins @ [ Mir.Ins.Ret ]
+            | _ -> failwithf "Expected function type for invoke method: %A" hirMethod.typ
+
+        // CIL インスタンスメソッドの arg 型リストは 'this' を除いた明示引数のみ。
+        // hirMethod.args の先頭要素 (envArgSid, TypeId.Name envTypeSid) を除外する。
+        let explicitArgs =
+            match hirMethod.args with
+            | _ :: rest -> rest |> List.map snd
+            | [] -> []
+        let ret =
+            match hirMethod.typ with
+            | TypeId.Fn (_, r) -> r
+            | _ -> failwithf "Expected function type for invoke method: %A" hirMethod.typ
+        Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, frame)
+
     let private layoutModule (hirModule: Hir.Module) : Mir.Module =
         let resolveTypeName (sid: SymbolId) =
             hirModule.scope.types
@@ -325,12 +388,27 @@ module Layout =
                 if symSid.id = sid.id then Some name else None)
             |> Option.defaultValue (sprintf "fn_%d" sid.id)
 
+        let closureInvokeMap = hirModule.closureInvokeMethods
+
+        // 型を生成する。クロージャー invoke メソッドがあれば env-class の Mir.Type.methods に追加する。
         let types =
             hirModule.types
-            |> List.map (fun hirType -> layoutType (resolveTypeName hirType.sym) hirType)
+            |> List.map (fun hirType ->
+                let baseType = layoutType (resolveTypeName hirType.sym) hirType
+                // この型に属するクロージャー invoke メソッドを収集し、インスタンスメソッドとして生成する。
+                let invokeMethods =
+                    hirModule.methods
+                    |> List.choose (fun hirMethod ->
+                        match closureInvokeMap |> Map.tryFind hirMethod.sym.id with
+                        | Some envTypeSid when envTypeSid = hirType.sym.id ->
+                            Some(layoutInvokeMethod (resolveMethodName hirMethod.sym) hirMethod)
+                        | _ -> None)
+                Mir.Type(baseType.name, baseType.sym, baseType.fields, baseType.ctors, invokeMethods))
 
+        // クロージャー invoke メソッドはすでに型内に配置したため、モジュールレベルからは除外する。
         let methods =
             hirModule.methods
+            |> List.filter (fun hirMethod -> not (closureInvokeMap |> Map.containsKey hirMethod.sym.id))
             |> List.map (fun hirMethod -> layoutMethod (resolveMethodName hirMethod.sym) hirMethod)
 
         Mir.Module(hirModule.name, types, methods)
@@ -353,6 +431,9 @@ module Layout =
             |> Option.defaultValue false
         | Hir.Expr.If (cond, thenBranch, elseBranch, _, _) ->
             hasLambdaExpr cond || hasLambdaExpr thenBranch || hasLambdaExpr elseBranch
+        // EnvFieldLoad と ClosureCreate は変換済みノードなので Lambda ではない。
+        | Hir.Expr.EnvFieldLoad _ -> false
+        | Hir.Expr.ClosureCreate _ -> false
         | _ -> false
 
     /// 文木に Lambda ノードが残っているかを判定する。

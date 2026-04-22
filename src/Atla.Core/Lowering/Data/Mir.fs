@@ -120,6 +120,12 @@ module Mir =
         | CallAssign of dst: Reg * method: MethodInfo * args: Value list
         | CallAssignSym of dst: Reg * sid: SymbolId * args: Value list
         | New of dst: Reg * ctor: ConstructorInfo * args: Value list
+        // env-class インスタンスを新規生成する（デフォルトコンストラクタ使用。typeSid で型を SymbolId 解決する）。
+        | NewEnv of dst: Reg * typeSid: SymbolId
+        // env-class インスタンスのフィールドへ値を書き込む（typeSid・fieldSid で解決）。
+        | StoreEnvField of inst: Reg * typeSid: SymbolId * fieldSid: SymbolId * value: Value
+        // env-class インスタンスのフィールドから値を読み込む（typeSid・fieldSid で解決）。
+        | LoadEnvField of dst: Reg * inst: Reg * typeSid: SymbolId * fieldSid: SymbolId
         | Ret
         | RetValue of value: Value
         | Jump of label: Label
@@ -137,6 +143,9 @@ module Mir =
             | CallAssign(dst, method, args) -> sprintf "%A = %A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssignSym(dst, sid, args) -> sprintf "%A = sid:%d(%s)" dst sid.id (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | New(dst, ctor, args) -> sprintf "%A = %A(%s)" dst ctor (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | NewEnv(dst, typeSid) -> sprintf "%A = new_env(typeSid=%d)" dst typeSid.id
+            | StoreEnvField(inst, typeSid, fieldSid, value) -> sprintf "%A.field_%d(typeSid=%d) = %s" inst fieldSid.id typeSid.id (value.ToString())
+            | LoadEnvField(dst, inst, typeSid, fieldSid) -> sprintf "%A = %A.field_%d(typeSid=%d)" dst inst fieldSid.id typeSid.id
             | Ret -> "Ret"
             | RetValue v -> sprintf "return %s" (v.ToString())
             | Jump label -> sprintf "Jump %s" (label.ToString())

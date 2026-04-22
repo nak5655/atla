@@ -36,6 +36,10 @@ module Infer =
             Hir.Expr.If(inferredCond, inferredThen, inferredElse, inferType tid, span)
         | Hir.Expr.ExprError (message, errTyp, span) ->
             Hir.Expr.ExprError(message, inferType errTyp, span)
+        // EnvFieldLoad と ClosureCreate はクロージャー変換後のノードで、型推論後に Infer が呼ばれることはないが、
+        // 安全のため pass-through とする。
+        | Hir.Expr.EnvFieldLoad _ -> expr
+        | Hir.Expr.ClosureCreate _ -> expr
 
     and private inferStmt (typeSubst: TypeSubst) (stmt: Hir.Stmt) : Hir.Stmt =
         match stmt with

@@ -16,6 +16,10 @@ module Gen =
     // Genモジュール内で共有する生成コンテキスト
     type Env =
         { typeBuilders: Dictionary<SymbolId, TypeBuilder>
+          // env-class のデフォルトコンストラクタ（typeSid -> ConstructorBuilder）。
+          typeCtors: Dictionary<SymbolId, ConstructorBuilder>
+          // env-class フィールドビルダー（fieldSid -> FieldBuilder）。
+          fieldBuilders: Dictionary<SymbolId, FieldBuilder>
           methodBuilders: Dictionary<SymbolId, MethodInfo>
           // インポート型（TypeId.Name sid）を System.Type へ解決するためのシンボルテーブル。
           symbolTable: SymbolTable }
@@ -210,6 +214,31 @@ module Gen =
             let op = if (0 < label.ilOffset && -120 < offset && offset < 120) then OpCodes.Brfalse_S else OpCodes.Brfalse
             gen.Emit(op, label.get(gen))
         // 未対応命令は明示的に失敗
+        | Mir.Ins.NewEnv (dst, typeSid) ->
+            // env-class の新規インスタンスを生成する（デフォルトコンストラクタ使用）。
+            match env.typeCtors.TryGetValue(typeSid) with
+            | true, ctorBuilder ->
+                gen.Emit(OpCodes.Newobj, ctorBuilder :> ConstructorInfo)
+                match dst with
+                | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+                | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+            | false, _ -> failwithf "No default constructor registered for env type: %A" typeSid
+        | Mir.Ins.StoreEnvField (inst, _, fieldSid, value) ->
+            // env インスタンスをスタックへ積み、値をスタックへ積んでから stfld を発行する。
+            genValue env gen (Mir.Value.RegVal inst)
+            genValue env gen value
+            match env.fieldBuilders.TryGetValue(fieldSid) with
+            | true, fb -> gen.Emit(OpCodes.Stfld, fb :> FieldInfo)
+            | false, _ -> failwithf "Unknown env field symbol for StoreEnvField: %A" fieldSid
+        | Mir.Ins.LoadEnvField (dst, inst, _, fieldSid) ->
+            // env インスタンスをスタックへ積んでから ldfld を発行し、結果をレジスタへ格納する。
+            genValue env gen (Mir.Value.RegVal inst)
+            match env.fieldBuilders.TryGetValue(fieldSid) with
+            | true, fb -> gen.Emit(OpCodes.Ldfld, fb :> FieldInfo)
+            | false, _ -> failwithf "Unknown env field symbol for LoadEnvField: %A" fieldSid
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         | _ -> failwithf "Unsupported instruction: %A" ins
 
     // コンストラクタ本体を生成する
@@ -275,6 +304,8 @@ module Gen =
         for field in typ.fields do
             let fieldType = resolveType env field.typ
             field.builder <- typ.builder.DefineField(sprintf "field_%d" field.sym.id, fieldType, FieldAttributes.Public)
+            // env-class フィールドを fieldBuilders へ登録する（GenIns での LoadEnvField/StoreEnvField 解決に使用）。
+            env.fieldBuilders.[field.sym] <- field.builder
 
         // コンストラクタ定義
         for ctor in typ.ctors do
@@ -282,11 +313,25 @@ module Gen =
             ctor.builder <- typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorArgTypes)
             genConstructor env ctor
 
-        // メソッド定義
+        // フィールド定義後、明示的コンストラクタが無い場合はデフォルトコンストラクタを自動生成する。
+        // これにより NewEnv 命令が new_env(typeSid) でインスタンスを生成できる。
+        if typ.ctors.IsEmpty then
+            let defaultCtor = typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [||])
+            let ctorIL = defaultCtor.GetILGenerator()
+            ctorIL.Emit(OpCodes.Ldarg_0)
+            ctorIL.Emit(OpCodes.Call, typeof<obj>.GetConstructor([||]))
+            ctorIL.Emit(OpCodes.Ret)
+            env.typeCtors.[typ.sym] <- defaultCtor
+
+        // インスタンスメソッド定義（クロージャー invoke メソッド）。
+        // typ.methods に含まれるメソッドはすべてインスタンスメソッドとして生成する。
+        // args の先頭要素は 'this'（env インスタンス）なので CIL シグネチャからは除外する。
         for method in typ.methods do
-            let methodArgTypes = method.args |> List.map (resolveType env) |> List.toArray
+            let explicitArgTypes = method.args |> List.tail |> List.map (resolveType env) |> List.toArray
             let methodRetType = resolveMethodReturnType method.ret
-            method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
+            method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public, methodRetType, explicitArgTypes)
+            // invoke メソッドの SymbolId を methodBuilders へ登録する（FnDelegate 値生成で使用）。
+            env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
             genMethod env method
 
         // 型確定
@@ -306,6 +351,8 @@ module Gen =
         // モジュール内型解決テーブルを初期化
         let env =
             { typeBuilders = Dictionary<SymbolId, TypeBuilder>()
+              typeCtors = Dictionary<SymbolId, ConstructorBuilder>()
+              fieldBuilders = Dictionary<SymbolId, FieldBuilder>()
               methodBuilders = Dictionary<SymbolId, MethodInfo>()
               symbolTable = symbolTable }
 
