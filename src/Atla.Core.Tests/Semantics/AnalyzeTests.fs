@@ -82,14 +82,23 @@ fn main (): Int = do
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
-                    match Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ])) with
-                    | { succeeded = true; value = Some mirAsm } -> Assert.Single(mirAsm.modules) |> ignore
+                    let hirAsm = Hir.Assembly("test", [ hirModule ])
+                    match ClosureConversion.preprocessAssembly hirAsm with
+                    | { succeeded = true; value = Some closedAsm } ->
+                        match Layout.layoutAssembly("TestAsm", closedAsm) with
+                        | { succeeded = true; value = Some mirAsm } -> Assert.Single(mirAsm.modules) |> ignore
+                        | { diagnostics = diagnostics } ->
+                            let message =
+                                diagnostics
+                                |> List.map (fun err -> err.toDisplayText())
+                                |> String.concat "; "
+                            Assert.True(false, $"Lowering failed: {message}")
                     | { diagnostics = diagnostics } ->
                         let message =
                             diagnostics
                             |> List.map (fun err -> err.toDisplayText())
                             |> String.concat "; "
-                        Assert.True(false, $"Lowering failed: {message}")
+                        Assert.True(false, $"Closure conversion failed: {message}")
                 | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
@@ -856,16 +865,24 @@ fn apply (f: Int -> Int) (x: Int): Int = f x
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
                     let hirAssembly = Hir.Assembly("TestAsm", [ hirModule ])
-                    match Layout.layoutAssembly("TestAsm", hirAssembly) with
-                    | { succeeded = true; value = Some mirAsm } ->
-                        let methods = mirAsm.modules.Head.methods
-                        Assert.Equal(2, methods.Length)
+                    match ClosureConversion.preprocessAssembly hirAssembly with
+                    | { succeeded = true; value = Some closedAsm } ->
+                        match Layout.layoutAssembly("TestAsm", closedAsm) with
+                        | { succeeded = true; value = Some mirAsm } ->
+                            let methods = mirAsm.modules.Head.methods
+                            Assert.Equal(2, methods.Length)
+                        | { diagnostics = diagnostics } ->
+                            let message =
+                                diagnostics
+                                |> List.map (fun err -> err.toDisplayText())
+                                |> String.concat "; "
+                            Assert.True(false, $"Layout failed: {message}")
                     | { diagnostics = diagnostics } ->
                         let message =
                             diagnostics
                             |> List.map (fun err -> err.toDisplayText())
                             |> String.concat "; "
-                        Assert.True(false, $"Layout failed: {message}")
+                        Assert.True(false, $"Closure conversion failed: {message}")
                 | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics

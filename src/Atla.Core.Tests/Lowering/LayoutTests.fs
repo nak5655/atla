@@ -10,6 +10,14 @@ open Atla.Core.Lowering.Data
 open Atla.Core.Data
 
 module LayoutTests =
+    /// `Hir.Assembly` に対してクロージャー変換とレイアウトを連続して適用するヘルパー。
+    /// テストコードで `ClosureConversion → Layout` の2段パイプラインを簡潔に呼び出せるようにする。
+    let private layoutHirAssembly (asmName: string, asm: Hir.Assembly) : PhaseResult<Mir.Assembly> =
+        match ClosureConversion.preprocessAssembly asm with
+        | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
+        | { value = Some closedAsm } -> Layout.layoutAssembly(asmName, closedAsm)
+        | _ -> PhaseResult.failed [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ]
+
     [<Fact>]
     let ``layoutAssembly emits RetValue for non-unit method`` () =
         let span = { left = Position.Zero; right = Position.Zero }
@@ -28,7 +36,7 @@ module LayoutTests =
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
         let hirAssembly = Hir.Assembly("ignored", [ hirModule ])
 
-        let mirAssemblyResult = Layout.layoutAssembly("TestAsm", hirAssembly)
+        let mirAssemblyResult = layoutHirAssembly("TestAsm", hirAssembly)
         let mirAssembly =
             match mirAssemblyResult with
             | { succeeded = true; value = Some asm } -> asm
@@ -63,7 +71,7 @@ fn main: () =
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
-                    let mirAssemblyResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirAssemblyResult = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
                     let mirAssembly =
                         match mirAssemblyResult with
                         | { succeeded = true; value = Some asm } -> asm
@@ -124,7 +132,7 @@ fn keep (xs: Array String): Array String = xs
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
-                    let mirAssemblyResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirAssemblyResult = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
                     let mirAssembly =
                         match mirAssemblyResult with
                         | { succeeded = true; value = Some asm } -> asm
@@ -214,7 +222,7 @@ fn keep (xs: Array String): Array String = xs
 
                     Assert.Equal("Fn([App(ArrayCtor,[String])],App(ArrayCtor,[String]))", hirSnapshot)
 
-                    let mirAssemblyResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirAssemblyResult = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
                     let mirSnapshot =
                         match mirAssemblyResult with
                         | { succeeded = true; value = Some asm } ->
@@ -266,7 +274,7 @@ fn keep (xs: Array String): Array String = xs
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
         let hirAssembly = Hir.Assembly("test", [ hirModule ])
-        let result = Layout.layoutAssembly("TestAsm", hirAssembly)
+        let result = layoutHirAssembly("TestAsm", hirAssembly)
 
         // capturedSym は外側メソッドの引数でも let 束縛でもないため、ClosureConversion が型情報不明診断を出す。
         Assert.False(result.succeeded, "captured lambda with no binding info should fail in preprocessing stage")
@@ -302,7 +310,7 @@ fn keep (xs: Array String): Array String = xs
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
         let hirAssembly = Hir.Assembly("test", [ hirModule ])
-        let result = Layout.layoutAssembly("TestAsm", hirAssembly)
+        let result = layoutHirAssembly("TestAsm", hirAssembly)
 
         Assert.True(result.succeeded, "non-captured lambda should be lowered by closure conversion")
         match result.value with
@@ -378,7 +386,7 @@ fn keep (xs: Array String): Array String = xs
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
                 span)
         let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), span)
-        let result = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
+        let result = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
         Assert.False(result.succeeded, "captured lambda with no binding info should still fail before env-class implementation")
         let message = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
@@ -410,7 +418,7 @@ fn keep (xs: Array String): Array String = xs
                 span)
 
         let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Fn([ TypeId.Unit ], TypeId.Int)), span)
-        let result = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
+        let result = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
         // mutableSym は let 束縛でメソッドの bindings に入るため、env-class 変換が成功すべき。
         Assert.True(result.succeeded, "mutable captured lambda should be successfully lowered via env-class conversion")
@@ -512,7 +520,7 @@ fn keep (xs: Array String): Array String = xs
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
         let hirAssembly = Hir.Assembly("test", [ hirModule ])
-        let result = Layout.layoutAssembly("TestAsm", hirAssembly)
+        let result = layoutHirAssembly("TestAsm", hirAssembly)
 
         Assert.True(result.succeeded, "captured lambda should be lowered successfully via env-class conversion")
         match result.value with
@@ -593,7 +601,7 @@ fn keep (xs: Array String): Array String = xs
                     | None -> Assert.True(false, "HIR add method not found")
 
                     // MIR スナップショット: add の MIR メソッドが args/ret を正しく持つことを確認。
-                    let mirResult = Layout.layoutAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirResult = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
                     match mirResult with
                     | { succeeded = true; value = Some mirAsm } ->
                         let mirAdd = mirAsm.modules.Head.methods |> List.tryFind (fun m -> m.name = "add")
@@ -669,6 +677,6 @@ fn bad (): Int = undefinedVar
                 let message = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
                 failwith (sprintf "layoutAssembly failed: %s" message)
 
-        let first = snapshotOf (Layout.layoutAssembly("TestAsm", hirAssembly))
-        let second = snapshotOf (Layout.layoutAssembly("TestAsm", hirAssembly))
+        let first = snapshotOf (layoutHirAssembly("TestAsm", hirAssembly))
+        let second = snapshotOf (layoutHirAssembly("TestAsm", hirAssembly))
         Assert.Equal(first, second)
