@@ -1515,3 +1515,11 @@ do
 - [x] ルートに `Atla.slnx`（`src/Atla.slnx`）を publish する Windows バッチファイルを追加する。
 - [x] 利用者が実行手順を参照できるよう README にバッチ利用方法を追記する。
 - [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
+
+## 2026-04-23 publish 出力先を folderprofile.pubxml の PublishDir に統一
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] ルートに `folderprofile.pubxml` を追加し、`PublishDir` を明示する。
+- [x] `publish-atla.bat` を更新し、`folderprofile.pubxml` の `PublishDir` を読み取って publish 先へ反映する。
+- [x] README の publish 手順を `folderprofile.pubxml` 前提へ更新する。
+- [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。

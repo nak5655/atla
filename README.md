@@ -92,7 +92,10 @@ NuGet 依存がキャッシュに存在しない場合は、NuGet.Client API 経
 publish-atla.bat
 ```
 
-このバッチは内部で `dotnet publish src\Atla.slnx -c Release` を実行します。
+このバッチは `folderprofile.pubxml` の `PublishDir` を読み取り、
+内部で `dotnet publish src\Atla.slnx -c Release -p:PublishDir=<PublishDir>` を実行します。
+
+出力先を変更したい場合は、`folderprofile.pubxml` の `PublishDir` を編集してください。
 
 ## 参考ドキュメント
 
