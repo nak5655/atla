@@ -1533,3 +1533,32 @@ VS Code拡張でIntelliSenseを提供する。
 - [x] `Atla.LanguageServer.Tests/IntelliSenseTests.fs` を新規作成する。
 - [x] `Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` に IntelliSenseTests.fs を追加する。
 - [x] ビルドとテストを実行して全テストが通ることを確認する。
+## 2026-04-23 Atla.slnx 一括 publish バッチ追加
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] ルートに `Atla.slnx`（`src/Atla.slnx`）を publish する Windows バッチファイルを追加する。
+- [x] 利用者が実行手順を参照できるよう README にバッチ利用方法を追記する。
+- [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
+
+## 2026-04-23 publish 出力先を folderprofile.pubxml の PublishDir に統一
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] ルートに `folderprofile.pubxml` を追加し、`PublishDir` を明示する。
+- [x] `publish-atla.bat` を更新し、`folderprofile.pubxml` の `PublishDir` を読み取って publish 先へ反映する。
+- [x] README の publish 手順を `folderprofile.pubxml` 前提へ更新する。
+- [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
+
+## 2026-04-23 publish profile 既定参照方式への切り替え
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] `publish-atla.bat` から `FolderProfile` 指定の `dotnet publish` を呼ぶだけの構成へ簡素化する。
+- [x] `src` 配下の各プロジェクトに `Properties/PublishProfiles/FolderProfile.pubxml` を追加する。
+- [x] ルート `folderprofile.pubxml` 依存を廃止し、README の手順を `FolderProfile` 参照方式に更新する。
+- [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
+
+## 2026-04-23 `FolderProfile.pubxml` の管理対象除外対応
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] 追跡対象になっている `FolderProfile.pubxml` を全プロジェクトから削除する。
+- [x] README の説明を「`FolderProfile.pubxml` はローカル管理前提」に更新する。
+- [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
