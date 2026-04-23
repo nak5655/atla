@@ -74,84 +74,102 @@ let private spanContains (line: int) (col: int) (span: Span) : bool =
     (line < el || (line = el && col < ec))
 
 // ---------------------------------------------------------------------------
-// PositionIndex 構築
+// PositionIndex 構築（内部アキュムレータ型）
+// ---------------------------------------------------------------------------
+
+/// `build` 関数が使用する不変アキュムレータ。
+/// F# のコーディング規約（AGENTS.md §6）に従い可変バインディングは使用しない。
+type private BuildState =
+    { useSites:  UseSite list
+      declSites: Map<int, Span> }
+
+/// 空のアキュムレータ。
+let private emptyState : BuildState =
+    { useSites  = []
+      declSites = Map.empty }
+
+/// 宣言スパンをアキュムレータに追加する（同一 SymbolId の場合は最初の登録のみ保持）。
+let private addDecl (sid: SymbolId) (span: Span) (state: BuildState) : BuildState =
+    let (SymbolId id) = sid
+    if state.declSites |> Map.containsKey id then state
+    else { state with declSites = state.declSites |> Map.add id span }
+
+/// 使用箇所をアキュムレータに追加する。
+let private addUse (sid: SymbolId) (span: Span) (state: BuildState) : BuildState =
+    { state with useSites = { span = span; symbolId = sid } :: state.useSites }
+
+/// 式ノードを再帰的に走査してアキュムレータを更新する。
+let rec private walkExpr (expr: Hir.Expr) (state: BuildState) : BuildState =
+    match expr with
+    | Hir.Expr.Id(sid, _, span) ->
+        addUse sid span state
+    | Hir.Expr.Call(_, instance, args, _, _) ->
+        let state1 = instance |> Option.fold (fun s e -> walkExpr e s) state
+        args |> List.fold (fun s e -> walkExpr e s) state1
+    | Hir.Expr.Lambda(args, _, body, _, _) ->
+        let state1 = args |> List.fold (fun s (arg: Hir.Arg) -> addDecl arg.sid arg.span s) state
+        walkExpr body state1
+    | Hir.Expr.MemberAccess(_, instance, _, _) ->
+        instance |> Option.fold (fun s e -> walkExpr e s) state
+    | Hir.Expr.Block(stmts, body, _, _) ->
+        let state1 = stmts |> List.fold (fun s stmt -> walkStmt stmt s) state
+        walkExpr body state1
+    | Hir.Expr.If(cond, thenBr, elseBr, _, _) ->
+        state |> walkExpr cond |> walkExpr thenBr |> walkExpr elseBr
+    | Hir.Expr.Unit _
+    | Hir.Expr.Int _
+    | Hir.Expr.Float _
+    | Hir.Expr.String _
+    | Hir.Expr.Null _
+    | Hir.Expr.ExprError _ -> state
+
+/// 文ノードを走査してアキュムレータを更新する。
+and private walkStmt (stmt: Hir.Stmt) (state: BuildState) : BuildState =
+    match stmt with
+    | Hir.Stmt.Let(sid, _, value, span) ->
+        state |> addDecl sid span |> walkExpr value
+    | Hir.Stmt.Assign(_, value, _) ->
+        walkExpr value state
+    | Hir.Stmt.ExprStmt(expr, _) ->
+        walkExpr expr state
+    | Hir.Stmt.For(sid, _, iterable, body, span) ->
+        let state1 = state |> addDecl sid span |> walkExpr iterable
+        body |> List.fold (fun s stmt -> walkStmt stmt s) state1
+    | Hir.Stmt.ErrorStmt _ -> state
+
+/// 単一モジュールを走査してアキュムレータを更新する。
+let private walkModule (modul: Hir.Module) (state: BuildState) : BuildState =
+    let state1 =
+        modul.fields |> List.fold (fun s field ->
+            s |> addDecl field.sym field.span |> walkExpr field.body) state
+    let state2 =
+        modul.methods |> List.fold (fun s method ->
+            s |> addDecl method.sym method.span |> walkExpr method.body) state1
+    modul.types |> List.fold (fun s typ ->
+        // Hir.Type はスパンを持たないため Span.Empty を使用する。
+        let s1 = addDecl typ.sym Span.Empty s
+        typ.fields |> List.fold (fun s2 field ->
+            s2 |> addDecl field.sym field.span |> walkExpr field.body) s1) state2
+
+// ---------------------------------------------------------------------------
+// PositionIndex 構築（公開エントリポイント）
 // ---------------------------------------------------------------------------
 
 /// HIR アセンブリを走査して PositionIndex を構築する。
 let build (assembly: Hir.Assembly) : PositionIndex =
-    let useSites = System.Collections.Generic.List<UseSite>()
-    let declSites = System.Collections.Generic.Dictionary<int, Span>()
+    // 全モジュールをフォールドで処理し、不変アキュムレータを更新する。
+    let finalState =
+        assembly.modules |> List.fold (fun s modul -> walkModule modul s) emptyState
 
-    /// シンボルの宣言スパンを登録する（初回のみ）。
-    let addDecl (sid: SymbolId) (span: Span) =
-        let (SymbolId id) = sid
-        if not (declSites.ContainsKey id) then
-            declSites[id] <- span
+    // トップレベルスコープ：最後のモジュールのスコープを補完候補として使用する。
+    let topScope =
+        assembly.modules
+        |> List.tryLast
+        |> Option.map (fun m -> m.scope)
+        |> Option.defaultWith (fun () -> Scope(None))
 
-    /// 式ノードを再帰的に走査し、Id 使用箇所と宣言箇所を収集する。
-    let rec walkExpr (expr: Hir.Expr) =
-        match expr with
-        | Hir.Expr.Id(sid, _, span) ->
-            useSites.Add { span = span; symbolId = sid }
-        | Hir.Expr.Call(_, instance, args, _, _) ->
-            instance |> Option.iter walkExpr
-            args |> List.iter walkExpr
-        | Hir.Expr.Lambda(args, _, body, _, _) ->
-            args |> List.iter (fun (arg: Hir.Arg) -> addDecl arg.sid arg.span)
-            walkExpr body
-        | Hir.Expr.MemberAccess(_, instance, _, _) ->
-            instance |> Option.iter walkExpr
-        | Hir.Expr.Block(stmts, body, _, _) ->
-            stmts |> List.iter walkStmt
-            walkExpr body
-        | Hir.Expr.If(cond, thenBr, elseBr, _, _) ->
-            walkExpr cond
-            walkExpr thenBr
-            walkExpr elseBr
-        | Hir.Expr.Unit _
-        | Hir.Expr.Int _
-        | Hir.Expr.Float _
-        | Hir.Expr.String _
-        | Hir.Expr.Null _
-        | Hir.Expr.ExprError _ -> ()
-
-    /// 文ノードを走査し、宣言箇所と使用箇所を収集する。
-    and walkStmt (stmt: Hir.Stmt) =
-        match stmt with
-        | Hir.Stmt.Let(sid, _, value, span) ->
-            addDecl sid span
-            walkExpr value
-        | Hir.Stmt.Assign(_, value, _) ->
-            walkExpr value
-        | Hir.Stmt.ExprStmt(expr, _) ->
-            walkExpr expr
-        | Hir.Stmt.For(sid, _, iterable, body, span) ->
-            addDecl sid span
-            walkExpr iterable
-            body |> List.iter walkStmt
-        | Hir.Stmt.ErrorStmt _ -> ()
-
-    // トップレベルスコープ（補完候補用）。
-    // 最後に処理したモジュールのスコープを使用する。
-    let mutable topScope = Scope(None)
-
-    for modul in assembly.modules do
-        topScope <- modul.scope
-        for field in modul.fields do
-            addDecl field.sym field.span
-            walkExpr field.body
-        for method in modul.methods do
-            addDecl method.sym method.span
-            walkExpr method.body
-        for typ in modul.types do
-            // Hir.Type はスパンを持たないため Span.Empty を使用する。
-            addDecl typ.sym Span.Empty
-            for field in typ.fields do
-                addDecl field.sym field.span
-                walkExpr field.body
-
-    { useSites  = useSites |> Seq.toList
-      declSites = declSites |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq
+    { useSites    = finalState.useSites
+      declSites   = finalState.declSites
       moduleScope = topScope }
 
 // ---------------------------------------------------------------------------

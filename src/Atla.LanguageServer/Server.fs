@@ -415,6 +415,7 @@ type Server
 
     /// 補完候補リストを返す。
     /// モジュールスコープ内の全シンボルを候補として提供する。
+    /// 現時点では位置情報は補完フィルタに使用しない（将来のスコープ絞り込み拡張用に保持）。
     member this.GetCompletions(uri: string, _line: int, _character: int) : CompletionList =
         match this.TryGetIndex uri with
         | None -> CompletionList(false, [])
@@ -434,6 +435,7 @@ type Server
                             | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
                             | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
                             | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
+                        // detail: VS Code の補完 UI に型シグネチャとして表示されるテキスト。
                         let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
                         Some(CompletionItem(name, ?kind = kind, detail = detail)))
             CompletionList(false, items)

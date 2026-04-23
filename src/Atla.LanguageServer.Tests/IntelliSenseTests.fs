@@ -75,7 +75,7 @@ module IntelliSenseTests =
         let result = server.GetHover("file:///tmp/hover-id.atla", 2, 2)
         match result with
         | None ->
-            // PositionIndex にキャッシュされていない場合は None が許容される（エラー源由なし）。
+            // PositionIndex にキャッシュされていない場合は None が許容される（エラー原因なし）。
             ()
         | Some hover ->
             Assert.NotNull(hover.contents)

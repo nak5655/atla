@@ -38,7 +38,7 @@ type Scope(parent: Scope option) =
             | None -> None
 
     /// スコープ内で参照可能な全変数を (name, SymbolId) のリストとして返す。
-    /// 親スコープより内側のシンボルが優先される（同名は内側で上書き）。
+    /// 内側のスコープが外側の同名シンボルに優先される（各 name は最大1エントリのみ含まれる）。
     member this.allVisibleVars() : (string * SymbolId) list =
         let parentVars =
             match parent with

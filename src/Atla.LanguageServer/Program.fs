@@ -60,6 +60,7 @@ let main _ =
                     match messageParams content with
                     | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null ->
                         let uri = p.["textDocument"].["uri"].ToString()
+                        // position が省略または不正な場合は先頭位置（0, 0）にフォールバックする。
                         let line      = try p.["position"].["line"].Value<int>()      with _ -> 0
                         let character = try p.["position"].["character"].Value<int>() with _ -> 0
                         let completions = server.GetCompletions(uri, line, character)
@@ -71,6 +72,7 @@ let main _ =
                     match messageParams content with
                     | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null ->
                         let uri = p.["textDocument"].["uri"].ToString()
+                        // position が省略または不正な場合は先頭位置（0, 0）にフォールバックする。
                         let line      = try p.["position"].["line"].Value<int>()      with _ -> 0
                         let character = try p.["position"].["character"].Value<int>() with _ -> 0
                         let hover = server.GetHover(uri, line, character)
@@ -82,6 +84,7 @@ let main _ =
                     match messageParams content with
                     | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null ->
                         let uri = p.["textDocument"].["uri"].ToString()
+                        // position が省略または不正な場合は先頭位置（0, 0）にフォールバックする。
                         let line      = try p.["position"].["line"].Value<int>()      with _ -> 0
                         let character = try p.["position"].["character"].Value<int>() with _ -> 0
                         let location = server.GetDefinition(uri, line, character)
