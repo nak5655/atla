@@ -36,3 +36,15 @@ type Scope(parent: Scope option) =
             match parent with
             | Some parentScope -> parentScope.ResolveType(id)
             | None -> None
+
+    /// スコープ内で参照可能な全変数を (name, SymbolId) のリストとして返す。
+    /// 親スコープより内側のシンボルが優先される（同名は内側で上書き）。
+    member this.allVisibleVars() : (string * SymbolId) list =
+        let parentVars =
+            match parent with
+            | Some p -> p.allVisibleVars()
+            | None -> []
+        let localVars = _vars |> Seq.map (fun kv -> kv.Key, kv.Value) |> Seq.toList
+        let localNames = localVars |> List.map fst |> Set.ofList
+        let filteredParentVars = parentVars |> List.filter (fun (name, _) -> not (localNames.Contains name))
+        localVars @ filteredParentVars
