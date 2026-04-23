@@ -1523,3 +1523,11 @@ do
 - [x] `publish-atla.bat` を更新し、`folderprofile.pubxml` の `PublishDir` を読み取って publish 先へ反映する。
 - [x] README の publish 手順を `folderprofile.pubxml` 前提へ更新する。
 - [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
+
+## 2026-04-23 publish profile 既定参照方式への切り替え
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] `publish-atla.bat` から `FolderProfile` 指定の `dotnet publish` を呼ぶだけの構成へ簡素化する。
+- [x] `src` 配下の各プロジェクトに `Properties/PublishProfiles/FolderProfile.pubxml` を追加する。
+- [x] ルート `folderprofile.pubxml` 依存を廃止し、README の手順を `FolderProfile` 参照方式に更新する。
+- [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
