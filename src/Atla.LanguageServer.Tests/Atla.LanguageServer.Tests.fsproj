@@ -11,6 +11,7 @@
     <Compile Include="DiagnosticsTests.fs" />
     <Compile Include="SemanticTokensTests.fs" />
     <Compile Include="ProgramTests.fs" />
+    <Compile Include="IntelliSenseTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

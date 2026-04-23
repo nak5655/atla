@@ -135,7 +135,9 @@ module ServerLifecycleTests =
         let compile (request: Compiler.CompileRequest) : Compiler.CompileResult =
             capturedRequests.Add(request)
             { succeeded = true
-              diagnostics = [] }
+              diagnostics = []
+              hir = None
+              symbolTable = None }
 
         let server =
             Server(
@@ -176,7 +178,9 @@ module ServerLifecycleTests =
         let compile (_: Compiler.CompileRequest) : Compiler.CompileResult =
             compileCalled <- true
             { succeeded = true
-              diagnostics = [] }
+              diagnostics = []
+              hir = None
+              symbolTable = None }
 
         let server =
             Server(

@@ -1509,6 +1509,30 @@ do
 - [x] 期待値をOS非依存（正規化関数の仕様準拠）へ修正し、Windows/Unixで同一意図を検証できるようにする。
 - [x] `Atla.LanguageServer.Tests` と `src/Atla.slnx` のテストを実行して回帰がないことを確認する。
 
+---
+
+## 2026-04-23 VS Code拡張のIntelliSense実装
+
+LSPサーバー（`Atla.LanguageServer`）に補完・ホバー・定義ジャンプ機能を追加し、
+VS Code拡張でIntelliSenseを提供する。
+
+### 実装内容
+
+- [x] `PLANS.md` に本タスク計画を追記する（このエントリ）。
+- [x] `Atla.Core/Semantics/Data/Scope.fs` に `allVisibleVars` メソッドを追加する。
+- [x] `Atla.Core/Semantics/PositionIndex.fs` を新規作成する（位置→シンボル逆引き、型フォーマット）。
+- [x] `Atla.Core/Atla.Core.fsproj` に PositionIndex.fs を追加する。
+- [x] `Atla.Core/Compile.fs` の `CompileResult` に `hir` と `symbolTable` を追加し、
+      意味解析成功時のHIR・シンボルテーブルをパイプライン後段の失敗時にも返すよう更新する。
+- [x] `Atla.LanguageServer/LSPTypes.fs` に `CompletionItem`・`CompletionList`・`Hover`・
+      `Location`・`CompletionOptions` を追加し、`ServerCapabilities` を拡張する。
+- [x] `Atla.LanguageServer/Server.fs` にHIRキャッシュを追加し、
+      `GetCompletions`・`GetHover`・`GetDefinition` メソッドを実装する。
+- [x] `Atla.LanguageServer/Program.fs` に `textDocument/completion`・`textDocument/hover`・
+      `textDocument/definition` のディスパッチを追加する。
+- [x] `Atla.LanguageServer.Tests/IntelliSenseTests.fs` を新規作成する。
+- [x] `Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` に IntelliSenseTests.fs を追加する。
+- [x] ビルドとテストを実行して全テストが通ることを確認する。
 ## 2026-04-23 Atla.slnx 一括 publish バッチ追加
 
 - [x] `PLANS.md` に本タスク計画を追記する。

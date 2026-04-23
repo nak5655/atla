@@ -56,6 +56,42 @@ let main _ =
                     | _ ->
                         sendErrorResponse id invalidRequest "Missing textDocument.uri"
 
+                | "textDocument/completion" ->
+                    match messageParams content with
+                    | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null ->
+                        let uri = p.["textDocument"].["uri"].ToString()
+                        // position が省略または不正な場合は先頭位置（0, 0）にフォールバックする。
+                        let line      = try p.["position"].["line"].Value<int>()      with _ -> 0
+                        let character = try p.["position"].["character"].Value<int>() with _ -> 0
+                        let completions = server.GetCompletions(uri, line, character)
+                        sendResponse id completions
+                    | _ ->
+                        sendErrorResponse id invalidRequest "Missing textDocument.uri"
+
+                | "textDocument/hover" ->
+                    match messageParams content with
+                    | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null ->
+                        let uri = p.["textDocument"].["uri"].ToString()
+                        // position が省略または不正な場合は先頭位置（0, 0）にフォールバックする。
+                        let line      = try p.["position"].["line"].Value<int>()      with _ -> 0
+                        let character = try p.["position"].["character"].Value<int>() with _ -> 0
+                        let hover = server.GetHover(uri, line, character)
+                        sendResponse id (hover |> Option.map box |> Option.defaultValue (box null))
+                    | _ ->
+                        sendErrorResponse id invalidRequest "Missing textDocument.uri"
+
+                | "textDocument/definition" ->
+                    match messageParams content with
+                    | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null ->
+                        let uri = p.["textDocument"].["uri"].ToString()
+                        // position が省略または不正な場合は先頭位置（0, 0）にフォールバックする。
+                        let line      = try p.["position"].["line"].Value<int>()      with _ -> 0
+                        let character = try p.["position"].["character"].Value<int>() with _ -> 0
+                        let location = server.GetDefinition(uri, line, character)
+                        sendResponse id (location |> Option.map box |> Option.defaultValue (box null))
+                    | _ ->
+                        sendErrorResponse id invalidRequest "Missing textDocument.uri"
+
                 | "shutdown" ->
                     // Acknowledge the shutdown request and mark as ready to exit.
                     isShutdown <- nextShutdownState isShutdown methodName

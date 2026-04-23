@@ -53,13 +53,27 @@ module Resolve =
 
         sid
 
-    let private resolveImport (symbolTable: SymbolTable) (scope: Scope) (importDecl: Ast.Decl.Import) : unit =
+    // import 宣言を処理し、型・変数スコープへ登録する。
+    // 対象の .NET 型がロード済みアセンブリ内に見つからない場合は Warning 診断を返す。
+    let private resolveImport (symbolTable: SymbolTable) (scope: Scope) (importDecl: Ast.Decl.Import) : Diagnostic list =
         let classPath = String.concat "." importDecl.path
         let shortName = Array.last (classPath.Split('.'))
         // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
         match scope.ResolveType(shortName) with
-        | Some _ -> ()
-        | None -> declareSystemType symbolTable scope classPath |> ignore
+        | Some _ -> []
+        | None ->
+            let sid = declareSystemType symbolTable scope classPath
+
+            // declareSystemType が型を解決できたか確認する。
+            // 解決できなかった場合（sysType が null）は依存関係の設定不備を示す Warning を返す。
+            match symbolTable.Get(sid) with
+            | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when isNull sysType ->
+                [ Diagnostic.Warning(
+                      sprintf
+                          "import '%s': type could not be resolved from loaded assemblies. Ensure the dependency providing this type is listed in atla.yaml and has been restored."
+                          classPath,
+                      importDecl.span) ]
+            | _ -> []
 
     let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : PhaseResult<ResolvedModule> =
         let moduleScope = Scope(None)
@@ -79,16 +93,19 @@ module Resolve =
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Import as importDecl ->
-                resolveImport symbolTable moduleScope importDecl
+                let importDiagnostics = resolveImport symbolTable moduleScope importDecl
+                diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Fn as fnDecl ->
                 fnDecls.Add(fnDecl)
             | _ -> diagnostics.Add(Diagnostic.Error("Unsupported declaration type in module", decl.span))
 
-        if diagnostics.Count > 0 then
-            PhaseResult.failed (Seq.toList diagnostics)
+        // Warning 診断があっても解析は続行する。Error 診断がある場合のみ失敗とする。
+        let allDiagnostics = Seq.toList diagnostics
+        if allDiagnostics |> List.exists (fun d -> d.isError) then
+            PhaseResult.failed allDiagnostics
         else
             PhaseResult.succeeded
                 { moduleName = moduleName
                   moduleScope = moduleScope
                   fnDecls = Seq.toList fnDecls }
-                []
+                allDiagnostics

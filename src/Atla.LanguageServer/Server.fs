@@ -11,6 +11,7 @@ open Atla.Compiler
 open Atla.Build
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
+open Atla.Core.Semantics
 open Atla.Core.Syntax
 open Atla.Core.Syntax.Data
 open Atla.LanguageServer.LSPTypes
@@ -175,6 +176,9 @@ type Server
     let mutable workspaceRoots: string list = []
     let buffers = Dictionary<string, string>()
     let displayUris = Dictionary<string, string>()
+    /// キャッシュ: 正規化 URI → (PositionIndex, SymbolTable)。
+    /// コンパイルが意味解析フェーズを通過した場合に格納され、IntelliSense クエリに使用する。
+    let hirCache = Dictionary<string, PositionIndex.PositionIndex * SymbolTable>()
     let publish = defaultArg publishDiagnosticsFn publishDiagnostics
     let getAssemblyLocation =
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
@@ -223,6 +227,14 @@ type Server
                 | Ok dependencies ->
                     let compileResult =
                         compile { asmName = asmName; source = text; outDir = outputDir; dependencies = dependencies }
+
+                    // 意味解析が成功した場合は HIR からインデックスを構築してキャッシュする。
+                    match compileResult.hir, compileResult.symbolTable with
+                    | Some hirAsm, Some symTable ->
+                        let index = PositionIndex.build hirAsm
+                        hirCache[normalizedUri] <- (index, symTable)
+                    | _ ->
+                        hirCache.Remove normalizedUri |> ignore
 
                     compileResult.diagnostics |> toLspDiagnostics "atla-compiler" |> publish displayUri
             with ex ->
@@ -291,7 +303,10 @@ type Server
                     SemanticTokensLegend(tokenTypes |> Array.toList, []),
                     false,
                     true
-                )
+                ),
+                CompletionOptions([ "." ]),
+                true,
+                true
             )
 
         let serverVersion = getAssemblyLocation () |> resolveServerVersion
@@ -381,7 +396,87 @@ type Server
 
             buffers.Remove(key) |> ignore
             displayUris.Remove(key) |> ignore
+            hirCache.Remove(key) |> ignore
 
     /// Backward-compatible entrypoint for existing callers.
     member this.Compile(uri: string, text: string) =
         this.ChangeDocument(uri, text)
+
+    // ---- IntelliSense ------------------------------------------------------
+
+    /// 指定した URI の PositionIndex とシンボルテーブルをキャッシュから取得する。
+    member private _.TryGetIndex(uri: string) : (PositionIndex.PositionIndex * SymbolTable) option =
+        match tryNormalizeUri uri with
+        | None -> None
+        | Some key ->
+            match hirCache.TryGetValue key with
+            | true, entry -> Some entry
+            | false, _ -> None
+
+    /// 補完候補リストを返す。
+    /// モジュールスコープ内の全シンボルを候補として提供する。
+    /// 現時点では位置情報は補完フィルタに使用しない（将来のスコープ絞り込み拡張用に保持）。
+    member this.GetCompletions(uri: string, _line: int, _character: int) : CompletionList =
+        match this.TryGetIndex uri with
+        | None -> CompletionList(false, [])
+        | Some(index, symbolTable) ->
+            let visibleVars = index.moduleScope.allVisibleVars()
+            let items =
+                visibleVars
+                |> List.choose (fun (name, sid) ->
+                    match symbolTable.Get sid with
+                    | None -> None
+                    | Some symInfo ->
+                        let kind =
+                            match symInfo.kind with
+                            | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
+                            | SymbolKind.Local _ -> Some CompletionItemKind.Variable
+                            | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
+                            | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
+                            | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
+                            | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
+                        // detail: VS Code の補完 UI に型シグネチャとして表示されるテキスト。
+                        let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
+                        Some(CompletionItem(name, ?kind = kind, detail = detail)))
+            CompletionList(false, items)
+
+    /// カーソル位置にある識別子のホバー情報を返す。
+    member this.GetHover(uri: string, line: int, character: int) : Hover option =
+        match this.TryGetIndex uri with
+        | None -> None
+        | Some(index, symbolTable) ->
+            match PositionIndex.tryFindSymbolAt index line character with
+            | None -> None
+            | Some sid ->
+                match symbolTable.Get sid with
+                | None -> None
+                | Some symInfo ->
+                    let typeStr = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
+                    let mdText = sprintf "```\n%s: %s\n```" symInfo.name typeStr
+                    Some(Hover(MarkupContent("markdown", mdText)))
+
+    /// カーソル位置にある識別子の定義位置を返す。
+    member this.GetDefinition(uri: string, line: int, character: int) : Location option =
+        match this.TryGetIndex uri with
+        | None -> None
+        | Some(index, _) ->
+            match PositionIndex.tryFindSymbolAt index line character with
+            | None -> None
+            | Some sid ->
+                match PositionIndex.tryFindDeclSpan index sid with
+                | None -> None
+                | Some span ->
+                    // 定義の URI は現在のドキュメントと同一と仮定する（単一ファイル）。
+                    let displayUri =
+                        match tryNormalizeUri uri with
+                        | Some key ->
+                            match displayUris.TryGetValue key with
+                            | true, du -> du
+                            | false, _ -> uri
+                        | None -> uri
+                    let range =
+                        Range(
+                            Position(span.left.Line, span.left.Column),
+                            Position(span.right.Line, span.right.Column)
+                        )
+                    Some(Location(displayUri, range))
