@@ -18,7 +18,16 @@ module ServerLifecycleTests =
                 normalizedPath.ToLowerInvariant()
             else
                 normalizedPath
-        sprintf "file://%s" normalizedPathForOs
+        let isWindowsDrivePath =
+            normalizedPathForOs.Length >= 3
+            && System.Char.IsLetter(normalizedPathForOs.[0])
+            && normalizedPathForOs.[1] = ':'
+            && normalizedPathForOs.[2] = '/'
+
+        if isWindowsDrivePath then
+            sprintf "file:///%s" normalizedPathForOs
+        else
+            sprintf "file://%s" normalizedPathForOs
 
     [<Fact>]
     let ``normalize uri makes file key deterministic`` () =
@@ -27,6 +36,19 @@ module ServerLifecycleTests =
         let normalized = server.TryNormalizeUri("file:///tmp/../tmp/test.atla")
 
         Assert.Equal(Some(expectedNormalizedFileUri "/tmp/test.atla"), normalized)
+
+    [<Fact>]
+    /// Windows では file URI を `file:///c:/...` 形式で保持し、drive letter が authority に誤解釈されないことを確認する。
+    let ``normalize uri preserves triple slash for windows drive paths`` () =
+        if Path.DirectorySeparatorChar = '\\' then
+            let server = Server()
+            let root = Path.GetPathRoot(Path.GetFullPath(Path.GetTempPath()))
+            let drive =
+                if System.String.IsNullOrWhiteSpace root then "c:" else root.TrimEnd('\\').TrimEnd('/').ToLowerInvariant()
+            let sampleUri = $"file:///{drive}/tmp/test.atla"
+            let normalized = server.TryNormalizeUri(sampleUri)
+
+            Assert.Equal(Some(sampleUri), normalized)
 
     [<Fact>]
     let ``did open, change, close lifecycle publishes diagnostics and clears buffer`` () =

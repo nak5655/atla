@@ -1569,3 +1569,10 @@ VS Code拡張でIntelliSenseを提供する。
 - [x] `Server.fs` の配下判定を末尾スラッシュ有無に依存しない形へ修正し、Windowsでの `atla.yaml` 探索取りこぼしを防ぐ。
 - [x] `ServerLifecycleTests` に回帰テストを追加し、`rootUri` が末尾スラッシュ付きでも依存解決が行われることを検証する。
 - [x] `dotnet test src/Atla.slnx` を実行して非退行を確認する。
+
+## 2026-04-23 LanguageServer Windows file URI 正規化修正
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] `Server.fs` の file URI 正規化を修正し、Windows ドライブレターで `file:///` 形式を維持する。
+- [x] `ServerLifecycleTests` の URI 正規化テストを仕様へ合わせ、Windows ドライブパスの回帰テストを追加する。
+- [x] `dotnet test src/Atla.slnx` を実行して非退行を確認する。

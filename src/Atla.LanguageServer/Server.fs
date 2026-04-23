@@ -70,16 +70,19 @@ let private normalizePathForKey (path: string) : string =
     let full = Path.GetFullPath(path).Replace('\\', '/')
     if Path.DirectorySeparatorChar = '\\' then full.ToLowerInvariant() else full
 
+/// 正規化済みファイルパスが Windows ドライブ形式（`c:/...`）かどうかを判定する。
+let private isWindowsDrivePath (path: string) : bool =
+    path.Length >= 3
+    && Char.IsLetter(path.[0])
+    && path.[1] = ':'
+    && path.[2] = '/'
+
 /// 末尾スラッシュを正規化する。Windows ドライブ直下（`c:/`）や Unix ルート（`/`）は維持する。
 let private trimTrailingSeparator (path: string) : string =
     if String.IsNullOrWhiteSpace path then
         path
     else
-        let isWindowsDriveRoot =
-            path.Length = 3
-            && Char.IsLetter(path.[0])
-            && path.[1] = ':'
-            && path.[2] = '/'
+        let isWindowsDriveRoot = path.Length = 3 && isWindowsDrivePath path
 
         if path = "/" || isWindowsDriveRoot then
             path
@@ -93,7 +96,10 @@ let private tryNormalizeUri (uriText: string) : string option =
         if Uri.TryCreate(uriText, UriKind.Absolute, &u) then
             if u.IsFile then
                 let normalizedPath = normalizePathForKey u.LocalPath
-                Some(sprintf "file://%s" normalizedPath)
+                if isWindowsDrivePath normalizedPath then
+                    Some(sprintf "file:///%s" normalizedPath)
+                else
+                    Some(sprintf "file://%s" normalizedPath)
             else
                 Some(uriText.Trim())
         else
