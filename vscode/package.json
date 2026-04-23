@@ -1,0 +1,130 @@
+{
+    "publisher": "atla-lang",
+    "name": "atla",
+    "displayName": "Atla",
+    "description": "Atla language support for VS Code.",
+    "icon": "images/icon.png",
+    "version": "0.0.1",
+    "private": false,
+    "author": "Tatsuya Nakano",
+    "license": "SEE LICENSE IN LICENSE",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/nak5655/vscode-atla"
+    },
+    "bugs": {
+        "url": "https://github.com/nak5655/vscode-atla/issues"
+    },
+    "engines": {
+        "vscode": "^1.90.0",
+        "node": ">=22"
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run check",
+        "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+        "dev": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint ./src",
+        "format": "prettier --write .",
+        "check": "npm run lint && npm run typecheck && npm run build"
+    },
+    "devDependencies": {
+        "@types/node": "^22.19.17",
+        "@types/vscode": "^1.90.0",
+        "@typescript-eslint/eslint-plugin": "^8.58.1",
+        "@typescript-eslint/parser": "^8.58.1",
+        "esbuild": "^0.28.0",
+        "eslint": "^10.2.0",
+        "prettier": "^3.8.2",
+        "typescript": "^6.0.2"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.1"
+    },
+    "activationEvents": [
+        "onLanguage:atla"
+    ],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "atla",
+                "extensions": [
+                    ".atla"
+                ],
+                "aliases": [
+                    "Atla"
+                ]
+            }
+        ],
+        "configuration": {
+            "title": "Atla",
+            "properties": {
+                "atla.lsp-server.path": {
+                    "type": "string",
+                    "default": "~/.atla/atla-lsp.exe"
+                },
+                "atla.build-system.path": {
+                    "type": "string",
+                    "default": "~/.atla/atla.exe"
+                }
+            }
+        },
+        "taskDefinitions": [
+            {
+                "type": "atla",
+                "required": [
+                    "command"
+                ],
+                "properties": {
+                    "label": {
+                        "type": "string"
+                    },
+                    "command": {
+                        "type": "string"
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "env": {
+                        "type": "object",
+                        "patternProperties": {
+                            ".+": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        ],
+        "commands": [
+            {
+                "command": "atla.compile",
+                "title": "Compile"
+            }
+        ],
+        "problemMatchers": [
+            {
+                "name": "atla",
+                "owner": "atla",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": [
+                    {
+                        "regexp": "^(.*):(\\d*):(\\d*): (warning|info|error): (.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                        "severity": 4,
+                        "message": 5
+                    }
+                ]
+            }
+        ]
+    }
+}
