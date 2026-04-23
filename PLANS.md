@@ -1531,3 +1531,10 @@ do
 - [x] `src` 配下の各プロジェクトに `Properties/PublishProfiles/FolderProfile.pubxml` を追加する。
 - [x] ルート `folderprofile.pubxml` 依存を廃止し、README の手順を `FolderProfile` 参照方式に更新する。
 - [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
+
+## 2026-04-23 `FolderProfile.pubxml` の管理対象除外対応
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] 追跡対象になっている `FolderProfile.pubxml` を全プロジェクトから削除する。
+- [x] README の説明を「`FolderProfile.pubxml` はローカル管理前提」に更新する。
+- [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。

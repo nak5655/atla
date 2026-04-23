@@ -95,7 +95,7 @@ publish-atla.bat
 このバッチは内部で `dotnet publish src\Atla.slnx -c Release -p:PublishProfile=FolderProfile` を実行します。
 
 `FolderProfile` は各プロジェクトの `Properties/PublishProfiles/FolderProfile.pubxml` を参照します。
-出力先を変更したい場合は、対象プロジェクトの `FolderProfile.pubxml` の `PublishDir` を編集してください。
+このファイルはリポジトリでは管理しない運用のため、必要に応じてローカル環境で作成・編集してください。
 
 ## 参考ドキュメント
 
