@@ -1508,3 +1508,10 @@ do
 - [x] `ServerLifecycleTests.normalize uri makes file key deterministic` の期待値がOS依存になっている箇所を特定する。
 - [x] 期待値をOS非依存（正規化関数の仕様準拠）へ修正し、Windows/Unixで同一意図を検証できるようにする。
 - [x] `Atla.LanguageServer.Tests` と `src/Atla.slnx` のテストを実行して回帰がないことを確認する。
+
+## 2026-04-23 Atla.slnx 一括 publish バッチ追加
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] ルートに `Atla.slnx`（`src/Atla.slnx`）を publish する Windows バッチファイルを追加する。
+- [x] 利用者が実行手順を参照できるよう README にバッチ利用方法を追記する。
+- [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
