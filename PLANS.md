@@ -1562,3 +1562,10 @@ VS Code拡張でIntelliSenseを提供する。
 - [x] 追跡対象になっている `FolderProfile.pubxml` を全プロジェクトから削除する。
 - [x] README の説明を「`FolderProfile.pubxml` はローカル管理前提」に更新する。
 - [x] `dotnet test src/Atla.slnx` を実行し、既存テストの非退行を確認する。
+
+## 2026-04-23 LanguageServer の workspace root 末尾スラッシュ境界バグ修正
+
+- [x] `PLANS.md` に本タスク計画を追記する。
+- [x] `Server.fs` の配下判定を末尾スラッシュ有無に依存しない形へ修正し、Windowsでの `atla.yaml` 探索取りこぼしを防ぐ。
+- [x] `ServerLifecycleTests` に回帰テストを追加し、`rootUri` が末尾スラッシュ付きでも依存解決が行われることを検証する。
+- [x] `dotnet test src/Atla.slnx` を実行して非退行を確認する。

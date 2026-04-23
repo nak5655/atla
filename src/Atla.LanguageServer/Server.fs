@@ -70,6 +70,22 @@ let private normalizePathForKey (path: string) : string =
     let full = Path.GetFullPath(path).Replace('\\', '/')
     if Path.DirectorySeparatorChar = '\\' then full.ToLowerInvariant() else full
 
+/// 末尾スラッシュを正規化する。Windows ドライブ直下（`c:/`）や Unix ルート（`/`）は維持する。
+let private trimTrailingSeparator (path: string) : string =
+    if String.IsNullOrWhiteSpace path then
+        path
+    else
+        let isWindowsDriveRoot =
+            path.Length = 3
+            && Char.IsLetter(path.[0])
+            && path.[1] = ':'
+            && path.[2] = '/'
+
+        if path = "/" || isWindowsDriveRoot then
+            path
+        else
+            path.TrimEnd('/')
+
 let private tryNormalizeUri (uriText: string) : string option =
     if String.IsNullOrWhiteSpace uriText then None
     else
@@ -84,7 +100,9 @@ let private tryNormalizeUri (uriText: string) : string option =
             None
 
 let private pathIsUnder (candidatePath: string) (rootPath: string) : bool =
-    candidatePath = rootPath || candidatePath.StartsWith(rootPath + "/", StringComparison.Ordinal)
+    let normalizedCandidate = trimTrailingSeparator candidatePath
+    let normalizedRoot = trimTrailingSeparator rootPath
+    normalizedCandidate = normalizedRoot || normalizedCandidate.StartsWith(normalizedRoot + "/", StringComparison.Ordinal)
 
 let private tryUriToNormalizedPath (uriText: string) : string option =
     let mutable u = Unchecked.defaultof<Uri>

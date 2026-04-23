@@ -87,6 +87,61 @@ module ServerLifecycleTests =
         Assert.Contains(publishedList, fun (uri, count) -> uri = "file:///tmp/out.atla" && count = 0)
 
     [<Fact>]
+    /// `rootUri` が末尾 `/` 付きでも project root 探索が止まらず、依存注入まで進むことを確認する。
+    let ``rootUri with trailing slash still resolves manifest and injects dependencies`` () =
+        let capturedRequests = ResizeArray<Compiler.CompileRequest>()
+        let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-trailing-root-{System.Guid.NewGuid():N}")
+        let srcDir = Path.Join(tempRoot, "src")
+        Directory.CreateDirectory(srcDir) |> ignore
+        File.WriteAllText(Path.Join(tempRoot, "atla.yaml"), "package:\n  name: \"app\"\n  version: \"0.1.0\"\n")
+
+        let buildProject (_: BuildRequest) : BuildResult =
+            { succeeded = true
+              plan =
+                Some {
+                    projectName = "app"
+                    projectVersion = "0.1.0"
+                    projectRoot = tempRoot
+                    dependencies =
+                        [ { name = "Sample.Dependency"
+                            version = "1.0.0"
+                            source = Path.Join(tempRoot, "deps", "sample")
+                            compileReferencePaths = [ Path.Join(tempRoot, "deps", "sample", "ref", "net10.0", "Sample.Dependency.dll") ]
+                            runtimeLoadPaths = [ Path.Join(tempRoot, "deps", "sample", "ref", "net10.0", "Sample.Dependency.dll") ]
+                            nativeRuntimePaths = [] } ]
+                  }
+              diagnostics = [] }
+
+        let compile (request: Compiler.CompileRequest) : Compiler.CompileResult =
+            capturedRequests.Add(request)
+            { succeeded = true
+              diagnostics = []
+              hir = None
+              symbolTable = None }
+
+        let server = Server(buildProjectFn = buildProject, compileFn = compile)
+        let initializeContent = JObject.Parse($"""
+        {{
+          "params": {{
+            "rootUri": "{System.Uri(tempRoot).AbsoluteUri.TrimEnd('/')}/",
+            "capabilities": {{
+              "textDocument": {{
+                "publishDiagnostics": {{ "relatedInformation": true }},
+                "semanticTokens": {{ "tokenTypes": ["keyword", "number", "string", "variable", "type"] }}
+              }}
+            }}
+          }}
+        }}
+        """)
+
+        server.Initialize(initializeContent) |> ignore
+        server.OpenDocument(System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri, "fn main: Int = 0")
+
+        let request = capturedRequests |> Seq.exactlyOne
+        Assert.Single(request.dependencies) |> ignore
+        Assert.Equal("Sample.Dependency", request.dependencies.Head.name)
+
+    [<Fact>]
     let ``initialize falls back to default version when assembly path is empty`` () =
         let server = Server(assemblyLocationResolver = (fun () -> ""))
 
@@ -249,4 +304,3 @@ module ServerLifecycleTests =
         List.iter2 (fun (uri1: string, count1: int) (uri2: string, count2: int) ->
             Assert.Equal(uri1, uri2)
             Assert.Equal(count1, count2)) first second
-
