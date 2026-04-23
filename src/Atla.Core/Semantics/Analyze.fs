@@ -500,7 +500,21 @@ module Analyze =
                         | Result.Error exprErr -> exprErr
                 | None ->
                     Hir.Expr.ExprError(sprintf "Undefined symbol for '%s'" idExpr.name, tid, idExpr.span)
-            | [] -> Hir.Expr.ExprError(sprintf "Undefined variable '%s'" idExpr.name, tid, idExpr.span)
+            | [] ->
+                // 変数として未登録だが型スペースに存在する場合、import されたが未解決の型である可能性がある。
+                // その場合は依存関係の設定を促す具体的なメッセージを返す。
+                let errorMessage =
+                    match nameEnv.scope.ResolveType(idExpr.name) with
+                    | Some (TypeId.Name sid) ->
+                        match nameEnv.resolveSym sid with
+                        | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when isNull sysType ->
+                            sprintf
+                                "Type '%s' is imported but could not be resolved from loaded assemblies. Check that the dependency providing this type is listed in atla.yaml."
+                                idExpr.name
+                        | _ -> sprintf "Undefined variable '%s'" idExpr.name
+                    | _ -> sprintf "Undefined variable '%s'" idExpr.name
+
+                Hir.Expr.ExprError(errorMessage, tid, idExpr.span)
             | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s'" idExpr.name, tid, idExpr.span)
         | :? Ast.Expr.GenericApply as genericApplyExpr ->
             let genericArgResolutionResult = resolveGenericTypeArgs nameEnv genericApplyExpr

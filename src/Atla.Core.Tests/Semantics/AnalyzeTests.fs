@@ -1105,3 +1105,63 @@ fn bad (): Int = do
         | { diagnostics = diagnostics } ->
             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
             Assert.True(false, $"Resolve.resolveModule failed: {message}")
+
+    /// ロードされていないアセンブリの型を import すると Warning 診断が出る。
+    [<Fact>]
+    let ``import of unresolvable type emits a Warning diagnostic`` () =
+        // "Non.Existent.Type" はどのアセンブリにも存在しない型。
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "Non"; "Existent"; "Type" ], span) :> Ast.Decl
+        let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, Ast.Expr.Int(0, span) :> Ast.Expr, span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl; fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+
+        // resolveModule は Warning 診断が存在しても succeeded = true を返す。
+        let resolveResult = Resolve.resolveModule(symbolTable, "main", astModule)
+        Assert.True(resolveResult.succeeded, "resolveModule should succeed even with unresolvable import")
+
+        let warnings = resolveResult.diagnostics |> List.filter (fun d -> d.severity = DiagnosticSeverity.Warning)
+        Assert.NotEmpty(warnings)
+
+        let warnMessage = warnings |> List.head |> (fun d -> d.message)
+        Assert.Contains("Non.Existent.Type", warnMessage)
+        Assert.Contains("atla.yaml", warnMessage)
+
+    /// ロードされていない型を値として使用した際に具体的なエラーメッセージが出る。
+    [<Fact>]
+    let ``using unresolvable imported type as value gives specific error message`` () =
+        // "Non.Existent.MyClass" はどのアセンブリにも存在しない型。
+        // ユーザーが MyClass() のように値として使おうとする状況を再現する。
+        let program = """
+import Non.Existent.MyClass
+
+fn main (): Int = MyClass ()
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                let result = Analyze.analyzeModule(symbolTable, subst, "main", moduleAst)
+
+                // エラー診断が存在する（型が未解決なため）。
+                let errors = result.diagnostics |> List.filter (fun d -> d.isError)
+                Assert.NotEmpty(errors)
+
+                // エラーメッセージに atla.yaml への言及が含まれ、
+                // "undefined variable" の代わりに具体的な案内が出ること。
+                let errorMessages = errors |> List.map (fun d -> d.message) |> String.concat " "
+                Assert.Contains("atla.yaml", errorMessages)
+                Assert.DoesNotContain("Undefined variable 'MyClass'", errorMessages)
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
