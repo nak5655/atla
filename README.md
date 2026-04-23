@@ -83,6 +83,20 @@ NuGet 依存がキャッシュに存在しない場合は、NuGet.Client API 経
 - 現在は env-class 本実装前の段階であり、捕捉ラムダは明示診断で失敗させます（非捕捉のみ成功パス）。
 
 
+## ソリューション一括 Publish（Windows）
+
+`src/Atla.slnx` に含まれる publish 対象プロジェクトを一括で publish するには、
+リポジトリルートで次を実行してください。
+
+```bat
+publish-atla.bat
+```
+
+このバッチは内部で `dotnet publish src\Atla.slnx -c Release -p:PublishProfile=FolderProfile` を実行します。
+
+`FolderProfile` は各プロジェクトの `Properties/PublishProfiles/FolderProfile.pubxml` を参照します。
+このファイルはリポジトリでは管理しない運用のため、必要に応じてローカル環境で作成・編集してください。
+
 ## 参考ドキュメント
 
 - CLI 詳細: `doc/cli-interface.md`
