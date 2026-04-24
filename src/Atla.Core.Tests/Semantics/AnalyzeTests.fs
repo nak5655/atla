@@ -238,6 +238,78 @@ fn main (): () = "hello" Console'WriteLine.
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``semantic analysis handles chained dot-only calls`` () =
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let mkArg name = Ast.FnArg.Named(name, intType, span) :> Ast.FnArg
+        let idDecl = Ast.Decl.Fn("id", [ mkArg "x" ], intType, Ast.Expr.Id("x", span) :> Ast.Expr, span) :> Ast.Decl
+        let incDecl = Ast.Decl.Fn("inc", [ mkArg "y" ], intType, Ast.Expr.Id("y", span) :> Ast.Expr, span) :> Ast.Decl
+
+        let mainBody =
+            Ast.Expr.Apply(
+                Ast.Expr.Id("inc", span) :> Ast.Expr,
+                [ Ast.Expr.Apply(Ast.Expr.Id("id", span) :> Ast.Expr, [ Ast.Expr.Int(1, span) :> Ast.Expr ], span) :> Ast.Expr ],
+                span
+            ) :> Ast.Expr
+        let mainDecl = Ast.Decl.Fn("main", [], intType, mainBody, span) :> Ast.Decl
+        let astModule = Ast.Module([ idDecl; incDecl; mainDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            let diagnostics = hirModule.methods |> List.collect (fun methodInfo -> methodInfo.getDiagnostics)
+            Assert.Empty(diagnostics)
+        | { diagnostics = diagnostics } ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toDisplayText())
+                |> String.concat "; "
+            Assert.True(false, $"Semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``semantic analysis handles zero argument dot-only call`` () =
+        let program = """
+fn ping (): Int = 1
+fn main (): Int = ping.
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let mainMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodInfo -> symbolTable.Get(methodInfo.sym) |> Option.exists (fun symbolInfo -> symbolInfo.name = "main"))
+
+                    match mainMethod with
+                    | Some methodInfo ->
+                        match methodInfo.body with
+                        | Hir.Expr.Call (Hir.Callable.Fn _, _, [], _, _) ->
+                            Assert.True(true)
+                        | other ->
+                            Assert.True(false, $"expected zero-arg Hir.Expr.Call for ping. but got {other}")
+                    | None ->
+                        Assert.True(false, "main method was not found in analyzed HIR module")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``void call should not be used as value`` () =
         let span = Span.Empty
         let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl

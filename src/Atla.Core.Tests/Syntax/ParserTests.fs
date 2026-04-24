@@ -560,3 +560,68 @@ fn main (): () = do
                 Assert.True(false, "main function declaration was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses chained dot-only calls left to right`` () =
+        let program = "fn main (): Int = x f. g."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as outerApply ->
+                    match outerApply.func, outerApply.args with
+                    | (:? Ast.Expr.Id as outerFunc), [ (:? Ast.Expr.Apply as innerApply) ] ->
+                        Assert.Equal("g", outerFunc.name)
+                        match innerApply.func, innerApply.args with
+                        | (:? Ast.Expr.Id as innerFunc), [ (:? Ast.Expr.Id as inputExpr) ] ->
+                            Assert.Equal("f", innerFunc.name)
+                            Assert.Equal("x", inputExpr.name)
+                        | _ ->
+                            Assert.True(false, "inner chained call should be f(x)")
+                    | _ ->
+                        Assert.True(false, "outer chained call should be g(f(x))")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as chained Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses identifier dot as zero argument call`` () =
+        let program = "fn main (): Int = ping."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.func with
+                    | :? Ast.Expr.Id as targetId ->
+                        Assert.Equal("ping", targetId.name)
+                        Assert.Empty(applyExpr.args)
+                    | _ ->
+                        Assert.True(false, "zero argument dot call target should be identifier")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as zero-arg Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

@@ -100,6 +100,7 @@ Detailed historical plans and design notes are stored under `notes/`.
 - 2026-04-24: Implemented parser-side syntax switch to apostrophe member access and dot-only call chaining; updated syntax parser tests to the new call/member forms.
 - 2026-04-24: Completed remaining Step 1/2 work: added explicit parser diagnostics for dangling apostrophe member access, required EOI for full module parse, and propagated `Ast.Expr.Error` / `Ast.Stmt.Error` through semantic analysis instead of emitting generic unsupported-type errors.
 - 2026-04-24: Completed Step 4/5 by adding non-regression semantic tests that assert dot/apostrophe syntax lowers to canonical `Hir.Expr.Call` forms, plus parser boundary tests for primary-binding member calls.
+- 2026-04-24: Expanded Step 5 coverage with parser/semantic tests for left-to-right chained dot calls (`x f. g.`), identifier zero-arg dot calls (`f.`), and successful semantic analysis of chained/zero-arg dot-only programs.
 
 ## References
 - Historical plans: `notes/plans-archive.md`
