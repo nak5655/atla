@@ -2,13 +2,14 @@ import System::Array
 import System::Console
 import System::Linq::Enumerable
 fn fizzbuzz (n: Int): () =
-    for i in Enumerable.Range 1 n
-        Console.WriteLine if
+    for i in 1 Enumerable::Range. n Enumerable::Range.
+        if
             | i % 15 == 0 => "FizzBuzz"
             | i % 5 == 0 => "Buzz"
             | i % 3 == 0 => "Fizz"
-            | else => i.ToString()
+            | else => i'ToString.
+        Console::WriteLine.
 
 fn main: () = do
-    let n = Int32.Parse (Console.ReadLine ())
-    fizzbuzz n
+    let n = Console::ReadLine. Int32::Parse.
+    n fizzbuzz.

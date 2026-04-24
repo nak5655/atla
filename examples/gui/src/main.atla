@@ -4,11 +4,11 @@ import Avalonia.AppBuilder
 import Avalonia.Controls.DesktopApplicationExtensions
 
 fn appMain (app: Application) (args: Array String): () = do
-    let window = Window ()
-    window.Show ()
-    DesktopApplicationExtensions.Run app window
+    let window = Window.
+    window'Show.
+    app DesktopApplicationExtensions::Run. window DesktopApplicationExtensions::Run.
 
 fn main (args: Array String): () = do
-    let config = AppBuilder.Configure[Application] ()
-    let config2 = config.UsePlatformDetect ()
-    config2.Start appMain args
+    let config = AppBuilder::Configure[Application].
+    let config2 = config'UsePlatformDetect.
+    appMain config2'Start. args config2'Start.
