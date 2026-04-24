@@ -7,5 +7,5 @@ fn fibonacci (n: Int): Int = if
     | else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
 fn main: () = do
-    let n = Console::ReadLine. Int32::Parse.
-    n fibonacci. Console::WriteLine.
+    let n = Console'ReadLine. Int32'Parse.
+    n fibonacci. Console'WriteLine.

@@ -1,4 +1,4 @@
 import System.Console
 
 fn main: () = do
-    "Hello, World!" Console::WriteLine.
+    "Hello, World!" Console'WriteLine.

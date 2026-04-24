@@ -102,6 +102,7 @@ Detailed historical plans and design notes are stored under `notes/`.
 - 2026-04-24: Completed Step 4/5 by adding non-regression semantic tests that assert dot/apostrophe syntax lowers to canonical `Hir.Expr.Call` forms, plus parser boundary tests for primary-binding member calls.
 - 2026-04-24: Expanded Step 5 coverage with parser/semantic tests for left-to-right chained dot calls (`x f. g.`), identifier zero-arg dot calls (`f.`), and successful semantic analysis of chained/zero-arg dot-only programs.
 - 2026-04-24: Migrated `examples/` source programs to dot-only calls and apostrophe member-access notation so sample code reflects the new surface syntax.
+- 2026-04-24: Removed `a::b` parser syntax path so member access is apostrophe-only (`a'b`), and updated parser tests/examples accordingly.
 
 ## References
 - Historical plans: `notes/plans-archive.md`

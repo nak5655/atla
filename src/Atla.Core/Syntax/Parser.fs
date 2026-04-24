@@ -128,11 +128,6 @@ module Parser =
             unit <|> paren () <|> ifExpr () <|> doExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str)
         )
 
-    and staticAccess (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            tid <& delim ':' <& delim ':' <&> tid |>> fun (typ, id) -> Ast.Expr.StaticAccess (typ.str, id.str, { left = typ.span.left; right = id.span.right })
-        )
-
     and postfixMemberAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
         Delay (fun () -> fun input pos ->
             match (delim '\'') input pos with
@@ -161,7 +156,7 @@ module Parser =
 
     and postfixExpr (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            (staticAccess () <|> factor ()) <&> Many (postfixMemberAccess () <|> postfixGenericApply ())
+            (factor ()) <&> Many (postfixMemberAccess () <|> postfixGenericApply ())
             |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes
         )
 

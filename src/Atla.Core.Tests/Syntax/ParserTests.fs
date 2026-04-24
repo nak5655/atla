@@ -625,3 +625,13 @@ fn main (): () = do
                 Assert.True(false, "main function declaration was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule rejects double-colon member access syntax`` () =
+        let program = "fn main (): Int = Console::WriteLine"
+
+        match parseModule program with
+        | Success _ ->
+            Assert.True(false, "double-colon member access syntax should be rejected")
+        | Failure _ ->
+            Assert.True(true)
