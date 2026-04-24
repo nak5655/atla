@@ -56,79 +56,86 @@ module ServerLifecycleTests =
         // collectWorkspaceRoots must decode these so dependency resolution finds atla.yaml.
         let capturedRequests = ResizeArray<Compiler.CompileRequest>()
         let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-pct-root-{System.Guid.NewGuid():N}")
-        let srcDir = Path.Join(tempRoot, "src")
-        Directory.CreateDirectory(srcDir) |> ignore
-        File.WriteAllText(
-            Path.Join(tempRoot, "atla.yaml"),
-            "package:\n  name: \"app\"\n  version: \"0.1.0\"\n")
 
-        let buildProject (_: BuildRequest) : BuildResult =
-            { succeeded = true
-              plan =
-                Some {
-                    projectName = "app"
-                    projectVersion = "0.1.0"
-                    projectRoot = tempRoot
-                    dependencies =
-                        [ { name = "Sample"
-                            version = "1.0.0"
-                            source = ""
-                            compileReferencePaths = []
-                            runtimeLoadPaths = []
-                            nativeRuntimePaths = [] } ]
-                  }
-              diagnostics = [] }
+        try
+            let srcDir = Path.Join(tempRoot, "src")
+            Directory.CreateDirectory(srcDir) |> ignore
+            File.WriteAllText(
+                Path.Join(tempRoot, "atla.yaml"),
+                "package:\n  name: \"app\"\n  version: \"0.1.0\"\n")
 
-        let compile (request: Compiler.CompileRequest) : Compiler.CompileResult =
-            capturedRequests.Add(request)
-            { succeeded = true; diagnostics = []; hir = None; symbolTable = None }
+            let buildProject (_: BuildRequest) : BuildResult =
+                { succeeded = true
+                  plan =
+                    Some {
+                        projectName = "app"
+                        projectVersion = "0.1.0"
+                        projectRoot = tempRoot
+                        dependencies =
+                            [ { name = "Sample"
+                                version = "1.0.0"
+                                source = ""
+                                compileReferencePaths = []
+                                runtimeLoadPaths = []
+                                nativeRuntimePaths = [] } ]
+                      }
+                  diagnostics = [] }
 
-        let server =
-            Server(
-                (fun _ _ -> ()),
-                buildProjectFn = buildProject,
-                compileFn = compile)
+            let compile (request: Compiler.CompileRequest) : Compiler.CompileResult =
+                capturedRequests.Add(request)
+                { succeeded = true; diagnostics = []; hir = None; symbolTable = None }
 
-        server.IsAvailablePublishDiagnostics <- true
+            let server =
+                Server(
+                    (fun _ _ -> ()),
+                    buildProjectFn = buildProject,
+                    compileFn = compile)
 
-        // Encode ':' as '%3A' only in the path portion of the URI (after "file://"),
-        // mimicking what VSCode on Windows sends for drive-letter paths.
-        // On Linux, file URIs contain no colon outside the scheme so encoding is a no-op.
-        let encodePathColon (uri: string) =
-            let prefix = "file://"
-            if uri.StartsWith(prefix, System.StringComparison.Ordinal) then
-                prefix + uri.Substring(prefix.Length).Replace(":", "%3A")
-            else
-                uri
+            server.IsAvailablePublishDiagnostics <- true
 
-        let rawRootUri = System.Uri(tempRoot).AbsoluteUri
-        let encodedRootUri = encodePathColon rawRootUri
+            // Encode ':' as '%3A' only in the path portion of the URI (after "file://").
+            // This mimics what VSCode on Windows sends for drive-letter paths.
+            // On Linux, file:// URIs contain no colon in the path so encoding is a no-op.
+            // Query strings and fragments are not present in file:// source URIs, so
+            // replacing every ':' after the scheme prefix is safe here.
+            let encodePathColon (uri: string) =
+                let prefix = "file://"
+                if uri.StartsWith(prefix, System.StringComparison.Ordinal) then
+                    prefix + uri.Substring(prefix.Length).Replace(":", "%3A")
+                else
+                    uri
 
-        let initContent = Newtonsoft.Json.Linq.JObject.Parse($"""
-        {{
-          "params": {{
-            "rootUri": "{encodedRootUri}",
-            "capabilities": {{
-              "textDocument": {{
-                "publishDiagnostics": {{ "relatedInformation": true }},
-                "semanticTokens": {{ "tokenTypes": ["keyword"] }}
+            let rawRootUri = System.Uri(tempRoot).AbsoluteUri
+            let encodedRootUri = encodePathColon rawRootUri
+
+            let initContent = Newtonsoft.Json.Linq.JObject.Parse($"""
+            {{
+              "params": {{
+                "rootUri": "{encodedRootUri}",
+                "capabilities": {{
+                  "textDocument": {{
+                    "publishDiagnostics": {{ "relatedInformation": true }},
+                    "semanticTokens": {{ "tokenTypes": ["keyword"] }}
+                  }}
+                }}
               }}
             }}
-          }}
-        }}
-        """)
+            """)
 
-        server.Initialize(initContent) |> ignore
+            server.Initialize(initContent) |> ignore
 
-        // Open a document whose URI also uses %3A encoding in the path portion.
-        let rawDocUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
-        let encodedDocUri = encodePathColon rawDocUri
-        server.OpenDocument(encodedDocUri, "fn main: Int = 0")
+            // Open a document whose URI also uses %3A encoding in the path portion.
+            let rawDocUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
+            let encodedDocUri = encodePathColon rawDocUri
+            server.OpenDocument(encodedDocUri, "fn main: Int = 0")
 
-        // Build system should have been invoked and the dependency injected.
-        let request = Assert.Single(capturedRequests)
-        Assert.Single(request.dependencies) |> ignore
-        Assert.Equal("Sample", request.dependencies.Head.name)
+            // Build system should have been invoked and the dependency injected.
+            let request = Assert.Single(capturedRequests)
+            Assert.Single(request.dependencies) |> ignore
+            Assert.Equal("Sample", request.dependencies.Head.name)
+        finally
+            if Directory.Exists tempRoot then
+                Directory.Delete(tempRoot, recursive = true)
 
     [<Fact>]
     let ``did open, change, close lifecycle publishes diagnostics and clears buffer`` () =

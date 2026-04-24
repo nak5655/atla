@@ -74,6 +74,8 @@ let private normalizePathForKey (path: string) : string =
 /// drive-letter colon is percent-encoded in the original URI (e.g. <c>d%3A</c> → <c>/d:/</c>
 /// instead of the expected <c>d:/</c>).  Strip that slash so the path can be handed
 /// to <c>Path.GetFullPath</c> without producing garbage.
+/// Checking the first three characters is sufficient: <c>/</c> then an ASCII letter then <c>:</c>
+/// uniquely identifies a Windows drive-letter prefix regardless of what follows.
 let private fixWindowsLocalPath (localPath: string) : string =
     if Path.DirectorySeparatorChar = '\\' &&
        localPath.Length >= 3 &&
