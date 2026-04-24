@@ -17,11 +17,70 @@ Detailed historical plans and design notes are stored under `notes/`.
 - Add/update tests for all invariant-impacting changes.
 
 ## Plan
-1. Define the smallest coherent implementation unit.
-2. Implement with explicit phase boundaries and immutable data flow.
-3. Add/update unit and regression tests.
-4. Run full test suite.
-5. Update docs when behavior/invariants change.
+### Active Epic (2026-04-24): Dot-Only Calls + Apostrophe Member Access
+
+#### Mission
+- Introduce new surface syntax while preventing downstream churn in HIR and later phases.
+- New syntax:
+  - Function calls use `.` only.
+  - Member access uses `'`.
+
+#### Frozen Language Rules
+- `x f.` => `f(x)`.
+- `x f. g.` => `g(f(x))` (left-to-right evaluation).
+- `f.` is valid (zero-argument call).
+- `x .` is valid (direct zero-argument call on callable expression `x`).
+- `a'b` => `a.b`.
+- Member access binds as primary expression: `a'b c.` => `(a.b)(c)`.
+- Invalid forms:
+  - `x f` is an error (missing `.` for call).
+  - `a'` is an error (missing member identifier).
+
+#### Scope Boundaries
+- AST/Parser/Semantics: in scope.
+- HIR/Frame Allocation/MIR/CIL: no intentional structural changes; only non-regression validation.
+
+#### Execution Steps
+1. Update grammar and parser for `.` calls and `'` member access with preserved source spans.
+2. Add/adjust parser diagnostics for invalid forms (`x f`, `a'`, malformed postfix sequences).
+3. Normalize parsed forms in Semantics into existing canonical call/member shapes.
+4. Reuse existing HIR lowering contracts; avoid introducing new HIR variants where possible.
+5. Add parser + semantic unit tests for positive/negative cases.
+6. Add/update AST/HIR/MIR snapshot tests for regression coverage.
+7. Run full test suite and verify deterministic diagnostics ordering.
+8. Update user-facing syntax documentation.
+
+#### Test Matrix
+- Positive:
+  - `x f.`
+  - `x f. g.`
+  - `f.`
+  - `x .`
+  - `a'b`
+  - `a'b c.`
+- Negative:
+  - `x f`
+  - `a'`
+  - malformed chained postfix call/member forms
+- Boundary:
+  - AST snapshot stability
+  - HIR snapshot remains canonical (Call/MemberAccess)
+  - MIR snapshot non-regression
+
+#### Risks & Mitigations
+- Dot token ambiguity in expression tails:
+  - Mitigation: strict postfix-call parsing and explicit primary-expression boundaries.
+- Parser churn causing broad test breakage:
+  - Mitigation: stage parser tests first, then semantic normalization and snapshots.
+- Accidental HIR contract drift:
+  - Mitigation: lock HIR shape assertions in regression tests before refactors.
+
+#### Done Criteria (Epic)
+- Build succeeds with zero warnings.
+- Full tests pass.
+- Diagnostics remain structured and deterministic.
+- HIR/MIR/CIL behavior is regression-equivalent for canonicalized forms.
+- Documentation updated for final syntax.
 
 ## Surprises & Discoveries
 - (Record unexpected findings discovered during implementation.)
@@ -37,6 +96,7 @@ Detailed historical plans and design notes are stored under `notes/`.
 - 2026-04-24: Converted AGENTS.md to ExecPlan-formatted guidance.
 - 2026-04-24: Started extracting phase-specific design notes from `notes/plans-archive.md` into `notes/phases/`.
 - 2026-04-24: Added explicit Closure Conversion phase documentation in `notes/phases/` and adjusted phase index order.
+- 2026-04-24: Frozen syntax plan for dot-only function calls (`.`) and apostrophe member access (`'`) with left-to-right call chaining and no intentional HIR+ changes.
 
 ## References
 - Historical plans: `notes/plans-archive.md`
