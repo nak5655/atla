@@ -173,6 +173,102 @@ let private tryFindProjectRootFromManifest (workspaceRoots: string list) (docume
         loop (normalizePathForKey docDir)
 
 // ---------------------------------------------------------------------------
+// IntelliSense ヘルパー関数
+// ---------------------------------------------------------------------------
+
+/// バッファテキストと補完トリガー位置を受け取り、直前がピリオドであれば
+/// ピリオド前の識別子の名前・行・開始列を返す。
+/// 返り値: Some(identName, identLine, identStartCol) または None（ドット補完でない場合）
+let private detectDotContext (text: string) (line: int) (character: int) : (string * int * int) option =
+    if line < 0 || character < 1 then None
+    else
+        let lines = text.Split('\n')
+        if line >= lines.Length then None
+        else
+            let lineText = lines.[line]
+            // character は補完トリガー位置（ピリオドの次の文字の列番号）。
+            // character - 1 がピリオドであることを確認する。
+            if character - 1 >= lineText.Length || lineText.[character - 1] <> '.' then None
+            else
+                let dotPos = character - 1
+                // dotPos の手前から英数字・アンダースコアをスキャンして識別子の開始列を求める。
+                let rec scanBack i =
+                    if i < 0 then 0
+                    elif Char.IsLetterOrDigit(lineText.[i]) || lineText.[i] = '_' then scanBack (i - 1)
+                    else i + 1
+                let identStart =
+                    if dotPos = 0 then dotPos
+                    else scanBack (dotPos - 1)
+                if identStart >= dotPos then None
+                else
+                    let identName = lineText.[identStart .. dotPos - 1]
+                    if String.IsNullOrEmpty identName then None
+                    else Some(identName, line, identStart)
+
+/// TypeId に対応するメンバー補完候補リストを返す。
+/// TypeId.Native および TypeId.Name（インポート済み .NET 型）はリフレクションでメンバーを列挙し、
+/// ユーザー定義型（TypeId.Name で typeFields に登録されているもの）はフィールドを返す。
+let private getMembersOfType
+    (symbolTable: SymbolTable)
+    (index: PositionIndex.PositionIndex)
+    (tid: TypeId)
+    : CompletionItem list =
+    let flags = BindingFlags.Public ||| BindingFlags.Instance
+    // TypeId を .NET System.Type へ解決する。
+    // TypeId.Native・組み込みスカラー型・インポート済み .NET 型名を処理する。
+    let resolveSysType (t: TypeId) : System.Type option =
+        match t with
+        | TypeId.Native sysType -> Some sysType
+        | TypeId.String          -> Some typeof<string>
+        | TypeId.Int             -> Some typeof<int>
+        | TypeId.Bool            -> Some typeof<bool>
+        | TypeId.Float           -> Some typeof<float>
+        | TypeId.Name sid ->
+            match symbolTable.Get sid with
+            | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) }
+                when not (obj.ReferenceEquals(sysType, null)) -> Some sysType
+            | _ -> None
+        | _ -> None
+    match resolveSysType tid with
+    | Some sysType ->
+        // .NET 型：リフレクションでパブリックインスタンスメンバーを列挙する。
+        [
+            // プロパティ
+            for p in sysType.GetProperties(flags) do
+                let typeStr = PositionIndex.formatTypeWithTable symbolTable (TypeId.fromSystemType p.PropertyType)
+                yield CompletionItem(p.Name, kind = CompletionItemKind.Field, detail = typeStr)
+            // メソッド（特殊メソッドを除く。同名の多重定義は最初のシグネチャのみ掲載）
+            let seenMethods = HashSet<string>()
+            for m in sysType.GetMethods(flags) do
+                if not m.IsSpecialName && seenMethods.Add(m.Name) then
+                    let paramStr =
+                        m.GetParameters()
+                        |> Array.map (fun p ->
+                            let ts = PositionIndex.formatTypeWithTable symbolTable (TypeId.fromSystemType p.ParameterType)
+                            sprintf "%s: %s" p.Name ts)
+                        |> String.concat ", "
+                    let retStr = PositionIndex.formatTypeWithTable symbolTable (TypeId.fromSystemType m.ReturnType)
+                    let detail = sprintf "(%s) -> %s" paramStr retStr
+                    yield CompletionItem(m.Name, kind = CompletionItemKind.Method, detail = detail)
+            // フィールド
+            for f in sysType.GetFields(flags) do
+                let typeStr = PositionIndex.formatTypeWithTable symbolTable (TypeId.fromSystemType f.FieldType)
+                yield CompletionItem(f.Name, kind = CompletionItemKind.Field, detail = typeStr)
+        ]
+    | None ->
+        // ユーザー定義型：typeFields インデックスからフィールド SymbolId を取得してシンボル名・型を返す。
+        match tid with
+        | TypeId.Name sid ->
+            PositionIndex.tryGetTypeFieldIds index sid
+            |> List.choose (fun fieldSid ->
+                match symbolTable.Get fieldSid with
+                | None -> None
+                | Some fieldInfo ->
+                    let typeStr = PositionIndex.formatTypeWithTable symbolTable fieldInfo.typ
+                    Some(CompletionItem(fieldInfo.name, kind = CompletionItemKind.Field, detail = typeStr)))
+        | _ -> []
+
+// ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
 
@@ -430,31 +526,52 @@ type Server
             | false, _ -> None
 
     /// 補完候補リストを返す。
-    /// モジュールスコープ内の全シンボルを候補として提供する。
-    /// 現時点では位置情報は補完フィルタに使用しない（将来のスコープ絞り込み拡張用に保持）。
-    member this.GetCompletions(uri: string, _line: int, _character: int) : CompletionList =
+    /// カーソル直前がピリオドの場合はドット補完を行い、レシーバーの型メンバーを返す。
+    /// それ以外はモジュールスコープ内の全シンボルを候補として返す（通常補完）。
+    member this.GetCompletions(uri: string, line: int, character: int) : CompletionList =
         match this.TryGetIndex uri with
         | None -> CompletionList(false, [])
         | Some(index, symbolTable) ->
-            let visibleVars = index.moduleScope.allVisibleVars()
-            let items =
-                visibleVars
-                |> List.choose (fun (name, sid) ->
+            // バッファテキストを取得し、ドット補完コンテキストを検出する。
+            let dotContext =
+                match tryNormalizeUri uri with
+                | None -> None
+                | Some key ->
+                    match buffers.TryGetValue key with
+                    | false, _ -> None
+                    | true, text -> detectDotContext text line character
+            match dotContext with
+            | Some(_, identLine, identCol) ->
+                // ドット補完：ピリオド前の識別子の型を特定し、その型のメンバーを返す。
+                match PositionIndex.tryFindSymbolAt index identLine identCol with
+                | None -> CompletionList(false, [])
+                | Some sid ->
                     match symbolTable.Get sid with
-                    | None -> None
+                    | None -> CompletionList(false, [])
                     | Some symInfo ->
-                        let kind =
-                            match symInfo.kind with
-                            | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
-                            | SymbolKind.Local _ -> Some CompletionItemKind.Variable
-                            | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
-                            | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
-                            | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
-                            | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
-                        // detail: VS Code の補完 UI に型シグネチャとして表示されるテキスト。
-                        let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
-                        Some(CompletionItem(name, ?kind = kind, detail = detail)))
-            CompletionList(false, items)
+                        let items = getMembersOfType symbolTable index symInfo.typ
+                        CompletionList(false, items)
+            | None ->
+                // 通常補完：スコープ内の全シンボルを返す。
+                let visibleVars = index.moduleScope.allVisibleVars()
+                let items =
+                    visibleVars
+                    |> List.choose (fun (name, sid) ->
+                        match symbolTable.Get sid with
+                        | None -> None
+                        | Some symInfo ->
+                            let kind =
+                                match symInfo.kind with
+                                | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
+                                | SymbolKind.Local _ -> Some CompletionItemKind.Variable
+                                | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
+                                | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
+                                | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
+                                | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
+                            // detail: VS Code の補完 UI に型シグネチャとして表示されるテキスト。
+                            let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
+                            Some(CompletionItem(name, ?kind = kind, detail = detail)))
+                CompletionList(false, items)
 
     /// カーソル位置にある識別子のホバー情報を返す。
     member this.GetHover(uri: string, line: int, character: int) : Hover option =

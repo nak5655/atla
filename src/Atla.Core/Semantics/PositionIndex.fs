@@ -58,7 +58,10 @@ type PositionIndex =
       /// シンボルIDから宣言スパンへのマップ（SymbolId.id をキーとする）。
       declSites: Map<int, Span>
       /// モジュールのトップレベルスコープ（補完候補の列挙に使用）。
-      moduleScope: Scope }
+      moduleScope: Scope
+      /// ユーザー定義型の SymbolId.id → フィールド SymbolId リスト。
+      /// ドット補完でユーザー定義型のフィールドを列挙するために使用する。
+      typeFields: Map<int, SymbolId list> }
 
 // ---------------------------------------------------------------------------
 // ヘルパー
@@ -80,13 +83,17 @@ let private spanContains (line: int) (col: int) (span: Span) : bool =
 /// `build` 関数が使用する不変アキュムレータ。
 /// F# のコーディング規約（AGENTS.md §6）に従い可変バインディングは使用しない。
 type private BuildState =
-    { useSites:  UseSite list
-      declSites: Map<int, Span> }
+    { useSites:   UseSite list
+      declSites:  Map<int, Span>
+      /// ユーザー定義型の SymbolId.id → フィールド SymbolId リスト。
+      /// ドット補完でユーザー定義型のフィールドを列挙するために使用する。
+      typeFields: Map<int, SymbolId list> }
 
 /// 空のアキュムレータ。
 let private emptyState : BuildState =
-    { useSites  = []
-      declSites = Map.empty }
+    { useSites   = []
+      declSites  = Map.empty
+      typeFields = Map.empty }
 
 /// 宣言スパンをアキュムレータに追加する（同一 SymbolId の場合は最初の登録のみ保持）。
 let private addDecl (sid: SymbolId) (span: Span) (state: BuildState) : BuildState =
@@ -148,8 +155,13 @@ let private walkModule (modul: Hir.Module) (state: BuildState) : BuildState =
     modul.types |> List.fold (fun s typ ->
         // Hir.Type はスパンを持たないため Span.Empty を使用する。
         let s1 = addDecl typ.sym Span.Empty s
-        typ.fields |> List.fold (fun s2 field ->
-            s2 |> addDecl field.sym field.span |> walkExpr field.body) s1) state2
+        // ユーザー定義型のフィールド SymbolId を typeFields マップへ記録する。
+        // ドット補完時にこのマップを参照してフィールド一覧を列挙する。
+        let (SymbolId typId) = typ.sym
+        let fieldSids = typ.fields |> List.map (fun f -> f.sym)
+        let s2 = { s1 with typeFields = s1.typeFields |> Map.add typId fieldSids }
+        typ.fields |> List.fold (fun s3 field ->
+            s3 |> addDecl field.sym field.span |> walkExpr field.body) s2) state2
 
 // ---------------------------------------------------------------------------
 // PositionIndex 構築（公開エントリポイント）
@@ -170,6 +182,7 @@ let build (assembly: Hir.Assembly) : PositionIndex =
 
     { useSites    = finalState.useSites
       declSites   = finalState.declSites
+      typeFields  = finalState.typeFields
       moduleScope = topScope }
 
 // ---------------------------------------------------------------------------
@@ -187,3 +200,9 @@ let tryFindSymbolAt (index: PositionIndex) (line: int) (col: int) : SymbolId opt
 let tryFindDeclSpan (index: PositionIndex) (sid: SymbolId) : Span option =
     let (SymbolId id) = sid
     index.declSites |> Map.tryFind id
+
+/// 指定したシンボル ID を持つユーザー定義型のフィールド SymbolId リストを返す。
+/// ドット補完でユーザー定義型のフィールドを列挙するために使用する。
+let tryGetTypeFieldIds (index: PositionIndex) (sid: SymbolId) : SymbolId list =
+    let (SymbolId id) = sid
+    index.typeFields |> Map.tryFind id |> Option.defaultValue []

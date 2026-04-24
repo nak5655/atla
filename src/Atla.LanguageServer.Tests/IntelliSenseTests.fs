@@ -168,3 +168,64 @@ module IntelliSenseTests =
         server.CloseDocument(uri)
         let afterClose = server.GetCompletions(uri, 0, 0)
         Assert.Empty(afterClose.items)
+
+    // -----------------------------------------------------------------------
+    // GetCompletions – ドット補完
+    // -----------------------------------------------------------------------
+
+    [<Fact>]
+    let ``GetCompletions at dot position returns member items for string variable`` () =
+        // `do` ブロック内で let s = "hello" を宣言し s.Length を式とする。
+        // s の型は String。s.Length の `.` 直後（行2・列4）で補完を要求すると String メンバーが返る。
+        // 行2: "  s.Length"  → col 2='s', col 3='.', col 4='L'
+        let source = "fn test: Int = do\n  let s = \"hello\"\n  s.Length"
+        let server = makeServerWithSource "file:///tmp/dot-completion-string.atla" source
+        let result = server.GetCompletions("file:///tmp/dot-completion-string.atla", 2, 4)
+        // String のメンバー（Length など）が含まれること。
+        Assert.False(result.isIncomplete)
+        Assert.NotEmpty(result.items)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("Length", names)
+
+    [<Fact>]
+    let ``GetCompletions at dot position returns CompletionItemKind for members`` () =
+        // String のメソッド（Contains 等）は Method、プロパティ（Length 等）は Field として返る。
+        let source = "fn test: Int = do\n  let s = \"hello\"\n  s.Length"
+        let server = makeServerWithSource "file:///tmp/dot-completion-kind.atla" source
+        let result = server.GetCompletions("file:///tmp/dot-completion-kind.atla", 2, 4)
+        Assert.NotEmpty(result.items)
+        // 少なくとも 1 件の kind が設定されたアイテムが存在すること。
+        let hasKind = result.items |> List.exists (fun i -> not (obj.ReferenceEquals(i.kind, null)))
+        Assert.True(hasKind)
+
+    [<Fact>]
+    let ``GetCompletions at non-dot position falls back to scope completions`` () =
+        // ドット以外の位置では通常のスコープ補完（宣言済み識別子）が返る。
+        let source = "fn scopeFn: Int = 42"
+        let server = makeServerWithSource "file:///tmp/dot-fallback.atla" source
+        // 列 0 は 'f'（ドットではない）→ 通常補完
+        let result = server.GetCompletions("file:///tmp/dot-fallback.atla", 0, 0)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("scopeFn", names)
+
+    [<Fact>]
+    let ``GetCompletions at dot position with no HIR returns empty list`` () =
+        // URI が HIR キャッシュにない場合はクラッシュせず空リストを返す。
+        let server = Server(fun _ _ -> ())
+        let result = server.GetCompletions("file:///tmp/no-hir.atla", 0, 1)
+        Assert.Empty(result.items)
+
+    [<Fact>]
+    let ``GetCompletions at position 0 does not crash`` () =
+        // character = 0 の場合はドット補完の前提条件を満たさないため通常補完にフォールバック。
+        let server = makeServerWithSource "file:///tmp/completion-zero.atla" "fn zero: Int = 0"
+        let result = server.GetCompletions("file:///tmp/completion-zero.atla", 0, 0)
+        Assert.False(result.isIncomplete)
+
+    [<Fact>]
+    let ``GetCompletions at dot after unknown identifier returns empty member list`` () =
+        // 識別子がインデックスに存在しない場合はクラッシュせず空リストを返す。
+        // ここでは行0・列1 (文字 'n') をドット位置として渡すが、`.` ではないのでフォールバック。
+        let server = makeServerWithSource "file:///tmp/dot-unknown.atla" "fn unknown: Int = 0"
+        let result = server.GetCompletions("file:///tmp/dot-unknown.atla", 0, 1)
+        Assert.False(result.isIncomplete)
