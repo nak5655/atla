@@ -1,4 +1,4 @@
-# 06. CIL Emission Phase Notes
+# 07. CIL Emission Phase Notes
 
 ## CIL invariants
 - CIL emission consumes MIR only.

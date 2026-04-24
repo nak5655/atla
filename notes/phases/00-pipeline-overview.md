@@ -1,13 +1,13 @@
 # 00. Pipeline Overview
 
 ## Canonical phase order
-`AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL`
+`AST -> Semantic Analysis -> HIR -> Closure Conversion -> Frame Allocation -> MIR -> CIL`
 
 ## Durable cross-phase decisions (from archive)
 - Compiler boundaries must be explicit modules; hidden internal phase jumps are disallowed.
 - Determinism is required for diagnostics and IR output ordering.
 - Error handling must stay `Result`-based with structured diagnostics instead of `failwith` control flow.
-- Closure conversion is treated as an explicit pre-processing step before frame allocation, not an implicit side effect inside layout.
+- Closure conversion is an explicit pre-processing phase before frame allocation, not an implicit side effect inside layout.
 
 ## Traceability
 Key historical batches in `notes/plans-archive.md`:

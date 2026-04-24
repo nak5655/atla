@@ -1,4 +1,4 @@
-# 04. Frame Allocation Phase Notes
+# 05. Frame Allocation Phase Notes
 
 ## Frame Allocation invariants
 - Input must be typed/closure-normalized HIR representation.

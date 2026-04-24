@@ -1,4 +1,4 @@
-# 05. MIR Phase Notes
+# 06. MIR Phase Notes
 
 ## MIR invariants
 - MIR control flow is explicit (basic blocks + jumps/branches).
