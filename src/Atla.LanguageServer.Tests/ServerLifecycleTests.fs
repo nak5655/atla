@@ -29,6 +29,115 @@ module ServerLifecycleTests =
         Assert.Equal(Some(expectedNormalizedFileUri "/tmp/test.atla"), normalized)
 
     [<Fact>]
+    let ``normalize uri handles percent-encoded Windows drive letter (d%3A)`` () =
+        // VSCode on Windows sends file URIs with the drive-letter colon percent-encoded
+        // (e.g. file:///d%3A/repo/src/main.atla instead of file:///d:/repo/src/main.atla).
+        // Uri.LocalPath decodes %3A to : but retains a spurious leading '/' on Windows
+        // (e.g. /d:/repo/...).  The server must strip that slash so path-based lookups work.
+        let server = Server()
+
+        let result = server.TryNormalizeUri("file:///d%3A/repo/src/main.atla")
+
+        // The URI must always resolve to Some (never None) on all platforms.
+        Assert.True(result.IsSome, "percent-encoded Windows drive URI should not return None")
+
+        if Path.DirectorySeparatorChar = '\\' then
+            // On Windows: the leading slash before the drive letter must not appear in
+            // the normalized key.  A well-formed key starts with "file://d:".
+            let normalized = result.Value
+            Assert.True(
+                normalized.StartsWith("file://d:", System.StringComparison.OrdinalIgnoreCase),
+                sprintf "On Windows the normalized key must start with 'file://d:', got: %s" normalized
+            )
+
+    [<Fact>]
+    let ``compile dispatches dependencies when workspace root URI uses percent-encoded drive letter`` () =
+        // VSCode on Windows can send workspace root URIs with percent-encoded colons (d%3A).
+        // collectWorkspaceRoots must decode these so dependency resolution finds atla.yaml.
+        let capturedRequests = ResizeArray<Compiler.CompileRequest>()
+        let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-pct-root-{System.Guid.NewGuid():N}")
+
+        try
+            let srcDir = Path.Join(tempRoot, "src")
+            Directory.CreateDirectory(srcDir) |> ignore
+            File.WriteAllText(
+                Path.Join(tempRoot, "atla.yaml"),
+                "package:\n  name: \"app\"\n  version: \"0.1.0\"\n")
+
+            let buildProject (_: BuildRequest) : BuildResult =
+                { succeeded = true
+                  plan =
+                    Some {
+                        projectName = "app"
+                        projectVersion = "0.1.0"
+                        projectRoot = tempRoot
+                        dependencies =
+                            [ { name = "Sample"
+                                version = "1.0.0"
+                                source = ""
+                                compileReferencePaths = []
+                                runtimeLoadPaths = []
+                                nativeRuntimePaths = [] } ]
+                      }
+                  diagnostics = [] }
+
+            let compile (request: Compiler.CompileRequest) : Compiler.CompileResult =
+                capturedRequests.Add(request)
+                { succeeded = true; diagnostics = []; hir = None; symbolTable = None }
+
+            let server =
+                Server(
+                    (fun _ _ -> ()),
+                    buildProjectFn = buildProject,
+                    compileFn = compile)
+
+            server.IsAvailablePublishDiagnostics <- true
+
+            // Encode ':' as '%3A' only in the path portion of the URI (after "file://").
+            // This mimics what VSCode on Windows sends for drive-letter paths.
+            // On Linux, file:// URIs contain no colon in the path so encoding is a no-op.
+            // Query strings and fragments are not present in file:// source URIs, so
+            // replacing every ':' after the scheme prefix is safe here.
+            let encodePathColon (uri: string) =
+                let prefix = "file://"
+                if uri.StartsWith(prefix, System.StringComparison.Ordinal) then
+                    prefix + uri.Substring(prefix.Length).Replace(":", "%3A")
+                else
+                    uri
+
+            let rawRootUri = System.Uri(tempRoot).AbsoluteUri
+            let encodedRootUri = encodePathColon rawRootUri
+
+            let initContent = Newtonsoft.Json.Linq.JObject.Parse($"""
+            {{
+              "params": {{
+                "rootUri": "{encodedRootUri}",
+                "capabilities": {{
+                  "textDocument": {{
+                    "publishDiagnostics": {{ "relatedInformation": true }},
+                    "semanticTokens": {{ "tokenTypes": ["keyword"] }}
+                  }}
+                }}
+              }}
+            }}
+            """)
+
+            server.Initialize(initContent) |> ignore
+
+            // Open a document whose URI also uses %3A encoding in the path portion.
+            let rawDocUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
+            let encodedDocUri = encodePathColon rawDocUri
+            server.OpenDocument(encodedDocUri, "fn main: Int = 0")
+
+            // Build system should have been invoked and the dependency injected.
+            let request = Assert.Single(capturedRequests)
+            Assert.Single(request.dependencies) |> ignore
+            Assert.Equal("Sample", request.dependencies.Head.name)
+        finally
+            if Directory.Exists tempRoot then
+                Directory.Delete(tempRoot, recursive = true)
+
+    [<Fact>]
     let ``did open, change, close lifecycle publishes diagnostics and clears buffer`` () =
         let published = ResizeArray<string * int>()
         let server =

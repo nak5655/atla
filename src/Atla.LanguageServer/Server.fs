@@ -70,13 +70,29 @@ let private normalizePathForKey (path: string) : string =
     let full = Path.GetFullPath(path).Replace('\\', '/')
     if Path.DirectorySeparatorChar = '\\' then full.ToLowerInvariant() else full
 
+/// On Windows, <c>Uri.LocalPath</c> retains a spurious leading <c>/</c> when the
+/// drive-letter colon is percent-encoded in the original URI (e.g. <c>d%3A</c> → <c>/d:/</c>
+/// instead of the expected <c>d:/</c>).  Strip that slash so the path can be handed
+/// to <c>Path.GetFullPath</c> without producing garbage.
+/// Checking the first three characters is sufficient: <c>/</c> then an ASCII letter then <c>:</c>
+/// uniquely identifies a Windows drive-letter prefix regardless of what follows.
+let private fixWindowsLocalPath (localPath: string) : string =
+    if Path.DirectorySeparatorChar = '\\' &&
+       localPath.Length >= 3 &&
+       localPath.[0] = '/' &&
+       Char.IsLetter(localPath.[1]) &&
+       localPath.[2] = ':' then
+        localPath.Substring(1)
+    else
+        localPath
+
 let private tryNormalizeUri (uriText: string) : string option =
     if String.IsNullOrWhiteSpace uriText then None
     else
         let mutable u = Unchecked.defaultof<Uri>
         if Uri.TryCreate(uriText, UriKind.Absolute, &u) then
             if u.IsFile then
-                let normalizedPath = normalizePathForKey u.LocalPath
+                let normalizedPath = u.LocalPath |> fixWindowsLocalPath |> normalizePathForKey
                 Some(sprintf "file://%s" normalizedPath)
             else
                 Some(uriText.Trim())
@@ -89,7 +105,7 @@ let private pathIsUnder (candidatePath: string) (rootPath: string) : bool =
 let private tryUriToNormalizedPath (uriText: string) : string option =
     let mutable u = Unchecked.defaultof<Uri>
     if Uri.TryCreate(uriText, UriKind.Absolute, &u) && u.IsFile then
-        Some(normalizePathForKey u.LocalPath)
+        Some(u.LocalPath |> fixWindowsLocalPath |> normalizePathForKey)
     else
         None
 
