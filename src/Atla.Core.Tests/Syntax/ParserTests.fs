@@ -491,3 +491,38 @@ fn main (): () = do
                 Assert.True(false, "main function declaration was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule reports dangling apostrophe member access as Ast.Expr.Error`` () =
+        let program = "fn main (): Int = value'"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Error as errorExpr ->
+                    Assert.Contains("Expected member identifier after apostrophe", errorExpr.message)
+                | _ ->
+                    Assert.True(false, "dangling apostrophe should be parsed as Ast.Expr.Error")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule rejects missing dot in call chain`` () =
+        let program = "fn main (): Int = 1 increment"
+
+        match parseModule program with
+        | Success _ ->
+            Assert.True(false, "missing dot in call chain should be rejected")
+        | Failure _ ->
+            Assert.True(true)

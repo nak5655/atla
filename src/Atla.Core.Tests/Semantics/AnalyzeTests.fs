@@ -111,6 +111,51 @@ fn main (): Int = do
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``semantic analysis preserves Ast.Expr.Error message`` () =
+        let span = Span.Empty
+        let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let body = Ast.Expr.Error("Expected '.' after callee in call expression.", span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        let diagnostics =
+            match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+            | { succeeded = true; value = Some hirModule } ->
+                hirModule.methods |> List.collect (fun methodInfo -> methodInfo.getDiagnostics)
+            | { diagnostics = diagnostics } -> diagnostics
+
+        Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Expected '.' after callee in call expression."))
+        Assert.DoesNotContain(diagnostics, fun diagnostic -> diagnostic.message.Contains("Unsupported expression type"))
+
+    [<Fact>]
+    let ``semantic analysis preserves dangling apostrophe parser error message`` () =
+        let program = "fn main (): Int = value'"
+        let input: Input<SourceChar> = StringInput program
+
+        let diagnostics =
+            match Lexer.tokenize input Position.Zero with
+            | Success (tokens, _) ->
+                let tokenInput = TokenInput(tokens)
+                let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+                match Parser.fileModule() tokenInput start with
+                | Success (moduleAst, _) ->
+                    let symbolTable = SymbolTable()
+                    let subst = TypeSubst()
+                    match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                    | { succeeded = true; value = Some hirModule } ->
+                        hirModule.methods |> List.collect (fun methodInfo -> methodInfo.getDiagnostics)
+                    | { diagnostics = diagnostics } -> diagnostics
+                | Failure (reason, span) ->
+                    [ Diagnostic.Error($"Parsing failed: {reason}", span) ]
+            | Failure (reason, span) ->
+                [ Diagnostic.Error($"Lexing failed: {reason}", span) ]
+
+        Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Expected member identifier after apostrophe."))
+        Assert.DoesNotContain(diagnostics, fun diagnostic -> diagnostic.message.Contains("Unsupported expression type"))
+
+    [<Fact>]
     let ``void call should not be used as value`` () =
         let span = Span.Empty
         let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl

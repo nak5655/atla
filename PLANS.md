@@ -98,6 +98,7 @@ Detailed historical plans and design notes are stored under `notes/`.
 - 2026-04-24: Added explicit Closure Conversion phase documentation in `notes/phases/` and adjusted phase index order.
 - 2026-04-24: Frozen syntax plan for dot-only function calls (`.`) and apostrophe member access (`'`) with left-to-right call chaining and no intentional HIR+ changes.
 - 2026-04-24: Implemented parser-side syntax switch to apostrophe member access and dot-only call chaining; updated syntax parser tests to the new call/member forms.
+- 2026-04-24: Completed remaining Step 1/2 work: added explicit parser diagnostics for dangling apostrophe member access, required EOI for full module parse, and propagated `Ast.Expr.Error` / `Ast.Stmt.Error` through semantic analysis instead of emitting generic unsupported-type errors.
 
 ## References
 - Historical plans: `notes/plans-archive.md`

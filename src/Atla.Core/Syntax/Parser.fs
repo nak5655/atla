@@ -134,9 +134,21 @@ module Parser =
         )
 
     and postfixMemberAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
-        Delay (fun () ->
-            delim '\'' &> tid |>> fun id ->
-                fun receiver -> Ast.Expr.MemberAccess(receiver, id.str, { left = receiver.span.left; right = id.span.right }) :> Ast.Expr
+        Delay (fun () -> fun input pos ->
+            match (delim '\'') input pos with
+            | Failure (reason, span) -> Failure (reason, span)
+            | Success (quote, afterQuotePos) ->
+                match tid input afterQuotePos with
+                | Success (id, nextPos) ->
+                    Success
+                        ((fun receiver -> Ast.Expr.MemberAccess(receiver, id.str, { left = receiver.span.left; right = id.span.right }) :> Ast.Expr),
+                         nextPos)
+                | Failure _ ->
+                    // `a'` のようにメンバ名が欠けている場合は、式エラーへ正規化する。
+                    Success
+                        ((fun receiver ->
+                            Ast.Expr.Error("Expected member identifier after apostrophe.", { left = receiver.span.left; right = quote.span.right }) :> Ast.Expr),
+                         afterQuotePos)
         )
 
     // 型引数付き呼び出しの postfix を受理する（例: receiver[Application]）。
@@ -431,5 +443,5 @@ module Parser =
     // モジュール
     and fileModule (): PackratParser<Token, Ast.Module> =
         Delay (fun () ->
-            Many (decl ()) |>> fun (decls) -> Ast.Module (decls)
+            Many (decl ()) <& Eoi |>> fun (decls) -> Ast.Module (decls)
         )
