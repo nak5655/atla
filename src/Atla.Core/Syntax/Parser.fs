@@ -135,7 +135,7 @@ module Parser =
 
     and postfixMemberAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
         Delay (fun () ->
-            symbol "." &> tid |>> fun id ->
+            delim '\'' &> tid |>> fun id ->
                 fun receiver -> Ast.Expr.MemberAccess(receiver, id.str, { left = receiver.span.left; right = id.span.right }) :> Ast.Expr
         )
 
@@ -167,27 +167,45 @@ module Parser =
                     receiver
         )
 
-    // 呼び出し式
-    // 先頭 term1（関数部分）を解析した後、引数は head.span.left を基準とした BlockInput で制限する。
-    // これにより同じインデントレベルの次の行を引数として誤って取り込まず、
-    // かつ head より深くインデントされた継続行は引数として解析できる。
+    // Dot-only 呼び出し式を解析する。
+    // 仕様:
+    // - `f.` は 0 引数呼び出し。
+    // - `x .` は callable 式 `x` の 0 引数呼び出し。
+    // - `x f.` は `f(x)` に正規化される。
+    // - `x f. g.` は `g(f(x))` に正規化される。
+    // - `x f` は parse error（`.` 必須）。
     and term2 (): PackratParser<Token, Ast.Expr> =
         Delay (fun () -> fun input pos ->
             match term1 () input pos with
             | Failure (reason, span) -> Failure (reason, span)
             | Success (head, afterHeadPos) ->
-                // head の開始位置を基準に引数の可視範囲を制限する BlockInput を作成する。
+                // 同一インデントの次文を誤って取り込まないよう、head 開始位置を基準に可視範囲を制限する。
                 let callInput = BlockInput(input, head.span.left) :> Input<Token>
-                // 引数リストを蓄積しながら最後の引数の span.right も追跡する。
-                let rec loop pos acc lastRight =
-                    match term1 () callInput pos with
-                    | Success (arg, nextPos) -> loop nextPos (arg :: acc) arg.span.right
-                    | Failure _ -> List.rev acc, pos, lastRight
-                let args, nextPos, lastRight = loop afterHeadPos [] head.span.right
-                if args.IsEmpty then
-                    Success (head, afterHeadPos)
-                else
-                    Success (Ast.Expr.Apply(head, args, { left = head.span.left; right = lastRight }) :> Ast.Expr, nextPos)
+                // 1 ステップ分の dot 呼び出しチェーンを適用する。
+                let rec loop (current: Ast.Expr) (currentPos: Position) =
+                    match (symbol ".") callInput currentPos with
+                    | Success (dot, afterDotPos) ->
+                        // `current.` / `current .` を 0 引数呼び出しとして扱う。
+                        let zeroArgCall =
+                            Ast.Expr.Apply(current, [], { left = current.span.left; right = dot.span.right }) :> Ast.Expr
+                        loop zeroArgCall afterDotPos
+                    | Failure _ ->
+                        match term1 () callInput currentPos with
+                        | Success (callee, afterCalleePos) ->
+                            match (symbol ".") callInput afterCalleePos with
+                            | Success (dot, afterDotPos) ->
+                                // `current callee.` を `callee(current)` へ正規化する。
+                                let pipedCall =
+                                    Ast.Expr.Apply(callee, [current], { left = current.span.left; right = dot.span.right }) :> Ast.Expr
+                                loop pipedCall afterDotPos
+                            | Failure _ ->
+                                // `current callee` は `.` 必須ルール違反として式エラーを返す。
+                                Success
+                                    (Ast.Expr.Error("Expected '.' after callee in call expression.", { left = current.span.left; right = callee.span.right }) :> Ast.Expr,
+                                     afterCalleePos)
+                        | Failure _ ->
+                            Success (current, currentPos)
+                loop head afterHeadPos
         )
 
     // 二項演算
