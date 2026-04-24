@@ -400,7 +400,7 @@ module Parser =
     // インポート宣言
     and importDecl (): PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            block (asToken (keyword "import")) (Once (SepBy1 tid (symbol ".") |>> fun ids -> Ast.Decl.Import (ids |> List.map (fun id -> id.str), { left = ids.Head.span.left; right = (List.last ids).span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+            block (asToken (keyword "import")) (Once (SepBy1 tid (delim '\'') |>> fun ids -> Ast.Decl.Import (ids |> List.map (fun id -> id.str), { left = ids.Head.span.left; right = (List.last ids).span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
         )
 
     // 関数宣言

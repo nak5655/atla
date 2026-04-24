@@ -1,7 +1,7 @@
-import Avalonia.Application
-import Avalonia.Controls.Window
-import Avalonia.AppBuilder
-import Avalonia.Controls.DesktopApplicationExtensions
+import Avalonia'Application
+import Avalonia'Controls'Window
+import Avalonia'AppBuilder
+import Avalonia'Controls'DesktopApplicationExtensions
 
 fn appMain (app: Application) (args: Array String): () = do
     let window = Window.

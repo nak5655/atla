@@ -10,7 +10,7 @@ module LoweringTests =
     [<Fact>]
     let ``hello`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn main: () = do
     Console.WriteLine "Hello, World!"
@@ -48,7 +48,7 @@ fn main: () = do
     [<Fact>]
     let ``nullary function call with unit argument syntax compiles and runs`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn greet (): () = Console.WriteLine "hello!"
 
@@ -85,9 +85,9 @@ fn main: () = greet ()
     [<Fact>]
     let ``fizzbuzz program compiles`` () =
         let program = """
-import System.Array
-import System.Console
-import System.Linq.Enumerable
+import System'Array
+import System'Console
+import System'Linq'Enumerable
 fn fizzbuzz (n: Int): () =
     for i in Enumerable.Range 1 n
         Console.WriteLine if
@@ -138,8 +138,8 @@ fn main: () = do
     [<Fact>]
     let ``fibonacci sum program compiles`` () =
         let program = """
-import System.Int32
-import System.Console
+import System'Int32
+import System'Console
 
 fn fibonacci (n: Int): Int = if 
     | n == 0 => 0
@@ -219,8 +219,8 @@ fn main: Int = 7
     [<Fact>]
     let ``string split with optional argument style compiles`` () =
         let program = """
-import System.Int32
-import System.Console
+import System'Int32
+import System'Console
 
 fn main: () = do
     var n_x = Console.ReadLine ()
@@ -239,7 +239,7 @@ fn main: () = do
     [<Fact>]
     let ``array index access reads second element`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn main: () = do
     let a = Console.ReadLine ()
@@ -280,7 +280,7 @@ fn main: () = do
     [<Fact>]
     let ``array index access on split result reads first token`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
@@ -321,7 +321,7 @@ fn main: () = do
     [<Fact>]
     let ``Array String annotated function compiles and runs`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn count (xs: Array String): Int = xs.Length
 
@@ -364,9 +364,9 @@ fn main: () = do
     [<Fact>]
     let ``range with array length and index access prints all tokens`` () =
         let program = """
-import System.Int32
-import System.Console
-import System.Linq.Enumerable
+import System'Int32
+import System'Console
+import System'Linq'Enumerable
 
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
@@ -496,7 +496,7 @@ fn main: Int = 0
         Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
 
         let program = """
-import System.Text.Json.JsonNamingPolicy
+import System'Text'Json'JsonNamingPolicy
 
 fn main: () = do
     var policy = JsonNamingPolicy.CamelCase
@@ -529,7 +529,7 @@ fn main: () = do
         Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
 
         let program = """
-import System.Text.Json.JsonNamingPolicy
+import System'Text'Json'JsonNamingPolicy
 
 fn main: () = do
     var policy = JsonNamingPolicy.CamelCase
@@ -559,7 +559,7 @@ fn main: () = do
     [<Fact>]
     let ``compile should report unresolved imported system type separately from dependency load failures`` () =
         let program = """
-import System.Text.Json.DoesNotExist
+import System'Text'Json'DoesNotExist
 
 fn main: () = do
     var x = DoesNotExist.Parse
@@ -671,8 +671,8 @@ fn main: () = do
         // インポート型（TypeId.Name sid）を関数パラメータに使った場合の CIL 生成を検証する。
         // System.Text.StringBuilder を引数に取る関数を定義し、正常にコンパイル・実行できることを確認する。
         let program = """
-import System.Text.StringBuilder
-import System.Console
+import System'Text'StringBuilder
+import System'Console
 
 fn process (sb: StringBuilder): () = do
     let _ = sb.Append "ok"

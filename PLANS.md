@@ -40,6 +40,18 @@ Detailed historical plans and design notes are stored under `notes/`.
 - AST/Parser/Semantics: in scope.
 - HIR/Frame Allocation/MIR/CIL: no intentional structural changes; only non-regression validation.
 
+### Active Task (2026-04-24): Import Path Separator Switch (`.` -> `'`)
+
+#### Mission
+- Change `import` path syntax from dot-separated identifiers to apostrophe-separated identifiers.
+- Make old dot-separated import syntax invalid (no compatibility layer).
+
+#### Execution Steps
+1. Update parser import grammar to parse `import A'B'C`.
+2. Confirm old `import A.B` now fails during parse.
+3. Migrate test and example source snippets to apostrophe-separated imports.
+4. Run focused syntax tests and then full suite checks.
+
 #### Execution Steps
 1. Update grammar and parser for `.` calls and `'` member access with preserved source spans.
 2. Add/adjust parser diagnostics for invalid forms (`x f`, `a'`, malformed postfix sequences).
@@ -103,6 +115,7 @@ Detailed historical plans and design notes are stored under `notes/`.
 - 2026-04-24: Expanded Step 5 coverage with parser/semantic tests for left-to-right chained dot calls (`x f. g.`), identifier zero-arg dot calls (`f.`), and successful semantic analysis of chained/zero-arg dot-only programs.
 - 2026-04-24: Migrated `examples/` source programs to dot-only calls and apostrophe member-access notation so sample code reflects the new surface syntax.
 - 2026-04-24: Removed `a::b` parser syntax path so member access is apostrophe-only (`a'b`), and updated parser tests/examples accordingly.
+- 2026-04-24: Started import syntax migration task to replace `import a.b` with `import a'b`, with explicit decision to reject legacy dot import syntax.
 
 ## References
 - Historical plans: `notes/plans-archive.md`

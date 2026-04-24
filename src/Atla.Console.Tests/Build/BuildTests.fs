@@ -68,7 +68,7 @@ package:
         File.WriteAllText(
             Path.Join(projectRoot, "src", "main.atla"),
             """
-import System.Console
+import System'Console
 
 fn main: () = do
     Console.WriteLine "Hello, World!"
