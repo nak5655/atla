@@ -99,5 +99,5 @@ publish-atla.bat
 
 ## 参考ドキュメント
 
-- CLI 詳細: `doc/cli-interface.md`
-- Build フェーズ設計: `doc/build-system-phase1.md`
+- CLI 詳細: `notes/cli-interface.md`
+- Build フェーズ設計: `notes/build-system-phase1.md`
