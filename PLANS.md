@@ -35,6 +35,7 @@ Detailed historical plans and design notes are stored under `notes/`.
 - 2026-04-24: Replaced oversized root plan with concise execution template.
 - 2026-04-24: Moved historical plan content to `notes/plans-archive.md`.
 - 2026-04-24: Converted AGENTS.md to ExecPlan-formatted guidance.
+- 2026-04-24: Started extracting phase-specific design notes from `notes/plans-archive.md` into `notes/phases/`.
 
 ## References
 - Historical plans: `notes/plans-archive.md`
