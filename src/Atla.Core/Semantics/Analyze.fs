@@ -469,6 +469,9 @@ module Analyze =
 
     and private analyzeExpr (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Ast.Expr) (tid: TypeId) : Hir.Expr =
         match expr with
+        | :? Ast.Expr.Error as errorExpr ->
+            // Parser 由来の式エラーはここで失わず、HIR 診断ノードへ明示的に伝播する。
+            Hir.Expr.ExprError(errorExpr.message, tid, errorExpr.span)
         | :? Ast.Expr.Unit as unitExpr ->
             match unifyOrError nameEnv typeEnv tid TypeId.Unit unitExpr.span with
             | Result.Ok _ -> Hir.Expr.Unit(unitExpr.span)
@@ -949,6 +952,9 @@ module Analyze =
 
     and private analyzeStmt (nameEnv: NameEnv) (typeEnv: TypeEnv) (stmt: Ast.Stmt) : Hir.Stmt =
         match stmt with
+        | :? Ast.Stmt.Error as errorStmt ->
+            // Parser 由来の文エラーは ErrorStmt として後段へ渡す。
+            Hir.Stmt.ErrorStmt(errorStmt.message, errorStmt.span)
         | :? Ast.Stmt.Let as letStmt ->
             let tid = typeEnv.freshMeta ()
             let rhs = analyzeExpr nameEnv typeEnv letStmt.value tid

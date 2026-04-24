@@ -111,6 +111,205 @@ fn main (): Int = do
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``semantic analysis preserves Ast.Expr.Error message`` () =
+        let span = Span.Empty
+        let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let body = Ast.Expr.Error("Expected '.' after callee in call expression.", span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        let diagnostics =
+            match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+            | { succeeded = true; value = Some hirModule } ->
+                hirModule.methods |> List.collect (fun methodInfo -> methodInfo.getDiagnostics)
+            | { diagnostics = diagnostics } -> diagnostics
+
+        Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Expected '.' after callee in call expression."))
+        Assert.DoesNotContain(diagnostics, fun diagnostic -> diagnostic.message.Contains("Unsupported expression type"))
+
+    [<Fact>]
+    let ``semantic analysis preserves dangling apostrophe parser error message`` () =
+        let program = "fn main (): Int = value'"
+        let input: Input<SourceChar> = StringInput program
+
+        let diagnostics =
+            match Lexer.tokenize input Position.Zero with
+            | Success (tokens, _) ->
+                let tokenInput = TokenInput(tokens)
+                let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+                match Parser.fileModule() tokenInput start with
+                | Success (moduleAst, _) ->
+                    let symbolTable = SymbolTable()
+                    let subst = TypeSubst()
+                    match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                    | { succeeded = true; value = Some hirModule } ->
+                        hirModule.methods |> List.collect (fun methodInfo -> methodInfo.getDiagnostics)
+                    | { diagnostics = diagnostics } -> diagnostics
+                | Failure (reason, span) ->
+                    [ Diagnostic.Error($"Parsing failed: {reason}", span) ]
+            | Failure (reason, span) ->
+                [ Diagnostic.Error($"Lexing failed: {reason}", span) ]
+
+        Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Expected member identifier after apostrophe."))
+        Assert.DoesNotContain(diagnostics, fun diagnostic -> diagnostic.message.Contains("Unsupported expression type"))
+
+    [<Fact>]
+    let ``semantic analysis keeps canonical Hir.Call shape for function apply`` () =
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let incArg = Ast.FnArg.Named("x", intType, span) :> Ast.FnArg
+        let incBody = Ast.Expr.Id("x", span) :> Ast.Expr
+        let incDecl = Ast.Decl.Fn("inc", [ incArg ], intType, incBody, span) :> Ast.Decl
+        let mainBody =
+            Ast.Expr.Apply(
+                Ast.Expr.Id("inc", span) :> Ast.Expr,
+                [ Ast.Expr.Int(1, span) :> Ast.Expr ],
+                span
+            ) :> Ast.Expr
+        let mainDecl = Ast.Decl.Fn("main", [], intType, mainBody, span) :> Ast.Decl
+        let astModule = Ast.Module([ incDecl; mainDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            let mainMethod =
+                hirModule.methods
+                |> List.tryFind (fun methodInfo -> symbolTable.Get(methodInfo.sym) |> Option.exists (fun symbolInfo -> symbolInfo.name = "main"))
+
+            match mainMethod with
+            | Some methodInfo ->
+                match methodInfo.body with
+                | Hir.Expr.Call (Hir.Callable.Fn _, _, [ Hir.Expr.Int (1, _) ], _, _) ->
+                    Assert.True(true)
+                | other ->
+                    Assert.True(false, $"expected canonical Hir.Expr.Call for function apply but got {other}")
+            | None ->
+                Assert.True(false, "main method was not found in analyzed HIR module")
+        | { diagnostics = diagnostics } ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toDisplayText())
+                |> String.concat "; "
+            Assert.True(false, $"Semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``semantic analysis lowers dot-only member call into Hir.Call with native callable`` () =
+        let program = """
+import System.Console
+fn main (): () = "hello" Console'WriteLine.
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let mainMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodInfo -> symbolTable.Get(methodInfo.sym) |> Option.exists (fun symbolInfo -> symbolInfo.name = "main"))
+
+                    match mainMethod with
+                    | Some methodInfo ->
+                        match methodInfo.body with
+                        | Hir.Expr.Call (Hir.Callable.NativeMethod _, _, [ Hir.Expr.String ("hello", _) ], _, _) ->
+                            Assert.True(true)
+                        | other ->
+                            Assert.True(false, $"expected native Hir.Expr.Call for dot-only member call but got {other}")
+                    | None ->
+                        Assert.True(false, "main method was not found in analyzed HIR module")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis handles chained dot-only calls`` () =
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let mkArg name = Ast.FnArg.Named(name, intType, span) :> Ast.FnArg
+        let idDecl = Ast.Decl.Fn("id", [ mkArg "x" ], intType, Ast.Expr.Id("x", span) :> Ast.Expr, span) :> Ast.Decl
+        let incDecl = Ast.Decl.Fn("inc", [ mkArg "y" ], intType, Ast.Expr.Id("y", span) :> Ast.Expr, span) :> Ast.Decl
+
+        let mainBody =
+            Ast.Expr.Apply(
+                Ast.Expr.Id("inc", span) :> Ast.Expr,
+                [ Ast.Expr.Apply(Ast.Expr.Id("id", span) :> Ast.Expr, [ Ast.Expr.Int(1, span) :> Ast.Expr ], span) :> Ast.Expr ],
+                span
+            ) :> Ast.Expr
+        let mainDecl = Ast.Decl.Fn("main", [], intType, mainBody, span) :> Ast.Decl
+        let astModule = Ast.Module([ idDecl; incDecl; mainDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            let diagnostics = hirModule.methods |> List.collect (fun methodInfo -> methodInfo.getDiagnostics)
+            Assert.Empty(diagnostics)
+        | { diagnostics = diagnostics } ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toDisplayText())
+                |> String.concat "; "
+            Assert.True(false, $"Semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``semantic analysis handles zero argument dot-only call`` () =
+        let program = """
+fn ping (): Int = 1
+fn main (): Int = ping.
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let mainMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodInfo -> symbolTable.Get(methodInfo.sym) |> Option.exists (fun symbolInfo -> symbolInfo.name = "main"))
+
+                    match mainMethod with
+                    | Some methodInfo ->
+                        match methodInfo.body with
+                        | Hir.Expr.Call (Hir.Callable.Fn _, _, [], _, _) ->
+                            Assert.True(true)
+                        | other ->
+                            Assert.True(false, $"expected zero-arg Hir.Expr.Call for ping. but got {other}")
+                    | None ->
+                        Assert.True(false, "main method was not found in analyzed HIR module")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``void call should not be used as value`` () =
         let span = Span.Empty
         let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl

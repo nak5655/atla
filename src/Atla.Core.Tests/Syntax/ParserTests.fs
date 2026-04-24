@@ -39,10 +39,8 @@ module ParserTests =
     [<Fact>]
     let ``fileModule parses for statement in do block`` () =
         let program = """
-import System.Linq.Enumerable
-
 fn main: () = do
-    for i in Enumerable.Range 1 3
+    for i in values
         i
 """
 
@@ -84,19 +82,16 @@ fn main: () = do
     [<Fact>]
     let ``fileModule parses fizzbuzz for statement`` () =
         let program = """
-import System.Array
-import System.Console
-import System.Linq.Enumerable
 fn fizzbuzz (n: Int): () =
-    for i in Enumerable.Range 1 n
-        Console.WriteLine if
+    for i in n
+        if
             | i % 15 == 0 => "FizzBuzz"
             | i % 5 == 0 => "Buzz"
             | i % 3 == 0 => "Fizz"
-            | else => i.ToString()
+            | else => i
 
 fn main: () = do
-    let n = Int32.Parse (Console.ReadLine ())
+    let n = 10
     fizzbuzz n
 """
 
@@ -195,7 +190,7 @@ import Avalonia.Controls.AppBuilder
 import Avalonia.Application
 
 fn main: () = do
-    let config = AppBuilder.Configure[Application] ()
+    let config = AppBuilder'Configure[Application].
     config
 """
 
@@ -250,8 +245,8 @@ fn main: () = do
 import System.Console
 
 fn main (): () = do
-    Console.WriteLine "hello"
-    Console.WriteLine "world"
+    "hello" Console'WriteLine.
+    "world" Console'WriteLine.
 """
 
         match parseModule program with
@@ -270,15 +265,22 @@ fn main (): () = do
                     // 2 つの文がそれぞれ別の exprStmt として解析されていることを確認する。
                     Assert.Equal(2, blockExpr.stmts.Length)
 
+                    let rec containsExpectedStringArg (expr: Ast.Expr) (expected: string) =
+                        match expr with
+                        | :? Ast.Expr.Apply as applyExpr ->
+                            let hasDirectArg =
+                                applyExpr.args
+                                |> List.exists (fun arg ->
+                                    match arg with
+                                    | :? Ast.Expr.String as s -> s.value = expected
+                                    | _ -> false)
+                            hasDirectArg || containsExpectedStringArg applyExpr.func expected
+                        | _ -> false
+
                     let stmtIsCallWithSingleStringArg (stmt: Ast.Stmt) (expected: string) =
                         match stmt with
                         | :? Ast.Stmt.ExprStmt as exprStmt ->
-                            match exprStmt.expr with
-                            | :? Ast.Expr.Apply as applyExpr ->
-                                match applyExpr.args with
-                                | [ (:? Ast.Expr.String as s) ] -> s.value = expected
-                                | _ -> false
-                            | _ -> false
+                            containsExpectedStringArg exprStmt.expr expected
                         | _ -> false
 
                     Assert.True(
@@ -330,7 +332,7 @@ fn main (): () = do
 
     [<Fact>]
     let ``fileModule parses lambda expression at expr top-level`` () =
-        let program = "fn main (): Int = (fn x -> x) 1"
+        let program = "fn main (): Int = 1 (fn x -> x)."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -359,7 +361,7 @@ fn main (): () = do
 
     [<Fact>]
     let ``fileModule parses lambda expression with explicit unit argument list`` () =
-        let program = "fn main (): Int = (fn () -> 1) ()"
+        let program = "fn main (): Int = (fn () -> 1)."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -431,6 +433,194 @@ fn main (): () = do
                     Assert.Contains("Lambda parameter list is empty", errExpr.message)
                 | _ ->
                     Assert.True(false, "missing lambda parameters should be reported as Ast.Expr.Error")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses apostrophe member access with dot call`` () =
+        let program = "fn main (): Int = 1 value'transform."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.func with
+                    | :? Ast.Expr.MemberAccess as memberAccess ->
+                        Assert.Equal("transform", memberAccess.memberName)
+                    | _ ->
+                        Assert.True(false, "call target was not parsed as Ast.Expr.MemberAccess")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses direct callable zero argument call`` () =
+        let program = "fn main (): Int = callable ."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as applyExpr ->
+                    Assert.Empty(applyExpr.args)
+                | _ ->
+                    Assert.True(false, "main body was not parsed as zero-arg Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule reports dangling apostrophe member access as Ast.Expr.Error`` () =
+        let program = "fn main (): Int = value'"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Error as errorExpr ->
+                    Assert.Contains("Expected member identifier after apostrophe", errorExpr.message)
+                | _ ->
+                    Assert.True(false, "dangling apostrophe should be parsed as Ast.Expr.Error")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule rejects missing dot in call chain`` () =
+        let program = "fn main (): Int = 1 increment"
+
+        match parseModule program with
+        | Success _ ->
+            Assert.True(false, "missing dot in call chain should be rejected")
+        | Failure _ ->
+            Assert.True(true)
+
+    [<Fact>]
+    let ``fileModule parses member access as primary before dot call`` () =
+        let program = "fn main (): Int = c a'b."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.func with
+                    | :? Ast.Expr.MemberAccess as memberAccess ->
+                        match memberAccess.receiver with
+                        | :? Ast.Expr.Id as receiverId ->
+                            Assert.Equal("a", receiverId.name)
+                            Assert.Equal("b", memberAccess.memberName)
+                        | _ ->
+                            Assert.True(false, "member receiver should be parsed as identifier 'a'")
+                    | _ ->
+                        Assert.True(false, "dot call target should be parsed as member access")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses chained dot-only calls left to right`` () =
+        let program = "fn main (): Int = x f. g."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as outerApply ->
+                    match outerApply.func, outerApply.args with
+                    | (:? Ast.Expr.Id as outerFunc), [ (:? Ast.Expr.Apply as innerApply) ] ->
+                        Assert.Equal("g", outerFunc.name)
+                        match innerApply.func, innerApply.args with
+                        | (:? Ast.Expr.Id as innerFunc), [ (:? Ast.Expr.Id as inputExpr) ] ->
+                            Assert.Equal("f", innerFunc.name)
+                            Assert.Equal("x", inputExpr.name)
+                        | _ ->
+                            Assert.True(false, "inner chained call should be f(x)")
+                    | _ ->
+                        Assert.True(false, "outer chained call should be g(f(x))")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as chained Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses identifier dot as zero argument call`` () =
+        let program = "fn main (): Int = ping."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.func with
+                    | :? Ast.Expr.Id as targetId ->
+                        Assert.Equal("ping", targetId.name)
+                        Assert.Empty(applyExpr.args)
+                    | _ ->
+                        Assert.True(false, "zero argument dot call target should be identifier")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as zero-arg Ast.Expr.Apply")
             | None ->
                 Assert.True(false, "main function declaration was not found")
         | Failure (reason, span) ->
