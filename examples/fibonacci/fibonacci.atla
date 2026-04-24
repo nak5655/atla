@@ -1,4 +1,4 @@
-import System.Console
+import System'Console
 
 fn fibonacci (n: Int): Int = if 
     | n == 0 => 0

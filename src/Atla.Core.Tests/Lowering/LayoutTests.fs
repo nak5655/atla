@@ -54,8 +54,8 @@ module LayoutTests =
     [<Fact>]
     let ``layoutAssembly lowers for statement into loop control instructions`` () =
         let program = """
-import System.Console
-import System.Linq.Enumerable
+import System'Console
+import System'Linq'Enumerable
 
 fn main: () =
     for i in (Enumerable.Range 1 3).GetEnumerator()

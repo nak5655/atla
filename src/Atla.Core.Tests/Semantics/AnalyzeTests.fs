@@ -198,7 +198,7 @@ fn main (): Int = do
     [<Fact>]
     let ``semantic analysis lowers dot-only member call into Hir.Call with native callable`` () =
         let program = """
-import System.Console
+import System'Console
 fn main (): () = "hello" Console'WriteLine.
 """
         let input: Input<SourceChar> = StringInput program
@@ -428,7 +428,7 @@ fn main: () =
     [<Fact>]
     let ``analyzeExpr should allow lambda capture from for loop scope`` () =
         let program = """
-import System.Linq.Enumerable
+import System'Linq'Enumerable
 
 fn main: () =
     do
@@ -555,7 +555,7 @@ fn main: () =
     [<Fact>]
     let ``nullary function call with unit argument syntax should be allowed`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn greet (): () = Console.WriteLine "hello!"
 
@@ -590,9 +590,9 @@ fn main: () = greet ()
     [<Fact>]
     let ``for statement accepts Enumerable.Range enumerable`` () =
         let program = """
-import System.Console
+import System'Console
 
-import System.Linq.Enumerable
+import System'Linq'Enumerable
 
 fn main: () = do
     for i in Enumerable.Range 1 20
@@ -627,8 +627,8 @@ fn main: () = do
     [<Fact>]
     let ``string split with implicit optional argument should be analyzed`` () =
         let program = """
-import System.Int32
-import System.Console
+import System'Int32
+import System'Console
 
 fn main: () = do
     var n_x = Console.ReadLine ()
@@ -663,7 +663,7 @@ fn main: () = do
     [<Fact>]
     let ``instance member call should work for imported named type arguments`` () =
         let program = """
-import System.Text.StringBuilder
+import System'Text'StringBuilder
 
 fn appendExclamation (sb: StringBuilder): () = do
     let ignored = sb.Append "!"
@@ -698,7 +698,7 @@ fn appendExclamation (sb: StringBuilder): () = do
     [<Fact>]
     let ``array index access should be analyzed`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
@@ -853,9 +853,9 @@ fn main: () = do
     [<Fact>]
     let ``for range with array length and index access should be analyzed`` () =
         let program = """
-import System.Int32
-import System.Console
-import System.Linq.Enumerable
+import System'Int32
+import System'Console
+import System'Linq'Enumerable
 
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
@@ -891,7 +891,7 @@ fn main: () = do
     [<Fact>]
     let ``generic apply on static method should be analyzed`` () =
         let program = """
-import System.Activator
+import System'Activator
 
 fn main (): Int = Activator.CreateInstance[Int] ()
 """
@@ -924,7 +924,7 @@ fn main (): Int = Activator.CreateInstance[Int] ()
     [<Fact>]
     let ``imported constructor call should be analyzed`` () =
         let program = """
-import System.Text.StringBuilder
+import System'Text'StringBuilder
 
 fn createBuilder (): StringBuilder = StringBuilder ()
 """
@@ -957,7 +957,7 @@ fn createBuilder (): StringBuilder = StringBuilder ()
     [<Fact>]
     let ``extension method call should be analyzed`` () =
         let program = """
-import Atla.Core.Tests.Semantics.TestExtensions
+import Atla'Core'Tests'Semantics'TestExtensions
 
 fn addTen (): () = do
     let x = 1
@@ -1335,7 +1335,7 @@ fn bad (): Int = do
         // "Non.Existent.MyClass" はどのアセンブリにも存在しない型。
         // ユーザーが MyClass() のように値として使おうとする状況を再現する。
         let program = """
-import Non.Existent.MyClass
+import Non'Existent'MyClass
 
 fn main (): Int = MyClass ()
 """

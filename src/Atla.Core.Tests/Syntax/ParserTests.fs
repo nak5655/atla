@@ -133,7 +133,7 @@ fn main: () = do
     [<Fact>]
     let ``fileModule parses index access expression with bang-bang operator`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn main: () = do
     let a = (Console.ReadLine ()).Split " "
@@ -186,8 +186,8 @@ fn main: () = do
     [<Fact>]
     let ``fileModule parses generic apply postfix`` () =
         let program = """
-import Avalonia.Controls.AppBuilder
-import Avalonia.Application
+import Avalonia'Controls'AppBuilder
+import Avalonia'Application
 
 fn main: () = do
     let config = AppBuilder'Configure[Application].
@@ -239,10 +239,24 @@ fn main: () = do
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule rejects legacy dot import syntax`` () =
+        let program = """
+import System.Console
+
+fn main: () = ()
+"""
+
+        match parseModule program with
+        | Success _ ->
+            Assert.True(false, "legacy dot import syntax must be rejected")
+        | Failure _ ->
+            Assert.True(true)
+
+    [<Fact>]
     let ``fileModule parses consecutive exprStmts in do block as separate statements`` () =
         // 回帰テスト: 同じインデントレベルの連続する exprStmt が 1 つの Apply 式として誤解析されないことを確認する。
         let program = """
-import System.Console
+import System'Console
 
 fn main (): () = do
     "hello" Console'WriteLine.
