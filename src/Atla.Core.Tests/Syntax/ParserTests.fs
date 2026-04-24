@@ -526,3 +526,37 @@ fn main (): () = do
             Assert.True(false, "missing dot in call chain should be rejected")
         | Failure _ ->
             Assert.True(true)
+
+    [<Fact>]
+    let ``fileModule parses member access as primary before dot call`` () =
+        let program = "fn main (): Int = c a'b."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.func with
+                    | :? Ast.Expr.MemberAccess as memberAccess ->
+                        match memberAccess.receiver with
+                        | :? Ast.Expr.Id as receiverId ->
+                            Assert.Equal("a", receiverId.name)
+                            Assert.Equal("b", memberAccess.memberName)
+                        | _ ->
+                            Assert.True(false, "member receiver should be parsed as identifier 'a'")
+                    | _ ->
+                        Assert.True(false, "dot call target should be parsed as member access")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
