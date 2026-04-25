@@ -1,5 +1,6 @@
 import Avalonia'Application
 import Avalonia'Controls'Window
+import Avalonia'Controls'WindowStartupLocation
 import Avalonia'AppBuilder
 import Avalonia'Controls'DesktopApplicationExtensions
 
@@ -8,10 +9,10 @@ fn appMain (app: Application) (args: Array String): () = do
     window'Title = "Hello, Avalonia!"
     window'Width = 320.0
     window'Height = 480.0
+    window'WindowStartupLocation = WindowStartupLocation'CenterScreen
     window'Show.
     app window DesktopApplicationExtensions'Run.
 
 fn main (args: Array String): () = do
-    let config = AppBuilder'Configure[Application].
-    let config2 = config'UsePlatformDetect.
-    appMain args config2'Start.
+    let config = (AppBuilder'Configure[Application].)'UsePlatformDetect.
+    appMain args config'Start.
