@@ -123,9 +123,24 @@ module Parser =
         )
 
     // 項
+    and dataInitField (): PackratParser<Token, Ast.DataInitField> =
+        Delay (fun () ->
+            tid <& symbol "=" <&> expr ()
+            |>> fun (fieldId, fieldValue) ->
+                Ast.DataInitField.Field(fieldId.str, fieldValue, { left = fieldId.span.left; right = fieldValue.span.right }) :> Ast.DataInitField
+        )
+
+    // `TypeName { field = value, ... }` 形式の data 初期化式を解析する。
+    and dataInitExpr (): PackratParser<Token, Ast.Expr> =
+        Delay (fun () ->
+            tid <& delim '{' <&> SepBy1 (dataInitField ()) (delim ',') <&> delim '}'
+            |>> fun ((typeId, fields), closeBrace) ->
+                Ast.Expr.DataInit(typeId.str, fields, { left = typeId.span.left; right = closeBrace.span.right }) :> Ast.Expr
+        )
+
     and factor (): PackratParser<Token, Ast.Expr> =
         Delay (fun () -> 
-            unit <|> paren () <|> ifExpr () <|> doExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str)
+            unit <|> paren () <|> ifExpr () <|> doExpr () <|> dataInitExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str)
         )
 
     and postfixMemberAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
@@ -407,7 +422,7 @@ module Parser =
     // データ宣言
     and dataField (): PackratParser<Token, Ast.DataItem.Field> =
         Delay (fun () ->
-            tid <& symbol ":" <&> typeExpr() |>> fun (id, typeExpr) -> Ast.DataItem.Field (id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right })
+            tid <& delim ':' <&> typeExpr() |>> fun (id, typeExpr) -> Ast.DataItem.Field (id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right })
         )
 
     and dataItem (): PackratParser<Token, Ast.DataItem> =
@@ -417,7 +432,12 @@ module Parser =
 
     and dataDecl (): PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            block (asToken (keyword "data")) (Once (tid <& symbol "=" <&> Many1 (dataItem ()) |>> fun (id, items) -> Ast.Decl.Data (id.str, items, { left = id.span.left; right = (List.last items).span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+            keyword "data"
+            &> Once (
+                tid <& symbol "=" <& delim '{' <&> SepBy1 (dataItem ()) (delim ',') <&> delim '}'
+                |>> fun ((id, items), closeBrace) ->
+                    Ast.Decl.Data (id.str, items, { left = id.span.left; right = closeBrace.span.right })
+            ) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)
         )
 
     // インポート宣言

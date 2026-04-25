@@ -192,6 +192,13 @@ module Layout =
                                     let dst, state3 = declareTemp state2 tid
                                     Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.New(dst, ctor, callArgs) ]; res = Some(Mir.Value.RegVal dst) })
                                 | None -> Result.Error (Diagnostic.Error($"No constructor matched argument count {argValues.Length}", callSpan))
+                            | Hir.Callable.DataConstructor (typeSid, fieldSids) ->
+                                let dst, state3 = declareTemp state2 tid
+                                let newIns = Mir.Ins.NewEnv(dst, typeSid)
+                                let storeIns =
+                                    List.zip fieldSids callArgs
+                                    |> List.map (fun (fieldSid, fieldValue) -> Mir.Ins.StoreEnvField(dst, typeSid, fieldSid, fieldValue))
+                                Ok (state3, { ins = instanceIns @ argIns @ [ newIns ] @ storeIns; res = Some(Mir.Value.RegVal dst) })
                             | Hir.Callable.BuiltinOperator op ->
                                 let dst, state3 = declareTemp state2 tid
                                 match argValues |> List.tryItem 0, argValues |> List.tryItem 1 with

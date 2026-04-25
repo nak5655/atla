@@ -215,6 +215,7 @@
 
 ## 予期しない発見・知見
 - （実装中に見つかった予期しない事項を記録する。）
+- 2026-04-25: 既存 `data` 構文は `data Name =` + オフサイド列挙であり、今回合意した `{ ... }` + `,` 区切り仕様とは非互換だったため、Parser とサンプルを同時更新する必要があった。
 - 2026-04-25: `examples/gui` の失敗は `WindowStartupLocation'CenterScreen` のような enum static literal field を CIL で `ldsfld` した際に `System.NotSupportedException` が発生することが原因だった。
 - 2026-04-25: `Atla.Core.Tests` のフルスイートには旧 call/member 構文サンプル（例: `f x`, `a.b()`）がまだ多く残っており、複数引数ドット呼び出し対応後でも、関連外の parser/semantic 失敗が発生する。
 - 2026-04-25: メンバー代入の lowering は、既存 HIR のまま安全に扱うため現時点では「プロパティ setter 呼び出し」へ正規化し、フィールド代入は明示エラーとして扱う方針にした。

@@ -12,6 +12,7 @@ module Hir =
 
     type Callable =
         | Fn of SymbolId
+        | DataConstructor of typeSid: SymbolId * fieldSids: SymbolId list
         | BuiltinOperator of Builtins.Operators
         | NativeMethod of MethodInfo
         | NativeMethodGroup of MethodInfo list

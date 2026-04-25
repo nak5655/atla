@@ -21,6 +21,9 @@ module Ast =
     type Decl =
         abstract member span: Span
 
+    type DataInitField =
+        abstract member span: Span
+
     type IfBranch =
         abstract member span: Span
 
@@ -168,6 +171,16 @@ module Ast =
                 member this.span = span
             interface HasSpan with
                 member this.span = span
+
+        /// `TypeName { field = value, ... }` 形式の data 初期化式。
+        type DataInit(typeName: string, fields: DataInitField list, span: Span) =
+            member this.typeName = typeName
+            member this.fields = fields
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
     
     module Stmt =
         type Let(name: string, value: Expr, span: Span) =
@@ -273,6 +286,17 @@ module Ast =
             member this.typeExpr = typeExpr
             member this.span = span
             interface DataItem with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+    module DataInitField =
+        /// data 初期化式の単一フィールド代入（`name = expr`）。
+        type Field(name: string, value: Expr, span: Span) =
+            member this.name = name
+            member this.value = value
+            member this.span = span
+            interface DataInitField with
                 member this.span = span
             interface HasSpan with
                 member this.span = span

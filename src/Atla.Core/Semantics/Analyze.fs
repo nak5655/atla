@@ -8,9 +8,20 @@ open Atla.Core.Semantics.Data
 module Analyze =
     let private extensionAttributeType = typeof<System.Runtime.CompilerServices.ExtensionAttribute>
 
-    type NameEnv(symbolTable: SymbolTable, scope: Scope) =
+    type DataFieldDef =
+        { name: string
+          sid: SymbolId
+          typ: TypeId
+          span: Atla.Core.Data.Span }
+
+    type DataTypeDef =
+        { typeSid: SymbolId
+          fields: DataFieldDef list }
+
+    type NameEnv(symbolTable: SymbolTable, scope: Scope, dataTypeDefs: Map<string, DataTypeDef>) =
         member this.symbolTable = symbolTable
         member this.scope = scope
+        member this.dataTypeDefs = dataTypeDefs
 
         // TypeExprをTypeIdへ解決する。
         member this.resolveTypeExpr (typeExpr: Ast.TypeExpr) : TypeId =
@@ -88,7 +99,7 @@ module Analyze =
 
         member this.sub(): NameEnv =
             let blockScope = Scope(Some this.scope)
-            NameEnv(this.symbolTable, blockScope)
+            NameEnv(this.symbolTable, blockScope, this.dataTypeDefs)
 
     type TypeEnv(typSubst: TypeSubst, metaFactory: TypeMetaFactory) =
         member this.typSubst = typSubst
@@ -488,6 +499,85 @@ module Analyze =
             match unifyOrError nameEnv typeEnv tid TypeId.String stringExpr.span with
             | Result.Ok _ -> Hir.Expr.String(stringExpr.value, stringExpr.span)
             | Result.Error exprErr -> exprErr
+        | :? Ast.Expr.DataInit as dataInitExpr ->
+            match Map.tryFind dataInitExpr.typeName nameEnv.dataTypeDefs with
+            | None ->
+                Hir.Expr.ExprError(sprintf "Undefined data type '%s'" dataInitExpr.typeName, tid, dataInitExpr.span)
+            | Some dataTypeDef ->
+                let fieldMap = dataTypeDef.fields |> List.map (fun fieldDef -> fieldDef.name, fieldDef) |> Map.ofList
+                let initFields =
+                    dataInitExpr.fields
+                    |> List.choose (fun field ->
+                        match field with
+                        | :? Ast.DataInitField.Field as namedField -> Some namedField
+                        | _ -> None)
+
+                let duplicateFieldName =
+                    initFields
+                    |> List.fold
+                        (fun (seen, dup) field ->
+                            match dup with
+                            | Some _ -> seen, dup
+                            | None when Set.contains field.name seen -> seen, Some field.name
+                            | None -> Set.add field.name seen, None)
+                        (Set.empty, None)
+                    |> snd
+
+                match duplicateFieldName with
+                | Some duplicatedName ->
+                    Hir.Expr.ExprError(sprintf "Duplicate field initializer '%s'" duplicatedName, tid, dataInitExpr.span)
+                | None ->
+                    let unknownFieldName =
+                        initFields
+                        |> List.tryPick (fun field ->
+                            if Map.containsKey field.name fieldMap then None else Some field.name)
+                    match unknownFieldName with
+                    | Some unknownName ->
+                        Hir.Expr.ExprError(sprintf "Unknown field '%s' for data type '%s'" unknownName dataInitExpr.typeName, tid, dataInitExpr.span)
+                    | None ->
+                        let providedFieldNames = initFields |> List.map (fun field -> field.name) |> Set.ofList
+                        let missingField =
+                            dataTypeDef.fields
+                            |> List.tryFind (fun fieldDef -> not (Set.contains fieldDef.name providedFieldNames))
+                        match missingField with
+                        | Some missing ->
+                            Hir.Expr.ExprError(sprintf "Missing required field '%s' for data type '%s'" missing.name dataInitExpr.typeName, tid, dataInitExpr.span)
+                        | None ->
+                            let initFieldMap =
+                                initFields
+                                |> List.map (fun field -> field.name, field.value)
+                                |> Map.ofList
+
+                            let typedArgsResult =
+                                dataTypeDef.fields
+                                |> List.fold
+                                    (fun acc fieldDef ->
+                                        match acc with
+                                        | Result.Error exprErr -> Result.Error exprErr
+                                        | Result.Ok typedArgs ->
+                                            match Map.tryFind fieldDef.name initFieldMap with
+                                            | None ->
+                                                Result.Error(Hir.Expr.ExprError(sprintf "Missing required field '%s' for data type '%s'" fieldDef.name dataInitExpr.typeName, tid, dataInitExpr.span))
+                                            | Some valueExpr ->
+                                                let typedExpr = analyzeExpr nameEnv typeEnv valueExpr fieldDef.typ
+                                                match typedExpr with
+                                                | Hir.Expr.ExprError _ as errExpr -> Result.Error errExpr
+                                                | _ -> Result.Ok (typedArgs @ [ typedExpr ]))
+                                    (Result.Ok [])
+
+                            match typedArgsResult with
+                            | Result.Error exprErr -> exprErr
+                            | Result.Ok typedArgs ->
+                                let dataType = TypeId.Name dataTypeDef.typeSid
+                                match unifyOrError nameEnv typeEnv tid dataType dataInitExpr.span with
+                                | Result.Error exprErr -> exprErr
+                                | Result.Ok _ ->
+                                    Hir.Expr.Call(
+                                        Hir.Callable.DataConstructor(dataTypeDef.typeSid, dataTypeDef.fields |> List.map (fun fieldDef -> fieldDef.sid)),
+                                        None,
+                                        typedArgs,
+                                        dataType,
+                                        dataInitExpr.span)
         | :? Ast.Expr.Id as idExpr ->
             match nameEnv.resolveVar idExpr.name with
             | [sid] ->
@@ -1086,12 +1176,38 @@ module Analyze =
         match Resolve.resolveModule (symbolTable, moduleName, moduleAst) with
         | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
         | { value = Some resolvedModule } ->
-            let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope)
+            let bootstrapNameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, Map.empty)
             let typeEnv = TypeEnv(typeSubst, TypeMetaFactory())
 
             let fields = List<Hir.Field>()
             let methods = List<Hir.Method>()
             let types = List<Hir.Type>()
+
+            // data 宣言を型定義へ正規化し、後続の式解析で参照するメタデータを構築する。
+            let dataTypeDefs =
+                resolvedModule.dataDecls
+                |> List.fold
+                    (fun defs resolvedDataDecl ->
+                        let resolvedFields =
+                            resolvedDataDecl.decl.items
+                            |> List.choose (fun item ->
+                                match item with
+                                | :? Ast.DataItem.Field as fieldItem ->
+                                    let fieldType = bootstrapNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                    let fieldSid = symbolTable.NextId()
+                                    symbolTable.Add(fieldSid, { name = $"{resolvedDataDecl.decl.name}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
+                                    Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; span = fieldItem.span }
+                                | _ -> None)
+
+                        let hirFields =
+                            resolvedFields
+                            |> List.map (fun fieldDef ->
+                                Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                        types.Add(Hir.Type(resolvedDataDecl.typeSid, hirFields))
+                        Map.add resolvedDataDecl.decl.name { typeSid = resolvedDataDecl.typeSid; fields = resolvedFields } defs)
+                    Map.empty
+
+            let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, dataTypeDefs)
 
             resolvedModule.fnDecls
             |> List.iter (fun fnDecl -> methods.Add(analyzeMethod nameEnv typeEnv fnDecl))
