@@ -13,6 +13,40 @@ open System.Runtime.Versioning
 open System.Collections.Generic
 
 module Gen =
+    /// リテラル値を CIL 即値ロード命令として IL スタックへ積む。
+    let private emitLiteralConstant (gen: ILGenerator) (fieldType: Type) (rawValue: obj) =
+        // enum リテラルは基底型へ正規化してから即値命令へ落とす。
+        let normalizedType, normalizedValue =
+            if fieldType.IsEnum then
+                let underlyingType = Enum.GetUnderlyingType(fieldType)
+                let converted =
+                    if obj.ReferenceEquals(rawValue, null) then
+                        null
+                    else
+                        Convert.ChangeType(rawValue, underlyingType)
+                underlyingType, converted
+            else
+                fieldType, rawValue
+
+        match normalizedValue with
+        | null -> gen.Emit(OpCodes.Ldnull)
+        | _ when normalizedType = typeof<bool> ->
+            if unbox<bool> normalizedValue then gen.Emit(OpCodes.Ldc_I4_1) else gen.Emit(OpCodes.Ldc_I4_0)
+        | _ when normalizedType = typeof<byte> -> gen.Emit(OpCodes.Ldc_I4, int (unbox<byte> normalizedValue))
+        | _ when normalizedType = typeof<sbyte> -> gen.Emit(OpCodes.Ldc_I4, int (unbox<sbyte> normalizedValue))
+        | _ when normalizedType = typeof<int16> -> gen.Emit(OpCodes.Ldc_I4, int (unbox<int16> normalizedValue))
+        | _ when normalizedType = typeof<uint16> -> gen.Emit(OpCodes.Ldc_I4, int (unbox<uint16> normalizedValue))
+        | _ when normalizedType = typeof<int> -> gen.Emit(OpCodes.Ldc_I4, unbox<int> normalizedValue)
+        | _ when normalizedType = typeof<uint32> -> gen.Emit(OpCodes.Ldc_I4, int (unbox<uint32> normalizedValue))
+        | _ when normalizedType = typeof<int64> -> gen.Emit(OpCodes.Ldc_I8, unbox<int64> normalizedValue)
+        | _ when normalizedType = typeof<uint64> -> gen.Emit(OpCodes.Ldc_I8, int64 (unbox<uint64> normalizedValue))
+        | _ when normalizedType = typeof<char> -> gen.Emit(OpCodes.Ldc_I4, int (unbox<char> normalizedValue))
+        | _ when normalizedType = typeof<float32> -> gen.Emit(OpCodes.Ldc_R4, unbox<float32> normalizedValue)
+        | _ when normalizedType = typeof<float> -> gen.Emit(OpCodes.Ldc_R8, unbox<float> normalizedValue)
+        | _ when normalizedType = typeof<string> -> gen.Emit(OpCodes.Ldstr, unbox<string> normalizedValue)
+        | _ ->
+            failwithf "Unsupported literal field type for CIL generation: %s" normalizedType.FullName
+
     // Genモジュール内で共有する生成コンテキスト
     type Env =
         { typeBuilders: Dictionary<SymbolId, TypeBuilder>
@@ -70,7 +104,11 @@ module Gen =
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Ldarg, index) // TODO Ldarg_0, Ldarg_1, Ldarg_2, Ldarg_3 を使う
         // this経由でフィールドをロード
         | Mir.Value.FieldVal field ->
-            if field.IsStatic then
+            if field.IsStatic && field.IsLiteral then
+                // static literal field（例: enum メンバー）は member 参照ではなく定数即値として発行する。
+                // PersistedAssemblyBuilder での ldsfld 互換性問題を避けるため、GetRawConstantValue を直接 IL 即値へ変換する。
+                emitLiteralConstant gen field.FieldType (field.GetRawConstantValue())
+            elif field.IsStatic then
                 gen.Emit(OpCodes.Ldsfld, field)
             else
                 genValue env gen (Mir.Value.RegVal(Mir.Reg.Arg 0)) // Assuming 'this' is at Arg 0

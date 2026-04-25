@@ -158,6 +158,49 @@ module GenTests =
         Assert.Equal(typeof<string[]>, first.GetParameters().[0].ParameterType)
         Assert.Equal(typeof<string>, first.ReturnType)
 
+    /// static literal field（enum メンバー）を ldsfld せず即値として emit できることを検証する。
+    [<Fact>]
+    let ``GenAssembly emits enum literal static field as constant`` () =
+        let mainSym = SymbolId 350
+        let enumField = typeof<DayOfWeek>.GetField("Monday", BindingFlags.Public ||| BindingFlags.Static)
+
+        Assert.NotNull(enumField)
+
+        let mainMethod =
+            Mir.Method(
+                "main",
+                mainSym,
+                [],
+                TypeId.Native typeof<DayOfWeek>,
+                [ Mir.Ins.RetValue(Mir.Value.FieldVal enumField) ],
+                Mir.Frame.empty)
+
+        let assembly =
+            Mir.Assembly(
+                "GenEnumLiteralField",
+                [ Mir.Module("MainModule", [], [ mainMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-enum-literal-field.dll")
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        let globalsType = loaded.GetType("MainModule.Globals")
+        Assert.NotNull(globalsType)
+
+        let main = globalsType.GetMethod("main", BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static)
+        Assert.NotNull(main)
+        Assert.Equal(typeof<DayOfWeek>, main.ReturnType)
+
+        let result = main.Invoke(null, [||]) :?> DayOfWeek
+        Assert.Equal(DayOfWeek.Monday, result)
+
     /// 高階関数の CIL 生成が正しくデリゲート経由の呼び出しを発行することを検証する。
     /// `apply (f: Int -> Int) (x: Int): Int = f x` を CIL に変換し、
     /// Func<int,int> 型の引数を受け取って正しい結果を返すことを確認する。

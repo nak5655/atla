@@ -86,6 +86,22 @@
 8. 成功ケースの lowering と失敗ケースの期待診断を semantic 回帰テストで検証する。
 9. フルテストスイートを実行し、AST/HIR/MIR 不変条件の非退行を確認する。
 
+
+### アクティブタスク (2026-04-25): CIL の static literal field 生成修正
+
+#### ミッション
+- static literal field（特に enum メンバー）を `ldsfld` で読み出す経路を解消し、定数即値として CIL へ正規化する。
+- Layout/HIR の境界は変更せず、MIR -> CIL 変換責務の範囲で根本修正する。
+
+#### 実行ステップ
+1. `Gen.genValue` の `Mir.Value.FieldVal` 分岐に `field.IsLiteral` 判定を追加する。
+2. literal は `GetRawConstantValue()` を使って型別に `ldc.*` / `ldstr` / `ldnull` へ変換する。
+3. enum literal は underlying type へ展開して整数即値として発行する。
+4. 非 literal static field のみ `ldsfld` を維持し、インスタンス field は既存 `ldfld` 経路を維持する。
+5. Lowering.Gen テストへ enum literal 回帰ケースを追加し、GUI サンプル再発を防止する。
+6. CIL フェーズノートへ literal field の取り扱い規約を追記する。
+7. フルテストを実行し、診断と不変条件の非退行を確認する。
+
 ### アクティブタスク (2026-04-25): インスタンス呼び出しの Layout 受け渡し修正
 
 #### ミッション
@@ -142,6 +158,7 @@
 
 ## 予期しない発見・知見
 - （実装中に見つかった予期しない事項を記録する。）
+- 2026-04-25: `examples/gui` の失敗は `WindowStartupLocation'CenterScreen` のような enum static literal field を CIL で `ldsfld` した際に `System.NotSupportedException` が発生することが原因だった。
 - 2026-04-25: `Atla.Core.Tests` のフルスイートには旧 call/member 構文サンプル（例: `f x`, `a.b()`）がまだ多く残っており、複数引数ドット呼び出し対応後でも、関連外の parser/semantic 失敗が発生する。
 - 2026-04-25: メンバー代入の lowering は、既存 HIR のまま安全に扱うため現時点では「プロパティ setter 呼び出し」へ正規化し、フィールド代入は明示エラーとして扱う方針にした。
 - 2026-04-25: 旧構文由来のテスト失敗は、テスト内サンプルコードを dot-only call / apostrophe member-access 構文へ移行することで解消できた（実装コード側で旧構文互換を追加しない方針を維持）。
@@ -169,6 +186,7 @@
 - 2026-04-25: 代入文の AST を `Assign(name, ...)` から `Assign(targetExpr, ...)` へ拡張し、`window'Width = 320` のようなメンバー代入を Semantic Analysis で setter 呼び出しへ lower する実装を開始した。
 - 2026-04-25: `Atla.Core.Tests` の旧呼び出し/メンバー構文サンプルを新構文へ更新し、`dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` が全件成功する状態へ復帰した。
 - 2026-04-25: Layout の call lowering で `instance` を `args` 先頭へ結合する修正方針を採用し、メソッド候補選択は receiver を除く引数数で評価する方針を確定した。
+- 2026-04-25: static literal field（enum 定数含む）は `ldsfld` ではなく即値ロードへ変換する CIL 修正方針を採用した。
 
 ## 参照
 - 履歴計画: `notes/plans-archive.md`
