@@ -71,7 +71,7 @@ package:
 import System'Console
 
 fn main: () = do
-    Console.WriteLine "Hello, World!"
+    "Hello, World!" Console'WriteLine.
 """.Trim())
 
         let outDir = Path.Join(projectRoot, "artifacts")

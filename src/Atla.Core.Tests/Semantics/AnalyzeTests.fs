@@ -595,7 +595,7 @@ fn main: () =
         Assert.DoesNotContain(diagnosticMessages, fun msg -> msg.Contains("target kind="))
 
     [<Fact>]
-    let ``nullary function call with unit argument syntax should be allowed`` () =
+    let ``nullary function call with dot-only syntax should be allowed`` () =
         let program = """
 import System'Console
 
@@ -617,13 +617,44 @@ fn main: () = greet.
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
                     let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
-                    Assert.False(hasError, "`greet ()` の0引数呼び出し解析に失敗しています。")
+                    Assert.False(hasError, "`greet.` の0引数呼び出し解析に失敗しています。")
                 | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``unit argument call should not be normalized to nullary call`` () =
+        let program = """
+import System'Console
+
+fn greet (): () = "hello!" Console'WriteLine.
+
+fn main: () = () greet.
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true } ->
+                    Assert.True(false, "`() greet.` は 0 引数関数呼び出しとして成功してはいけません。")
+                | { diagnostics = diagnostics } ->
+                    let messages = diagnostics |> List.map (fun d -> d.message)
+                    Assert.Contains(messages, fun msg -> msg.Contains("different number of arguments"))
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
