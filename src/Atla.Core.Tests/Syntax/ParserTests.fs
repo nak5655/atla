@@ -240,6 +240,50 @@ fn main: () = do
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses record-style data declaration with comma-separated fields`` () =
+        let program = "data Person = { name: String, age: Int }"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            match astModule.decls with
+            | [ (:? Ast.Decl.Data as dataDecl) ] ->
+                Assert.Equal("Person", dataDecl.name)
+                Assert.Equal(2, dataDecl.items.Length)
+            | _ ->
+                Assert.True(false, "expected a single Ast.Decl.Data declaration")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses named data initialization expression`` () =
+        let program = """
+data Person = { name: String, age: Int }
+fn main (): Person = Person { name = "Alice", age = 20 }
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let mainDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match mainDecl with
+            | Some fnDecl ->
+                match fnDecl.body with
+                | :? Ast.Expr.DataInit as initExpr ->
+                    Assert.Equal("Person", initExpr.typeName)
+                    Assert.Equal(2, initExpr.fields.Length)
+                | _ ->
+                    Assert.True(false, "expected Ast.Expr.DataInit in main body")
+            | None ->
+                Assert.True(false, "main declaration not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses apostrophe import syntax`` () =
         let program = """
 import System'Console

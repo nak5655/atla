@@ -139,6 +139,38 @@
 3. 旧構文を直接前提にするテスト名/期待値を新仕様に合わせて更新する。
 4. 影響するテストプロジェクト（Core/Console）を再実行して成功を確認する。
 
+### アクティブタスク (2026-04-25): `data` 宣言と初期化構文の導入（struct lowering）
+
+#### ミッション
+- `examples/data` 系サンプルをコンパイル可能にするため、`data` 宣言を表層構文として受理する。
+- `data` を Semantic Analysis で正準 struct + constructor 呼び出しへ lower し、既存 HIR/MIR/CIL パイプラインを再利用する。
+- フィールドは `public` かつ可変を既定とし、自動 `Equals` / `ToString` 生成や immutable 前提は導入しない。
+
+#### 実行ステップ
+1. 受理文法を次で固定する:
+   - 宣言: `data Person = { name: String, age: Int }`（フィールド区切りは `,`）
+   - 初期化: `Person { name = "Alice", age = 20 }`（名前付きのみ、必須フィールド省略不可）
+   - フィールド型注釈は必須、宣言側に初期化式は持たせない。
+2. **変更制御**: `src/Atla.Core/Syntax/Lexer.fs` / `src/Atla.Core/Syntax/Parser.fs` の編集前に明示承認を取得する（AGENTS.md ルール）。
+3. Parser で `data` 宣言 AST ノードと `data` 初期化 AST ノードを追加し、span を保持した決定的診断（不足フィールド、重複、区切り不正）を実装する。
+4. Semantic Analysis で `data` 宣言を struct シンボルへ展開し、`public mutable` フィールド定義と constructor シグネチャを型付き HIR に正規化する。
+5. Semantic Analysis で `data` 初期化構文を既存 constructor 呼び出しに lower し、宣言順に並ぶ引数列へ変換する（未知/重複/不足/型不一致は構造化診断）。
+6. HIR 不変条件（完全型付け、未解決識別子なし、糖衣構文なし）を検証する回帰テストを追加する。
+7. Parser/Semantic の境界テストを追加する:
+   - 正常系: `data` 宣言 + 初期化成功
+   - 異常系: 重複フィールド、未知フィールド、必須フィールド欠落、型不一致
+   - スナップショット: AST/HIR 形状の固定化
+8. MIR/CIL への影響が struct lowering に限定されることを確認し、`data` 由来コードの最終 CIL 実行回帰テストを追加する。
+9. `examples/data` サンプル、言語仕様ドキュメント、フェーズノートを更新し、`dotnet test` フルスイートで非退行を確認する。
+
+#### リスクと対策
+- Parser の糖衣が HIR へ漏れるリスク:
+  - 対策: semantic 正規化点を単一点に固定し、HIR では struct/ctor 呼び出しの正準ノードのみ許可する。
+- 初期化構文の自由度増加で診断順序が不安定化するリスク:
+  - 対策: 診断優先順位を `重複 -> 未知 -> 必須不足 -> 型不一致` に固定し、テストで順序を凍結する。
+- 既存 struct/ctor 機構との二重実装リスク:
+  - 対策: lowering は既存 constructor 解決ロジックを再利用し、`data` 専用の MIR/CIL 分岐を追加しない。
+
 #### 実行ステップ
 1. `.` 呼び出しと `'` メンバーアクセスの文法/Parser を、ソース span を保ったまま更新する。
 2. 無効形式（`x f`, `a'`, 不正な後置 call/member 連鎖）の parser 診断を追加・調整する。
@@ -183,6 +215,7 @@
 
 ## 予期しない発見・知見
 - （実装中に見つかった予期しない事項を記録する。）
+- 2026-04-25: 既存 `data` 構文は `data Name =` + オフサイド列挙であり、今回合意した `{ ... }` + `,` 区切り仕様とは非互換だったため、Parser とサンプルを同時更新する必要があった。
 - 2026-04-25: `examples/gui` の失敗は `WindowStartupLocation'CenterScreen` のような enum static literal field を CIL で `ldsfld` した際に `System.NotSupportedException` が発生することが原因だった。
 - 2026-04-25: `Atla.Core.Tests` のフルスイートには旧 call/member 構文サンプル（例: `f x`, `a.b()`）がまだ多く残っており、複数引数ドット呼び出し対応後でも、関連外の parser/semantic 失敗が発生する。
 - 2026-04-25: メンバー代入の lowering は、既存 HIR のまま安全に扱うため現時点では「プロパティ setter 呼び出し」へ正規化し、フィールド代入は明示エラーとして扱う方針にした。

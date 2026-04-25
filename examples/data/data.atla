@@ -1,0 +1,4 @@
+data Person = { name: String, age: Int }
+
+fn buildPerson (): Person =
+    Person { name = "Alice", age = 20 }

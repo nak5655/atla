@@ -238,6 +238,54 @@ fn main (): () = "hello" Console'WriteLine.
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``semantic analysis and lowering accept data declaration and named initialization`` () =
+        let program = """
+data Person = { name: String, age: Int }
+fn buildPerson (): Person = Person { name = "Alice", age = 20 }
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hirAsm = Hir.Assembly("test", [ hirModule ])
+                    match ClosureConversion.preprocessAssembly(symbolTable, hirAsm) with
+                    | { succeeded = true; value = Some closedAsm } ->
+                        match Layout.layoutAssembly("TestAsm", closedAsm) with
+                        | { succeeded = true; value = Some mirAsm } ->
+                            Assert.Single(mirAsm.modules.Head.types) |> ignore
+                        | { diagnostics = diagnostics } ->
+                            let message =
+                                diagnostics
+                                |> List.map (fun err -> err.toDisplayText())
+                                |> String.concat "; "
+                            Assert.True(false, $"Lowering failed: {message}")
+                    | { diagnostics = diagnostics } ->
+                        let message =
+                            diagnostics
+                            |> List.map (fun err -> err.toDisplayText())
+                            |> String.concat "; "
+                        Assert.True(false, $"Closure conversion failed: {message}")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``semantic analysis handles chained dot-only calls`` () =
         let span = Span.Empty
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr

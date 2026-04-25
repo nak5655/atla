@@ -5,10 +5,15 @@ open Atla.Core.Semantics.Data
 open System.Runtime.Loader
 
 module Resolve =
+    type ResolvedDataDecl =
+        { typeSid: SymbolId
+          decl: Ast.Decl.Data }
+
     type ResolvedModule =
         { moduleName: string
           moduleScope: Scope
-          fnDecls: Ast.Decl.Fn list }
+          fnDecls: Ast.Decl.Fn list
+          dataDecls: ResolvedDataDecl list }
 
     let private tryResolveSystemType (classPath: string) : System.Type option =
         match System.Type.GetType(classPath) with
@@ -88,13 +93,30 @@ module Resolve =
         |> List.iter (fun (name, sid) -> moduleScope.DeclareVar(name, sid))
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
+        let dataDecls = ResizeArray<ResolvedDataDecl>()
         let diagnostics = ResizeArray<Diagnostic>()
+
+        // data 型名を先に登録し、同一モジュール内で相互参照可能にする。
+        for decl in moduleAst.decls do
+            match decl with
+            | :? Ast.Decl.Data as dataDecl ->
+                match moduleScope.ResolveType(dataDecl.name) with
+                | Some _ ->
+                    diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" dataDecl.name, dataDecl.span))
+                | None ->
+                    let typeSid = symbolTable.NextId()
+                    symbolTable.Add(typeSid, { name = dataDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
+                    moduleScope.DeclareType(dataDecl.name, TypeId.Name typeSid)
+                    dataDecls.Add({ typeSid = typeSid; decl = dataDecl })
+            | _ -> ()
 
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Import as importDecl ->
                 let importDiagnostics = resolveImport symbolTable moduleScope importDecl
                 diagnostics.AddRange(importDiagnostics)
+            | :? Ast.Decl.Data ->
+                ()
             | :? Ast.Decl.Fn as fnDecl ->
                 fnDecls.Add(fnDecl)
             | _ -> diagnostics.Add(Diagnostic.Error("Unsupported declaration type in module", decl.span))
@@ -107,5 +129,6 @@ module Resolve =
             PhaseResult.succeeded
                 { moduleName = moduleName
                   moduleScope = moduleScope
-                  fnDecls = Seq.toList fnDecls }
+                  fnDecls = Seq.toList fnDecls
+                  dataDecls = Seq.toList dataDecls }
                 allDiagnostics
