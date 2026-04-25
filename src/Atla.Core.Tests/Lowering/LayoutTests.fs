@@ -164,6 +164,62 @@ fn keep (xs: Array String): Array String = xs
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``layoutAssembly keeps receiver as first MIR call argument for instance method`` () =
+        let program = """
+import System'IO'StringWriter
+
+fn main: () = do
+    let writer = StringWriter.
+    "hello" writer'WriteLine.
+"""
+
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let mirAssemblyResult = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ hirModule ]))
+                    let mirAssembly =
+                        match mirAssemblyResult with
+                        | { succeeded = true; value = Some asm } -> asm
+                        | { diagnostics = diagnostics } ->
+                            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                            failwith $"layoutAssembly failed: {message}"
+
+                    let entryMethodBody = mirAssembly.modules.Head.methods.Head.body
+                    let writeLineCall =
+                        entryMethodBody
+                        |> List.tryFind (function
+                            | Mir.Ins.Call (Choice1Of2 methodInfo, _) when methodInfo.Name = "WriteLine" -> true
+                            | _ -> false)
+
+                    match writeLineCall with
+                    | Some (Mir.Ins.Call (_, args)) ->
+                        match args with
+                        | Mir.Value.RegVal _ :: Mir.Value.ImmVal(Mir.Imm.String text) :: [] ->
+                            Assert.Equal("hello", text)
+                        | _ ->
+                            Assert.True(false, $"Unexpected WriteLine args shape: {args}")
+                    | _ ->
+                        Assert.True(false, "MIR call for StringWriter.WriteLine was not found.")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``Array String type snapshot stays stable across AST HIR MIR`` () =
         let program = "fn keep (xs: Array String): Array String = xs"
         let input: Input<SourceChar> = StringInput program
