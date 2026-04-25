@@ -160,6 +160,15 @@ module Parser =
             |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes
         )
 
+    // 代入左辺として許可される式を解析する。
+    // 許可: 識別子、アポストロフィによるメンバーアクセス連鎖（例: a'b'c）。
+    // 非許可: 呼び出し結果、リテラル、型引数適用、添字アクセス。
+    and assignLValueExpr (): PackratParser<Token, Ast.Expr> =
+        Delay (fun () ->
+            (asExpr id) <&> Many (postfixMemberAccess ())
+            |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes
+        )
+
     // 呼び出し式の項
     and term1 (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
@@ -307,7 +316,8 @@ module Parser =
         block (asToken (keyword "var")) (Once (tid <& symbol "=" <&> expr() |>> fun (id, rhs) -> Ast.Stmt.Var (id.str, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt))
 
     and assignStmt (): PackratParser<Token, Ast.Stmt> =
-        tid <& symbol "=" <&> expr() |>> fun (id, rhs) -> Ast.Stmt.Assign (id.str, rhs, { left = id.span.left; right = rhs.span.right })
+        assignLValueExpr () <& symbol "=" <&> expr()
+        |>> fun (target, rhs) -> Ast.Stmt.Assign (target, rhs, { left = target.span.left; right = rhs.span.right })
 
     and exprStmt (): PackratParser<Token, Ast.Stmt> =
         expr() |>> fun e -> Ast.Stmt.ExprStmt (e, e.span)

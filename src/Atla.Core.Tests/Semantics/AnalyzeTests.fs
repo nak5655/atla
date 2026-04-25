@@ -474,7 +474,7 @@ import System'Linq'Enumerable
 
 fn main: () =
     do
-        for i in Enumerable.Range 0 1
+        for i in 0 1 Enumerable'Range.
             let f = fn _ -> i
             ()
         ()
@@ -599,9 +599,9 @@ fn main: () =
         let program = """
 import System'Console
 
-fn greet (): () = Console.WriteLine "hello!"
+fn greet (): () = "hello!" Console'WriteLine.
 
-fn main: () = greet ()
+fn main: () = greet.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -637,8 +637,8 @@ import System'Console
 import System'Linq'Enumerable
 
 fn main: () = do
-    for i in Enumerable.Range 1 20
-        Console.WriteLine i
+    for i in 1 20 Enumerable'Range.
+        i Console'WriteLine.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -673,8 +673,8 @@ import System'Int32
 import System'Console
 
 fn main: () = do
-    var n_x = Console.ReadLine ()
-    n_x = n_x.Split " "
+    var n_x = Console'ReadLine.
+    n_x = " " n_x'Split.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -708,7 +708,7 @@ fn main: () = do
 import System'Text'StringBuilder
 
 fn appendExclamation (sb: StringBuilder): () = do
-    let ignored = sb.Append "!"
+    let ignored = "!" sb'Append.
     ()
 """
 
@@ -743,8 +743,9 @@ fn appendExclamation (sb: StringBuilder): () = do
 import System'Console
 
 fn main: () = do
-    let a = (Console.ReadLine ()).Split " "
-    Console.WriteLine a !! 0
+    let line = Console'ReadLine.
+    let a = " " line'Split.
+    a !! 0 Console'WriteLine.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -900,9 +901,10 @@ import System'Console
 import System'Linq'Enumerable
 
 fn main: () = do
-    let a = (Console.ReadLine ()).Split " "
-    for i in Enumerable.Range 0 a.Length
-        Console.WriteLine a !! i
+    let line = Console'ReadLine.
+    let a = " " line'Split.
+    for i in 0 a'Length Enumerable'Range.
+        a !! i Console'WriteLine.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -935,7 +937,7 @@ fn main: () = do
         let program = """
 import System'Activator
 
-fn main (): Int = Activator.CreateInstance[Int] ()
+fn main (): Int = Activator'CreateInstance[Int].
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -968,7 +970,7 @@ fn main (): Int = Activator.CreateInstance[Int] ()
         let program = """
 import System'Text'StringBuilder
 
-fn createBuilder (): StringBuilder = StringBuilder ()
+fn createBuilder (): StringBuilder = StringBuilder.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -997,13 +999,80 @@ fn createBuilder (): StringBuilder = StringBuilder ()
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``member access assignment with writable property should be analyzed`` () =
+        let program = """
+import System'Console
+
+fn main (): () = do
+    Console'WindowWidth = 120
+    ()
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "`Console'WindowWidth = 120` の解析に失敗しています。")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``member access assignment reports read only property`` () =
+        let program = """
+import System'DateTime
+
+fn main (): () = do
+    DateTime'Now = DateTime'Now
+    ()
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        let diagnostics =
+            match Lexer.tokenize input Position.Zero with
+            | Success (tokens, _) ->
+                let tokenInput = TokenInput(tokens)
+                let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+                match Parser.fileModule() tokenInput start with
+                | Success (moduleAst, _) ->
+                    let symbolTable = SymbolTable()
+                    let subst = TypeSubst()
+                    match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                    | { succeeded = true; value = Some hirModule } ->
+                        hirModule.methods |> List.collect (fun methodInfo -> methodInfo.getDiagnostics)
+                    | { diagnostics = diagnostics } -> diagnostics
+                | Failure (reason, span) ->
+                    [ Diagnostic.Error($"Parsing failed: {reason}", span) ]
+            | Failure (reason, span) ->
+                [ Diagnostic.Error($"Lexing failed: {reason}", span) ]
+
+        Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("read-only"))
+
+    [<Fact>]
     let ``extension method call should be analyzed`` () =
         let program = """
 import Atla'Core'Tests'Semantics'TestExtensions
 
 fn addTen (): () = do
     let x = 1
-    x.PlusTen ()
+    x'PlusTen.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -1061,7 +1130,7 @@ fn apply (f: Int -> Int) (x: Int): Int = x
     let ``semantic analysis supports higher-order function parameters`` () =
         let program = """
 fn twice (x: Int): Int = x + x
-fn apply (f: Int -> Int) (x: Int): Int = f x
+fn apply (f: Int -> Int) (x: Int): Int = x f.
 """
         let input: Input<SourceChar> = StringInput program
         match Lexer.tokenize input Position.Zero with
@@ -1092,7 +1161,7 @@ fn apply (f: Int -> Int) (x: Int): Int = f x
     let ``layout supports higher-order function parameters`` () =
         let program = """
 fn twice (x: Int): Int = x + x
-fn apply (f: Int -> Int) (x: Int): Int = f x
+fn apply (f: Int -> Int) (x: Int): Int = x f.
 """
         let input: Input<SourceChar> = StringInput program
         match Lexer.tokenize input Position.Zero with
@@ -1151,7 +1220,7 @@ fn apply (f: Int -> Int) (x: Int): Int = f x
     [<Fact>]
     let ``Hir.Method.args preserves parameter declaration order`` () =
         let program = """
-fn apply (f: Int -> Int) (x: Int): Int = f x
+fn apply (f: Int -> Int) (x: Int): Int = x f.
 """
         let input: Input<SourceChar> = StringInput program
         match Lexer.tokenize input Position.Zero with
@@ -1379,7 +1448,7 @@ fn bad (): Int = do
         let program = """
 import Non'Existent'MyClass
 
-fn main (): Int = MyClass ()
+fn main (): Int = MyClass.
 """
         let input: Input<SourceChar> = StringInput program
 

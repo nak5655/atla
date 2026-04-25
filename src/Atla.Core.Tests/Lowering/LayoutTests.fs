@@ -58,8 +58,8 @@ import System'Console
 import System'Linq'Enumerable
 
 fn main: () =
-    for i in (Enumerable.Range 1 3).GetEnumerator()
-        Console.WriteLine i
+    for i in 1 3 Enumerable'Range.
+        i Console'WriteLine.
 """
 
         let input: Input<SourceChar> = StringInput program
