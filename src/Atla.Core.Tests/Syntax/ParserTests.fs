@@ -611,6 +611,63 @@ fn main (): () = do
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses multi argument dot-only call`` () =
+        let program = "fn main (): Int = a b c sum3."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.func, applyExpr.args with
+                    | (:? Ast.Expr.Id as funcId), [ (:? Ast.Expr.Id as arg0); (:? Ast.Expr.Id as arg1); (:? Ast.Expr.Id as arg2) ] ->
+                        Assert.Equal("sum3", funcId.name)
+                        Assert.Equal("a", arg0.name)
+                        Assert.Equal("b", arg1.name)
+                        Assert.Equal("c", arg2.name)
+                    | _ ->
+                        Assert.True(false, "multi-argument dot call should normalize to sum3(a, b, c)")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule rejects missing dot in multi argument call chain`` () =
+        let program = "fn main (): Int = a b sum3"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Error as errorExpr ->
+                    Assert.Contains("Expected '.' after callee in call expression.", errorExpr.message)
+                | _ ->
+                    Assert.True(false, "missing dot in multi-argument call chain should produce Ast.Expr.Error")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed unexpectedly: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses identifier dot as zero argument call`` () =
         let program = "fn main (): Int = ping."
 

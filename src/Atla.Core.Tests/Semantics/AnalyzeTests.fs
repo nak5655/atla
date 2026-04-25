@@ -268,6 +268,48 @@ fn main (): () = "hello" Console'WriteLine.
             Assert.True(false, $"Semantic analysis failed: {message}")
 
     [<Fact>]
+    let ``semantic analysis handles multi argument dot-only call`` () =
+        let program = """
+fn add3 (a: Int) (b: Int) (c: Int): Int = a
+fn main (): Int = 1 2 3 add3.
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let mainMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodInfo -> symbolTable.Get(methodInfo.sym) |> Option.exists (fun symbolInfo -> symbolInfo.name = "main"))
+
+                    match mainMethod with
+                    | Some methodInfo ->
+                        match methodInfo.body with
+                        | Hir.Expr.Call (Hir.Callable.Fn _, _, [ Hir.Expr.Int (1, _); Hir.Expr.Int (2, _); Hir.Expr.Int (3, _) ], _, _) ->
+                            Assert.True(true)
+                        | other ->
+                            Assert.True(false, $"expected multi-argument Hir.Expr.Call for dot-only syntax but got {other}")
+                    | None ->
+                        Assert.True(false, "main method was not found in analyzed HIR module")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``semantic analysis handles zero argument dot-only call`` () =
         let program = """
 fn ping (): Int = 1
