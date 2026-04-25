@@ -966,21 +966,56 @@ module Analyze =
             let sid = nameEnv.declareLocal varStmt.name tid
             Hir.Stmt.Let(sid, true, rhs, varStmt.span)
         | :? Ast.Stmt.Assign as assignStmt ->
-            let tid = typeEnv.freshMeta ()
-            let rhs = analyzeExpr nameEnv typeEnv assignStmt.value tid
-            match nameEnv.resolveVar assignStmt.name with
-            | [sid] ->
-                match unifyOrError nameEnv typeEnv (nameEnv.resolveSymType sid) rhs.typ assignStmt.span with
-                | Result.Ok _ -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)
-                | Result.Error exprErr -> Hir.Stmt.ExprStmt(exprErr, assignStmt.span)
-            | [] -> Hir.Stmt.ExprStmt(Hir.Expr.ExprError(sprintf "Undefined variable '%s'" assignStmt.name, TypeId.Error (sprintf "Undefined variable '%s'" assignStmt.name), assignStmt.span), assignStmt.span)
+            // 代入は左辺の形状ごとに lower する。
+            // - 識別子: 既存の Hir.Stmt.Assign を利用
+            // - メンバーアクセス: setter 呼び出しへ lower（現在はプロパティ setter のみ許可）
+            match assignStmt.target with
+            | :? Ast.Expr.Id as idTarget ->
+                let tid = typeEnv.freshMeta ()
+                let rhs = analyzeExpr nameEnv typeEnv assignStmt.value tid
+                match nameEnv.resolveVar idTarget.name with
+                | [sid] ->
+                    match unifyOrError nameEnv typeEnv (nameEnv.resolveSymType sid) rhs.typ assignStmt.span with
+                    | Result.Ok _ -> Hir.Stmt.Assign(sid, rhs, assignStmt.span)
+                    | Result.Error exprErr -> Hir.Stmt.ExprStmt(exprErr, assignStmt.span)
+                | [] ->
+                    let message = sprintf "Undefined variable '%s'" idTarget.name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                | _ ->
+                    let message = sprintf "Ambiguous variable '%s'" idTarget.name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+            | :? Ast.Expr.MemberAccess as memberTarget ->
+                let analyzedTarget = analyzeExpr nameEnv typeEnv memberTarget (typeEnv.freshMeta ())
+                match analyzedTarget with
+                | Hir.Expr.MemberAccess (Hir.Member.NativeProperty propertyInfo, instanceOpt, _, _) ->
+                    match propertyInfo.SetMethod with
+                    | null ->
+                        let message = sprintf "Property '%s' is read-only" propertyInfo.Name
+                        Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                    | setMethod ->
+                        let rhs = analyzeExpr nameEnv typeEnv assignStmt.value (TypeId.fromSystemType propertyInfo.PropertyType)
+                        let callExpr =
+                            Hir.Expr.Call(
+                                Hir.Callable.NativeMethod setMethod,
+                                instanceOpt,
+                                [ rhs ],
+                                TypeId.Unit,
+                                assignStmt.span)
+                        Hir.Stmt.ExprStmt(callExpr, assignStmt.span)
+                | Hir.Expr.MemberAccess (Hir.Member.NativeField fieldInfo, _, _, _) ->
+                    let message = sprintf "Field assignment is not supported for member '%s'" fieldInfo.Name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                | Hir.Expr.MemberAccess (Hir.Member.NativeMethod methodInfo, _, _, _) ->
+                    let message = sprintf "Method '%s' is not assignable" methodInfo.Name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                | Hir.Expr.ExprError (message, errTyp, span) ->
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, errTyp, span), assignStmt.span)
+                | _ ->
+                    let message = "Invalid assignment target"
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
             | _ ->
-                Hir.Stmt.ExprStmt(
-                    Hir.Expr.ExprError(
-                        sprintf "Ambiguous variable '%s'" assignStmt.name,
-                        TypeId.Error(sprintf "Ambiguous variable '%s'" assignStmt.name),
-                        assignStmt.span),
-                    assignStmt.span)
+                let message = "Invalid assignment target"
+                Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
         | :? Ast.Stmt.ExprStmt as exprStmt ->
             let expr = analyzeExpr nameEnv typeEnv exprStmt.expr TypeId.Unit
             Hir.Stmt.ExprStmt(expr, exprStmt.span)

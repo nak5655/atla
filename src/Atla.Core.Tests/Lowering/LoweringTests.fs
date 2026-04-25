@@ -13,7 +13,7 @@ module LoweringTests =
 import System'Console
 
 fn main: () = do
-    Console.WriteLine "Hello, World!"
+    "Hello, World!" Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -50,9 +50,9 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn greet (): () = Console.WriteLine "hello!"
+fn greet (): () = "hello!" Console'WriteLine.
 
-fn main: () = greet ()
+fn main: () = greet.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -89,16 +89,17 @@ import System'Array
 import System'Console
 import System'Linq'Enumerable
 fn fizzbuzz (n: Int): () =
-    for i in Enumerable.Range 1 n
-        Console.WriteLine if
+    for i in 1 n Enumerable'Range.
+        (if
             | i % 15 == 0 => "FizzBuzz"
             | i % 5 == 0 => "Buzz"
             | i % 3 == 0 => "Fizz"
-            | else => i.ToString()
+            | else => i'ToString.) Console'WriteLine.
+
 
 fn main: () = do
-    let n = Int32.Parse (Console.ReadLine ())
-    fizzbuzz n
+    let n = Console'ReadLine. Int32'Parse.
+    n fizzbuzz.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -145,11 +146,11 @@ fn fibonacci (n: Int): Int = if
     | n == 0 => 0
     | n == 1 => 1
     | n == 2 => 1
-    | else => fibonacci (n - 2) + fibonacci (n - 1)
+    | else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
 fn main: () = do
-    let n = Int32.Parse (Console.ReadLine ())
-    Console.WriteLine (fibonacci n)
+    let n = Console'ReadLine. Int32'Parse.
+    n fibonacci. Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -223,8 +224,8 @@ import System'Int32
 import System'Console
 
 fn main: () = do
-    var n_x = Console.ReadLine ()
-    n_x = n_x.Split " "
+    var n_x = Console'ReadLine.
+    n_x = " " n_x'Split.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -242,8 +243,8 @@ fn main: () = do
 import System'Console
 
 fn main: () = do
-    let a = Console.ReadLine ()
-    Console.WriteLine a !! 1
+    let a = Console'ReadLine.
+    a !! 1 Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -283,8 +284,9 @@ fn main: () = do
 import System'Console
 
 fn main: () = do
-    let a = (Console.ReadLine ()).Split " "
-    Console.WriteLine a !! 0
+    let line = Console'ReadLine.
+    let a = " " line'Split.
+    a !! 0 Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -323,11 +325,12 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn count (xs: Array String): Int = xs.Length
+fn count (xs: Array String): Int = xs'Length
 
 fn main: () = do
-    let a = (Console.ReadLine ()).Split " "
-    Console.WriteLine (count a)
+    let line = Console'ReadLine.
+    let a = " " line'Split.
+    a count. Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -369,9 +372,10 @@ import System'Console
 import System'Linq'Enumerable
 
 fn main: () = do
-    let a = (Console.ReadLine ()).Split " "
-    for i in Enumerable.Range 0 a.Length
-        Console.WriteLine a !! i
+    let line = Console'ReadLine.
+    let a = " " line'Split.
+    for i in 0 a'Length Enumerable'Range.
+        a !! i Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -499,7 +503,7 @@ fn main: Int = 0
 import System'Text'Json'JsonNamingPolicy
 
 fn main: () = do
-    var policy = JsonNamingPolicy.CamelCase
+    var policy = JsonNamingPolicy'CamelCase
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -532,7 +536,7 @@ fn main: () = do
 import System'Text'Json'JsonNamingPolicy
 
 fn main: () = do
-    var policy = JsonNamingPolicy.CamelCase
+    var policy = JsonNamingPolicy'CamelCase
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -562,7 +566,7 @@ fn main: () = do
 import System'Text'Json'DoesNotExist
 
 fn main: () = do
-    var x = DoesNotExist.Parse
+    var x = DoesNotExist'Parse
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -675,12 +679,12 @@ import System'Text'StringBuilder
 import System'Console
 
 fn process (sb: StringBuilder): () = do
-    let _ = sb.Append "ok"
-    Console.WriteLine (sb.ToString ())
+    let _ = "ok" sb'Append.
+    sb'ToString. Console'WriteLine.
 
 fn main: () = do
-    let sb = StringBuilder ()
-    process sb
+    let sb = StringBuilder.
+    sb process.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))

@@ -188,8 +188,8 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Assign(name: string, value: Expr, span: Span) =
-            member this.name = name
+        type Assign(target: Expr, value: Expr, span: Span) =
+            member this.target = target
             member this.value = value
             member this.span = span
             interface Stmt with

@@ -92,7 +92,7 @@ fn fizzbuzz (n: Int): () =
 
 fn main: () = do
     let n = 10
-    fizzbuzz n
+    n fizzbuzz.
 """
 
         match parseModule program with
@@ -136,8 +136,9 @@ fn main: () = do
 import System'Console
 
 fn main: () = do
-    let a = (Console.ReadLine ()).Split " "
-    Console.WriteLine a !! 0
+    let line = Console'ReadLine.
+    let a = " " line'Split.
+    a !! 0 Console'WriteLine.
 """
 
         match parseModule program with
@@ -570,6 +571,47 @@ fn main (): () = do
                         Assert.True(false, "dot call target should be parsed as member access")
                 | _ ->
                     Assert.True(false, "main body was not parsed as Ast.Expr.Apply")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses member access assignment target`` () =
+        let program = """
+fn main (): () = do
+    window'Width = 320
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    match blockExpr.stmts |> List.tryHead with
+                    | Some (:? Ast.Stmt.Assign as assignStmt) ->
+                        match assignStmt.target with
+                        | :? Ast.Expr.MemberAccess as memberAccess ->
+                            match memberAccess.receiver with
+                            | :? Ast.Expr.Id as receiverId ->
+                                Assert.Equal("window", receiverId.name)
+                                Assert.Equal("Width", memberAccess.memberName)
+                            | _ ->
+                                Assert.True(false, "member assignment receiver should be parsed as Ast.Expr.Id")
+                        | _ ->
+                            Assert.True(false, "assignment target should be parsed as Ast.Expr.MemberAccess")
+                    | _ ->
+                        Assert.True(false, "block should contain Ast.Stmt.Assign")
+                | _ ->
+                    Assert.True(false, "main body was not parsed into block expression")
             | None ->
                 Assert.True(false, "main function declaration was not found")
         | Failure (reason, span) ->
