@@ -179,8 +179,9 @@ module Parser =
     // - `f.` は 0 引数呼び出し。
     // - `x .` は callable 式 `x` の 0 引数呼び出し。
     // - `x f.` は `f(x)` に正規化される。
+    // - `a b f.` は `f(a, b)` に正規化される。
     // - `x f. g.` は `g(f(x))` に正規化される。
-    // - `x f` は parse error（`.` 必須）。
+    // - `x f` / `a b f` は parse error（callee の直後に `.` 必須）。
     and term2 (): PackratParser<Token, Ast.Expr> =
         Delay (fun () -> fun input pos ->
             match term1 () input pos with
@@ -197,21 +198,33 @@ module Parser =
                             Ast.Expr.Apply(current, [], { left = current.span.left; right = dot.span.right }) :> Ast.Expr
                         loop zeroArgCall afterDotPos
                     | Failure _ ->
-                        match term1 () callInput currentPos with
-                        | Success (callee, afterCalleePos) ->
-                            match (symbol ".") callInput afterCalleePos with
+                        // `current` の後続を `arg* callee .` 形式として読み取る。
+                        // 先頭から最後の項までを収集し、最後の項を callee、手前を追加引数として扱う。
+                        let rec collectTailTerms (tailPos: Position) (acc: Ast.Expr list) =
+                            match term1 () callInput tailPos with
+                            | Success (parsed, nextPos) -> collectTailTerms nextPos (parsed :: acc)
+                            | Failure _ -> List.rev acc, tailPos
+
+                        let tailTerms, afterTailTermsPos = collectTailTerms currentPos []
+                        match tailTerms with
+                        | [] ->
+                            Success (current, currentPos)
+                        | _ ->
+                            match (symbol ".") callInput afterTailTermsPos with
                             | Success (dot, afterDotPos) ->
-                                // `current callee.` を `callee(current)` へ正規化する。
+                                // `current arg1 ... callee.` を `callee(current, arg1, ...)` へ正規化する。
+                                let callee = List.last tailTerms
+                                let extraArgs = tailTerms |> List.take (tailTerms.Length - 1)
+                                let allArgs = current :: extraArgs
                                 let pipedCall =
-                                    Ast.Expr.Apply(callee, [current], { left = current.span.left; right = dot.span.right }) :> Ast.Expr
+                                    Ast.Expr.Apply(callee, allArgs, { left = current.span.left; right = dot.span.right }) :> Ast.Expr
                                 loop pipedCall afterDotPos
                             | Failure _ ->
-                                // `current callee` は `.` 必須ルール違反として式エラーを返す。
+                                // `current arg* callee` は `.` 必須ルール違反として式エラーを返す。
+                                let callee = List.last tailTerms
                                 Success
                                     (Ast.Expr.Error("Expected '.' after callee in call expression.", { left = current.span.left; right = callee.span.right }) :> Ast.Expr,
-                                     afterCalleePos)
-                        | Failure _ ->
-                            Success (current, currentPos)
+                                     afterTailTermsPos)
                 loop head afterHeadPos
         )
 

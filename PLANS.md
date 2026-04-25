@@ -27,6 +27,7 @@ Detailed historical plans and design notes are stored under `notes/`.
 
 #### Frozen Language Rules
 - `x f.` => `f(x)`.
+- `a b f.` => `f(a, b)`.
 - `x f. g.` => `g(f(x))` (left-to-right evaluation).
 - `f.` is valid (zero-argument call).
 - `x .` is valid (direct zero-argument call on callable expression `x`).
@@ -51,6 +52,20 @@ Detailed historical plans and design notes are stored under `notes/`.
 2. Confirm old `import A.B` now fails during parse.
 3. Migrate test and example source snippets to apostrophe-separated imports.
 4. Run focused syntax tests and then full suite checks.
+
+### Active Task (2026-04-25): Multi-Argument Dot-Only Call Parsing
+
+#### Mission
+- Extend dot-only call parsing so pipelines can pass multiple arguments before a callee.
+- Preserve canonical AST shape (`Ast.Expr.Apply`) so Semantic/HIR contracts remain unchanged.
+
+#### Execution Steps
+1. Update `term2` parsing loop to collect one-or-more argument terms before the final callee and trailing `.`.
+2. Preserve existing behavior for zero-argument calls (`f.`, `x .`) and chained calls (`x f. g.`).
+3. Add parser tests for 2+ argument calls and missing-dot diagnostics in multi-argument forms.
+4. Add semantic analysis regression tests that verify multi-argument dot-only calls lower into canonical `Hir.Expr.Call`.
+5. Update example source that previously relied on unsupported multi-argument syntax.
+6. Run full test suite.
 
 #### Execution Steps
 1. Update grammar and parser for `.` calls and `'` member access with preserved source spans.
@@ -96,6 +111,7 @@ Detailed historical plans and design notes are stored under `notes/`.
 
 ## Surprises & Discoveries
 - (Record unexpected findings discovered during implementation.)
+- 2026-04-25: `Atla.Core.Tests` full-suite still contains many legacy call/member syntax samples (e.g., `f x`, `a.b()`), so running the entire suite currently reports unrelated parser/semantic failures even after multi-argument dot-call support is implemented.
 
 ## Validation
 - Build succeeds with zero warnings.
