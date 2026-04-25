@@ -1,0 +1,19 @@
+import Avalonia'Application
+import Avalonia'Controls'Window
+import Avalonia'Controls'WindowStartupLocation
+import Avalonia'AppBuilder
+import Avalonia'Controls'DesktopApplicationExtensions
+import CalculatorWindow'CalculatorWindow
+
+fn appMain (app: Application) (args: Array String): () = do
+    let window = CalculatorWindow'new.
+    window'Title = "Hello, Avalonia!"
+    window'Width = 320.0
+    window'Height = 480.0
+    window'WindowStartupLocation = WindowStartupLocation'CenterScreen
+    window'Show.
+    app window DesktopApplicationExtensions'Run.
+
+fn main (args: Array String): () = do
+    let config = (AppBuilder'Configure[Application].)'UsePlatformDetect.
+    appMain args config'Start.
