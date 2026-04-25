@@ -240,18 +240,17 @@ fn main: () = do
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule rejects legacy dot import syntax`` () =
+    let ``fileModule parses apostrophe import syntax`` () =
         let program = """
-import System.Console
+import System'Console
 
 fn main: () = ()
 """
 
         match parseModule program with
-        | Success _ ->
-            Assert.True(false, "legacy dot import syntax must be rejected")
-        | Failure _ ->
-            Assert.True(true)
+        | Success _ -> Assert.True(true)
+        | Failure (reason, span) ->
+            Assert.True(false, $"apostrophe import syntax should be accepted: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
     let ``fileModule parses consecutive exprStmts in do block as separate statements`` () =
@@ -300,10 +299,10 @@ fn main (): () = do
 
                     Assert.True(
                         stmtIsCallWithSingleStringArg blockExpr.stmts.[0] "hello",
-                        "1 番目の文が Console.WriteLine \"hello\" の Apply として解析されていません")
+                        "1 番目の文が \"hello\" Console'WriteLine. の Apply として解析されていません")
                     Assert.True(
                         stmtIsCallWithSingleStringArg blockExpr.stmts.[1] "world",
-                        "2 番目の文が Console.WriteLine \"world\" の Apply として解析されていません")
+                        "2 番目の文が \"world\" Console'WriteLine. の Apply として解析されていません")
                 | _ ->
                     Assert.True(false, "main body was not parsed into a block expression")
             | None ->

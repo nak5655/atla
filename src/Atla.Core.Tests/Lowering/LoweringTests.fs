@@ -46,7 +46,7 @@ fn main: () = do
 
 
     [<Fact>]
-    let ``nullary function call with unit argument syntax compiles and runs`` () =
+    let ``nullary function call with dot-only syntax compiles and runs`` () =
         let program = """
 import System'Console
 
@@ -81,6 +81,23 @@ fn main: () = greet.
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("hello!", stdout.Trim())
+
+    [<Fact>]
+    let ``unit argument call should fail for nullary function`` () =
+        let program = """
+import System'Console
+
+fn greet (): () = "hello!" Console'WriteLine.
+
+fn main: () = () greet.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = Compiler.compile { asmName = "UnitArgIsNotNullary"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.False(res.succeeded)
+        Assert.Contains(res.diagnostics, fun d -> d.message.Contains("different number of arguments"))
 
     [<Fact>]
     let ``fizzbuzz program compiles`` () =

@@ -576,12 +576,8 @@ module Analyze =
                 Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
             let analyzedArgs = applyExpr.args |> List.map (fun arg -> analyzeExpr nameEnv typeEnv arg (typeEnv.freshMeta()))
-            let normalizedArgs =
-                match analyzedArgs with
-                | [Hir.Expr.Unit _] -> []
-                | _ -> analyzedArgs
             let callRetType = typeEnv.freshMeta()
-            let funcType = normalizedArgs |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, callRetType)
+            let funcType = analyzedArgs |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, callRetType)
             let analyzedFunc = analyzeExpr nameEnv typeEnv applyExpr.func funcType
             let callable = exprAsCallable nameEnv typeEnv analyzedFunc
             let instanceArgs =
@@ -590,7 +586,7 @@ module Analyze =
                 | _ -> []
             match callable with
             | Some resolvedCallable ->
-                let allArgs = instanceArgs @ normalizedArgs
+                let allArgs = instanceArgs @ analyzedArgs
                 let suppliedParameterCount (methodInfo: MethodInfo) =
                     let instanceOffset = if methodInfo.IsStatic then 0 else 1
                     max 0 (allArgs.Length - instanceOffset)
