@@ -86,6 +86,18 @@
 8. 成功ケースの lowering と失敗ケースの期待診断を semantic 回帰テストで検証する。
 9. フルテストスイートを実行し、AST/HIR/MIR 不変条件の非退行を確認する。
 
+### アクティブタスク (2026-04-25): インスタンス呼び出しの Layout 受け渡し修正
+
+#### ミッション
+- `Hir.Expr.Call` が保持する `instance` を Layout で欠落させず MIR 呼び出し引数へ反映する。
+- CIL 生成前に `instance :: args` の順序を保証し、`callvirt` のスタック不整合を防止する。
+
+#### 実行ステップ
+1. Layout の call lowering で instance 式を先に正規化し、引数命令列へ安定順序で結合する。
+2. メソッドオーバーロード解決時は instance を除いた実引数数で候補選択する。
+3. インスタンスメソッド呼び出しが MIR で receiver を先頭引数として保持する回帰テストを追加する。
+4. 該当 Lowering テストを実行し、既存の phase 境界不変条件に退行がないことを確認する。
+
 #### 実行ステップ
 1. `.` 呼び出しと `'` メンバーアクセスの文法/Parser を、ソース span を保ったまま更新する。
 2. 無効形式（`x f`, `a'`, 不正な後置 call/member 連鎖）の parser 診断を追加・調整する。
@@ -133,6 +145,7 @@
 - 2026-04-25: `Atla.Core.Tests` のフルスイートには旧 call/member 構文サンプル（例: `f x`, `a.b()`）がまだ多く残っており、複数引数ドット呼び出し対応後でも、関連外の parser/semantic 失敗が発生する。
 - 2026-04-25: メンバー代入の lowering は、既存 HIR のまま安全に扱うため現時点では「プロパティ setter 呼び出し」へ正規化し、フィールド代入は明示エラーとして扱う方針にした。
 - 2026-04-25: 旧構文由来のテスト失敗は、テスト内サンプルコードを dot-only call / apostrophe member-access 構文へ移行することで解消できた（実装コード側で旧構文互換を追加しない方針を維持）。
+- 2026-04-25: `Layout.layoutExpr` の `ClosedHir.Expr.Call` 分岐で `instance` が破棄されており、インスタンスメソッド呼び出し時に receiver 未積載の不正 IL（`InvalidProgramException`）が発生することを確認した。
 
 ## 検証
 - 警告ゼロでビルド成功。
@@ -155,6 +168,7 @@
 - 2026-04-24: `import a.b` を `import a'b` へ置換する import 構文移行タスクを開始し、旧ドット import を拒否する方針を明示した。
 - 2026-04-25: 代入文の AST を `Assign(name, ...)` から `Assign(targetExpr, ...)` へ拡張し、`window'Width = 320` のようなメンバー代入を Semantic Analysis で setter 呼び出しへ lower する実装を開始した。
 - 2026-04-25: `Atla.Core.Tests` の旧呼び出し/メンバー構文サンプルを新構文へ更新し、`dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` が全件成功する状態へ復帰した。
+- 2026-04-25: Layout の call lowering で `instance` を `args` 先頭へ結合する修正方針を採用し、メソッド候補選択は receiver を除く引数数で評価する方針を確定した。
 
 ## 参照
 - 履歴計画: `notes/plans-archive.md`
