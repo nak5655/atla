@@ -5,6 +5,9 @@ import Avalonia'Controls'DesktopApplicationExtensions
 
 fn appMain (app: Application) (args: Array String): () = do
     let window = Window.
+    window'Title = "Hello, Avalonia!"
+    window'Width = 320.0
+    window'Height = 480.0
     window'Show.
     app window DesktopApplicationExtensions'Run.
 
