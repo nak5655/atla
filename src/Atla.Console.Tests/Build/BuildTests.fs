@@ -25,7 +25,7 @@ package:
     /// カレントディレクトリから上位へ辿ってリポジトリルートを見つける。
     let private tryFindRepositoryRoot () : string option =
         let rec loop (dir: DirectoryInfo) =
-            let marker = Path.Join(dir.FullName, "examples", "gui", "atla.yaml")
+            let marker = Path.Join(dir.FullName, "examples", "gui_hello", "atla.yaml")
             if File.Exists(marker) then
                 Some dir.FullName
             else
@@ -81,10 +81,10 @@ fn main: () = do
         Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.dll")))
 
     [<Fact>]
-    let ``build should succeed for examples gui`` () =
+    let ``build should succeed for examples gui_hello`` () =
         match tryFindRepositoryRoot () with
         | Some repositoryRoot ->
-            let projectRoot = Path.Join(repositoryRoot, "examples", "gui")
+            let projectRoot = Path.Join(repositoryRoot, "examples", "gui_hello")
             let outDir = Path.Join(projectRoot, "out-regression")
 
             if Directory.Exists(outDir) then
@@ -93,5 +93,21 @@ fn main: () = do
             let code = Console.run [| "build"; projectRoot; "-o"; outDir; "--name"; "GuiExampleRegression" |]
             Assert.Equal(0, code)
             Assert.True(File.Exists(Path.Join(outDir, "GuiExampleRegression.dll")))
+        | None ->
+            Assert.True(false, "Repository root was not found from current working directory.")
+
+    [<Fact>]
+    let ``build should succeed for examples data`` () =
+        match tryFindRepositoryRoot () with
+        | Some repositoryRoot ->
+            let projectRoot = Path.Join(repositoryRoot, "examples", "data")
+            let outDir = Path.Join(projectRoot, "out-regression")
+
+            if Directory.Exists(outDir) then
+                Directory.Delete(outDir, recursive = true)
+
+            let code = Console.run [| "build"; projectRoot; "-o"; outDir; "--name"; "DataExampleRegression" |]
+            Assert.Equal(0, code)
+            Assert.True(File.Exists(Path.Join(outDir, "DataExampleRegression.dll")))
         | None ->
             Assert.True(false, "Repository root was not found from current working directory.")

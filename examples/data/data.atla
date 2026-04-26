@@ -5,10 +5,10 @@ data Line =
     , intercept: Float
     }
 
+fn main (): () = do
+    let line = Line { slope = 2.0, intercept = -1.0 }
+    5.0 line'evaluate. Console'WriteLine.
+
 impl Line
     fn evaluate (this: Line) (x: Float): Float =
         this'slope * x + this'intercept
-
-fn main (): () =
-    let line = Line { slope = 2.0, intercept = -1.0 }
-    5.0 line'evaluate. Console'WriteLine.

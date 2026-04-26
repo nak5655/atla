@@ -263,6 +263,18 @@
 - 2026-04-25: `Layout.layoutExpr` の `ClosedHir.Expr.Call` 分岐で `instance` が破棄されており、インスタンスメソッド呼び出し時に receiver 未積載の不正 IL（`InvalidProgramException`）が発生することを確認した。
 - 2026-04-26: Lexer の keyword 判定が単語境界を見ておらず、`intercept` などが `in` + `tercept` に分割される問題を確認したため、単語境界チェックを導入した。
 
+### アクティブタスク (2026-04-26): examples 回帰テストの整合（`gui_hello` / `data`）
+
+#### ミッション
+- `Atla.Console.Tests` の examples 回帰テストを現行ディレクトリ構成に合わせ、`examples/gui_hello` を正しくビルド検証できるようにする。
+- `examples/data` のビルドが成功することを確認する回帰テストを追加する。
+
+#### 実行ステップ
+1. examples パス探索ロジックの `gui` 固定参照を `gui_hello` へ更新する。
+2. `build should succeed for examples gui_hello` テストへ名称/期待成果物を更新する。
+3. `build should succeed for examples data` テストを追加し、`examples/data` で `atla build` 成功と DLL 出力を検証する。
+4. `dotnet test src/Atla.Console.Tests/Atla.Console.Tests.fsproj` を実行して回帰確認する。
+
 ## 検証
 - 警告ゼロでビルド成功。
 - フルテスト合格。
