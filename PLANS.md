@@ -358,6 +358,24 @@
 3. `build should succeed for examples data` テストを追加し、`examples/data` で `atla build` 成功と DLL 出力を検証する。
 4. `dotnet test src/Atla.Console.Tests/Atla.Console.Tests.fsproj` を実行して回帰確認する。
 
+
+### アクティブタスク (2026-04-26): `data` 複数 `impl` 制約の実装計画
+
+#### ミッション
+- 現状「同一型への複数 `impl` はエラー」となっている制約を見直し、`data` 型に対して複数 `impl` ブロックを許可する。
+- 実装着手前に、重複メソッド・解決順序・診断の決定性を含む仕様を先に凍結する。
+- AST/HIR/MIR の既存不変条件を壊さない最小差分設計を採用する。
+
+#### 実行ステップ
+1. 事前確認: Parser/Lexer 変更が必要なため、着手前に明示承認を取得する（AGENTS.md ルール）。
+2. AST/Parser: `impl T` と `impl T for Role` を AST に保持し、span と構文診断の決定性を維持する。
+3. Resolver: `T` と `Role` の存在解決を追加し、未解決時は `E_IMPL_TARGET_NOT_DATA` / `E_IMPL_ROLE_NOT_FOUND` を返す。
+4. Semantic 集約: `(T, Option<Role>)` 単位で `impl` をグルーピングし、`impl T` は 1 件、`impl T for Role` は Role ごと 1 件の制約を検証する。
+5. Semantic 重複検証: 許可されたブロック集合に対し、メソッドシグネチャ重複（name + args + return）を検証する。
+6. HIR 正規化: `impl` 糖衣を残さず既存 `Hir.Method` 群へ正規化し、下流（Frame Allocation/MIR/CIL）の変更を回避する。
+7. テスト追加: parser/semantic/lowering の正常系・異常系・スナップショットを追加する（`impl T` 重複、`impl T for Role` 重複を必須化）。
+8. 検証: `dotnet test` の全テストプロジェクトを実行し、診断順序の決定性と非退行を確認する。
+
 ## 検証
 - 警告ゼロでビルド成功。
 - フルテスト合格。

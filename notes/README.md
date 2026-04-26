@@ -10,6 +10,7 @@ This directory consolidates historical planning and design documentation that wa
 - `language-server.md`: Language Server design notes.
 - `semantic-phase-design.md`: Semantic phase design details.
 - `unit-void-design.md`: Unit/Void semantics design notes.
+- `multi-impl-spec.md`: Proposal for allowing multiple `impl` blocks on a single `data` type.
 
 ## Usage
 - Keep `PLANS.md` focused on active execution plans.

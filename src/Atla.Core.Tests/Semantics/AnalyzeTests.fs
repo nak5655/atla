@@ -401,6 +401,106 @@ fn year (c: Clock): Int = c'Year
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``semantic analysis allows multiple impl for blocks when roles differ`` () =
+        let source = """
+data Shape = { value: Int }
+data Reader = { marker: Int }
+data Writer = { marker: Int }
+impl Shape for Reader
+    fn read (this: Shape): Int = this'value
+impl Shape for Writer
+    fn write (this: Shape): Int = this'value
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some _ } ->
+                    Assert.True(true)
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun diagnostic -> diagnostic.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports duplicate default impl blocks`` () =
+        let source = """
+data Line = { value: Int }
+impl Line
+    fn first (this: Line): Int = this'value
+impl Line
+    fn second (this: Line): Int = this'value
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasExpectedDiagnostic =
+                        diagnostics
+                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("already has a default impl block"))
+                    Assert.True(hasExpectedDiagnostic, "Expected duplicate default impl diagnostic was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for duplicate default impl blocks")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports duplicate impl blocks for same role`` () =
+        let source = """
+data Line = { value: Int }
+data Reader = { marker: Int }
+impl Line for Reader
+    fn first (this: Line): Int = this'value
+impl Line for Reader
+    fn second (this: Line): Int = this'value
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasExpectedDiagnostic =
+                        diagnostics
+                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("already has an impl block for role 'Reader'"))
+                    Assert.True(hasExpectedDiagnostic, "Expected duplicate role impl diagnostic was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for duplicate role impl blocks")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``semantic analysis handles chained dot-only calls`` () =
         let span = Span.Empty
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
