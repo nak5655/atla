@@ -192,12 +192,39 @@ module Parser =
             |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes
         )
 
+    // 単項マイナスを解析し、AST の既存 Apply 形状へ正規化する。
+    // - 負の数値リテラルは literal 値へ直接畳み込む。
+    // - それ以外の `-expr` は `0 - expr` 呼び出し形へ変換する。
+    and unaryTerm (): PackratParser<Token, Ast.Expr> =
+        Delay (fun () -> fun input pos ->
+            match (symbol "-") input pos with
+            | Success (minusToken, afterMinusPos) ->
+                match unaryTerm () input afterMinusPos with
+                | Success (operandExpr, nextPos) ->
+                    match operandExpr with
+                    | :? Ast.Expr.Int as intExpr ->
+                        Success (Ast.Expr.Int(-intExpr.value, { left = minusToken.span.left; right = intExpr.span.right }) :> Ast.Expr, nextPos)
+                    | :? Ast.Expr.Float as floatExpr ->
+                        Success (Ast.Expr.Float(-floatExpr.value, { left = minusToken.span.left; right = floatExpr.span.right }) :> Ast.Expr, nextPos)
+                    | _ ->
+                        let zeroExpr = Ast.Expr.Int(0, minusToken.span) :> Ast.Expr
+                        let negatedExpr =
+                            Ast.Expr.Apply(
+                                Ast.Expr.Id("-", minusToken.span) :> Ast.Expr,
+                                [ zeroExpr; operandExpr ],
+                                { left = minusToken.span.left; right = operandExpr.span.right }) :> Ast.Expr
+                        Success (negatedExpr, nextPos)
+                | Failure (reason, span) -> Failure (reason, span)
+            | Failure _ ->
+                postfixExpr () input pos
+        )
+
     // 呼び出し式の項
     and term1 (): PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
             // TODO: 将来的には `!!` を通常の演算子解決（Id("!!") 経由）へ統一し、
             //       term1 での IndexAccess 特別扱いを削除する。
-            postfixExpr () <&> Optional (symbol "!!" &> postfixExpr ())
+            unaryTerm () <&> Optional (symbol "!!" &> unaryTerm ())
             |>> fun (receiver, optIndex) ->
                 match optIndex with
                 | Some index ->
@@ -233,9 +260,15 @@ module Parser =
                         // `current` の後続を `arg* callee .` 形式として読み取る。
                         // 先頭から最後の項までを収集し、最後の項を callee、手前を追加引数として扱う。
                         let rec collectTailTerms (tailPos: Position) (acc: Ast.Expr list) =
-                            match term1 () callInput tailPos with
-                            | Success (parsed, nextPos) -> collectTailTerms nextPos (parsed :: acc)
-                            | Failure _ -> List.rev acc, tailPos
+                            // 二項演算子位置では dot-call 引数収集を打ち切り、binop 解析へ制御を戻す。
+                            // これにより `n - 2` の `-` を誤って unary 引数として取り込むことを防ぐ。
+                            match callInput.get tailPos with
+                            | Some (:? Token.Symbol as sym) when sym.str <> "!!" && sym.str <> "." ->
+                                List.rev acc, tailPos
+                            | _ ->
+                                match term1 () callInput tailPos with
+                                | Success (parsed, nextPos) -> collectTailTerms nextPos (parsed :: acc)
+                                | Failure _ -> List.rev acc, tailPos
 
                         let tailTerms, afterTailTermsPos = collectTailTerms currentPos []
                         match tailTerms with

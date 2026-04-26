@@ -297,6 +297,42 @@ fn main: () = ()
             Assert.True(false, $"apostrophe import syntax should be accepted: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses unary minus float literal in data initialization`` () =
+        let program = """
+data Line = { slope: Float, intercept: Float }
+fn main (): Line = Line { slope = 2.0, intercept = -1.0 }
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let mainDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match mainDecl with
+            | Some fnDecl ->
+                match fnDecl.body with
+                | :? Ast.Expr.DataInit as initExpr ->
+                    match initExpr.fields |> List.tryFind (fun field -> match field with | :? Ast.DataInitField.Field as f -> f.name = "intercept" | _ -> false) with
+                    | Some (:? Ast.DataInitField.Field as interceptField) ->
+                        match interceptField.value with
+                        | :? Ast.Expr.Float as floatExpr ->
+                            Assert.Equal(-1.0, floatExpr.value)
+                        | _ ->
+                            Assert.True(false, "intercept field was not parsed as Ast.Expr.Float")
+                    | _ ->
+                        Assert.True(false, "intercept field initializer was not found")
+                | _ ->
+                    Assert.True(false, "main body was not parsed as Ast.Expr.DataInit")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses consecutive exprStmts in do block as separate statements`` () =
         // 回帰テスト: 同じインデントレベルの連続する exprStmt が 1 つの Apply 式として誤解析されないことを確認する。
         let program = """

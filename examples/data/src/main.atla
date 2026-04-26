@@ -11,4 +11,4 @@ impl Line
 
 fn main (): () = do
     let line = Line { slope = 2.0, intercept = -1.0 }
-    5.0 line'evaluate. Console'WriteLine.
+    let _evaluated = 5.0 line'evaluate.

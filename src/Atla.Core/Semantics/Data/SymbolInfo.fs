@@ -40,11 +40,16 @@ type SymbolTable() =
 
     let builtinOperators : (string * SymbolId) list =
         [ ("+", addBuiltinOperator "+" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpAdd)
+          ("+", addBuiltinOperator "+" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpAdd)
           ("-", addBuiltinOperator "-" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpSub)
+          ("-", addBuiltinOperator "-" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpSub)
           ("*", addBuiltinOperator "*" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpMul)
+          ("*", addBuiltinOperator "*" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpMul)
           ("/", addBuiltinOperator "/" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpDiv)
+          ("/", addBuiltinOperator "/" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpDiv)
           ("%", addBuiltinOperator "%" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpMod)
-          ("==", addBuiltinOperator "==" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpEq) ]
+          ("==", addBuiltinOperator "==" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpEq)
+          ("==", addBuiltinOperator "==" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Bool)) Builtins.Operators.OpEq) ]
 
     member this.BuiltinOperators = builtinOperators
 

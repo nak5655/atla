@@ -1598,3 +1598,72 @@ fn main (): Int = MyClass.
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    /// Float 同士の四則演算がビルトイン演算子解決で成功することを確認する。
+    [<Fact>]
+    let ``semantic analysis resolves float builtin arithmetic operators`` () =
+        let program = """
+fn main (): Float = 2.0 * 3.0 + 1.0
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let mainMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodInfo ->
+                            symbolTable.Get(methodInfo.sym)
+                            |> Option.exists (fun symbolInfo -> symbolInfo.name = "main"))
+
+                    match mainMethod with
+                    | Some methodInfo ->
+                        match methodInfo.typ with
+                        | TypeId.Fn([], TypeId.Float) -> Assert.True(true)
+                        | other -> Assert.True(false, $"Expected main type to be () -> Float but got {other}")
+                    | None ->
+                        Assert.True(false, "main method was not found in analyzed HIR")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+
+    /// NativeMethodGroup のオーバーロードが実引数型で一意に解決されることを確認する。
+    [<Fact>]
+    let ``semantic analysis resolves Console WriteLine overload by argument type`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    42 Console'WriteLine.
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true } ->
+                    Assert.True(true)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
