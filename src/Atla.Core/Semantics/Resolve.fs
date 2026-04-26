@@ -13,7 +13,8 @@ module Resolve =
         { moduleName: string
           moduleScope: Scope
           fnDecls: Ast.Decl.Fn list
-          dataDecls: ResolvedDataDecl list }
+          dataDecls: ResolvedDataDecl list
+          implDecls: (SymbolId * Ast.Decl.Impl) list }
 
     let private tryResolveSystemType (classPath: string) : System.Type option =
         match System.Type.GetType(classPath) with
@@ -94,6 +95,7 @@ module Resolve =
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
+        let implDecls = ResizeArray<SymbolId * Ast.Decl.Impl>()
         let diagnostics = ResizeArray<Diagnostic>()
 
         // data 型名を先に登録し、同一モジュール内で相互参照可能にする。
@@ -117,6 +119,45 @@ module Resolve =
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
                 ()
+            | :? Ast.Decl.Impl as implDecl ->
+                let typeResolution = moduleScope.ResolveType(implDecl.typeName)
+                match typeResolution with
+                | Some (TypeId.Name typeSid) ->
+                    let isDataType =
+                        dataDecls
+                        |> Seq.exists (fun dataDecl -> dataDecl.typeSid.id = typeSid.id)
+                    if not isDataType then
+                        diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data type in this module" implDecl.typeName, implDecl.span))
+                    else
+                        if implDecl.methods.IsEmpty then
+                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' must contain at least one method" implDecl.typeName, implDecl.span))
+
+                        let duplicateMethodName =
+                            implDecl.methods
+                            |> List.fold
+                                (fun (seen, dup) methodDecl ->
+                                    match dup with
+                                    | Some _ -> seen, dup
+                                    | None when Set.contains methodDecl.name seen -> seen, Some methodDecl.name
+                                    | None -> Set.add methodDecl.name seen, None)
+                                (Set.empty, None)
+                            |> snd
+                        match duplicateMethodName with
+                        | Some methodName ->
+                            diagnostics.Add(Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodName implDecl.typeName, implDecl.span))
+                        | None -> ()
+
+                        let hasExistingImpl =
+                            implDecls
+                            |> Seq.exists (fun (sid, _) -> sid.id = typeSid.id)
+                        if hasExistingImpl then
+                            diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block" implDecl.typeName, implDecl.span))
+                        else
+                            implDecls.Add(typeSid, implDecl)
+                | Some _ ->
+                    diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl target '%s'" implDecl.typeName, implDecl.span))
+                | None ->
+                    diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl target type '%s'" implDecl.typeName, implDecl.span))
             | :? Ast.Decl.Fn as fnDecl ->
                 fnDecls.Add(fnDecl)
             | _ -> diagnostics.Add(Diagnostic.Error("Unsupported declaration type in module", decl.span))
@@ -130,5 +171,6 @@ module Resolve =
                 { moduleName = moduleName
                   moduleScope = moduleScope
                   fnDecls = Seq.toList fnDecls
-                  dataDecls = Seq.toList dataDecls }
+                  dataDecls = Seq.toList dataDecls
+                  implDecls = Seq.toList implDecls }
                 allDiagnostics

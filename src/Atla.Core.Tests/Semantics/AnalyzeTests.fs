@@ -286,6 +286,50 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``semantic analysis accepts impl method with explicit this and data member access`` () =
+        let span = Span.Empty
+        let floatType = Ast.TypeExpr.Id("Float", span) :> Ast.TypeExpr
+        let lineType = Ast.TypeExpr.Id("Line", span) :> Ast.TypeExpr
+        let dataDecl =
+            Ast.Decl.Data(
+                "Line",
+                [ Ast.DataItem.Field("slope", floatType, span) :> Ast.DataItem
+                  Ast.DataItem.Field("intercept", floatType, span) :> Ast.DataItem ],
+                span) :> Ast.Decl
+
+        let thisArg = Ast.FnArg.Named("this", lineType, span) :> Ast.FnArg
+        let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
+        let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("this", span) :> Ast.Expr, "slope", span) :> Ast.Expr
+        let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, span)
+        let implDecl = Ast.Decl.Impl("Line", [ evalFn ], span) :> Ast.Decl
+
+        let lineInit =
+            Ast.Expr.DataInit(
+                "Line",
+                [ Ast.DataInitField.Field("slope", Ast.Expr.Float(2.0, span) :> Ast.Expr, span) :> Ast.DataInitField
+                  Ast.DataInitField.Field("intercept", Ast.Expr.Float(-1.0, span) :> Ast.Expr, span) :> Ast.DataInitField ],
+                span) :> Ast.Expr
+        let callBody =
+            Ast.Expr.Apply(
+                Ast.Expr.MemberAccess(lineInit, "evaluate", span) :> Ast.Expr,
+                [ Ast.Expr.Float(5.0, span) :> Ast.Expr ],
+                span) :> Ast.Expr
+        let mainDecl = Ast.Decl.Fn("main", [], floatType, callBody, span) :> Ast.Decl
+
+        let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            let hasEvaluate =
+                hirModule.methods
+                |> List.exists (fun methodInfo -> symbolTable.Get(methodInfo.sym) |> Option.exists (fun symbolInfo -> symbolInfo.name = "Line.evaluate"))
+            Assert.True(hasEvaluate, "impl method symbol 'Line.evaluate' was not found")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Semantic analysis failed: {message}")
+
+    [<Fact>]
     let ``semantic analysis handles chained dot-only calls`` () =
         let span = Span.Empty
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr

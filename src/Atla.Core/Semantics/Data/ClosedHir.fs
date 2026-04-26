@@ -100,9 +100,10 @@ module ClosedHir =
         member this.span = span
 
     /// クロージャー変換後の型定義。
-    type Type(sid: SymbolId, fields: Field list) =
+    type Type(sid: SymbolId, fields: Field list, methods: Method list) =
         member this.sym = sid
         member this.fields = fields
+        member this.methods = methods
 
     /// クロージャー変換後のモジュール。`closureInvokeMethods` は必須フィールドとして保持する。
     type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope, closureInvokeMethods: Map<int, int>) =

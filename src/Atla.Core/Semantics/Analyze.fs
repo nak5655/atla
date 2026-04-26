@@ -16,7 +16,8 @@ module Analyze =
 
     type DataTypeDef =
         { typeSid: SymbolId
-          fields: DataFieldDef list }
+          fields: DataFieldDef list
+          methods: Map<string, SymbolId * TypeId> }
 
     type NameEnv(symbolTable: SymbolTable, scope: Scope, dataTypeDefs: Map<string, DataTypeDef>) =
         member this.symbolTable = symbolTable
@@ -475,6 +476,7 @@ module Analyze =
         | Hir.Expr.MemberAccess (memberInfo, _, _, _) ->
             match memberInfo with
             | Hir.Member.NativeMethod methodInfo -> Some (Hir.Callable.NativeMethod methodInfo)
+            | Hir.Member.DataMethod (_, methodSid) -> Some (Hir.Callable.Fn methodSid)
             | _ -> None
         | _ -> None
 
@@ -902,9 +904,31 @@ module Analyze =
                                 | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                             | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                         | None ->
-                            match resolveTyp nameEnv typeEnv receiver.typ with
-                            | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
-                            | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
+                            match typeEnv.resolveType receiver.typ with
+                            | TypeId.Name receiverTypeSid ->
+                                let dataTypeOpt =
+                                    nameEnv.dataTypeDefs
+                                    |> Map.tryPick (fun _ dataTypeDef ->
+                                        if dataTypeDef.typeSid.id = receiverTypeSid.id then Some dataTypeDef else None)
+                                match dataTypeOpt with
+                                | Some dataTypeDef ->
+                                    match dataTypeDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = memberAccessExpr.memberName) with
+                                    | Some fieldDef ->
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataField(dataTypeDef.typeSid, fieldDef.sid), Some receiver, fieldDef.typ, memberAccessExpr.span))
+                                    | None ->
+                                        match dataTypeDef.methods |> Map.tryFind memberAccessExpr.memberName with
+                                        | Some (methodSid, methodType) ->
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, methodType, memberAccessExpr.span))
+                                        | None ->
+                                            Result.Error (sprintf "Undefined member '%s' for data type" memberAccessExpr.memberName)
+                                | None ->
+                                    match resolveTyp nameEnv typeEnv receiver.typ with
+                                    | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                                    | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
+                            | _ ->
+                                match resolveTyp nameEnv typeEnv receiver.typ with
+                                | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                                | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
                 | _ ->
                     let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                     let receiverType = typeEnv.resolveType receiver.typ
@@ -937,9 +961,31 @@ module Analyze =
                             | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                         | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                     | None ->
-                        match resolveTyp nameEnv typeEnv receiver.typ with
-                        | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
-                        | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
+                        match typeEnv.resolveType receiver.typ with
+                        | TypeId.Name receiverTypeSid ->
+                            let dataTypeOpt =
+                                nameEnv.dataTypeDefs
+                                |> Map.tryPick (fun _ dataTypeDef ->
+                                    if dataTypeDef.typeSid.id = receiverTypeSid.id then Some dataTypeDef else None)
+                            match dataTypeOpt with
+                            | Some dataTypeDef ->
+                                match dataTypeDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = memberAccessExpr.memberName) with
+                                | Some fieldDef ->
+                                    Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataField(dataTypeDef.typeSid, fieldDef.sid), Some receiver, fieldDef.typ, memberAccessExpr.span))
+                                | None ->
+                                    match dataTypeDef.methods |> Map.tryFind memberAccessExpr.memberName with
+                                    | Some (methodSid, methodType) ->
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, methodType, memberAccessExpr.span))
+                                    | None ->
+                                        Result.Error (sprintf "Undefined member '%s' for data type" memberAccessExpr.memberName)
+                            | None ->
+                                match resolveTyp nameEnv typeEnv receiver.typ with
+                                | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                                | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
+                        | _ ->
+                            match resolveTyp nameEnv typeEnv receiver.typ with
+                            | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                            | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
 
             resultToExpr tid memberAccessExpr.span resolvedMemberResult
         | :? Ast.Expr.StaticAccess as staticAccessExpr ->
@@ -1091,8 +1137,14 @@ module Analyze =
                 | Hir.Expr.MemberAccess (Hir.Member.NativeField fieldInfo, _, _, _) ->
                     let message = sprintf "Field assignment is not supported for member '%s'" fieldInfo.Name
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                | Hir.Expr.MemberAccess (Hir.Member.DataField _, _, _, _) ->
+                    let message = "Field assignment is not supported for data fields"
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.NativeMethod methodInfo, _, _, _) ->
                     let message = sprintf "Method '%s' is not assignable" methodInfo.Name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                | Hir.Expr.MemberAccess (Hir.Member.DataMethod _, _, _, _) ->
+                    let message = "Method is not assignable"
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
                 | Hir.Expr.ExprError (message, errTyp, span) ->
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, errTyp, span), assignStmt.span)
@@ -1144,7 +1196,7 @@ module Analyze =
                     Hir.Stmt.ErrorStmt(sprintf "Type '%s' does not define MoveNext/Current or GetEnumerator()" iterableSystemType.FullName, forStmt.span)
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
-    let private analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =
+    let private analyzeMethodCore (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) : Hir.Method =
         let bodyNameEnv = nameEnv.sub()
         let retType = nameEnv.resolveTypeExpr fnDecl.ret
         let rawArgTypes = fnDecl.args |> List.map bodyNameEnv.resolveArgType
@@ -1167,10 +1219,21 @@ module Analyze =
             |> List.choose id
 
         let tid = TypeId.Fn(argTypes, retType)
-        let sid = nameEnv.declareLocal fnDecl.name tid
         let body = analyzeExpr bodyNameEnv typeEnv fnDecl.body retType
 
         Hir.Method(sid, argSids, body, tid, fnDecl.span)
+
+    let private analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =
+        let argTypes =
+            fnDecl.args
+            |> List.map nameEnv.resolveArgType
+            |> (fun raw ->
+                match fnDecl.args, raw with
+                | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
+                | _ -> raw)
+        let retType = nameEnv.resolveTypeExpr fnDecl.ret
+        let sid = nameEnv.declareLocal fnDecl.name (TypeId.Fn(argTypes, retType))
+        analyzeMethodCore nameEnv typeEnv sid fnDecl
 
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
         match Resolve.resolveModule (symbolTable, moduleName, moduleAst) with
@@ -1203,25 +1266,74 @@ module Analyze =
                             resolvedFields
                             |> List.map (fun fieldDef ->
                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                        types.Add(Hir.Type(resolvedDataDecl.typeSid, hirFields))
-                        Map.add resolvedDataDecl.decl.name { typeSid = resolvedDataDecl.typeSid; fields = resolvedFields } defs)
+                        types.Add(Hir.Type(resolvedDataDecl.typeSid, hirFields, []))
+                        Map.add resolvedDataDecl.decl.name { typeSid = resolvedDataDecl.typeSid; fields = resolvedFields; methods = Map.empty } defs)
                     Map.empty
 
-            let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, dataTypeDefs)
+            // impl 宣言のシグネチャを先に登録し、メソッド解決を安定化する。
+            let dataTypeDefsWithMethods, implMethodDecls, implDiagnostics =
+                resolvedModule.implDecls
+                |> List.fold
+                    (fun (defs, methodDecls, diagnostics) (typeSid, implDecl) ->
+                        match defs |> Map.tryFind implDecl.typeName with
+                        | None ->
+                            defs, methodDecls, diagnostics @ [ Diagnostic.Error(sprintf "Undefined impl target type '%s'" implDecl.typeName, implDecl.span) ]
+                        | Some dataTypeDef ->
+                            let foldResult =
+                                implDecl.methods
+                                |> List.fold
+                                    (fun (methodMap, declAcc, diagAcc) methodDecl ->
+                                        match methodDecl.args with
+                                        | (:? Ast.FnArg.Named as thisArg) :: _ ->
+                                            let thisType = bootstrapNameEnv.resolveTypeExpr thisArg.typeExpr
+                                            match thisArg.name, thisType with
+                                            | "this", TypeId.Name thisTypeSid when thisTypeSid.id = typeSid.id ->
+                                                if Map.containsKey methodDecl.name methodMap then
+                                                    methodMap, declAcc, diagAcc @ [ Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodDecl.name implDecl.typeName, methodDecl.span) ]
+                                                else
+                                                    let argTypes = methodDecl.args |> List.map bootstrapNameEnv.resolveArgType |> List.filter (fun t -> t <> TypeId.Unit)
+                                                    let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
+                                                    let methodType = TypeId.Fn(argTypes, retType)
+                                                    let methodSid = symbolTable.NextId()
+                                                    symbolTable.Add(methodSid, { name = $"{implDecl.typeName}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
+                                                    Map.add methodDecl.name (methodSid, methodType) methodMap, (methodSid, methodDecl) :: declAcc, diagAcc
+                                            | _ ->
+                                                methodMap, declAcc, diagAcc @ [ Diagnostic.Error("impl method must declare '(this: TargetType)' as first argument", methodDecl.span) ]
+                                        | _ ->
+                                            methodMap, declAcc, diagAcc @ [ Diagnostic.Error("impl method must declare '(this: TargetType)' as first argument", methodDecl.span) ])
+                                    (dataTypeDef.methods, [], [])
+
+                            let methodMap, declAcc, diagAcc = foldResult
+                            let updatedDefs =
+                                defs
+                                |> Map.add implDecl.typeName { dataTypeDef with methods = methodMap }
+                            updatedDefs, (List.rev declAcc) @ methodDecls, diagnostics @ diagAcc)
+                    (dataTypeDefs, [], [])
+
+            let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, dataTypeDefsWithMethods)
 
             resolvedModule.fnDecls
             |> List.iter (fun fnDecl -> methods.Add(analyzeMethod nameEnv typeEnv fnDecl))
 
+            implMethodDecls
+            |> List.iter (fun (methodSid, methodDecl) ->
+                methods.Add(analyzeMethodCore nameEnv typeEnv methodSid methodDecl))
+
+            let typedTypes = types |> Seq.toList
+
             let untypedHirModule =
                 Hir.Module(
                     resolvedModule.moduleName,
-                    types |> Seq.toList,
+                    typedTypes,
                     fields |> Seq.toList,
                     methods |> Seq.toList,
                     resolvedModule.moduleScope
                 )
 
-            match Infer.inferModule (typeSubst, untypedHirModule) with
-            | Result.Ok hir -> PhaseResult.succeeded hir []
-            | Result.Error diagnostics -> PhaseResult.failed diagnostics
+            if implDiagnostics |> List.exists (fun d -> d.isError) then
+                PhaseResult.failed implDiagnostics
+            else
+                match Infer.inferModule (typeSubst, untypedHirModule) with
+                | Result.Ok hir -> PhaseResult.succeeded hir implDiagnostics
+                | Result.Error diagnostics -> PhaseResult.failed (implDiagnostics @ diagnostics)
         | _ -> PhaseResult.failed [ Diagnostic.Error("Unknown analyze module failure", Atla.Core.Data.Span.Empty) ]

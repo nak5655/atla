@@ -67,6 +67,8 @@ module Parser =
         p |>> fun d -> d :> Ast.Decl
     let asTypeExpr<'T when 'T :> Ast.TypeExpr> (p: PackratParser<Token, 'T>) : PackratParser<Token, Ast.TypeExpr> =
         p |>> fun t -> t :> Ast.TypeExpr
+    let asFnDecl (p: PackratParser<Token, Ast.Decl.Fn>) : PackratParser<Token, Ast.Decl> =
+        p |>> fun f -> f :> Ast.Decl
 
     let block<'A> (opener: PackratParser<Token, Token>) (body: PackratParser<Token, 'A>): PackratParser<Token, 'A> =
         Delay (fun () -> fun input pos ->
@@ -86,13 +88,19 @@ module Parser =
             | _ -> None)
 
     let tid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id -> Some(id) | _ -> None)
+    let thisKeywordId: PackratParser<Token, Token.Keyword> = AcceptMatch (fun t -> match t with :? Token.Keyword as kw when kw.str = "this" -> Some(kw) | _ -> None)
+    let valueIdent: PackratParser<Token, string * Span> =
+        (tid |>> fun id -> id.str, id.span)
+        <|> (thisKeywordId |>> fun kw -> kw.str, kw.span)
 
     let keyword kw: PackratParser<Token, Token.Keyword> = AcceptMatch (fun t -> match t with :? Token.Keyword as st when st.str = kw -> Some(st) | _ -> None)
     let delim d: PackratParser<Token, Token.Delim> = AcceptMatch (fun t -> match t with :? Token.Delim as st when st.char = d -> Some(st) | _ -> None)
     let symbol sym: PackratParser<Token, Token.Symbol> = AcceptMatch (fun t -> match t with :? Token.Symbol as st when st.str = sym -> Some(st) | _ -> None)
     
     // 式
-    let id = tid |>> fun id -> Ast.Expr.Id (id.str, id.span)
+    let id =
+        valueIdent
+        |>> fun (name, span) -> Ast.Expr.Id (name, span)
     let int: PackratParser<Token, Ast.Expr.Int> = AcceptMatch (fun t -> match t with :? Token.Int as st -> Some(Ast.Expr.Int(st.value, st.span)) | _ -> None)
     let float: PackratParser<Token, Ast.Expr.Float> = AcceptMatch (fun t -> match t with :? Token.Float as st -> Some(Ast.Expr.Float(st.value, st.span)) | _ -> None)
     let str: PackratParser<Token, Ast.Expr.String> = AcceptMatch (fun t -> match t with :? Token.String as st -> Some(Ast.Expr.String(st.value, st.span)) | _ -> None)
@@ -449,7 +457,7 @@ module Parser =
     // 関数宣言
     and fnArgNamed (): PackratParser<Token, Ast.FnArg> =
         Delay (fun () ->
-            delim '(' &> tid <& delim ':' <&> typeExpr() <& delim ')' |>> fun (id, typeExpr) -> Ast.FnArg.Named(id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right })
+            delim '(' &> valueIdent <& delim ':' <&> typeExpr() <& delim ')' |>> fun ((name, nameSpan), typeExpr) -> Ast.FnArg.Named(name, typeExpr, { left = nameSpan.left; right = typeExpr.span.right })
         )
 
     and fnArgUnit (): PackratParser<Token, Ast.FnArg> =
@@ -473,9 +481,38 @@ module Parser =
             block (asToken (keyword "fn")) (Once (tid <&> Many (fnArg ()) <& delim ':' <&> typeExpr () <& symbol "=" <&> fnBodyExpr () |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
         )
 
+    and implMethodDecl (): PackratParser<Token, Ast.Decl.Fn> =
+        Delay (fun () ->
+            block (asToken (keyword "fn"))
+                    (Once
+                    (tid <&> Many (fnArg ()) <& delim ':' <&> typeExpr () <& symbol "=" <&> fnBodyExpr ()
+                     |>> fun (((id, args), ret), body) -> Ast.Decl.Fn(id.str, args, ret, body, { left = id.span.left; right = body.span.right }))
+                    (fun (msg, span) ->
+                        Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), span)))
+        )
+
+    and implDecl (): PackratParser<Token, Ast.Decl> =
+        Delay (fun () ->
+            block (asToken (keyword "impl"))
+                (Once
+                    (tid <&> Many1 (asFnDecl (implMethodDecl ())) |>> fun (typeId, methodDecls) ->
+                        let methods =
+                            methodDecls
+                            |> List.choose (fun methodDecl ->
+                                match methodDecl with
+                                | :? Ast.Decl.Fn as fn -> Some fn
+                                | _ -> None)
+                        let rightSpan =
+                            match methods |> List.tryLast with
+                            | Some lastMethod -> lastMethod.span.right
+                            | None -> typeId.span.right
+                        Ast.Decl.Impl(typeId.str, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl)
+                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+        )
+
     and decl (): PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            dataDecl () <|> importDecl () <|> fnDecl ()
+            dataDecl () <|> importDecl () <|> fnDecl () <|> implDecl ()
         )
 
     // モジュール

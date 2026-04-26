@@ -6,8 +6,8 @@ data Line =
     }
 
 impl Line
-    fn evaluate (x: Float): Float =
-        slope * x + intercept
+    fn evaluate (this: Line) (x: Float): Float =
+        this'slope * x + this'intercept
 
 fn main (): () =
     let line = Line { slope = 2.0, intercept = -1.0 }

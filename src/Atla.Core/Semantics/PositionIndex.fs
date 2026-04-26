@@ -148,8 +148,11 @@ let private walkModule (modul: Hir.Module) (state: BuildState) : BuildState =
     modul.types |> List.fold (fun s typ ->
         // Hir.Type はスパンを持たないため Span.Empty を使用する。
         let s1 = addDecl typ.sym Span.Empty s
-        typ.fields |> List.fold (fun s2 field ->
-            s2 |> addDecl field.sym field.span |> walkExpr field.body) s1) state2
+        let s2 =
+            typ.fields |> List.fold (fun sField field ->
+                sField |> addDecl field.sym field.span |> walkExpr field.body) s1
+        typ.methods |> List.fold (fun sMethod methodInfo ->
+            sMethod |> addDecl methodInfo.sym methodInfo.span |> walkExpr methodInfo.body) s2) state2
 
 // ---------------------------------------------------------------------------
 // PositionIndex 構築（公開エントリポイント）
