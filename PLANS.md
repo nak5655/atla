@@ -46,6 +46,15 @@
 4. `Console'WriteLine` を使う回帰テストを追加し、`examples/data` を元の出力コードへ戻してビルドを検証する。
 5. フルテストスイートを実行して既存パイプライン不変条件の非退行を確認する。
 
+### アクティブタスク (2026-04-26): `examples/data` の出力行復元
+
+#### ミッション
+- `examples/data/src/main.atla` の `Console'WriteLine` 呼び出しを復元し、前回変更で導入された `_evaluated` 束縛への置換を取り消す。
+
+#### 実行ステップ
+1. `main` 末尾行を `5.0 line'evaluate. Console'WriteLine.` へ戻す。
+2. `examples/data` のビルド挙動を確認する。
+
 ### アクティブエピック (2026-04-24): ドット専用呼び出し + アポストロフィメンバーアクセス
 
 #### ミッション
