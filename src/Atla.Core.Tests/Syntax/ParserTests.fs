@@ -891,3 +891,33 @@ impl B for A
                 Assert.True(false, "impl declaration with for clause was not parsed")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses impl declaration with subtype for and by clause`` () =
+        let program = """
+data Wrapper =
+    { value: Int
+    , inner: Base
+    }
+impl Wrapper for Base by inner
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
+                    | _ -> None)
+
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.Equal("Wrapper", parsedImplDecl.typeName)
+                Assert.Equal(Some "Base", parsedImplDecl.forTypeName)
+                Assert.Equal(Some "inner", parsedImplDecl.byFieldName)
+                Assert.Empty(parsedImplDecl.methods)
+            | None ->
+                Assert.True(false, "impl declaration with for/by clause was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

@@ -21,4 +21,4 @@ impl CalculatorWindow =
     
         _window'Content = root
 
-impl CalculatorWindow for Window = delegate _window
+impl CalculatorWindow for Window by _window

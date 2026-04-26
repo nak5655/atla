@@ -528,7 +528,7 @@ module Parser =
         Delay (fun () ->
             block (asToken (keyword "impl"))
                 (Once
-                    (tid <&> Optional (keyword "for" &> tid) <&> Many1 (asFnDecl (implMethodDecl ())) |>> fun ((typeId, forTypeIdOpt), methodDecls) ->
+                    (tid <&> Optional (keyword "for" &> tid) <&> Optional (keyword "by" &> tid) <&> Many (asFnDecl (implMethodDecl ())) |>> fun (((typeId, forTypeIdOpt), byFieldIdOpt), methodDecls) ->
                         let methods =
                             methodDecls
                             |> List.choose (fun methodDecl ->
@@ -540,7 +540,8 @@ module Parser =
                             | Some lastMethod -> lastMethod.span.right
                             | None -> typeId.span.right
                         let forTypeName = forTypeIdOpt |> Option.map (fun forTypeId -> forTypeId.str)
-                        Ast.Decl.Impl(typeId.str, forTypeName, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl)
+                        let byFieldName = byFieldIdOpt |> Option.map (fun byFieldId -> byFieldId.str)
+                        Ast.Decl.Impl(typeId.str, forTypeName, byFieldName, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl)
                     (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
         )
 

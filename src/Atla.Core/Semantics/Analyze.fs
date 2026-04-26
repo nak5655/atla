@@ -17,6 +17,7 @@ module Analyze =
     type DataTypeDef =
         { typeSid: SymbolId
           baseTypeSid: SymbolId option
+          delegatedByFieldName: string option
           fields: DataFieldDef list
           methods: Map<string, SymbolId * TypeId> }
 
@@ -498,14 +499,23 @@ module Analyze =
             | Result.Error err -> Result.Error(errorExpr expected span (formatUnifyError nameEnv typeEnv err))
 
     /// data 型の継承チェーンを辿ってメンバー（field/method）を探索する。
-    let private tryResolveDataMember (nameEnv: NameEnv) (receiverTypeSid: SymbolId) (memberName: string) (span: Atla.Core.Data.Span) (receiverExpr: Hir.Expr) : Result<Hir.Expr, string> =
+    /// 直接見つからない場合は `impl ... by <field>` の委譲先フィールドも探索する。
+    let private tryResolveDataMember
+        (nameEnv: NameEnv)
+        (typeEnv: TypeEnv)
+        (expectedType: TypeId)
+        (receiverTypeSid: SymbolId)
+        (memberName: string)
+        (span: Atla.Core.Data.Span)
+        (receiverExpr: Hir.Expr)
+        : Result<Hir.Expr, string> =
         let bySid =
             nameEnv.dataTypeDefs
             |> Map.toSeq
             |> Seq.map (fun (_, def) -> def.typeSid, def)
             |> Map.ofSeq
 
-        let rec loop (currentSid: SymbolId) (visited: Set<int>) =
+        let rec loop (currentSid: SymbolId) (visited: Set<int>) (currentReceiverExpr: Hir.Expr) =
             if visited |> Set.contains currentSid.id then
                 Result.Error("Cyclic subtype relation detected while resolving data member")
             else
@@ -514,7 +524,7 @@ module Analyze =
                 | Some currentDef ->
                     match currentDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = memberName) with
                     | Some fieldDef ->
-                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataField(currentDef.typeSid, fieldDef.sid), Some receiverExpr, fieldDef.typ, span))
+                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataField(currentDef.typeSid, fieldDef.sid), Some currentReceiverExpr, fieldDef.typ, span))
                     | None ->
                         match currentDef.methods |> Map.tryFind memberName with
                         | Some (methodSid, methodType) ->
@@ -522,13 +532,102 @@ module Analyze =
                                 match methodType with
                                 | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
                                 | _ -> methodType
-                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(currentDef.typeSid, methodSid), Some receiverExpr, boundMethodType, span))
+                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(currentDef.typeSid, methodSid), Some currentReceiverExpr, boundMethodType, span))
                         | None ->
                             match currentDef.baseTypeSid with
-                            | Some baseSid -> loop baseSid (visited |> Set.add currentSid.id)
-                            | None -> Result.Error (sprintf "Undefined member '%s' for data type" memberName)
+                            | Some baseSid ->
+                                match loop baseSid (visited |> Set.add currentSid.id) currentReceiverExpr with
+                                | Result.Ok resolved -> Result.Ok resolved
+                                | Result.Error _ -> tryResolveFromDelegatedField currentDef
+                            | None -> tryResolveFromDelegatedField currentDef
 
-        loop receiverTypeSid Set.empty
+        and tryResolveFromDelegatedField (currentDef: DataTypeDef) : Result<Hir.Expr, string> =
+            match currentDef.delegatedByFieldName with
+            | None -> Result.Error(sprintf "Undefined member '%s' for data type" memberName)
+            | Some delegateFieldName ->
+                match currentDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = delegateFieldName) with
+                | None ->
+                    Result.Error(sprintf "Delegate field '%s' not found on data type while resolving member" delegateFieldName)
+                | Some delegateFieldDef ->
+                    let delegatedReceiver =
+                        Hir.Expr.MemberAccess(Hir.Member.DataField(currentDef.typeSid, delegateFieldDef.sid), Some receiverExpr, delegateFieldDef.typ, span)
+
+                    match typeEnv.resolveType delegateFieldDef.typ with
+                    | TypeId.Name delegateTypeSid ->
+                        if bySid |> Map.containsKey delegateTypeSid then
+                            loop delegateTypeSid Set.empty delegatedReceiver
+                        else
+                            match nameEnv.resolveSym delegateTypeSid with
+                            | Some symInfo ->
+                                match symInfo.kind with
+                                | SymbolKind.External(ExternalBinding.SystemTypeRef systemType) when not (obj.ReferenceEquals(systemType, null)) ->
+                                    let memberInfos =
+                                        systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                                        |> Seq.filter (fun memberInfo -> memberInfo.Name = memberName)
+                                        |> Seq.toList
+
+                                    match resolveNativeMember typeEnv memberInfos expectedType with
+                                    | [memberInfo, resolvedMemberType] ->
+                                        match memberInfo with
+                                        | :? MethodInfo as methodInfo ->
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod(methodInfo), Some delegatedReceiver, resolvedMemberType, span))
+                                        | :? FieldInfo as fieldInfo ->
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField(fieldInfo), Some delegatedReceiver, resolvedMemberType, span))
+                                        | :? PropertyInfo as propertyInfo ->
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty(propertyInfo), Some delegatedReceiver, resolvedMemberType, span))
+                                        | _ ->
+                                            Result.Error(sprintf "Unsupported delegated member type for '%s'" memberName)
+                                    | [] -> Result.Error(sprintf "Undefined member '%s' for delegated type '%s'" memberName systemType.FullName)
+                                    | members ->
+                                        let methodInfos =
+                                            members
+                                            |> List.choose (fun (memberInfo, _) ->
+                                                match memberInfo with
+                                                | :? MethodInfo as methodInfo -> Some methodInfo
+                                                | _ -> None)
+
+                                        if methodInfos.Length = members.Length then
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some delegatedReceiver, expectedType, span))
+                                        else
+                                            Result.Error(sprintf "Ambiguous delegated member '%s' for type '%s'" memberName systemType.FullName)
+                                | _ ->
+                                    Result.Error(sprintf "Delegate field '%s' type does not support delegated member lookup" delegateFieldName)
+                            | None ->
+                                Result.Error(sprintf "Undefined delegate field type for '%s'" delegateFieldName)
+                    | TypeId.Native systemType ->
+                        let memberInfos =
+                            systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                            |> Seq.filter (fun memberInfo -> memberInfo.Name = memberName)
+                            |> Seq.toList
+
+                        match resolveNativeMember typeEnv memberInfos expectedType with
+                        | [memberInfo, resolvedMemberType] ->
+                            match memberInfo with
+                            | :? MethodInfo as methodInfo ->
+                                Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod(methodInfo), Some delegatedReceiver, resolvedMemberType, span))
+                            | :? FieldInfo as fieldInfo ->
+                                Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField(fieldInfo), Some delegatedReceiver, resolvedMemberType, span))
+                            | :? PropertyInfo as propertyInfo ->
+                                Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty(propertyInfo), Some delegatedReceiver, resolvedMemberType, span))
+                            | _ ->
+                                Result.Error(sprintf "Unsupported delegated member type for '%s'" memberName)
+                        | [] -> Result.Error(sprintf "Undefined member '%s' for delegated type '%s'" memberName systemType.FullName)
+                        | members ->
+                            let methodInfos =
+                                members
+                                |> List.choose (fun (memberInfo, _) ->
+                                    match memberInfo with
+                                    | :? MethodInfo as methodInfo -> Some methodInfo
+                                    | _ -> None)
+
+                            if methodInfos.Length = members.Length then
+                                Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some delegatedReceiver, expectedType, span))
+                            else
+                                Result.Error(sprintf "Ambiguous delegated member '%s' for type '%s'" memberName systemType.FullName)
+                    | unsupportedType ->
+                        Result.Error(sprintf "Type '%s' does not support delegation lookup for member '%s'" (string unsupportedType) memberName)
+
+        loop receiverTypeSid Set.empty receiverExpr
 
     // Generate an overload error message with available candidates when argument count does not match.
     let private noOverloadMessage (callable: Hir.Callable) (argCount: int) : string =
@@ -1110,7 +1209,7 @@ module Analyze =
                         | None ->
                             match typeEnv.resolveType receiver.typ with
                             | TypeId.Name receiverTypeSid ->
-                                match tryResolveDataMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
+                                match tryResolveDataMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
                                 | Result.Ok resolvedMember -> Result.Ok resolvedMember
                                 | Result.Error _ ->
                                     match resolveTyp nameEnv typeEnv receiver.typ with
@@ -1164,7 +1263,7 @@ module Analyze =
                     | None ->
                         match typeEnv.resolveType receiver.typ with
                         | TypeId.Name receiverTypeSid ->
-                            match tryResolveDataMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
+                            match tryResolveDataMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
                             | Result.Ok resolvedMember -> Result.Ok resolvedMember
                             | Result.Error _ ->
                                 match resolveTyp nameEnv typeEnv receiver.typ with
@@ -1472,14 +1571,21 @@ module Analyze =
                             |> List.map (fun fieldDef ->
                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
                         types.Add(Hir.Type(resolvedDataDecl.typeSid, None, hirFields, []))
-                        Map.add resolvedDataDecl.decl.name { typeSid = resolvedDataDecl.typeSid; baseTypeSid = None; fields = resolvedFields; methods = Map.empty } defs)
+                        Map.add
+                            resolvedDataDecl.decl.name
+                            { typeSid = resolvedDataDecl.typeSid
+                              baseTypeSid = None
+                              delegatedByFieldName = None
+                              fields = resolvedFields
+                              methods = Map.empty }
+                            defs)
                     Map.empty
 
             // impl 宣言のシグネチャを先に登録し、メソッド解決を安定化する。
             let dataTypeDefsWithMethods, implMethodDecls, implDiagnostics =
                 resolvedModule.implDecls
                 |> List.fold
-                    (fun (defs, methodDecls, diagnostics) (typeSid, baseTypeSidOpt, implDecl) ->
+                    (fun (defs, methodDecls, diagnostics) (typeSid, baseTypeSidOpt, byFieldNameOpt, implDecl) ->
                         match defs |> Map.tryFind implDecl.typeName with
                         | None ->
                             defs, methodDecls, diagnostics @ [ Diagnostic.Error(sprintf "Undefined impl target type '%s'" implDecl.typeName, implDecl.span) ]
@@ -1511,7 +1617,12 @@ module Analyze =
                             let methodMap, declAcc, diagAcc = foldResult
                             let updatedDefs =
                                 defs
-                                |> Map.add implDecl.typeName { dataTypeDef with methods = methodMap; baseTypeSid = baseTypeSidOpt }
+                                |> Map.add
+                                    implDecl.typeName
+                                    { dataTypeDef with
+                                        methods = methodMap
+                                        baseTypeSid = baseTypeSidOpt
+                                        delegatedByFieldName = byFieldNameOpt }
                             updatedDefs, (List.rev declAcc) @ methodDecls, diagnostics @ diagAcc)
                     (dataTypeDefs, [], [])
 
