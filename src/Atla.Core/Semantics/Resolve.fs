@@ -14,7 +14,7 @@ module Resolve =
           moduleScope: Scope
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
-          implDecls: (SymbolId * SymbolId option * Ast.Decl.Impl) list }
+          implDecls: (SymbolId * SymbolId option * string option * Ast.Decl.Impl) list }
 
     let private tryResolveSystemType (classPath: string) : System.Type option =
         match System.Type.GetType(classPath) with
@@ -95,7 +95,7 @@ module Resolve =
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
-        let implDecls = ResizeArray<SymbolId * SymbolId option * Ast.Decl.Impl>()
+        let implDecls = ResizeArray<SymbolId * SymbolId option * string option * Ast.Decl.Impl>()
         let diagnostics = ResizeArray<Diagnostic>()
 
         // data 型名を先に登録し、同一モジュール内で相互参照可能にする。
@@ -143,7 +143,31 @@ module Resolve =
                                     diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl base type '%s'" forTypeName, implDecl.span))
                                     None
 
-                        if implDecl.methods.IsEmpty then
+                        if implDecl.byFieldName.IsSome && implDecl.forTypeName.IsNone then
+                            diagnostics.Add(Diagnostic.Error("'impl ... by ...' requires an explicit 'for' base type", implDecl.span))
+
+                        let byFieldNameOpt =
+                            match implDecl.byFieldName with
+                            | None -> None
+                            | Some byFieldName ->
+                                let hasField =
+                                    dataDecls
+                                    |> Seq.tryFind (fun dataDecl -> dataDecl.typeSid.id = typeSid.id)
+                                    |> Option.map (fun dataDecl ->
+                                        dataDecl.decl.items
+                                        |> List.exists (fun dataItem ->
+                                            match dataItem with
+                                            | :? Ast.DataItem.Field as fieldDecl -> fieldDecl.name = byFieldName
+                                            | _ -> false))
+                                    |> Option.defaultValue false
+
+                                if hasField then
+                                    Some byFieldName
+                                else
+                                    diagnostics.Add(Diagnostic.Error(sprintf "Delegate field '%s' is not defined in data '%s'" byFieldName implDecl.typeName, implDecl.span))
+                                    None
+
+                        if implDecl.methods.IsEmpty && byFieldNameOpt.IsNone then
                             diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' must contain at least one method" implDecl.typeName, implDecl.span))
 
                         let duplicateMethodName =
@@ -163,11 +187,11 @@ module Resolve =
 
                         let hasExistingImpl =
                             implDecls
-                            |> Seq.exists (fun (sid, _, _) -> sid.id = typeSid.id)
+                            |> Seq.exists (fun (sid, _, _, _) -> sid.id = typeSid.id)
                         if hasExistingImpl then
                             diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block" implDecl.typeName, implDecl.span))
                         else
-                            implDecls.Add(typeSid, resolvedBaseTypeSidOpt, implDecl)
+                            implDecls.Add(typeSid, resolvedBaseTypeSidOpt, byFieldNameOpt, implDecl)
                 | Some _ ->
                     diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl target '%s'" implDecl.typeName, implDecl.span))
                 | None ->
@@ -179,7 +203,7 @@ module Resolve =
         // data 型の継承関係（impl B for A）に循環がないことを検証する。
         let implBaseMap =
             implDecls
-            |> Seq.choose (fun (typeSid, baseTypeSidOpt, _) -> baseTypeSidOpt |> Option.map (fun baseSid -> typeSid, baseSid))
+            |> Seq.choose (fun (typeSid, baseTypeSidOpt, _, _) -> baseTypeSidOpt |> Option.map (fun baseSid -> typeSid, baseSid))
             |> Map.ofSeq
 
         let hasInheritanceCycle (startSid: SymbolId) : bool =
@@ -192,7 +216,7 @@ module Resolve =
                     | None -> false
             loop Set.empty startSid
 
-        for (typeSid, _, implDecl) in implDecls do
+        for (typeSid, _, _, implDecl) in implDecls do
             if hasInheritanceCycle typeSid then
                 diagnostics.Add(Diagnostic.Error(sprintf "Cyclic subtype relation detected for '%s'" implDecl.typeName, implDecl.span))
 

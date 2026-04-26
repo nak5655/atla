@@ -301,7 +301,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
         let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("this", span) :> Ast.Expr, "slope", span) :> Ast.Expr
         let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, span)
-        let implDecl = Ast.Decl.Impl("Line", None, [ evalFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", None, None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
             Ast.Expr.DataInit(
@@ -357,6 +357,44 @@ impl B for A
                     Assert.True(hasCycleDiagnostic, "Expected cyclic subtype relation diagnostic was not reported")
                 | _ ->
                     Assert.True(false, "Semantic analysis unexpectedly succeeded for cyclic subtype relation")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis resolves delegated native member via impl for by`` () =
+        let source = """
+import System'DateTime
+data Clock = { dt: DateTime }
+impl Clock for DateTime by dt
+fn year (c: Clock): Int = c'Year
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let yearMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodDef ->
+                            match symbolTable.Get(methodDef.sym) with
+                            | Some symInfo -> symInfo.name = "year"
+                            | None -> false)
+                    Assert.True(yearMethod.IsSome, "Expected delegated-member consumer method 'year' to be analyzed successfully")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun diagnostic -> diagnostic.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->

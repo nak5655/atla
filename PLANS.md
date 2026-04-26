@@ -17,6 +17,21 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-26): `impl A for B by b` 委譲メンバー解決
+
+#### ミッション
+- 新構文 `impl A for B by b` を導入し、`A` から `b` フィールド経由で `B` のメンバーへ委譲解決できるようにする。
+- 既存の `impl A` / `impl A for B` との後方互換を維持する。
+- AST -> Semantic Analysis -> HIR の境界でのみ糖衣を処理し、下流フェーズ（Frame Allocation/MIR/CIL）の契約を変更しない。
+
+#### 実行ステップ
+1. AST `Decl.Impl` を拡張し、`byFieldName` を保持できるようにする。
+2. Lexer/Parser を拡張し、`impl <Target> [for <Base>] [by <Field>]` を決定的に解析する。
+3. Resolve で `by` 指定の妥当性（`for` 必須・対象 data フィールド存在）を検証する。
+4. Analyze で data メンバー探索失敗時に `by` フィールド経由の委譲探索を実行し、data/native 双方のメンバー解決へ接続する。
+5. Parser/Semantics テストを追加し、`for + by` の正常系と回帰を検証する。
+6. フルテストスイートを実行して非退行を確認する。
+
 ### アクティブタスク (2026-04-26): `impl B for A` サブタイプ関係の導入
 
 #### ミッション
