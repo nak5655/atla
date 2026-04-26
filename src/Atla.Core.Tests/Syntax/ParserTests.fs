@@ -855,10 +855,39 @@ impl Line
             match implDecl with
             | Some implDecl ->
                 Assert.Equal("Line", implDecl.typeName)
+                Assert.True(implDecl.forTypeName.IsNone)
                 Assert.Single(implDecl.methods) |> ignore
                 let methodDecl = implDecl.methods.Head
                 Assert.Equal("evaluate", methodDecl.name)
             | None ->
                 Assert.True(false, "impl declaration was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses impl declaration with subtype for clause`` () =
+        let program = """
+data B =
+    { value: Int }
+impl B for A
+    fn evaluate (this: B): Int =
+        this'value
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as implDecl -> Some implDecl
+                    | _ -> None)
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.Equal("B", parsedImplDecl.typeName)
+                Assert.Equal(Some "A", parsedImplDecl.forTypeName)
+                Assert.Single(parsedImplDecl.methods) |> ignore
+            | None ->
+                Assert.True(false, "impl declaration with for clause was not parsed")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

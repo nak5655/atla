@@ -17,6 +17,23 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-26): `impl B for A` サブタイプ関係の導入
+
+#### ミッション
+- 新構文 `impl B for A` を導入し、`for` が `B <: A` のサブタイプ関係を作る仕様を実装する。
+- AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL の各フェーズで基底型情報を隣接フェーズに明示的に伝搬する。
+- 既存の `impl B`（`for` なし）を後方互換で維持する。
+
+#### 実行ステップ
+1. `Ast.Decl.Impl` を拡張し、`forTypeName`（基底型名）を保持できるようにする。
+2. Parser を拡張し、`impl <Target> [for <Base>]` を決定的に解析する。
+3. Resolver で `for` 指定時の基底型解決と循環継承検証を追加する。
+4. Semantic Analysis にサブタイプ判定ヘルパーを追加し、型適合判定と data メンバー解決で継承チェーンを考慮する。
+5. HIR/ClosedHir/MIR の `Type` に `baseType` を追加し、Layout/ClosureConversion/Infer で情報を保持する。
+6. CIL 生成で `DefineType` 時に基底型を指定し、実行時型階層へ反映する。
+7. Parser/Semantics/Lowering の回帰テストを追加し、`impl B for A` の成功系・失敗系を検証する。
+8. フルテストスイートを実行して非退行を確認する。
+
 ### アクティブタスク (2026-04-26): 単項マイナス + Float ビルトイン演算子対応
 
 #### ミッション

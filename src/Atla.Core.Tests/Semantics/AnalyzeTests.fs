@@ -301,7 +301,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
         let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("this", span) :> Ast.Expr, "slope", span) :> Ast.Expr
         let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, span)
-        let implDecl = Ast.Decl.Impl("Line", [ evalFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
             Ast.Expr.DataInit(
@@ -328,6 +328,39 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         | { diagnostics = diagnostics } ->
             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
             Assert.True(false, $"Semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``semantic analysis reports cyclic subtype relation declared by impl for`` () =
+        let source = """
+data A = { value: Int }
+data B = { value: Int }
+impl A for B
+    fn asInt (this: A): Int = this'value
+impl B for A
+    fn asInt (this: B): Int = this'value
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasCycleDiagnostic =
+                        diagnostics
+                        |> List.exists (fun d -> d.toDisplayText().Contains("Cyclic subtype relation detected"))
+                    Assert.True(hasCycleDiagnostic, "Expected cyclic subtype relation diagnostic was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for cyclic subtype relation")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
     let ``semantic analysis handles chained dot-only calls`` () =

@@ -434,7 +434,14 @@ module Gen =
 
         // 型を先に宣言してTypeId.Name解決を可能にする
         for typ in modul.types do
-            typ.builder <- moduleBuilder.DefineType(typ.name, TypeAttributes.Public)
+            let resolvedBaseType =
+                match typ.baseType with
+                | Some baseTid ->
+                    match resolveType env baseTid with
+                    | null -> typeof<obj>
+                    | runtimeBaseType -> runtimeBaseType
+                | None -> typeof<obj>
+            typ.builder <- moduleBuilder.DefineType(typ.name, TypeAttributes.Public, resolvedBaseType)
             env.typeBuilders.Add(typ.sym, typ.builder)
 
         // 型内main探索

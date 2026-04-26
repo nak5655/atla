@@ -16,6 +16,7 @@ module Analyze =
 
     type DataTypeDef =
         { typeSid: SymbolId
+          baseTypeSid: SymbolId option
           fields: DataFieldDef list
           methods: Map<string, SymbolId * TypeId> }
 
@@ -101,6 +102,29 @@ module Analyze =
         member this.sub(): NameEnv =
             let blockScope = Scope(Some this.scope)
             NameEnv(this.symbolTable, blockScope, this.dataTypeDefs)
+
+        /// 継承チェーンを辿り、`actualTypeSid <: expectedTypeSid` が成立するかを判定する。
+        member this.isSubtype (actualTypeSid: SymbolId) (expectedTypeSid: SymbolId) : bool =
+            let bySid =
+                this.dataTypeDefs
+                |> Map.toSeq
+                |> Seq.map (fun (_, def) -> def.typeSid, def)
+                |> Map.ofSeq
+
+            let rec loop (currentSid: SymbolId) (visited: Set<int>) =
+                if currentSid.id = expectedTypeSid.id then
+                    true
+                elif visited |> Set.contains currentSid.id then
+                    false
+                else
+                    match bySid |> Map.tryFind currentSid with
+                    | Some currentDef ->
+                        match currentDef.baseTypeSid with
+                        | Some baseSid -> loop baseSid (visited |> Set.add currentSid.id)
+                        | None -> false
+                    | None -> false
+
+            loop actualTypeSid Set.empty
 
     type TypeEnv(typSubst: TypeSubst, metaFactory: TypeMetaFactory) =
         member this.typSubst = typSubst
@@ -427,12 +451,84 @@ module Analyze =
 
     // 型の単一化を試み、失敗時は ExprError を返す。
     let private unifyOrError (nameEnv: NameEnv) (typeEnv: TypeEnv) (expected: TypeId) (actual: TypeId) (span: Atla.Core.Data.Span) : Result<unit, Hir.Expr> =
+        let resolvedExpected = typeEnv.resolveType expected
+        let resolvedActual = typeEnv.resolveType actual
+        let dataDefsBySid =
+            nameEnv.dataTypeDefs
+            |> Map.toSeq
+            |> Seq.map (fun (_, def) -> def.typeSid, def)
+            |> Map.ofSeq
+
+        let tryResolveNamedSystemType (sid: SymbolId) : System.Type option =
+            match nameEnv.resolveSym sid with
+            | Some symInfo ->
+                match symInfo.kind with
+                | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> Some sysType
+                | _ -> None
+            | None -> None
+
+        let rec isSubtypeOfSystemType (candidateSid: SymbolId) (expectedSystemType: System.Type) (visited: Set<int>) : bool =
+            if visited |> Set.contains candidateSid.id then
+                false
+            else
+                match tryResolveNamedSystemType candidateSid with
+                | Some candidateSystemType -> expectedSystemType.IsAssignableFrom(candidateSystemType)
+                | None ->
+                    match dataDefsBySid |> Map.tryFind candidateSid with
+                    | Some candidateDef ->
+                        match candidateDef.baseTypeSid with
+                        | Some baseSid -> isSubtypeOfSystemType baseSid expectedSystemType (visited |> Set.add candidateSid.id)
+                        | None -> false
+                    | None -> false
+
+        let subtypeSatisfied =
+            match resolvedExpected, resolvedActual with
+            | TypeId.Name expectedSid, TypeId.Name actualSid -> nameEnv.isSubtype actualSid expectedSid
+            | TypeId.Native expectedSystemType, TypeId.Name actualSid -> isSubtypeOfSystemType actualSid expectedSystemType Set.empty
+            | TypeId.Native expectedSystemType, TypeId.Native actualSystemType -> expectedSystemType.IsAssignableFrom(actualSystemType)
+            | _ -> false
+
         if isNativeVoid typeEnv actual && not (isUnitContext typeEnv expected) then
             Result.Error(errorExpr expected span (formatUnifyError nameEnv typeEnv (UnifyError.CannotUnify(expected, actual))))
+        elif subtypeSatisfied then
+            Result.Ok ()
         else
             match typeEnv.unifyTypes expected actual with
             | Result.Ok _ -> Result.Ok ()
             | Result.Error err -> Result.Error(errorExpr expected span (formatUnifyError nameEnv typeEnv err))
+
+    /// data 型の継承チェーンを辿ってメンバー（field/method）を探索する。
+    let private tryResolveDataMember (nameEnv: NameEnv) (receiverTypeSid: SymbolId) (memberName: string) (span: Atla.Core.Data.Span) (receiverExpr: Hir.Expr) : Result<Hir.Expr, string> =
+        let bySid =
+            nameEnv.dataTypeDefs
+            |> Map.toSeq
+            |> Seq.map (fun (_, def) -> def.typeSid, def)
+            |> Map.ofSeq
+
+        let rec loop (currentSid: SymbolId) (visited: Set<int>) =
+            if visited |> Set.contains currentSid.id then
+                Result.Error("Cyclic subtype relation detected while resolving data member")
+            else
+                match bySid |> Map.tryFind currentSid with
+                | None -> Result.Error("Undefined data type while resolving member")
+                | Some currentDef ->
+                    match currentDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = memberName) with
+                    | Some fieldDef ->
+                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataField(currentDef.typeSid, fieldDef.sid), Some receiverExpr, fieldDef.typ, span))
+                    | None ->
+                        match currentDef.methods |> Map.tryFind memberName with
+                        | Some (methodSid, methodType) ->
+                            let boundMethodType =
+                                match methodType with
+                                | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
+                                | _ -> methodType
+                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(currentDef.typeSid, methodSid), Some receiverExpr, boundMethodType, span))
+                        | None ->
+                            match currentDef.baseTypeSid with
+                            | Some baseSid -> loop baseSid (visited |> Set.add currentSid.id)
+                            | None -> Result.Error (sprintf "Undefined member '%s' for data type" memberName)
+
+        loop receiverTypeSid Set.empty
 
     // Generate an overload error message with available candidates when argument count does not match.
     let private noOverloadMessage (callable: Hir.Callable) (argCount: int) : string =
@@ -1014,26 +1110,9 @@ module Analyze =
                         | None ->
                             match typeEnv.resolveType receiver.typ with
                             | TypeId.Name receiverTypeSid ->
-                                let dataTypeOpt =
-                                    nameEnv.dataTypeDefs
-                                    |> Map.tryPick (fun _ dataTypeDef ->
-                                        if dataTypeDef.typeSid.id = receiverTypeSid.id then Some dataTypeDef else None)
-                                match dataTypeOpt with
-                                | Some dataTypeDef ->
-                                    match dataTypeDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = memberAccessExpr.memberName) with
-                                    | Some fieldDef ->
-                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataField(dataTypeDef.typeSid, fieldDef.sid), Some receiver, fieldDef.typ, memberAccessExpr.span))
-                                    | None ->
-                                        match dataTypeDef.methods |> Map.tryFind memberAccessExpr.memberName with
-                                        | Some (methodSid, methodType) ->
-                                            let boundMethodType =
-                                                match methodType with
-                                                | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
-                                                | _ -> methodType
-                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, boundMethodType, memberAccessExpr.span))
-                                        | None ->
-                                            Result.Error (sprintf "Undefined member '%s' for data type" memberAccessExpr.memberName)
-                                | None ->
+                                match tryResolveDataMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
+                                | Result.Ok resolvedMember -> Result.Ok resolvedMember
+                                | Result.Error _ ->
                                     match resolveTyp nameEnv typeEnv receiver.typ with
                                     | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                                     | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
@@ -1085,26 +1164,9 @@ module Analyze =
                     | None ->
                         match typeEnv.resolveType receiver.typ with
                         | TypeId.Name receiverTypeSid ->
-                            let dataTypeOpt =
-                                nameEnv.dataTypeDefs
-                                |> Map.tryPick (fun _ dataTypeDef ->
-                                    if dataTypeDef.typeSid.id = receiverTypeSid.id then Some dataTypeDef else None)
-                            match dataTypeOpt with
-                            | Some dataTypeDef ->
-                                match dataTypeDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = memberAccessExpr.memberName) with
-                                | Some fieldDef ->
-                                    Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataField(dataTypeDef.typeSid, fieldDef.sid), Some receiver, fieldDef.typ, memberAccessExpr.span))
-                                | None ->
-                                    match dataTypeDef.methods |> Map.tryFind memberAccessExpr.memberName with
-                                    | Some (methodSid, methodType) ->
-                                        let boundMethodType =
-                                            match methodType with
-                                            | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
-                                            | _ -> methodType
-                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, boundMethodType, memberAccessExpr.span))
-                                    | None ->
-                                        Result.Error (sprintf "Undefined member '%s' for data type" memberAccessExpr.memberName)
-                            | None ->
+                            match tryResolveDataMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
+                            | Result.Ok resolvedMember -> Result.Ok resolvedMember
+                            | Result.Error _ ->
                                 match resolveTyp nameEnv typeEnv receiver.typ with
                                 | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                                 | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
@@ -1409,15 +1471,15 @@ module Analyze =
                             resolvedFields
                             |> List.map (fun fieldDef ->
                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                        types.Add(Hir.Type(resolvedDataDecl.typeSid, hirFields, []))
-                        Map.add resolvedDataDecl.decl.name { typeSid = resolvedDataDecl.typeSid; fields = resolvedFields; methods = Map.empty } defs)
+                        types.Add(Hir.Type(resolvedDataDecl.typeSid, None, hirFields, []))
+                        Map.add resolvedDataDecl.decl.name { typeSid = resolvedDataDecl.typeSid; baseTypeSid = None; fields = resolvedFields; methods = Map.empty } defs)
                     Map.empty
 
             // impl 宣言のシグネチャを先に登録し、メソッド解決を安定化する。
             let dataTypeDefsWithMethods, implMethodDecls, implDiagnostics =
                 resolvedModule.implDecls
                 |> List.fold
-                    (fun (defs, methodDecls, diagnostics) (typeSid, implDecl) ->
+                    (fun (defs, methodDecls, diagnostics) (typeSid, baseTypeSidOpt, implDecl) ->
                         match defs |> Map.tryFind implDecl.typeName with
                         | None ->
                             defs, methodDecls, diagnostics @ [ Diagnostic.Error(sprintf "Undefined impl target type '%s'" implDecl.typeName, implDecl.span) ]
@@ -1449,7 +1511,7 @@ module Analyze =
                             let methodMap, declAcc, diagAcc = foldResult
                             let updatedDefs =
                                 defs
-                                |> Map.add implDecl.typeName { dataTypeDef with methods = methodMap }
+                                |> Map.add implDecl.typeName { dataTypeDef with methods = methodMap; baseTypeSid = baseTypeSidOpt }
                             updatedDefs, (List.rev declAcc) @ methodDecls, diagnostics @ diagAcc)
                     (dataTypeDefs, [], [])
 
@@ -1462,7 +1524,19 @@ module Analyze =
             |> List.iter (fun (methodSid, methodDecl) ->
                 methods.Add(analyzeMethodCore nameEnv typeEnv methodSid methodDecl))
 
-            let typedTypes = types |> Seq.toList
+            // impl で確定した基底型情報を HIR.Type へ反映する。
+            let baseTypeBySid =
+                dataTypeDefsWithMethods
+                |> Map.toSeq
+                |> Seq.map (fun (_, def) -> def.typeSid.id, (def.baseTypeSid |> Option.map TypeId.Name))
+                |> Map.ofSeq
+
+            let typedTypes =
+                types
+                |> Seq.toList
+                |> List.map (fun typ ->
+                    let baseTypeOpt = baseTypeBySid |> Map.tryFind typ.sym.id |> Option.flatten
+                    Hir.Type(typ.sym, baseTypeOpt, typ.fields, typ.methods))
 
             let untypedHirModule =
                 Hir.Module(

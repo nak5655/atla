@@ -100,8 +100,9 @@ module ClosedHir =
         member this.span = span
 
     /// クロージャー変換後の型定義。
-    type Type(sid: SymbolId, fields: Field list, methods: Method list) =
+    type Type(sid: SymbolId, baseType: TypeId option, fields: Field list, methods: Method list) =
         member this.sym = sid
+        member this.baseType = baseType
         member this.fields = fields
         member this.methods = methods
 
