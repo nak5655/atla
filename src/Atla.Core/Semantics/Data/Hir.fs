@@ -23,6 +23,8 @@ module Hir =
         | NativeField of FieldInfo
         | NativeProperty of PropertyInfo
         | NativeMethod of MethodInfo
+        | DataField of typeSid: SymbolId * fieldSid: SymbolId
+        | DataMethod of typeSid: SymbolId * methodSid: SymbolId
 
     type Expr =
         | Unit of span: Span
@@ -128,11 +130,16 @@ module Hir =
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics
 
-    type Type(sid: SymbolId, fields: Field list) =
+    type Type(sid: SymbolId, fields: Field list, methods: Method list) =
         member this.sym = sid
         member this.fields = fields
-        member this.hasError = fields |> List.exists (fun field -> field.hasError)
-        member this.getDiagnostics = fields |> List.collect (fun field -> field.getDiagnostics)
+        member this.methods = methods
+        member this.hasError =
+            (fields |> List.exists (fun field -> field.hasError))
+            || (methods |> List.exists (fun methodInfo -> methodInfo.hasError))
+        member this.getDiagnostics =
+            (fields |> List.collect (fun field -> field.getDiagnostics))
+            @ (methods |> List.collect (fun methodInfo -> methodInfo.getDiagnostics))
 
     type Module(name: string, types: Type list, fields: Field list, methods: Method list, scope: Scope) =
         member this.name = name

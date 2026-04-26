@@ -163,6 +163,46 @@
 8. MIR/CIL への影響が struct lowering に限定されることを確認し、`data` 由来コードの最終 CIL 実行回帰テストを追加する。
 9. `examples/data` サンプル、言語仕様ドキュメント、フェーズノートを更新し、`dotnet test` フルスイートで非退行を確認する。
 
+### アクティブタスク (2026-04-26): `impl` 構文の導入（型メソッド束縛）
+
+#### ミッション
+- `examples/data/data.atla` に追加された `impl TypeName ...` 構文をパース・意味解析できるようにし、既存フェーズ境界を壊さずにコンパイル可能にする。
+- `impl` 内の `fn` は最終的に正準 HIR メソッドへ lower し、Frame Allocation/MIR/CIL へは既存の関数呼び出し経路で受け渡す。
+- 仕様確定（2026-04-26）:
+  - 対象は `data` 型のみ
+  - `this` は必須
+  - `this` は先頭引数で明示
+  - 同名メソッド・同一型への複数 `impl` はエラー
+
+#### 実行ステップ
+1. 受理仕様を固定する（最小スコープ）:
+   - 形: `impl TypeName` ブロック配下に `fn` 宣言のみ許可。
+   - `impl` 対象型は同一モジュール内 `data` または `import` 済み型に限定（拡張メソッドは将来課題）。
+   - メソッド本体内の `this` 解決ルール（暗黙/明示）を明文化し、曖昧さを禁止。
+2. **変更制御**: `src/Atla.Core/Syntax/Lexer.fs` / `src/Atla.Core/Syntax/Parser.fs` 変更が必要なため、着手前に明示承認を取得する（AGENTS.md ルール）。
+3. AST を拡張し、`Decl.Impl`（型名 + メソッド群 + span）を追加する。`impl` 内要素は構文段階で `fn` のみに制限し、決定的診断を返す。
+4. Parser で `impl` 宣言をトップレベル宣言として受理する。オフサイドルールと span 付与を既存 `fn`/`data` と同一方針に揃える。
+5. Resolve で `impl` 対象型の存在検証を行い、未定義型/重複メソッド名/不正シグネチャを構造化診断で返す。
+6. Analyze で `impl` メソッドを型に束縛された HIR メソッドへ正規化する:
+   - レシーバ引数（`this`）を明示的な先頭引数として確定。
+   - メンバー呼び出し `value'method.` を既存 `Hir.Expr.Call` 形状へ lower。
+   - HIR に parser 糖衣（`impl` 専用ノード）を残さない。
+7. Lowering 非退行を確認する（Frame Allocation/MIR/CIL の新分岐は原則追加しない）。必要なら symbol 解決のみ最小修正する。
+8. テストを追加・更新する:
+   - Parser: `impl` 正常系/異常系（空ブロック、不正要素、未知型）。
+   - Semantics: `impl` メソッド解決、`this` 束縛、重複/型不一致診断順序。
+   - Lowering: `impl` メソッド呼び出しが既存 MIR/CIL 経路で動作する回帰。
+   - Snapshot: AST/HIR 形状の固定化（`impl` 糖衣が HIR に残らないこと）。
+9. `examples/data` とフェーズノート（AST/Semantic/HIR）を更新し、`dotnet test` フルスイートで完了判定する。
+
+#### リスクと対策
+- `this` 解決を式解析へ直結すると未解決識別子が HIR へ漏れるリスク:
+  - 対策: Semantic Analysis でのみ `this` を導入し、Parser は予約語として受理するだけに留める。
+- `impl` を HIR 新ノードで保持してしまうリスク:
+  - 対策: Analyze で必ず既存 `Hir.Method` 群へ正規化し、下流へは同一契約で渡す。
+- 診断順序の不安定化リスク:
+  - 対策: `対象型未定義 -> メソッド重複 -> シグネチャ不正 -> 本体型不一致` の順序を固定する。
+
 #### リスクと対策
 - Parser の糖衣が HIR へ漏れるリスク:
   - 対策: semantic 正規化点を単一点に固定し、HIR では struct/ctor 呼び出しの正準ノードのみ許可する。
@@ -221,6 +261,19 @@
 - 2026-04-25: メンバー代入の lowering は、既存 HIR のまま安全に扱うため現時点では「プロパティ setter 呼び出し」へ正規化し、フィールド代入は明示エラーとして扱う方針にした。
 - 2026-04-25: 旧構文由来のテスト失敗は、テスト内サンプルコードを dot-only call / apostrophe member-access 構文へ移行することで解消できた（実装コード側で旧構文互換を追加しない方針を維持）。
 - 2026-04-25: `Layout.layoutExpr` の `ClosedHir.Expr.Call` 分岐で `instance` が破棄されており、インスタンスメソッド呼び出し時に receiver 未積載の不正 IL（`InvalidProgramException`）が発生することを確認した。
+- 2026-04-26: Lexer の keyword 判定が単語境界を見ておらず、`intercept` などが `in` + `tercept` に分割される問題を確認したため、単語境界チェックを導入した。
+
+### アクティブタスク (2026-04-26): examples 回帰テストの整合（`gui_hello` / `data`）
+
+#### ミッション
+- `Atla.Console.Tests` の examples 回帰テストを現行ディレクトリ構成に合わせ、`examples/gui_hello` を正しくビルド検証できるようにする。
+- `examples/data` のビルドが成功することを確認する回帰テストを追加する。
+
+#### 実行ステップ
+1. examples パス探索ロジックの `gui` 固定参照を `gui_hello` へ更新する。
+2. `build should succeed for examples gui_hello` テストへ名称/期待成果物を更新する。
+3. `build should succeed for examples data` テストを追加し、`examples/data` で `atla build` 成功と DLL 出力を検証する。
+4. `dotnet test src/Atla.Console.Tests/Atla.Console.Tests.fsproj` を実行して回帰確認する。
 
 ## 検証
 - 警告ゼロでビルド成功。

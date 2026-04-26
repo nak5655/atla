@@ -70,7 +70,12 @@ module Infer =
                 let inferredTypeFields =
                     typ.fields
                     |> List.map (fun field -> Hir.Field(field.sym, Type.resolve typeSubst field.typ, inferExpr typeSubst field.body, field.span))
-                Hir.Type(typ.sym, inferredTypeFields))
+                let inferredTypeMethods =
+                    typ.methods
+                    |> List.map (fun meth ->
+                        let inferredArgs = meth.args |> List.map (fun (sid, tid) -> (sid, Type.resolve typeSubst tid))
+                        Hir.Method(meth.sym, inferredArgs, inferExpr typeSubst meth.body, Type.resolve typeSubst meth.typ, meth.span))
+                Hir.Type(typ.sym, inferredTypeFields, inferredTypeMethods))
 
         let typedModule = Hir.Module(hirModule.name, inferredTypes, inferredFields, inferredMethods, hirModule.scope)
 

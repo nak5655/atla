@@ -348,6 +348,15 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        type Impl(typeName: string, methods: Fn list, span: Span) =
+            member this.typeName = typeName
+            member this.methods = methods
+            member this.span = span
+            interface Decl with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type Error(message: string, span: Span) =
             member this.message = message
             member this.span = span

@@ -96,6 +96,23 @@ module Layout =
             match mem with
             | Hir.Member.NativeField fi -> Ok (state, { ins = []; res = Some(Mir.Value.FieldVal fi) })
             | Hir.Member.NativeMethod mi -> Ok (state, { ins = []; res = Some(Mir.Value.MethodVal mi) })
+            | Hir.Member.DataMethod _ ->
+                Result.Error (Diagnostic.Error("First-class data method value is not supported", span))
+            | Hir.Member.DataField (typeSid, fieldSid) ->
+                match instance with
+                | None -> Result.Error (Diagnostic.Error("Data field access requires an instance receiver", span))
+                | Some instanceExpr ->
+                    match layoutExpr state instanceExpr with
+                    | Result.Error e -> Result.Error e
+                    | Ok (state1, instanceKn) ->
+                        match instanceKn.res with
+                        | Some(Mir.Value.RegVal instReg) ->
+                            let dst, state2 = declareTemp state1 tid
+                            Ok (state2, { ins = instanceKn.ins @ [ Mir.Ins.LoadEnvField(dst, instReg, typeSid, fieldSid) ]; res = Some(Mir.Value.RegVal dst) })
+                        | Some _ ->
+                            Result.Error (Diagnostic.Error("Data field receiver must be a register value", span))
+                        | None ->
+                            Result.Error (Diagnostic.Error("Data field receiver did not produce a value", span))
             | Hir.Member.NativeProperty pi ->
                 match pi.GetMethod with
                 | null -> Result.Error (Diagnostic.Error($"Property has no getter: {pi.Name}", span))
@@ -456,9 +473,21 @@ module Layout =
                 Ok (Mir.Method(methodName, hirMethod.sym, args, ret, body, finalState.frame))
         | _ -> Result.Error (Diagnostic.Error($"Expected function type for method: {hirMethod.typ}", hirMethod.span))
 
-    let private layoutType (typeName: string) (hirType: ClosedHir.Type) : Mir.Type =
+    let private layoutType (typeName: string) (resolveMethodName: SymbolId -> string) (hirType: ClosedHir.Type) : Result<Mir.Type, Diagnostic> =
         let fields = hirType.fields |> List.map (fun field -> Mir.Field(field.sym, field.typ))
-        Mir.Type(typeName, hirType.sym, fields, [], [])
+        let methodResults =
+            hirType.methods
+            |> List.map (fun hirMethod -> layoutMethod (resolveMethodName hirMethod.sym) hirMethod)
+        let methodErrors, methodSuccesses =
+            methodResults
+            |> List.fold (fun (errs, oks) r ->
+                match r with
+                | Result.Error e -> (e :: errs, oks)
+                | Ok m -> (errs, m :: oks)) ([], [])
+        if List.isEmpty methodErrors then
+            Result.Ok(Mir.Type(typeName, hirType.sym, fields, [], List.rev methodSuccesses))
+        else
+            Result.Error(List.rev methodErrors |> List.head)
 
     /// env-class の invoke メソッドとして使用するインスタンスメソッドを生成する。
     /// 通常の layoutMethod との違い: 第一引数（env インスタンス）を CIL arg リストから除去する。
@@ -512,7 +541,7 @@ module Layout =
         let typeResults =
             hirModule.types
             |> List.map (fun hirType ->
-                let baseType = layoutType (resolveTypeName hirType.sym) hirType
+                let baseTypeResult = layoutType (resolveTypeName hirType.sym) resolveMethodName hirType
                 // この型に属するクロージャー invoke メソッドを収集し、インスタンスメソッドとして生成する。
                 let invokeMethodResults =
                     hirModule.methods
@@ -528,9 +557,11 @@ module Layout =
                         match r with
                         | Result.Error e -> (e :: errs, oks)
                         | Ok m -> (errs, m :: oks)) ([], [])
-                if List.isEmpty invokeErrors then
-                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.fields, baseType.ctors, List.rev invokeSuccesses))
-                else
+                match baseTypeResult with
+                | Result.Error e -> Result.Error [ e ]
+                | Result.Ok baseType when List.isEmpty invokeErrors ->
+                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.fields, baseType.ctors, baseType.methods @ (List.rev invokeSuccesses)))
+                | Result.Ok _ ->
                     Result.Error (List.rev invokeErrors))
 
         // クロージャー invoke メソッドはすでに型内に配置したため、モジュールレベルからは除外する。

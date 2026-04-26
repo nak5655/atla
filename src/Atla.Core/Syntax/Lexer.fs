@@ -57,9 +57,31 @@ module Lexer =
     let alphaNum: PackratParser<SourceChar, SourceChar> = alpha <|> digit
     let alphaNum_ = alpha_ <|> digit
     let keyword: PackratParser<SourceChar, Token.Keyword> =
+        let isWordKeyword (kw: string) =
+            kw |> Seq.last |> System.Char.IsLetterOrDigit || kw.EndsWith("_")
+        let isIdentContinuation (c: SourceChar) =
+            System.Char.IsLetterOrDigit(c.char) || c.char = '_'
+
         keywords
-            |> List.map (fun kw -> (Phrase (kw |> Seq.toList) (fun (c, k) -> c.char = k) |>> fun chars -> let s = SourceString.join(chars) in Token.Keyword(s.string, s.span)))
-            |> List.fold (<|>) (Fail "No keywords")
+        |> List.map (fun kw ->
+            let rawKeyword =
+                Phrase (kw |> Seq.toList) (fun (c, k) -> c.char = k)
+                |>> fun chars ->
+                    let s = SourceString.join(chars)
+                    Token.Keyword(s.string, s.span)
+
+            if isWordKeyword kw then
+                Delay (fun () -> fun input pos ->
+                    match rawKeyword input pos with
+                    | Success (tok, nextPos) ->
+                        match input.get nextPos with
+                        | Some nextChar when isIdentContinuation nextChar ->
+                            Failure ("Keyword boundary mismatch", tok.span)
+                        | _ -> Success (tok, nextPos)
+                    | Failure (reason, span) -> Failure (reason, span))
+            else
+                rawKeyword)
+        |> List.fold (<|>) (Fail "No keywords")
     let delim: PackratParser<SourceChar, Token.Delim> =
         delims
             |> List.map (fun d -> AcceptIf (fun (c: SourceChar) -> c.char = d) |>> fun c -> Token.Delim (c.char, c.span))

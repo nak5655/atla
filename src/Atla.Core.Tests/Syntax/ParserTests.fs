@@ -580,10 +580,24 @@ fn main (): () = do
         let program = "fn main (): Int = 1 increment"
 
         match parseModule program with
-        | Success _ ->
-            Assert.True(false, "missing dot in call chain should be rejected")
-        | Failure _ ->
-            Assert.True(true)
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Error as errorExpr ->
+                    Assert.Contains("Expected '.' after callee in call expression.", errorExpr.message)
+                | _ ->
+                    Assert.True(false, "missing dot in call chain should produce Ast.Expr.Error")
+            | None ->
+                Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed unexpectedly: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
     let ``fileModule parses member access as primary before dot call`` () =
@@ -779,5 +793,36 @@ fn main (): () = do
                     Assert.True(false, "main body was not parsed as zero-arg Ast.Expr.Apply")
             | None ->
                 Assert.True(false, "main function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses impl declaration with explicit this argument`` () =
+        let program = """
+data Line =
+    { slope: Float
+    , intercept: Float
+    }
+impl Line
+    fn evaluate (this: Line) (x: Float): Float =
+        this'slope * x + this'intercept
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as implDecl -> Some implDecl
+                    | _ -> None)
+            match implDecl with
+            | Some implDecl ->
+                Assert.Equal("Line", implDecl.typeName)
+                Assert.Single(implDecl.methods) |> ignore
+                let methodDecl = implDecl.methods.Head
+                Assert.Equal("evaluate", methodDecl.name)
+            | None ->
+                Assert.True(false, "impl declaration was not parsed")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
