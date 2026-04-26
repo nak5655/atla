@@ -1,4 +1,14 @@
 import System'Console
 
+data Line =
+    { slope: Float
+    , intercept: Float
+    }
+
+impl Line
+    fn evaluate (this: Line) (x: Float): Float =
+        this'slope * x + this'intercept
+
 fn main (): () = do
-    "data example" Console'WriteLine.
+    let line = Line { slope = 2.0, intercept = -1.0 }
+    5.0 line'evaluate. Console'WriteLine.
