@@ -1,22 +1,24 @@
-import Avalonia.Window
-import Avalonia.Thickness
-import Avalonia.Controls.TextBox
-import Avalonia.Controls.StackPanel
-import Avalonia.Controls.Orientation
+import Avalonia'Window
+import Avalonia'Thickness
+import Avalonia'Controls'TextBox
+import Avalonia'Controls'StackPanel
+import Avalonia'Controls'Orientation
 
-data CalculatorWindow
-    _display: TextBox
-    _currentValue: Float
-    _pendingOperator: String
-    _clearOnNextDigit: Bool
+data CalculatorWindow = 
+    { _window: Window
+    , _display: TextBox
+    , _currentValue: Float
+    , _pendingOperator: String
+    , _clearOnNextDigit: Bool
+    }
 
-does CalculatorWindow
-    fn new (): CalculatorWindow = do
-        let root = StackPanel.new.
-        root.Orientation = Orientation'Vertical
-        root.Margin = Thickness.new(8.0)
-        root.Spacing = 8.0
+impl CalculatorWindow =
+    fn new: CalculatorWindow = do
+        let root = StackPanel'new.
+        root'Orientation = Orientation'Vertical
+        root'Margin = Thickness'new(8.0)
+        root'Spacing = 8.0
     
-        Content = root
-        
-does CalculatorWindow as Window
+        _window'Content = root
+
+impl CalculatorWindow for Window = delegate _window

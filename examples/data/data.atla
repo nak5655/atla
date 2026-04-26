@@ -1,4 +1,14 @@
-data Person = { name: String, age: Int }
+import System'Console
 
-fn buildPerson (): Person =
-    Person { name = "Alice", age = 20 }
+data Line =
+    { slope: Float
+    , intercept: Float
+    }
+
+impl Line
+    fn evaluate (x: Float): Float =
+        slope * x + intercept
+
+fn main (): () =
+    let line = Line { slope = 2.0, intercept = -1.0 }
+    5.0 line'evaluate. Console'WriteLine.
