@@ -185,12 +185,32 @@ module Resolve =
                             diagnostics.Add(Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodName implDecl.typeName, implDecl.span))
                         | None -> ()
 
+                        // impl ブロックの個数制約:
+                        // - `impl T`（for なし）は型ごとに 1 つ
+                        // - `impl T for Role` は (T, Role) ごとに 1 つ
+                        let hasResolvableRoleKey =
+                            match implDecl.forTypeName, resolvedBaseTypeSidOpt with
+                            | Some _, None -> false
+                            | _ -> true
+
                         let hasExistingImpl =
-                            implDecls
-                            |> Seq.exists (fun (sid, _, _, _) -> sid.id = typeSid.id)
+                            if not hasResolvableRoleKey then
+                                false
+                            else
+                                implDecls
+                                |> Seq.exists (fun (sid, existingBaseTypeSidOpt, _, _) ->
+                                    let existingBaseKey = existingBaseTypeSidOpt |> Option.map (fun existingSid -> existingSid.id)
+                                    let resolvedBaseKey = resolvedBaseTypeSidOpt |> Option.map (fun resolvedSid -> resolvedSid.id)
+                                    sid.id = typeSid.id
+                                    && existingBaseKey = resolvedBaseKey)
+
                         if hasExistingImpl then
-                            diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block" implDecl.typeName, implDecl.span))
-                        else
+                            match implDecl.forTypeName with
+                            | Some roleName ->
+                                diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block for role '%s'" implDecl.typeName roleName, implDecl.span))
+                            | None ->
+                                diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has a default impl block" implDecl.typeName, implDecl.span))
+                        elif hasResolvableRoleKey then
                             implDecls.Add(typeSid, resolvedBaseTypeSidOpt, byFieldNameOpt, implDecl)
                 | Some _ ->
                     diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl target '%s'" implDecl.typeName, implDecl.span))
