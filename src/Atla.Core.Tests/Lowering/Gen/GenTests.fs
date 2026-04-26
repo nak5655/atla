@@ -15,7 +15,7 @@ module GenTests =
         let mainSym = SymbolId 101
         let useFooSym = SymbolId 102
 
-        let mirType = Mir.Type("Foo", typeSym, [], [], [])
+        let mirType = Mir.Type("Foo", typeSym, None, [], [], [])
 
         let mainMethod =
             Mir.Method(

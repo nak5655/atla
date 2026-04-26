@@ -14,7 +14,7 @@ module Resolve =
           moduleScope: Scope
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
-          implDecls: (SymbolId * Ast.Decl.Impl) list }
+          implDecls: (SymbolId * SymbolId option * Ast.Decl.Impl) list }
 
     let private tryResolveSystemType (classPath: string) : System.Type option =
         match System.Type.GetType(classPath) with
@@ -95,7 +95,7 @@ module Resolve =
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
-        let implDecls = ResizeArray<SymbolId * Ast.Decl.Impl>()
+        let implDecls = ResizeArray<SymbolId * SymbolId option * Ast.Decl.Impl>()
         let diagnostics = ResizeArray<Diagnostic>()
 
         // data 型名を先に登録し、同一モジュール内で相互参照可能にする。
@@ -129,6 +129,20 @@ module Resolve =
                     if not isDataType then
                         diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data type in this module" implDecl.typeName, implDecl.span))
                     else
+                        // `impl B for A` の `for` 句を解決し、基底型 SymbolId を保持する。
+                        let resolvedBaseTypeSidOpt =
+                            match implDecl.forTypeName with
+                            | None -> None
+                            | Some forTypeName ->
+                                match moduleScope.ResolveType(forTypeName) with
+                                | Some (TypeId.Name baseTypeSid) -> Some baseTypeSid
+                                | Some _ ->
+                                    diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl base type '%s'" forTypeName, implDecl.span))
+                                    None
+                                | None ->
+                                    diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl base type '%s'" forTypeName, implDecl.span))
+                                    None
+
                         if implDecl.methods.IsEmpty then
                             diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' must contain at least one method" implDecl.typeName, implDecl.span))
 
@@ -149,11 +163,11 @@ module Resolve =
 
                         let hasExistingImpl =
                             implDecls
-                            |> Seq.exists (fun (sid, _) -> sid.id = typeSid.id)
+                            |> Seq.exists (fun (sid, _, _) -> sid.id = typeSid.id)
                         if hasExistingImpl then
                             diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block" implDecl.typeName, implDecl.span))
                         else
-                            implDecls.Add(typeSid, implDecl)
+                            implDecls.Add(typeSid, resolvedBaseTypeSidOpt, implDecl)
                 | Some _ ->
                     diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl target '%s'" implDecl.typeName, implDecl.span))
                 | None ->
@@ -161,6 +175,26 @@ module Resolve =
             | :? Ast.Decl.Fn as fnDecl ->
                 fnDecls.Add(fnDecl)
             | _ -> diagnostics.Add(Diagnostic.Error("Unsupported declaration type in module", decl.span))
+
+        // data 型の継承関係（impl B for A）に循環がないことを検証する。
+        let implBaseMap =
+            implDecls
+            |> Seq.choose (fun (typeSid, baseTypeSidOpt, _) -> baseTypeSidOpt |> Option.map (fun baseSid -> typeSid, baseSid))
+            |> Map.ofSeq
+
+        let hasInheritanceCycle (startSid: SymbolId) : bool =
+            let rec loop (visited: Set<int>) (currentSid: SymbolId) =
+                if visited |> Set.contains currentSid.id then
+                    true
+                else
+                    match implBaseMap |> Map.tryFind currentSid with
+                    | Some nextSid -> loop (visited |> Set.add currentSid.id) nextSid
+                    | None -> false
+            loop Set.empty startSid
+
+        for (typeSid, _, implDecl) in implDecls do
+            if hasInheritanceCycle typeSid then
+                diagnostics.Add(Diagnostic.Error(sprintf "Cyclic subtype relation detected for '%s'" implDecl.typeName, implDecl.span))
 
         // Warning 診断があっても解析は続行する。Error 診断がある場合のみ失敗とする。
         let allDiagnostics = Seq.toList diagnostics

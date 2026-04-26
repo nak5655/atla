@@ -190,10 +190,11 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Type(name: string, sid: SymbolId, fields: Field list, ctors: Constructor list, methods: Method list) =
+    type Type(name: string, sid: SymbolId, baseType: TypeId option, fields: Field list, ctors: Constructor list, methods: Method list) =
         let mutable _builder: TypeBuilder option = None
         member this.name = name
         member this.sym = sid
+        member this.baseType = baseType
         member this.fields = fields
         member this.ctors = ctors
         member this.methods = methods
