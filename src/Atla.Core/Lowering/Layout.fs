@@ -96,6 +96,8 @@ module Layout =
             match mem with
             | Hir.Member.NativeField fi -> Ok (state, { ins = []; res = Some(Mir.Value.FieldVal fi) })
             | Hir.Member.NativeMethod mi -> Ok (state, { ins = []; res = Some(Mir.Value.MethodVal mi) })
+            | Hir.Member.NativeMethodGroup _ ->
+                Result.Error (Diagnostic.Error("First-class native method group value is not supported", span))
             | Hir.Member.DataMethod _ ->
                 Result.Error (Diagnostic.Error("First-class data method value is not supported", span))
             | Hir.Member.DataField (typeSid, fieldSid) ->

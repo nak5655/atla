@@ -55,6 +55,19 @@
 1. `main` 末尾行を `5.0 line'evaluate. Console'WriteLine.` へ戻す。
 2. `examples/data` のビルド挙動を確認する。
 
+### アクティブタスク (2026-04-26): MemberAccess の NativeMethodGroup 保持
+
+#### ミッション
+- MemberAccess 段階で複数 Native メソッド候補が存在する場合に即時 Ambiguous へ落とさず、`Hir.Member` として method-group を保持して Apply 段階で最終選択する。
+- `Console'WriteLine` のような多重オーバーロードで、実引数型確定後の決定的解決を可能にする。
+
+#### 実行ステップ
+1. `Hir.Member` へ `NativeMethodGroup of MethodInfo list` ケースを追加する。
+2. Analyze の MemberAccess 解決で、method 候補が複数件のとき `NativeMethodGroup` を返す経路を実装する。
+3. `exprAsCallable` で `Member.NativeMethodGroup` を `Callable.NativeMethodGroup` へ変換する。
+4. 既存の Apply 側 overload 選択ロジックを再利用して最終候補を確定する。
+5. `Console'WriteLine` を含む回帰テストと `examples/data` ビルドで動作確認する。
+
 ### アクティブエピック (2026-04-24): ドット専用呼び出し + アポストロフィメンバーアクセス
 
 #### ミッション

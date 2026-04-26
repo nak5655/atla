@@ -476,6 +476,7 @@ module Analyze =
         | Hir.Expr.MemberAccess (memberInfo, _, _, _) ->
             match memberInfo with
             | Hir.Member.NativeMethod methodInfo -> Some (Hir.Callable.NativeMethod methodInfo)
+            | Hir.Member.NativeMethodGroup methodInfos -> Some (Hir.Callable.NativeMethodGroup methodInfos)
             | Hir.Member.DataMethod (_, methodSid) -> Some (Hir.Callable.Fn methodSid)
             | _ -> None
         | _ -> None
@@ -810,6 +811,20 @@ module Analyze =
                             Some (resolvedCallable, TypeId.fromSystemType methodInfo.ReturnType)
                         else
                             None
+                    | Hir.Callable.Fn sid ->
+                        match nameEnv.resolveSym sid with
+                        | Some symInfo ->
+                            match typeEnv.resolveType symInfo.typ with
+                            | TypeId.Fn(expectedArgs, expectedRet) when expectedArgs.Length = allArgs.Length ->
+                                let argsMatch =
+                                    List.zip allArgs expectedArgs
+                                    |> List.forall (fun (actualArg, expectedArg) -> typeEnv.canUnify actualArg.typ expectedArg)
+                                if argsMatch then
+                                    Some (resolvedCallable, expectedRet)
+                                else
+                                    None
+                            | _ -> None
+                        | None -> None
                     | Hir.Callable.NativeConstructor ctorInfo ->
                         if ctorInfo.DeclaringType.IsAbstract then
                             None
@@ -921,7 +936,18 @@ module Analyze =
                     | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, resolvedTid, memberAccessExpr.span))
                     | _ -> Result.Error (sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
                 | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName sysType.FullName)
-                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName sysType.FullName)
+                | members ->
+                    let methodInfos =
+                        members
+                        |> List.choose (fun (memberInfo, _) ->
+                            match memberInfo with
+                            | :? MethodInfo as methodInfo -> Some methodInfo
+                            | _ -> None)
+
+                    if methodInfos.Length = members.Length then
+                        Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, None, tid, memberAccessExpr.span))
+                    else
+                        Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName sysType.FullName)
 
             let resolveFromSymInfo (typeName: obj) (symInfo: SymbolInfo) : Result<Hir.Expr, string> =
                 match symInfo.kind with
@@ -974,7 +1000,17 @@ module Analyze =
                                 | [] ->
                                     Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                 | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                            | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                            | members ->
+                                let methodInfos =
+                                    members
+                                    |> List.choose (fun (memberInfo, _) ->
+                                        match memberInfo with
+                                        | :? MethodInfo as methodInfo -> Some methodInfo
+                                        | _ -> None)
+                                if methodInfos.Length = members.Length then
+                                    Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some receiver, tid, memberAccessExpr.span))
+                                else
+                                    Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                         | None ->
                             match typeEnv.resolveType receiver.typ with
                             | TypeId.Name receiverTypeSid ->
@@ -990,7 +1026,11 @@ module Analyze =
                                     | None ->
                                         match dataTypeDef.methods |> Map.tryFind memberAccessExpr.memberName with
                                         | Some (methodSid, methodType) ->
-                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, methodType, memberAccessExpr.span))
+                                            let boundMethodType =
+                                                match methodType with
+                                                | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
+                                                | _ -> methodType
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, boundMethodType, memberAccessExpr.span))
                                         | None ->
                                             Result.Error (sprintf "Undefined member '%s' for data type" memberAccessExpr.memberName)
                                 | None ->
@@ -1031,7 +1071,17 @@ module Analyze =
                             | [] ->
                                 Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                             | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                        | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                        | members ->
+                            let methodInfos =
+                                members
+                                |> List.choose (fun (memberInfo, _) ->
+                                    match memberInfo with
+                                    | :? MethodInfo as methodInfo -> Some methodInfo
+                                    | _ -> None)
+                            if methodInfos.Length = members.Length then
+                                Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some receiver, tid, memberAccessExpr.span))
+                            else
+                                Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                     | None ->
                         match typeEnv.resolveType receiver.typ with
                         | TypeId.Name receiverTypeSid ->
@@ -1047,7 +1097,11 @@ module Analyze =
                                 | None ->
                                     match dataTypeDef.methods |> Map.tryFind memberAccessExpr.memberName with
                                     | Some (methodSid, methodType) ->
-                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, methodType, memberAccessExpr.span))
+                                        let boundMethodType =
+                                            match methodType with
+                                            | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
+                                            | _ -> methodType
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, boundMethodType, memberAccessExpr.span))
                                     | None ->
                                         Result.Error (sprintf "Undefined member '%s' for data type" memberAccessExpr.memberName)
                             | None ->
@@ -1083,7 +1137,17 @@ module Analyze =
                                     | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, memberType, staticAccessExpr.span))
                                     | _ -> Result.Error (sprintf "Unsupported member type for '%s.%s'" staticAccessExpr.typeName staticAccessExpr.memberName)
                                 | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
-                                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
+                                | members ->
+                                    let methodInfos =
+                                        members
+                                        |> List.choose (fun (memberInfo, _) ->
+                                            match memberInfo with
+                                            | :? MethodInfo as methodInfo -> Some methodInfo
+                                            | _ -> None)
+                                    if methodInfos.Length = members.Length then
+                                        Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, None, tid, staticAccessExpr.span))
+                                    else
+                                        Result.Error (sprintf "Ambiguous member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
                         | _ -> Result.Error (sprintf "Type '%s' is not a system type" staticAccessExpr.typeName)
                     | None -> Result.Error (sprintf "Undefined type symbol '%s'" staticAccessExpr.typeName)
                 | Some _ -> Result.Error (sprintf "Unsupported type id for '%s'" staticAccessExpr.typeName)
@@ -1214,6 +1278,13 @@ module Analyze =
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.NativeMethod methodInfo, _, _, _) ->
                     let message = sprintf "Method '%s' is not assignable" methodInfo.Name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                | Hir.Expr.MemberAccess (Hir.Member.NativeMethodGroup methodInfos, _, _, _) ->
+                    let methodName =
+                        match methodInfos with
+                        | head :: _ -> head.Name
+                        | [] -> memberTarget.memberName
+                    let message = sprintf "Method group '%s' is not assignable" methodName
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.DataMethod _, _, _, _) ->
                     let message = "Method is not assignable"

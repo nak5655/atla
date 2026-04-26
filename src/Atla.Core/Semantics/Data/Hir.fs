@@ -23,6 +23,7 @@ module Hir =
         | NativeField of FieldInfo
         | NativeProperty of PropertyInfo
         | NativeMethod of MethodInfo
+        | NativeMethodGroup of MethodInfo list
         | DataField of typeSid: SymbolId * fieldSid: SymbolId
         | DataMethod of typeSid: SymbolId * methodSid: SymbolId
 
