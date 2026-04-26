@@ -476,6 +476,7 @@ module Analyze =
         | Hir.Expr.MemberAccess (memberInfo, _, _, _) ->
             match memberInfo with
             | Hir.Member.NativeMethod methodInfo -> Some (Hir.Callable.NativeMethod methodInfo)
+            | Hir.Member.NativeMethodGroup methodInfos -> Some (Hir.Callable.NativeMethodGroup methodInfos)
             | Hir.Member.DataMethod (_, methodSid) -> Some (Hir.Callable.Fn methodSid)
             | _ -> None
         | _ -> None
@@ -610,7 +611,30 @@ module Analyze =
                     | _ -> sprintf "Undefined variable '%s'" idExpr.name
 
                 Hir.Expr.ExprError(errorMessage, tid, idExpr.span)
-            | _ -> Hir.Expr.ExprError(sprintf "Ambiguous variable '%s'" idExpr.name, tid, idExpr.span)
+            | sids ->
+                // 同名候補が複数ある場合は期待型との単一化可否で候補を絞り込む。
+                // これにより、同名ビルトイン演算子（Int/Float）の解決を決定的に行う。
+                let typedCandidates =
+                    sids
+                    |> List.choose (fun sid ->
+                        match nameEnv.resolveSym sid with
+                        | Some symInfo when typeEnv.canUnify tid symInfo.typ -> Some (sid, symInfo)
+                        | _ -> None)
+
+                match typedCandidates with
+                | [sid, symInfo] ->
+                    match symInfo.kind with
+                    | SymbolKind.External(ExternalBinding.NativeMethodGroup _)
+                    | SymbolKind.External(ExternalBinding.ConstructorGroup _) ->
+                        Hir.Expr.Id(sid, tid, idExpr.span)
+                    | _ ->
+                        match unifyOrError nameEnv typeEnv tid symInfo.typ idExpr.span with
+                        | Result.Ok _ -> Hir.Expr.Id(sid, symInfo.typ, idExpr.span)
+                        | Result.Error exprErr -> exprErr
+                | [] ->
+                    Hir.Expr.ExprError(sprintf "No overload matched for '%s'" idExpr.name, tid, idExpr.span)
+                | _ ->
+                    Hir.Expr.ExprError(sprintf "Ambiguous variable '%s'" idExpr.name, tid, idExpr.span)
         | :? Ast.Expr.GenericApply as genericApplyExpr ->
             let genericArgResolutionResult = resolveGenericTypeArgs nameEnv genericApplyExpr
             match genericArgResolutionResult with
@@ -683,6 +707,23 @@ module Analyze =
                     let instanceOffset = if methodInfo.IsStatic then 0 else 1
                     max 0 (allArgs.Length - instanceOffset)
 
+                // 呼び出し時の実引数に対応する論理パラメータ型列を返す。
+                // インスタンスメソッドは先頭に receiver 型を補う。
+                let suppliedParameterTypes (methodInfo: MethodInfo) : TypeId list =
+                    let parameterTypes =
+                        methodInfo.GetParameters()
+                        |> Array.toList
+                        |> List.map (fun p -> TypeId.fromSystemType p.ParameterType)
+
+                    let logicalParameterTypes =
+                        if methodInfo.IsStatic then
+                            parameterTypes
+                        else
+                            TypeId.fromSystemType methodInfo.DeclaringType :: parameterTypes
+
+                    let suppliedCount = min logicalParameterTypes.Length allArgs.Length
+                    logicalParameterTypes |> List.take suppliedCount
+
                 let canApplyWithOptionalDefaults (methodInfo: MethodInfo) =
                     let parameters = methodInfo.GetParameters()
                     let suppliedCount = suppliedParameterCount methodInfo
@@ -693,22 +734,54 @@ module Analyze =
                         |> Array.skip suppliedCount
                         |> Array.forall (fun p -> p.IsOptional && (tryDefaultArgExpr p applyExpr.span |> Option.isSome))
 
+                // method 候補が実引数型と期待戻り型に適合するか判定する。
+                let methodMatchesTypes (methodInfo: MethodInfo) : bool =
+                    let suppliedTypes = suppliedParameterTypes methodInfo
+                    if suppliedTypes.Length <> allArgs.Length then
+                        false
+                    else
+                        let argsMatch =
+                            List.zip allArgs suppliedTypes
+                            |> List.forall (fun (actualArg, expectedType) -> typeEnv.canUnify actualArg.typ expectedType)
+
+                        if not argsMatch then
+                            false
+                        else
+                            let expectedReturnType = TypeId.fromSystemType methodInfo.ReturnType
+                            typeEnv.canUnify callRetType expectedReturnType
+
+                // 同一スコア候補が複数ある場合は曖昧として扱うため、最高スコアの候補を返す。
+                let tryPickBestMethod (methods: MethodInfo list) : MethodInfo option =
+                    let scoreMethod (methodInfo: MethodInfo) =
+                        let suppliedTypes = suppliedParameterTypes methodInfo
+                        List.zip allArgs suppliedTypes
+                        |> List.sumBy (fun (actualArg, expectedType) ->
+                            if typeEnv.resolveType actualArg.typ = typeEnv.resolveType expectedType then 2 else 1)
+
+                    let scored = methods |> List.map (fun methodInfo -> methodInfo, scoreMethod methodInfo)
+                    match scored with
+                    | [] -> None
+                    | _ ->
+                        let bestScore = scored |> List.maxBy snd |> snd
+                        let bestMethods = scored |> List.filter (fun (_, score) -> score = bestScore) |> List.map fst
+                        match bestMethods with
+                        | [methodInfo] -> Some methodInfo
+                        | _ -> None
+
                 let resolvedCall =
                     match resolvedCallable with
                     | Hir.Callable.NativeMethodGroup methods ->
-                        let exactArity =
+                        let typeCompatible =
                             methods
-                            |> List.filter (fun methodInfo -> methodInfo.GetParameters().Length = suppliedParameterCount methodInfo)
+                            |> List.filter (fun methodInfo ->
+                                let suppliedCount = suppliedParameterCount methodInfo
+                                let parameterCount = methodInfo.GetParameters().Length
+                                (parameterCount = suppliedCount || (parameterCount > suppliedCount && canApplyWithOptionalDefaults methodInfo))
+                                && methodMatchesTypes methodInfo)
 
-                        let optionalArity =
-                            methods
-                            |> List.filter (fun methodInfo -> methodInfo.GetParameters().Length > suppliedParameterCount methodInfo)
-                            |> List.filter canApplyWithOptionalDefaults
-
-                        match exactArity, optionalArity with
-                        | [methodInfo], _ -> Some (Hir.Callable.NativeMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
-                        | [], [methodInfo] -> Some (Hir.Callable.NativeMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
-                        | _ -> None
+                        match tryPickBestMethod typeCompatible with
+                        | Some methodInfo -> Some (Hir.Callable.NativeMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
+                        | None -> None
                     | Hir.Callable.NativeConstructorGroup ctors ->
                         let exactArity =
                             ctors
@@ -738,6 +811,20 @@ module Analyze =
                             Some (resolvedCallable, TypeId.fromSystemType methodInfo.ReturnType)
                         else
                             None
+                    | Hir.Callable.Fn sid ->
+                        match nameEnv.resolveSym sid with
+                        | Some symInfo ->
+                            match typeEnv.resolveType symInfo.typ with
+                            | TypeId.Fn(expectedArgs, expectedRet) when expectedArgs.Length = allArgs.Length ->
+                                let argsMatch =
+                                    List.zip allArgs expectedArgs
+                                    |> List.forall (fun (actualArg, expectedArg) -> typeEnv.canUnify actualArg.typ expectedArg)
+                                if argsMatch then
+                                    Some (resolvedCallable, expectedRet)
+                                else
+                                    None
+                            | _ -> None
+                        | None -> None
                     | Hir.Callable.NativeConstructor ctorInfo ->
                         if ctorInfo.DeclaringType.IsAbstract then
                             None
@@ -849,7 +936,18 @@ module Analyze =
                     | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, resolvedTid, memberAccessExpr.span))
                     | _ -> Result.Error (sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
                 | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName sysType.FullName)
-                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName sysType.FullName)
+                | members ->
+                    let methodInfos =
+                        members
+                        |> List.choose (fun (memberInfo, _) ->
+                            match memberInfo with
+                            | :? MethodInfo as methodInfo -> Some methodInfo
+                            | _ -> None)
+
+                    if methodInfos.Length = members.Length then
+                        Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, None, tid, memberAccessExpr.span))
+                    else
+                        Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName sysType.FullName)
 
             let resolveFromSymInfo (typeName: obj) (symInfo: SymbolInfo) : Result<Hir.Expr, string> =
                 match symInfo.kind with
@@ -902,7 +1000,17 @@ module Analyze =
                                 | [] ->
                                     Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                 | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                            | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                            | members ->
+                                let methodInfos =
+                                    members
+                                    |> List.choose (fun (memberInfo, _) ->
+                                        match memberInfo with
+                                        | :? MethodInfo as methodInfo -> Some methodInfo
+                                        | _ -> None)
+                                if methodInfos.Length = members.Length then
+                                    Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some receiver, tid, memberAccessExpr.span))
+                                else
+                                    Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                         | None ->
                             match typeEnv.resolveType receiver.typ with
                             | TypeId.Name receiverTypeSid ->
@@ -918,7 +1026,11 @@ module Analyze =
                                     | None ->
                                         match dataTypeDef.methods |> Map.tryFind memberAccessExpr.memberName with
                                         | Some (methodSid, methodType) ->
-                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, methodType, memberAccessExpr.span))
+                                            let boundMethodType =
+                                                match methodType with
+                                                | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
+                                                | _ -> methodType
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, boundMethodType, memberAccessExpr.span))
                                         | None ->
                                             Result.Error (sprintf "Undefined member '%s' for data type" memberAccessExpr.memberName)
                                 | None ->
@@ -959,7 +1071,17 @@ module Analyze =
                             | [] ->
                                 Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                             | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                        | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                        | members ->
+                            let methodInfos =
+                                members
+                                |> List.choose (fun (memberInfo, _) ->
+                                    match memberInfo with
+                                    | :? MethodInfo as methodInfo -> Some methodInfo
+                                    | _ -> None)
+                            if methodInfos.Length = members.Length then
+                                Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some receiver, tid, memberAccessExpr.span))
+                            else
+                                Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                     | None ->
                         match typeEnv.resolveType receiver.typ with
                         | TypeId.Name receiverTypeSid ->
@@ -975,7 +1097,11 @@ module Analyze =
                                 | None ->
                                     match dataTypeDef.methods |> Map.tryFind memberAccessExpr.memberName with
                                     | Some (methodSid, methodType) ->
-                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, methodType, memberAccessExpr.span))
+                                        let boundMethodType =
+                                            match methodType with
+                                            | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
+                                            | _ -> methodType
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(dataTypeDef.typeSid, methodSid), Some receiver, boundMethodType, memberAccessExpr.span))
                                     | None ->
                                         Result.Error (sprintf "Undefined member '%s' for data type" memberAccessExpr.memberName)
                             | None ->
@@ -1011,7 +1137,17 @@ module Analyze =
                                     | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, memberType, staticAccessExpr.span))
                                     | _ -> Result.Error (sprintf "Unsupported member type for '%s.%s'" staticAccessExpr.typeName staticAccessExpr.memberName)
                                 | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
-                                | _ -> Result.Error (sprintf "Ambiguous member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
+                                | members ->
+                                    let methodInfos =
+                                        members
+                                        |> List.choose (fun (memberInfo, _) ->
+                                            match memberInfo with
+                                            | :? MethodInfo as methodInfo -> Some methodInfo
+                                            | _ -> None)
+                                    if methodInfos.Length = members.Length then
+                                        Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, None, tid, staticAccessExpr.span))
+                                    else
+                                        Result.Error (sprintf "Ambiguous member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
                         | _ -> Result.Error (sprintf "Type '%s' is not a system type" staticAccessExpr.typeName)
                     | None -> Result.Error (sprintf "Undefined type symbol '%s'" staticAccessExpr.typeName)
                 | Some _ -> Result.Error (sprintf "Unsupported type id for '%s'" staticAccessExpr.typeName)
@@ -1142,6 +1278,13 @@ module Analyze =
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.NativeMethod methodInfo, _, _, _) ->
                     let message = sprintf "Method '%s' is not assignable" methodInfo.Name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                | Hir.Expr.MemberAccess (Hir.Member.NativeMethodGroup methodInfos, _, _, _) ->
+                    let methodName =
+                        match methodInfos with
+                        | head :: _ -> head.Name
+                        | [] -> memberTarget.memberName
+                    let message = sprintf "Method group '%s' is not assignable" methodName
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.DataMethod _, _, _, _) ->
                     let message = "Method is not assignable"

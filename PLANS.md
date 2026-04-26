@@ -17,6 +17,57 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-26): 単項マイナス + Float ビルトイン演算子対応
+
+#### ミッション
+- `-1.0` / `-x` などの単項マイナスを Parser で受理し、決定的に AST へ正規化する。
+- 既存のビルトイン算術演算子に Float 系シグネチャを追加し、`Float` 計算が意味解析を通過できるようにする。
+- 既存の AST -> Semantic Analysis -> HIR 契約を維持し、下流フェーズ契約を変更しない。
+
+#### 実行ステップ
+1. Parser に単項マイナス解析レイヤーを導入し、負の数値リテラルと一般式（`-expr`）を受理する。
+2. 既存の二項演算パースに単項マイナスレイヤーを接続し、演算子優先順位を維持する。
+3. SymbolTable のビルトイン演算子定義へ Float 用シグネチャ（`+ - * / ==`）を追加する。
+4. 同名演算子の複数シンボルに対して、期待型で候補を絞り込めるように名前解決ロジックを調整する。
+5. Parser/Semantics テストに単項マイナス・Float 演算ケースを追加する。
+6. `examples/data` を再ビルドして再現エラーが解消したことを確認する。
+7. フルテストスイートを実行し、既存仕様の非退行を確認する。
+
+### アクティブタスク (2026-04-26): 呼び出し時オーバーロード解決の型適合化
+
+#### ミッション
+- `NativeMethodGroup` 呼び出し時の候補選択を arity 優先のみから型適合優先へ拡張し、`Console'WriteLine` のような多重オーバーロードを決定的に解決する。
+- `Ast.Expr.Id` 側の同名候補絞り込みとの一貫性を確保し、診断（No match / Ambiguous）を安定化する。
+
+#### 実行ステップ
+1. Analyze の `Apply` 経路に「引数型 + 返り値期待型」で method 候補を評価するヘルパーを導入する。
+2. optional 引数は型適合判定と整合する形で補助的に扱い、既存機能を維持する。
+3. `NativeMethodGroup` 選択で型適合スコアを用いた一意選択を実装し、同点候補は曖昧診断へフォールバックする。
+4. `Console'WriteLine` を使う回帰テストを追加し、`examples/data` を元の出力コードへ戻してビルドを検証する。
+5. フルテストスイートを実行して既存パイプライン不変条件の非退行を確認する。
+
+### アクティブタスク (2026-04-26): `examples/data` の出力行復元
+
+#### ミッション
+- `examples/data/src/main.atla` の `Console'WriteLine` 呼び出しを復元し、前回変更で導入された `_evaluated` 束縛への置換を取り消す。
+
+#### 実行ステップ
+1. `main` 末尾行を `5.0 line'evaluate. Console'WriteLine.` へ戻す。
+2. `examples/data` のビルド挙動を確認する。
+
+### アクティブタスク (2026-04-26): MemberAccess の NativeMethodGroup 保持
+
+#### ミッション
+- MemberAccess 段階で複数 Native メソッド候補が存在する場合に即時 Ambiguous へ落とさず、`Hir.Member` として method-group を保持して Apply 段階で最終選択する。
+- `Console'WriteLine` のような多重オーバーロードで、実引数型確定後の決定的解決を可能にする。
+
+#### 実行ステップ
+1. `Hir.Member` へ `NativeMethodGroup of MethodInfo list` ケースを追加する。
+2. Analyze の MemberAccess 解決で、method 候補が複数件のとき `NativeMethodGroup` を返す経路を実装する。
+3. `exprAsCallable` で `Member.NativeMethodGroup` を `Callable.NativeMethodGroup` へ変換する。
+4. 既存の Apply 側 overload 選択ロジックを再利用して最終候補を確定する。
+5. `Console'WriteLine` を含む回帰テストと `examples/data` ビルドで動作確認する。
+
 ### アクティブエピック (2026-04-24): ドット専用呼び出し + アポストロフィメンバーアクセス
 
 #### ミッション
