@@ -37,6 +37,9 @@ async function tryActivate(context: vscode.ExtensionContext) {
         run,
         debug: run,
     };
+    // Atla ファイルで `'` 入力時に補完 UI を開くフックを登録する
+    context.subscriptions.push(registerApostropheCompletionTrigger());
+
     // LSPとの通信に使うリクエストを定義
     const clientOptions: lc.LanguageClientOptions = {
         // 対象とするファイルの種類や拡張子
@@ -46,6 +49,24 @@ async function tryActivate(context: vscode.ExtensionContext) {
         revealOutputChannelOn: lc.RevealOutputChannelOn.Never,
         initializationOptions: {},
         progressOnInitialization: true,
+        // 旧仕様の `.` トリガー補完を抑止し、手動補完は維持する
+        middleware: {
+            provideCompletionItem: async (
+                document,
+                position,
+                context,
+                token,
+                next,
+            ) => {
+                if (
+                    context.triggerKind === vscode.CompletionTriggerKind.TriggerCharacter &&
+                    context.triggerCharacter === '.'
+                ) {
+                    return [];
+                }
+                return next(document, position, context, token);
+            },
+        },
     };
 
     try {
@@ -65,6 +86,27 @@ async function tryActivate(context: vscode.ExtensionContext) {
         null,
         context.subscriptions,
     );
+}
+
+// Atla ドキュメントで `'` が入力されたら補完を開始する
+function registerApostropheCompletionTrigger(): vscode.Disposable {
+    return vscode.workspace.onDidChangeTextDocument(async (event) => {
+        if (event.document.languageId !== 'atla' || event.contentChanges.length !== 1) {
+            return;
+        }
+
+        const [change] = event.contentChanges;
+        if (change.text !== '\'' || change.rangeLength > 0) {
+            return;
+        }
+
+        const editor = vscode.window.activeTextEditor;
+        if (editor === undefined || editor.document.uri.toString() !== event.document.uri.toString()) {
+            return;
+        }
+
+        await vscode.commands.executeCommand('editor.action.triggerSuggest');
+    });
 }
 
 export async function deactivate(): Promise<void> {
