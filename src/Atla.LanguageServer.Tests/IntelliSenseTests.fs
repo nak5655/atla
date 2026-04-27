@@ -52,6 +52,35 @@ module IntelliSenseTests =
         Assert.NotNull(computeItem.Value.detail)
         Assert.NotEmpty(computeItem.Value.detail)
 
+    [<Fact>]
+    let ``GetCompletions on apostrophe returns receiver type members only`` () =
+        let source = "import System'Console\nfn main (): () = do\n    \"Hello, World!\" Console'"
+        let server = makeServerWithSource "file:///tmp/completion-incomplete.atla" source
+        let result = server.GetCompletions("file:///tmp/completion-incomplete.atla", 2, 28)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.NotEmpty(names)
+        Assert.Contains("WriteLine", names)
+        Assert.DoesNotContain("main", names)
+
+    [<Fact>]
+    let ``GetCompletions narrows by lexical position and excludes future let bindings`` () =
+        let source = "fn main: Int = do\n  let first = 1\n  fir\n  let second = 2\n  first"
+        let server = makeServerWithSource "file:///tmp/completion-scope.atla" source
+        // 行2・列4 (`fir` 位置) は `second` の宣言より前。
+        let result = server.GetCompletions("file:///tmp/completion-scope.atla", 2, 4)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("first", names)
+        Assert.DoesNotContain("second", names)
+
+    [<Fact>]
+    let ``GetCompletions without apostrophe includes visible vars and visible types`` () =
+        let source = "import System'Console\nfn main (): Int = do\n  let value = 1\n  value"
+        let server = makeServerWithSource "file:///tmp/completion-vars-types.atla" source
+        let result = server.GetCompletions("file:///tmp/completion-vars-types.atla", 3, 3)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("value", names)
+        Assert.Contains("Console", names)
+
     // -----------------------------------------------------------------------
     // GetHover
     // -----------------------------------------------------------------------

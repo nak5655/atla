@@ -44,6 +44,11 @@ All changes must preserve semantic equivalence across lowering stages and keep p
 - Pattern matches must be exhaustive.
 - Phase functions must be total on valid input domains.
 
+### Change policy (AI execution priority)
+- Backward compatibility is not required. Breaking changes are explicitly allowed when they improve correctness, architecture, or maintainability.
+- If current code contains defects or structurally inappropriate responsibilities, better designs/proposals must be prioritized and may replace existing implementations.
+- Any code made obsolete by breaking changes must be deleted. Do not leave dead paths, compatibility shims, or unused branches behind.
+
 ---
 
 ## 3) Execution Plan Workflow (Required per change)
