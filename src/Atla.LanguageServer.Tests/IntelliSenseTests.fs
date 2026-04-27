@@ -43,6 +43,29 @@ module IntelliSenseTests =
         Assert.Empty(result.items)
 
     [<Fact>]
+    let ``GetCompletions falls back to object members for apostrophe context without cache`` () =
+        let uri = "file:///tmp/no-cache-member.atla"
+        let server = Server(fun _ _ -> ())
+        // パース不能テキストを直接開き、キャッシュ未生成状態を作る。
+        server.IsAvailablePublishDiagnostics <- true
+        server.OpenDocument(uri, "fn main: Int = value'")
+        let result = server.GetCompletions(uri, 0, 21)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("ToString", names)
+
+    [<Fact>]
+    let ``GetCompletions resolves static members from imports without cache`` () =
+        let uri = "file:///tmp/no-cache-console.atla"
+        let server = Server(fun _ _ -> ())
+        // import は有効だが本文が未完成な状態でも、Console の static メンバーを出せることを検証する。
+        server.IsAvailablePublishDiagnostics <- true
+        let source = "import System'Console\n\nfn main: () = do\n    \"Hello, World!\" Console'"
+        server.OpenDocument(uri, source)
+        let result = server.GetCompletions(uri, 3, 28)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("WriteLine", names)
+
+    [<Fact>]
     let ``GetCompletions items have kind and detail fields`` () =
         let server = makeServerWithSource "file:///tmp/completion-detail.atla" "fn compute: Int = 1"
         let result = server.GetCompletions("file:///tmp/completion-detail.atla", 0, 10)
@@ -51,6 +74,51 @@ module IntelliSenseTests =
         // detail（型文字列）が空でないこと。
         Assert.NotNull(computeItem.Value.detail)
         Assert.NotEmpty(computeItem.Value.detail)
+
+    [<Fact>]
+    let ``GetCompletions filters candidates by identifier prefix at cursor`` () =
+        let source = "fn greet: Int = 1\nfn gone: Int = 2\nfn main: Int = 0"
+        let server = makeServerWithSource "file:///tmp/completion-prefix.atla" source
+        // 行0・列8 は `greet` 識別子の `gre` 末尾位置。
+        let result = server.GetCompletions("file:///tmp/completion-prefix.atla", 0, 8)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("greet", names)
+        Assert.DoesNotContain("gone", names)
+
+    [<Fact>]
+    let ``GetCompletions returns native member candidates after apostrophe input`` () =
+        let uri = "file:///tmp/completion-member.atla"
+        let validSource = "fn compute: Int = 1\nfn main: Int = compute."
+        let server = makeServerWithSource uri validSource
+        // 入力途中の `compute'` はパース不能だが、直前の成功キャッシュで補完できることを期待する。
+        server.ChangeDocument(uri, "fn compute: Int = 1\nfn main: Int = compute'")
+        let result = server.GetCompletions(uri, 1, 23)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("Invoke", names)
+
+    [<Fact>]
+    let ``GetCompletions includes static native members for imported type receivers`` () =
+        let uri = "file:///tmp/completion-console.atla"
+        let validSource = "import System'Console\nfn main: () = do\n  \"Hello, World!\" Console'WriteLine."
+        let server = makeServerWithSource uri validSource
+        // 入力途中の `Console'` でも static メンバー候補が表示されること。
+        let incompleteSource = "import System'Console\nfn main: () = do\n  \"Hello, World!\" Console'"
+        server.ChangeDocument(uri, incompleteSource)
+        let result = server.GetCompletions(uri, 2, 26)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("WriteLine", names)
+
+    [<Fact>]
+    let ``GetCompletions keeps last successful cache on parse errors`` () =
+        let uri = "file:///tmp/completion-cache.atla"
+        let validSource = "fn compute: Int = 1"
+        let server = makeServerWithSource uri validSource
+        let beforeError = server.GetCompletions(uri, 0, 0)
+        Assert.NotEmpty(beforeError.items)
+        // ぶら下がりアポストロフィで意図的にパースエラーを作る。
+        server.ChangeDocument(uri, "fn compute: Int = 1\n'")
+        let afterError = server.GetCompletions(uri, 0, 0)
+        Assert.NotEmpty(afterError.items)
 
     // -----------------------------------------------------------------------
     // GetHover

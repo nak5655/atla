@@ -28,6 +28,30 @@ module SemanticTokensTests =
         Assert.False(result.capabilities.documentHighlightProvider)
 
     [<Fact>]
+    let ``initialize completion trigger characters exclude dot and include apostrophe`` () =
+        let server = Server()
+        let content = JObject.Parse("""
+        {
+          "params": {
+            "capabilities": {
+              "textDocument": {
+                "semanticTokens": { "tokenTypes": ["keyword", "number", "string", "variable", "type"] },
+                "publishDiagnostics": { "relatedInformation": true }
+              }
+            }
+          }
+        }
+        """)
+
+        let result = server.Initialize(content)
+        let completionProvider = result.capabilities.completionProvider
+
+        Assert.NotNull(completionProvider)
+        Assert.NotNull(completionProvider.triggerCharacters)
+        Assert.Contains("'", completionProvider.triggerCharacters)
+        Assert.DoesNotContain(".", completionProvider.triggerCharacters)
+
+    [<Fact>]
     let ``internal tokenize returns data for simple program`` () =
         let server = Server()
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]

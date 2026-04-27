@@ -7,6 +7,31 @@ import { activateTaskProvider } from './tasks';
 
 let client: lc.LanguageClient;
 
+/**
+ * 入力変更イベントから補完 UI を自動起動するべきかを判定する。
+ * `.` 入力は補完トリガー対象から除外する。
+ */
+function shouldTriggerSuggestOnInput(event: vscode.TextDocumentChangeEvent): boolean {
+    if (event.document.languageId !== 'atla') {
+        return false;
+    }
+    if (event.contentChanges.length !== 1) {
+        return false;
+    }
+
+    const change = event.contentChanges[0];
+    if (change.text.length !== 1) {
+        return false;
+    }
+
+    const ch = change.text;
+    if (ch === '.') {
+        return false;
+    }
+
+    return /^[A-Za-z0-9_']$/.test(ch);
+}
+
 // 拡張機能が有効になったときに呼ばれる
 export async function activate(context: vscode.ExtensionContext) {
     await tryActivate(context).catch((err) => {
@@ -64,6 +89,23 @@ async function tryActivate(context: vscode.ExtensionContext) {
         (_) => client.sendNotification('workspace/didChangeConfiguration', { settings: '' }),
         null,
         context.subscriptions,
+    );
+
+    // 入力中に補完候補を表示する。
+    // `.` 入力は対象外（ユーザー要件）として、識別子/`'` 入力時のみ起動する。
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument((event) => {
+            if (!shouldTriggerSuggestOnInput(event)) {
+                return;
+            }
+
+            const activeEditor = vscode.window.activeTextEditor;
+            if (activeEditor === undefined || activeEditor.document.uri.toString() !== event.document.uri.toString()) {
+                return;
+            }
+
+            void vscode.commands.executeCommand('editor.action.triggerSuggest');
+        }),
     );
 }
 

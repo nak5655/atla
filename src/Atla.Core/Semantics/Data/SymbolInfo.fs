@@ -63,3 +63,9 @@ type SymbolTable() =
         match _table.TryGetValue(sid) with
         | true, info -> Some info
         | false, _ -> None
+
+    /// 登録済みシンボルを (SymbolId, SymbolInfo) の列として返す。
+    member this.Entries() : (SymbolId * SymbolInfo) list =
+        _table
+        |> Seq.map (fun kv -> kv.Key, kv.Value)
+        |> Seq.toList
