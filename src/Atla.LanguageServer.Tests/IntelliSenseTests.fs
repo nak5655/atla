@@ -43,6 +43,17 @@ module IntelliSenseTests =
         Assert.Empty(result.items)
 
     [<Fact>]
+    let ``GetCompletions falls back to object members for apostrophe context without cache`` () =
+        let uri = "file:///tmp/no-cache-member.atla"
+        let server = Server(fun _ _ -> ())
+        // パース不能テキストを直接開き、キャッシュ未生成状態を作る。
+        server.IsAvailablePublishDiagnostics <- true
+        server.OpenDocument(uri, "fn main: Int = value'")
+        let result = server.GetCompletions(uri, 0, 21)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("ToString", names)
+
+    [<Fact>]
     let ``GetCompletions items have kind and detail fields`` () =
         let server = makeServerWithSource "file:///tmp/completion-detail.atla" "fn compute: Int = 1"
         let result = server.GetCompletions("file:///tmp/completion-detail.atla", 0, 10)

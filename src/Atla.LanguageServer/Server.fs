@@ -557,14 +557,42 @@ type Server
         |> Seq.distinctBy (fun item -> item.label)
         |> Seq.toList
 
+    /// シンボルテーブルが利用できない場合の簡易ネイティブメンバー補完候補を収集する。
+    member private _.GetNativeTypeMemberCompletionsWithoutSymbols
+        (systemType: System.Type, prefix: string)
+        : CompletionItem list =
+        let bindingFlags = BindingFlags.Public ||| BindingFlags.Instance
+
+        systemType.GetMembers(bindingFlags)
+        |> Seq.choose (fun memberInfo ->
+            let memberName = memberInfo.Name
+            if prefix.Length > 0 && not (memberName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) then
+                None
+            else
+                match memberInfo with
+                | :? MethodInfo -> Some(CompletionItem(memberName, kind = CompletionItemKind.Method, detail = "native member"))
+                | :? PropertyInfo
+                | :? FieldInfo -> Some(CompletionItem(memberName, kind = CompletionItemKind.Field, detail = "native member"))
+                | _ -> None)
+        |> Seq.distinctBy (fun item -> item.label)
+        |> Seq.toList
+
     /// 補完候補リストを返す。
     /// モジュールスコープ内の全シンボルを候補として提供する。
     /// メンバーアクセス文脈（`receiver'prefix`）では receiver 型に応じたメンバー候補を返す。
     member this.GetCompletions(uri: string, line: int, character: int) : CompletionList =
+        let completionContext = this.TryGetCompletionContext(uri, line, character)
         match this.TryGetCachedSemanticState uri with
-        | None -> CompletionList(false, [])
+        | None ->
+            match completionContext with
+            | Some(MemberAccess(_, _, _, memberPrefix)) ->
+                // 直近の成功キャッシュがない場合でも `receiver'` 入力中は最低限 Object メンバーを提示する。
+                let fallbackItems = this.GetNativeTypeMemberCompletionsWithoutSymbols(typeof<obj>, memberPrefix)
+                CompletionList(false, fallbackItems)
+            | Some(ModuleScope _)
+            | None ->
+                CompletionList(false, [])
         | Some(index, symbolTable, hirAsm) ->
-            let completionContext = this.TryGetCompletionContext(uri, line, character)
             match completionContext with
             | Some(MemberAccess(receiverName, receiverLine, receiverProbeColumn, memberPrefix)) ->
                 let memberItems =
