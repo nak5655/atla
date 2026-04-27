@@ -54,6 +54,18 @@ module IntelliSenseTests =
         Assert.Contains("ToString", names)
 
     [<Fact>]
+    let ``GetCompletions resolves static members from imports without cache`` () =
+        let uri = "file:///tmp/no-cache-console.atla"
+        let server = Server(fun _ _ -> ())
+        // import は有効だが本文が未完成な状態でも、Console の static メンバーを出せることを検証する。
+        server.IsAvailablePublishDiagnostics <- true
+        let source = "import System'Console\n\nfn main: () = do\n    \"Hello, World!\" Console'"
+        server.OpenDocument(uri, source)
+        let result = server.GetCompletions(uri, 3, 28)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("WriteLine", names)
+
+    [<Fact>]
     let ``GetCompletions items have kind and detail fields`` () =
         let server = makeServerWithSource "file:///tmp/completion-detail.atla" "fn compute: Int = 1"
         let result = server.GetCompletions("file:///tmp/completion-detail.atla", 0, 10)

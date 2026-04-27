@@ -565,9 +565,15 @@ type Server
 
     /// シンボルテーブルが利用できない場合の簡易ネイティブメンバー補完候補を収集する。
     member private _.GetNativeTypeMemberCompletionsWithoutSymbols
-        (systemType: System.Type, prefix: string)
+        (systemType: System.Type, prefix: string, includeInstance: bool, includeStatic: bool)
         : CompletionItem list =
-        let bindingFlags = BindingFlags.Public ||| BindingFlags.Instance
+        let bindingFlags =
+            let mutable flags = BindingFlags.Public
+            if includeInstance then
+                flags <- flags ||| BindingFlags.Instance
+            if includeStatic then
+                flags <- flags ||| BindingFlags.Static
+            flags
 
         systemType.GetMembers(bindingFlags)
         |> Seq.choose (fun memberInfo ->
@@ -583,6 +589,51 @@ type Server
         |> Seq.distinctBy (fun item -> item.label)
         |> Seq.toList
 
+    /// キャッシュ不在時、import 行からレシーバー型名に対応する .NET 型を解決する。
+    member private _.TryResolveImportedNativeTypeWithoutCache(uri: string, receiverName: string) : System.Type option =
+        let tryResolveByFullName (fullName: string) : System.Type option =
+            AppDomain.CurrentDomain.GetAssemblies()
+            |> Seq.tryPick (fun asm ->
+                try
+                    asm.GetType(fullName, false, true) |> Option.ofObj
+                with _ ->
+                    None)
+
+        let tryResolveBySimpleName (simpleName: string) : System.Type option =
+            AppDomain.CurrentDomain.GetAssemblies()
+            |> Seq.tryPick (fun asm ->
+                try
+                    asm.GetTypes()
+                    |> Array.tryFind (fun t -> String.Equals(t.Name, simpleName, StringComparison.OrdinalIgnoreCase))
+                with _ ->
+                    None)
+
+        match tryNormalizeUri uri with
+        | None -> tryResolveBySimpleName receiverName
+        | Some key ->
+            match buffers.TryGetValue key with
+            | false, _ -> tryResolveBySimpleName receiverName
+            | true, text ->
+                let lines = normalizeForLineAccess text |> fun x -> x.Split('\n')
+                let importCandidates =
+                    lines
+                    |> Seq.choose (fun line ->
+                        let trimmed = line.Trim()
+                        if trimmed.StartsWith("import ", StringComparison.Ordinal) then
+                            let path = trimmed.Substring("import ".Length).Trim()
+                            if String.IsNullOrWhiteSpace path then
+                                None
+                            else
+                                Some(path.Replace("'", "."))
+                        else
+                            None)
+                    |> Seq.filter (fun fullPath -> fullPath.EndsWith("." + receiverName, StringComparison.OrdinalIgnoreCase))
+                    |> Seq.toList
+
+                match importCandidates |> List.tryPick tryResolveByFullName with
+                | Some resolved -> Some resolved
+                | None -> tryResolveBySimpleName receiverName
+
     /// 補完候補リストを返す。
     /// モジュールスコープ内の全シンボルを候補として提供する。
     /// メンバーアクセス文脈（`receiver'prefix`）では receiver 型に応じたメンバー候補を返す。
@@ -591,10 +642,20 @@ type Server
         match this.TryGetCachedSemanticState uri with
         | None ->
             match completionContext with
-            | Some(MemberAccess(_, _, _, memberPrefix)) ->
-                // 直近の成功キャッシュがない場合でも `receiver'` 入力中は最低限 Object メンバーを提示する。
-                let fallbackItems = this.GetNativeTypeMemberCompletionsWithoutSymbols(typeof<obj>, memberPrefix)
-                CompletionList(false, fallbackItems)
+            | Some(MemberAccess(receiverName, _, _, memberPrefix)) ->
+                // 直近の成功キャッシュがない場合は import から型解決を試み、失敗時は Object メンバーにフォールバックする。
+                let fallbackType =
+                    match this.TryResolveImportedNativeTypeWithoutCache(uri, receiverName) with
+                    | Some resolvedType -> resolvedType
+                    | None -> typeof<obj>
+                let includeInstance = fallbackType = typeof<obj>
+                let includeStatic = not includeInstance
+                let fallbackItems =
+                    this.GetNativeTypeMemberCompletionsWithoutSymbols(fallbackType, memberPrefix, includeInstance, includeStatic)
+                if fallbackItems.IsEmpty then
+                    CompletionList(false, this.GetNativeTypeMemberCompletionsWithoutSymbols(typeof<obj>, memberPrefix, true, false))
+                else
+                    CompletionList(false, fallbackItems)
             | Some(ModuleScope _)
             | None ->
                 CompletionList(false, [])
