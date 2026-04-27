@@ -21,6 +21,29 @@ module ServerLifecycleTests =
         sprintf "file://%s" normalizedPathForOs
 
     [<Fact>]
+    let ``initialize sets completion trigger to apostrophe only`` () =
+        let server = Server()
+        let content = JObject.Parse("""
+        {
+          "params": {
+            "capabilities": {
+              "textDocument": {
+                "publishDiagnostics": { "relatedInformation": true },
+                "semanticTokens": { "tokenTypes": ["keyword", "number", "string", "variable", "type"] }
+              }
+            }
+          }
+        }
+        """)
+
+        let result = server.Initialize(content)
+        let resultJson = JObject.FromObject(result)
+        let triggers =
+            resultJson.["capabilities"].["completionProvider"].["triggerCharacters"].Values<string>()
+            |> Seq.toList
+        Assert.Equal<string list>(["'"], triggers)
+
+    [<Fact>]
     let ``normalize uri makes file key deterministic`` () =
         let server = Server()
 
@@ -358,4 +381,3 @@ module ServerLifecycleTests =
         List.iter2 (fun (uri1: string, count1: int) (uri2: string, count2: int) ->
             Assert.Equal(uri1, uri2)
             Assert.Equal(count1, count2)) first second
-
