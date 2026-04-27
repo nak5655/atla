@@ -528,9 +528,15 @@ type Server
 
     /// .NET ネイティブ型メンバー候補を収集する。
     member private this.GetNativeTypeMemberCompletions
-        (systemType: System.Type, symbolTable: SymbolTable, prefix: string)
+        (systemType: System.Type, symbolTable: SymbolTable, prefix: string, includeInstance: bool, includeStatic: bool)
         : CompletionItem list =
-        let bindingFlags = BindingFlags.Public ||| BindingFlags.Instance
+        let bindingFlags =
+            let mutable flags = BindingFlags.Public
+            if includeInstance then
+                flags <- flags ||| BindingFlags.Instance
+            if includeStatic then
+                flags <- flags ||| BindingFlags.Static
+            flags
 
         systemType.GetMembers(bindingFlags)
         |> Seq.choose (fun memberInfo ->
@@ -606,10 +612,10 @@ type Server
                                 if String.Equals(info.name, receiverName, StringComparison.Ordinal) then Some sid else None)
 
                     match receiverSidOpt with
-                    | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix)
+                    | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix, true, false)
                     | Some receiverSid ->
                         match symbolTable.Get receiverSid with
-                        | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix)
+                        | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix, true, false)
                         | Some receiverInfo ->
                             match receiverInfo.typ with
                             | TypeId.Name typeSid ->
@@ -622,16 +628,16 @@ type Server
                                     | Some typeInfo ->
                                         match typeInfo.kind with
                                         | SymbolKind.External(ExternalBinding.SystemTypeRef systemType) ->
-                                            this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix)
+                                            this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix, false, true)
                                         | _ -> []
                                     | None -> []
                             | TypeId.Native systemType ->
-                                this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix)
+                                this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix, true, false)
                             | primitiveOrFnType ->
                                 match TypeId.tryToRuntimeSystemType primitiveOrFnType with
                                 | Some systemType ->
-                                    this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix)
-                                | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix)
+                                    this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix, true, false)
+                                | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix, true, false)
 
                 CompletionList(false, memberItems)
             | Some(ModuleScope _)

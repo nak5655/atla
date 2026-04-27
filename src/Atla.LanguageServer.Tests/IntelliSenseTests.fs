@@ -85,6 +85,18 @@ module IntelliSenseTests =
         Assert.Contains("Invoke", names)
 
     [<Fact>]
+    let ``GetCompletions includes static native members for imported type receivers`` () =
+        let uri = "file:///tmp/completion-console.atla"
+        let validSource = "import System'Console\nfn main: () = do\n  \"Hello, World!\" Console'WriteLine."
+        let server = makeServerWithSource uri validSource
+        // 入力途中の `Console'` でも static メンバー候補が表示されること。
+        let incompleteSource = "import System'Console\nfn main: () = do\n  \"Hello, World!\" Console'"
+        server.ChangeDocument(uri, incompleteSource)
+        let result = server.GetCompletions(uri, 2, 26)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("WriteLine", names)
+
+    [<Fact>]
     let ``GetCompletions keeps last successful cache on parse errors`` () =
         let uri = "file:///tmp/completion-cache.atla"
         let validSource = "fn compute: Int = 1"
