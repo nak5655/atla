@@ -117,6 +117,11 @@ let private isIdentifierChar (ch: char) : bool =
 let private normalizeForLineAccess (text: string) : string =
     if isNull text then "" else text.Replace("\r\n", "\n").Replace("\r", "\n")
 
+/// 補完計算時の文脈（通常補完 / メンバー補完）を表す。
+type private CompletionContext =
+    | ModuleScope of prefix: string
+    | MemberAccess of receiverName: string * receiverLine: int * receiverProbeColumn: int * memberPrefix: string
+
 let private resolveServerVersion (assemblyLocation: string) : string =
     if String.IsNullOrWhiteSpace assemblyLocation then
         "0.0.0"
@@ -200,9 +205,9 @@ type Server
     let mutable workspaceRoots: string list = []
     let buffers = Dictionary<string, string>()
     let displayUris = Dictionary<string, string>()
-    /// キャッシュ: 正規化 URI → (PositionIndex, SymbolTable)。
+    /// キャッシュ: 正規化 URI → (PositionIndex, SymbolTable, Typed HIR Assembly)。
     /// コンパイルが意味解析フェーズを通過した場合に格納され、IntelliSense クエリに使用する。
-    let hirCache = Dictionary<string, PositionIndex.PositionIndex * SymbolTable>()
+    let hirCache = Dictionary<string, PositionIndex.PositionIndex * SymbolTable * Hir.Assembly>()
     let publish = defaultArg publishDiagnosticsFn publishDiagnostics
     let getAssemblyLocation =
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
@@ -256,9 +261,10 @@ type Server
                     match compileResult.hir, compileResult.symbolTable with
                     | Some hirAsm, Some symTable ->
                         let index = PositionIndex.build hirAsm
-                        hirCache[normalizedUri] <- (index, symTable)
+                        hirCache[normalizedUri] <- (index, symTable, hirAsm)
                     | _ ->
-                        hirCache.Remove normalizedUri |> ignore
+                        // 入力途中の構文エラーでも補完を維持するため、直前の成功キャッシュを保持する。
+                        ()
 
                     compileResult.diagnostics |> toLspDiagnostics "atla-compiler" |> publish displayUri
             with ex ->
@@ -429,8 +435,10 @@ type Server
 
     // ---- IntelliSense ------------------------------------------------------
 
-    /// 指定した URI の PositionIndex とシンボルテーブルをキャッシュから取得する。
-    member private _.TryGetIndex(uri: string) : (PositionIndex.PositionIndex * SymbolTable) option =
+    /// 指定した URI の PositionIndex / シンボルテーブル / HIR をキャッシュから取得する。
+    member private _.TryGetCachedSemanticState
+        (uri: string)
+        : (PositionIndex.PositionIndex * SymbolTable * Hir.Assembly) option =
         match tryNormalizeUri uri with
         | None -> None
         | Some key ->
@@ -438,9 +446,8 @@ type Server
             | true, entry -> Some entry
             | false, _ -> None
 
-    /// 指定位置直前の識別子プレフィックスを取得する。
-    /// 取得できない場合は `None` を返し、空文字列は「絞り込みなし」を意味する。
-    member private _.TryGetCompletionPrefix(uri: string, line: int, character: int) : string option =
+    /// 指定位置の補完文脈（通常補完 / メンバー補完）を抽出する。
+    member private _.TryGetCompletionContext(uri: string, line: int, character: int) : CompletionContext option =
         match tryNormalizeUri uri with
         | None -> None
         | Some key ->
@@ -450,7 +457,7 @@ type Server
                 let lines = normalizeForLineAccess text |> fun x -> x.Split('\n')
 
                 if line < 0 || line >= lines.Length then
-                    Some ""
+                    Some(ModuleScope "")
                 else
                     let lineText = lines.[line]
                     let cursor = min (max character 0) lineText.Length
@@ -459,48 +466,180 @@ type Server
                     while start > 0 && isIdentifierChar lineText.[start - 1] do
                         start <- start - 1
 
-                    Some(lineText.Substring(start, cursor - start))
+                    let prefix = lineText.Substring(start, cursor - start)
+                    let quoteIndex = start - 1
+
+                    if quoteIndex >= 0 && lineText.[quoteIndex] = '\'' then
+                        let mutable receiverStart = quoteIndex
+                        while receiverStart > 0 && isIdentifierChar lineText.[receiverStart - 1] do
+                            receiverStart <- receiverStart - 1
+
+                        if receiverStart < quoteIndex then
+                            // receiverProbeColumn は receiver 識別子内部の列（末尾文字）を使う。
+                            let receiverName = lineText.Substring(receiverStart, quoteIndex - receiverStart)
+                            Some(MemberAccess(receiverName, line, quoteIndex - 1, prefix))
+                        else
+                            Some(ModuleScope prefix)
+                    else
+                        Some(ModuleScope prefix)
+
+    /// 名前と型情報から補完候補 1 件を作成する。
+    member private _.BuildCompletionItem
+        (name: string, typ: TypeId, kind: CompletionItemKind option, symbolTable: SymbolTable)
+        : CompletionItem =
+        let detail = PositionIndex.formatTypeWithTable symbolTable typ
+        CompletionItem(name, ?kind = kind, detail = detail)
+
+    /// データ型メンバー候補を収集する。
+    member private this.GetDataTypeMemberCompletions
+        (typeSid: SymbolId, symbolTable: SymbolTable, hirAsm: Hir.Assembly, prefix: string)
+        : CompletionItem list =
+        let tryFindDataType () =
+            hirAsm.modules
+            |> List.collect (fun modul -> modul.types)
+            |> List.tryFind (fun typ -> typ.sym = typeSid)
+
+        match tryFindDataType () with
+        | None -> []
+        | Some dataType ->
+            let fieldItems =
+                dataType.fields
+                |> List.choose (fun field ->
+                    match symbolTable.Get field.sym with
+                    | None -> None
+                    | Some info ->
+                        if prefix.Length > 0 && not (info.name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) then
+                            None
+                        else
+                            Some(this.BuildCompletionItem(info.name, info.typ, Some CompletionItemKind.Field, symbolTable)))
+
+            let methodItems =
+                dataType.methods
+                |> List.choose (fun methodInfo ->
+                    match symbolTable.Get methodInfo.sym with
+                    | None -> None
+                    | Some info ->
+                        if prefix.Length > 0 && not (info.name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) then
+                            None
+                        else
+                            Some(this.BuildCompletionItem(info.name, info.typ, Some CompletionItemKind.Method, symbolTable)))
+
+            fieldItems @ methodItems
+
+    /// .NET ネイティブ型メンバー候補を収集する。
+    member private this.GetNativeTypeMemberCompletions
+        (systemType: System.Type, symbolTable: SymbolTable, prefix: string)
+        : CompletionItem list =
+        let bindingFlags = BindingFlags.Public ||| BindingFlags.Instance
+
+        systemType.GetMembers(bindingFlags)
+        |> Seq.choose (fun memberInfo ->
+            let memberName = memberInfo.Name
+            if prefix.Length > 0 && not (memberName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) then
+                None
+            else
+                match memberInfo with
+                | :? MethodInfo as methodInfo ->
+                    let args =
+                        methodInfo.GetParameters()
+                        |> Seq.map (fun p -> TypeId.fromSystemType p.ParameterType)
+                        |> Seq.toList
+                    let ret = TypeId.fromSystemType methodInfo.ReturnType
+                    let tid = TypeId.Fn(args, ret)
+                    Some(this.BuildCompletionItem(memberName, tid, Some CompletionItemKind.Method, symbolTable))
+                | :? PropertyInfo as propertyInfo ->
+                    let tid = TypeId.fromSystemType propertyInfo.PropertyType
+                    Some(this.BuildCompletionItem(memberName, tid, Some CompletionItemKind.Field, symbolTable))
+                | :? FieldInfo as fieldInfo ->
+                    let tid = TypeId.fromSystemType fieldInfo.FieldType
+                    Some(this.BuildCompletionItem(memberName, tid, Some CompletionItemKind.Field, symbolTable))
+                | _ -> None)
+        |> Seq.distinctBy (fun item -> item.label)
+        |> Seq.toList
 
     /// 補完候補リストを返す。
     /// モジュールスコープ内の全シンボルを候補として提供する。
-    /// カーソル位置の識別子プレフィックスがある場合は前方一致で絞り込む。
+    /// メンバーアクセス文脈（`receiver'prefix`）では receiver 型に応じたメンバー候補を返す。
     member this.GetCompletions(uri: string, line: int, character: int) : CompletionList =
-        match this.TryGetIndex uri with
+        match this.TryGetCachedSemanticState uri with
         | None -> CompletionList(false, [])
-        | Some(index, symbolTable) ->
-            let prefix =
-                match this.TryGetCompletionPrefix(uri, line, character) with
-                | Some value -> value
-                | None -> ""
+        | Some(index, symbolTable, hirAsm) ->
+            let completionContext = this.TryGetCompletionContext(uri, line, character)
+            match completionContext with
+            | Some(MemberAccess(receiverName, receiverLine, receiverProbeColumn, memberPrefix)) ->
+                let memberItems =
+                    let receiverSidOpt =
+                        match PositionIndex.tryFindSymbolAt index receiverLine receiverProbeColumn with
+                        | Some sid -> Some sid
+                        | None ->
+                            // 入力途中で位置インデックスが追随できない場合は名前でフォールバック解決する。
+                            symbolTable.Entries()
+                            |> List.tryPick (fun (sid, info) ->
+                                if String.Equals(info.name, receiverName, StringComparison.Ordinal) then Some sid else None)
 
-            let visibleVars = index.moduleScope.allVisibleVars()
-            let items =
-                visibleVars
-                |> List.choose (fun (name, sid) ->
-                    match symbolTable.Get sid with
-                    | None -> None
-                    | Some symInfo ->
-                        if prefix.Length > 0 && not (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) then
-                            None
-                        else
-                            let kind =
-                                match symInfo.kind with
-                                | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
-                                | SymbolKind.Local _ -> Some CompletionItemKind.Variable
-                                | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
-                                | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
-                                | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
-                                | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
-                            // detail: VS Code の補完 UI に型シグネチャとして表示されるテキスト。
-                            let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
-                            Some(CompletionItem(name, ?kind = kind, detail = detail)))
-            CompletionList(false, items)
+                    match receiverSidOpt with
+                    | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix)
+                    | Some receiverSid ->
+                        match symbolTable.Get receiverSid with
+                        | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix)
+                        | Some receiverInfo ->
+                            match receiverInfo.typ with
+                            | TypeId.Name typeSid ->
+                                // data 型を優先し、見つからなければ外部型（SystemTypeRef）として扱う。
+                                let dataItems = this.GetDataTypeMemberCompletions(typeSid, symbolTable, hirAsm, memberPrefix)
+                                if not dataItems.IsEmpty then
+                                    dataItems
+                                else
+                                    match symbolTable.Get typeSid with
+                                    | Some typeInfo ->
+                                        match typeInfo.kind with
+                                        | SymbolKind.External(ExternalBinding.SystemTypeRef systemType) ->
+                                            this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix)
+                                        | _ -> []
+                                    | None -> []
+                            | TypeId.Native systemType ->
+                                this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix)
+                            | primitiveOrFnType ->
+                                match TypeId.tryToRuntimeSystemType primitiveOrFnType with
+                                | Some systemType ->
+                                    this.GetNativeTypeMemberCompletions(systemType, symbolTable, memberPrefix)
+                                | None -> this.GetNativeTypeMemberCompletions(typeof<obj>, symbolTable, memberPrefix)
+
+                CompletionList(false, memberItems)
+            | Some(ModuleScope _)
+            | None ->
+                let normalizedPrefix =
+                    match completionContext with
+                    | Some(ModuleScope p) -> p
+                    | _ -> ""
+
+                let visibleVars = index.moduleScope.allVisibleVars()
+                let items =
+                    visibleVars
+                    |> List.choose (fun (name, sid) ->
+                        match symbolTable.Get sid with
+                        | None -> None
+                        | Some symInfo ->
+                            if normalizedPrefix.Length > 0 && not (name.StartsWith(normalizedPrefix, StringComparison.OrdinalIgnoreCase)) then
+                                None
+                            else
+                                let kind =
+                                    match symInfo.kind with
+                                    | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
+                                    | SymbolKind.Local _ -> Some CompletionItemKind.Variable
+                                    | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
+                                    | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
+                                    | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
+                                    | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
+                                Some(this.BuildCompletionItem(name, symInfo.typ, kind, symbolTable)))
+
+                CompletionList(false, items)
 
     /// カーソル位置にある識別子のホバー情報を返す。
     member this.GetHover(uri: string, line: int, character: int) : Hover option =
-        match this.TryGetIndex uri with
+        match this.TryGetCachedSemanticState uri with
         | None -> None
-        | Some(index, symbolTable) ->
+        | Some(index, symbolTable, _) ->
             match PositionIndex.tryFindSymbolAt index line character with
             | None -> None
             | Some sid ->
@@ -513,9 +652,9 @@ type Server
 
     /// カーソル位置にある識別子の定義位置を返す。
     member this.GetDefinition(uri: string, line: int, character: int) : Location option =
-        match this.TryGetIndex uri with
+        match this.TryGetCachedSemanticState uri with
         | None -> None
-        | Some(index, _) ->
+        | Some(index, _, _) ->
             match PositionIndex.tryFindSymbolAt index line character with
             | None -> None
             | Some sid ->

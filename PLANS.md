@@ -28,8 +28,14 @@
 1. Language Server の `initialize` 応答を更新し、`completionProvider.triggerCharacters` から `.` を除外する。
 2. `GetCompletions` でドキュメント本文とカーソル位置から識別子プレフィックスを抽出し、候補をプレフィックス一致で絞り込む。
 3. VS Code 拡張側でテキスト入力イベントを監視し、Atla 文書かつ識別子/`'` 入力時のみ `editor.action.triggerSuggest` を発火する（`.` 入力では発火しない）。
-4. Language Server テストを追加/更新し、`.` 非トリガー・`'` トリガー・プレフィックス絞り込みを検証する。
-5. 拡張の静的チェック（lint/typecheck/build）と .NET テストスイートを実行し、非退行を確認する。
+4. メンバーアクセス文脈（`receiver'prefix`）を補完コンテキストとして解釈し、receiver 型に応じたメンバー候補（data / native）を返す。
+5. 入力途中の構文エラー時に補完が途切れないよう、最新の成功 HIR キャッシュを維持する。
+6. Language Server テストを追加/更新し、`.` 非トリガー・`'` トリガー・プレフィックス絞り込み・`receiver'` 補完・構文エラー時キャッシュ維持を検証する。
+7. 拡張の静的チェック（lint/typecheck/build）と .NET テストスイートを実行し、非退行を確認する。
+
+#### Surprises & Discoveries
+- 入力中に `receiver'` で補完が出ない主因は、ぶら下がり `'` による構文エラーで HIR キャッシュを都度削除していた点だった。
+- 対策として「直前の成功キャッシュを保持して補完のみ継続」する方針にし、診断通知は従来どおり最新エラーを返す。
 
 ### アクティブタスク (2026-04-26): impl 内 `this` 省略メソッドの static 扱い
 

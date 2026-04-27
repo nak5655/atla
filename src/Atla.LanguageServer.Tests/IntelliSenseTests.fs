@@ -62,6 +62,29 @@ module IntelliSenseTests =
         Assert.Contains("greet", names)
         Assert.DoesNotContain("gone", names)
 
+    [<Fact>]
+    let ``GetCompletions returns native member candidates after apostrophe input`` () =
+        let uri = "file:///tmp/completion-member.atla"
+        let validSource = "fn compute: Int = 1\nfn main: Int = compute."
+        let server = makeServerWithSource uri validSource
+        // 入力途中の `compute'` はパース不能だが、直前の成功キャッシュで補完できることを期待する。
+        server.ChangeDocument(uri, "fn compute: Int = 1\nfn main: Int = compute'")
+        let result = server.GetCompletions(uri, 1, 23)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("Invoke", names)
+
+    [<Fact>]
+    let ``GetCompletions keeps last successful cache on parse errors`` () =
+        let uri = "file:///tmp/completion-cache.atla"
+        let validSource = "fn compute: Int = 1"
+        let server = makeServerWithSource uri validSource
+        let beforeError = server.GetCompletions(uri, 0, 0)
+        Assert.NotEmpty(beforeError.items)
+        // ぶら下がりアポストロフィで意図的にパースエラーを作る。
+        server.ChangeDocument(uri, "fn compute: Int = 1\n'")
+        let afterError = server.GetCompletions(uri, 0, 0)
+        Assert.NotEmpty(afterError.items)
+
     // -----------------------------------------------------------------------
     // GetHover
     // -----------------------------------------------------------------------
