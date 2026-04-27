@@ -1,6 +1,7 @@
 import System'Array
 import System'Console
 import System'Linq'Enumerable
+
 fn fizzbuzz (n: Int): () =
     for i in 1 Enumerable'Range. n Enumerable'Range.
         if
