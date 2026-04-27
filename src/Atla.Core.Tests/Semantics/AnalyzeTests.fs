@@ -330,6 +330,63 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Assert.True(false, $"Semantic analysis failed: {message}")
 
     [<Fact>]
+    let ``semantic analysis accepts impl method without this as static member`` () =
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let dataDecl =
+            Ast.Decl.Data(
+                "Line",
+                [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
+                span) :> Ast.Decl
+
+        let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
+        let implDecl = Ast.Decl.Impl("Line", None, None, [ oneFn ], span) :> Ast.Decl
+        let staticCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(Ast.Expr.Id("Line", span) :> Ast.Expr, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
+        let mainDecl = Ast.Decl.Fn("main", [], intType, staticCall, span) :> Ast.Decl
+
+        let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            let hasOne =
+                hirModule.methods
+                |> List.exists (fun methodInfo -> symbolTable.Get(methodInfo.sym) |> Option.exists (fun symbolInfo -> symbolInfo.name = "Line.one"))
+            Assert.True(hasOne, "impl static method symbol 'Line.one' was not found")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``semantic analysis reports instance access to static impl method`` () =
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let dataDecl =
+            Ast.Decl.Data(
+                "Line",
+                [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
+                span) :> Ast.Decl
+
+        let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
+        let implDecl = Ast.Decl.Impl("Line", None, None, [ oneFn ], span) :> Ast.Decl
+        let lineInit =
+            Ast.Expr.DataInit(
+                "Line",
+                [ Ast.DataInitField.Field("value", Ast.Expr.Int(42, span) :> Ast.Expr, span) :> Ast.DataInitField ],
+                span) :> Ast.Expr
+        let badCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(lineInit, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
+        let mainDecl = Ast.Decl.Fn("main", [], intType, badCall, span) :> Ast.Decl
+
+        let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = false } ->
+            Assert.True(true)
+        | _ ->
+            Assert.True(false, "Semantic analysis unexpectedly succeeded for instance access to static impl method")
+
+    [<Fact>]
     let ``semantic analysis reports cyclic subtype relation declared by impl for`` () =
         let source = """
 data A = { value: Int }
