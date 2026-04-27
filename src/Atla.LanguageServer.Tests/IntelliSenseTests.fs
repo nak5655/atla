@@ -52,6 +52,16 @@ module IntelliSenseTests =
         Assert.NotNull(computeItem.Value.detail)
         Assert.NotEmpty(computeItem.Value.detail)
 
+    [<Fact>]
+    let ``GetCompletions filters candidates by identifier prefix at cursor`` () =
+        let source = "fn greet: Int = 1\nfn gone: Int = 2\nfn main: Int = 0"
+        let server = makeServerWithSource "file:///tmp/completion-prefix.atla" source
+        // 行0・列8 は `greet` 識別子の `gre` 末尾位置。
+        let result = server.GetCompletions("file:///tmp/completion-prefix.atla", 0, 8)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("greet", names)
+        Assert.DoesNotContain("gone", names)
+
     // -----------------------------------------------------------------------
     // GetHover
     // -----------------------------------------------------------------------

@@ -109,6 +109,14 @@ let private tryUriToNormalizedPath (uriText: string) : string option =
     else
         None
 
+/// 補完候補のプレフィックス抽出に使う識別子文字判定。
+let private isIdentifierChar (ch: char) : bool =
+    Char.IsLetterOrDigit(ch) || ch = '_'
+
+/// 行アクセス用途で改行コード差分（LF/CRLF/CR）を吸収する。
+let private normalizeForLineAccess (text: string) : string =
+    if isNull text then "" else text.Replace("\r\n", "\n").Replace("\r", "\n")
+
 let private resolveServerVersion (assemblyLocation: string) : string =
     if String.IsNullOrWhiteSpace assemblyLocation then
         "0.0.0"
@@ -311,6 +319,7 @@ type Server
             else
                 None
 
+        // 補完トリガーは `.` を広告せず、メンバーアクセス記号 `'` を既定とする。
         let capabilities =
             ServerCapabilities(
                 false,
@@ -320,7 +329,7 @@ type Server
                     false,
                     true
                 ),
-                CompletionOptions([ "." ]),
+                CompletionOptions([ "'" ]),
                 true,
                 true
             )
@@ -429,13 +438,41 @@ type Server
             | true, entry -> Some entry
             | false, _ -> None
 
+    /// 指定位置直前の識別子プレフィックスを取得する。
+    /// 取得できない場合は `None` を返し、空文字列は「絞り込みなし」を意味する。
+    member private _.TryGetCompletionPrefix(uri: string, line: int, character: int) : string option =
+        match tryNormalizeUri uri with
+        | None -> None
+        | Some key ->
+            match buffers.TryGetValue key with
+            | false, _ -> None
+            | true, text ->
+                let lines = normalizeForLineAccess text |> fun x -> x.Split('\n')
+
+                if line < 0 || line >= lines.Length then
+                    Some ""
+                else
+                    let lineText = lines.[line]
+                    let cursor = min (max character 0) lineText.Length
+                    let mutable start = cursor
+
+                    while start > 0 && isIdentifierChar lineText.[start - 1] do
+                        start <- start - 1
+
+                    Some(lineText.Substring(start, cursor - start))
+
     /// 補完候補リストを返す。
     /// モジュールスコープ内の全シンボルを候補として提供する。
-    /// 現時点では位置情報は補完フィルタに使用しない（将来のスコープ絞り込み拡張用に保持）。
-    member this.GetCompletions(uri: string, _line: int, _character: int) : CompletionList =
+    /// カーソル位置の識別子プレフィックスがある場合は前方一致で絞り込む。
+    member this.GetCompletions(uri: string, line: int, character: int) : CompletionList =
         match this.TryGetIndex uri with
         | None -> CompletionList(false, [])
         | Some(index, symbolTable) ->
+            let prefix =
+                match this.TryGetCompletionPrefix(uri, line, character) with
+                | Some value -> value
+                | None -> ""
+
             let visibleVars = index.moduleScope.allVisibleVars()
             let items =
                 visibleVars
@@ -443,17 +480,20 @@ type Server
                     match symbolTable.Get sid with
                     | None -> None
                     | Some symInfo ->
-                        let kind =
-                            match symInfo.kind with
-                            | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
-                            | SymbolKind.Local _ -> Some CompletionItemKind.Variable
-                            | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
-                            | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
-                            | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
-                            | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
-                        // detail: VS Code の補完 UI に型シグネチャとして表示されるテキスト。
-                        let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
-                        Some(CompletionItem(name, ?kind = kind, detail = detail)))
+                        if prefix.Length > 0 && not (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) then
+                            None
+                        else
+                            let kind =
+                                match symInfo.kind with
+                                | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
+                                | SymbolKind.Local _ -> Some CompletionItemKind.Variable
+                                | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
+                                | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
+                                | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
+                                | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
+                            // detail: VS Code の補完 UI に型シグネチャとして表示されるテキスト。
+                            let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
+                            Some(CompletionItem(name, ?kind = kind, detail = detail)))
             CompletionList(false, items)
 
     /// カーソル位置にある識別子のホバー情報を返す。
