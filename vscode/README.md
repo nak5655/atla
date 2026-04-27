@@ -7,6 +7,7 @@ Provides real-time diagnostics, completions, hover information, and other Intell
 
 - Real-time error diagnostics (via LSP)
 - Code completions, hover information, and signature help
+- Auto-completion trigger on apostrophe input (`'`)
 - Build / Clean / Run tasks (VS Code task runner integration)
 - Problem matcher (displays compiler errors in the Problems panel)
 
