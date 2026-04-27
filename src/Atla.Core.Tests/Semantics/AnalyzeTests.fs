@@ -624,6 +624,7 @@ fn main (): Int = 1 2 3 add3.
                         |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
+
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
@@ -1935,3 +1936,19 @@ fn main (): () = do
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``analyzeModule returns partial hir when semantic diagnostics contain errors`` () =
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let body = Ast.Expr.Id("unknownValue", span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], intType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        let result = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
+
+        Assert.False(result.succeeded)
+        Assert.True(result.diagnostics |> List.exists (fun diagnostic -> diagnostic.isError))
+        Assert.True(result.value.IsSome, "意味エラー時も IntelliSense 用の部分 HIR を返す必要があります。")

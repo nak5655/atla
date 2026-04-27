@@ -52,6 +52,25 @@ module IntelliSenseTests =
         Assert.NotNull(computeItem.Value.detail)
         Assert.NotEmpty(computeItem.Value.detail)
 
+    [<Fact>]
+    let ``GetCompletions keeps cache for incomplete member access with semantic errors`` () =
+        let source = "import System'Console\nfn main: () = do\n    \"Hello, World!\" Console'"
+        let server = makeServerWithSource "file:///tmp/completion-incomplete.atla" source
+        let result = server.GetCompletions("file:///tmp/completion-incomplete.atla", 2, 27)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.NotEmpty(names)
+        Assert.Contains("main", names)
+
+    [<Fact>]
+    let ``GetCompletions narrows by lexical position and excludes future let bindings`` () =
+        let source = "fn main: Int = do\n  let first = 1\n  fir\n  let second = 2\n  first"
+        let server = makeServerWithSource "file:///tmp/completion-scope.atla" source
+        // 行2・列4 (`fir` 位置) は `second` の宣言より前。
+        let result = server.GetCompletions("file:///tmp/completion-scope.atla", 2, 4)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("first", names)
+        Assert.DoesNotContain("second", names)
+
     // -----------------------------------------------------------------------
     // GetHover
     // -----------------------------------------------------------------------

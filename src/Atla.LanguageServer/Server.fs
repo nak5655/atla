@@ -430,13 +430,24 @@ type Server
             | false, _ -> None
 
     /// 補完候補リストを返す。
-    /// モジュールスコープ内の全シンボルを候補として提供する。
-    /// 現時点では位置情報は補完フィルタに使用しない（将来のスコープ絞り込み拡張用に保持）。
-    member this.GetCompletions(uri: string, _line: int, _character: int) : CompletionList =
+    /// 最新入力から得たキャッシュを使い、カーソル位置で可視なシンボルへ絞り込む。
+    member this.GetCompletions(uri: string, line: int, character: int) : CompletionList =
         match this.TryGetIndex uri with
         | None -> CompletionList(false, [])
         | Some(index, symbolTable) ->
-            let visibleVars = index.moduleScope.allVisibleVars()
+            let localSymbolsAtCursor =
+                PositionIndex.visibleSymbolIdsAt index line character
+                |> List.choose (fun sid ->
+                    symbolTable.Get sid
+                    |> Option.map (fun info -> info.name, sid))
+                |> List.distinctBy fst
+
+            let localNames = localSymbolsAtCursor |> List.map fst |> Set.ofList
+            let moduleVisibleVars =
+                index.moduleScope.allVisibleVars()
+                |> List.filter (fun (name, _) -> not (localNames.Contains name))
+
+            let visibleVars = localSymbolsAtCursor @ moduleVisibleVars
             let items =
                 visibleVars
                 |> List.choose (fun (name, sid) ->

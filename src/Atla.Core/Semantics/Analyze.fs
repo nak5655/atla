@@ -1704,10 +1704,14 @@ module Analyze =
                     resolvedModule.moduleScope
                 )
 
+            // IntelliSense 用に、エラーを含む場合でも可能な限り HIR を返す。
             if implDiagnostics |> List.exists (fun d -> d.isError) then
-                PhaseResult.failed implDiagnostics
+                PhaseResult.failedWithValue untypedHirModule implDiagnostics
             else
                 match Infer.inferModule (typeSubst, untypedHirModule) with
                 | Result.Ok hir -> PhaseResult.succeeded hir implDiagnostics
-                | Result.Error diagnostics -> PhaseResult.failed (implDiagnostics @ diagnostics)
+                // 型推論に失敗した場合も、補完で使える部分 HIR を保持する。
+                | Result.Error diagnostics ->
+                    let allDiagnostics = implDiagnostics @ diagnostics
+                    PhaseResult.failedWithValue untypedHirModule allDiagnostics
         | _ -> PhaseResult.failed [ Diagnostic.Error("Unknown analyze module failure", Atla.Core.Data.Span.Empty) ]

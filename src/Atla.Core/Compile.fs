@@ -82,34 +82,37 @@ module Compiler =
                             // Semantic Analysis
                             let symbolTable = SymbolTable()
                             let typeSubst = TypeSubst()
-                            match Analyze.analyzeModule(symbolTable, typeSubst, "main", moduleAst) with
-                            | { succeeded = false; diagnostics = diagnostics } ->
-                                failed diagnostics None None
-                            | { value = Some hir; diagnostics = analyzeDiagnostics } ->
+                            let analyzeResult = Analyze.analyzeModule(symbolTable, typeSubst, "main", moduleAst)
+                            match analyzeResult.value with
+                            | None ->
+                                failed analyzeResult.diagnostics None None
+                            | Some hir ->
                                 let hirAsm = Hir.Assembly("hello", [ hir ])
-                                // Closure Conversion
-                                match ClosureConversion.preprocessAssembly(symbolTable, hirAsm) with
-                                | { succeeded = false; diagnostics = closureDiagnostics } ->
-                                    failed (analyzeDiagnostics @ closureDiagnostics) (Some hirAsm) (Some symbolTable)
-                                | { value = Some closedAsm; diagnostics = closureDiagnostics } ->
-                                    // Lowering
-                                    match Layout.layoutAssembly(request.asmName, closedAsm) with
-                                    | { succeeded = false; diagnostics = layoutDiagnostics } ->
-                                        failed (analyzeDiagnostics @ closureDiagnostics @ layoutDiagnostics) (Some hirAsm) (Some symbolTable)
-                                    | { value = Some mir; diagnostics = layoutDiagnostics } ->
-                                        // Code Generation
-                                        let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
-                                        match Gen.genAssembly(mir, outPath, symbolTable) with
-                                        | { succeeded = false; diagnostics = genDiagnostics } ->
-                                            failed (analyzeDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
-                                        | { diagnostics = genDiagnostics } ->
-                                            succeeded (analyzeDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
+                                // 意味解析エラー時は下流フェーズへ進まず、部分 HIR を返す。
+                                if analyzeResult.diagnostics |> List.exists (fun d -> d.isError) then
+                                    failed analyzeResult.diagnostics (Some hirAsm) (Some symbolTable)
+                                else
+                                    // Closure Conversion
+                                    match ClosureConversion.preprocessAssembly(symbolTable, hirAsm) with
+                                    | { succeeded = false; diagnostics = closureDiagnostics } ->
+                                        failed (analyzeResult.diagnostics @ closureDiagnostics) (Some hirAsm) (Some symbolTable)
+                                    | { value = Some closedAsm; diagnostics = closureDiagnostics } ->
+                                        // Lowering
+                                        match Layout.layoutAssembly(request.asmName, closedAsm) with
+                                        | { succeeded = false; diagnostics = layoutDiagnostics } ->
+                                            failed (analyzeResult.diagnostics @ closureDiagnostics @ layoutDiagnostics) (Some hirAsm) (Some symbolTable)
+                                        | { value = Some mir; diagnostics = layoutDiagnostics } ->
+                                            // Code Generation
+                                            let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
+                                            match Gen.genAssembly(mir, outPath, symbolTable) with
+                                            | { succeeded = false; diagnostics = genDiagnostics } ->
+                                                failed (analyzeResult.diagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
+                                            | { diagnostics = genDiagnostics } ->
+                                                succeeded (analyzeResult.diagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
+                                        | _ ->
+                                            failed (analyzeResult.diagnostics @ closureDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
                                     | _ ->
-                                        failed (analyzeDiagnostics @ closureDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
-                                | _ ->
-                                    failed (analyzeDiagnostics @ [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
-                            | _ ->
-                                failed [ Diagnostic.Error("Semantic analysis failed with unknown state", Span.Empty) ] None None
+                                        failed (analyzeResult.diagnostics @ [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
                         finally
                             DependencyLoader.unloadDependencies dependencyLoadContext
                 with ex ->
