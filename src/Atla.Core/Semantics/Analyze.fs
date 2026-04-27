@@ -19,7 +19,7 @@ module Analyze =
           baseTypeSid: SymbolId option
           delegatedByFieldName: string option
           fields: DataFieldDef list
-          methods: Map<string, SymbolId * TypeId> }
+          methods: Map<string, SymbolId * TypeId * bool> }
 
     type NameEnv(symbolTable: SymbolTable, scope: Scope, dataTypeDefs: Map<string, DataTypeDef>) =
         member this.symbolTable = symbolTable
@@ -498,9 +498,9 @@ module Analyze =
             | Result.Ok _ -> Result.Ok ()
             | Result.Error err -> Result.Error(errorExpr expected span (formatUnifyError nameEnv typeEnv err))
 
-    /// data 型の継承チェーンを辿ってメンバー（field/method）を探索する。
+    /// data 型インスタンスの継承チェーンを辿ってメンバー（field/instance method）を探索する。
     /// 直接見つからない場合は `impl ... by <field>` の委譲先フィールドも探索する。
-    let private tryResolveDataMember
+    let private tryResolveDataInstanceMember
         (nameEnv: NameEnv)
         (typeEnv: TypeEnv)
         (expectedType: TypeId)
@@ -527,12 +527,14 @@ module Analyze =
                         Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataField(currentDef.typeSid, fieldDef.sid), Some currentReceiverExpr, fieldDef.typ, span))
                     | None ->
                         match currentDef.methods |> Map.tryFind memberName with
-                        | Some (methodSid, methodType) ->
+                        | Some (methodSid, methodType, isStatic) when not isStatic ->
                             let boundMethodType =
                                 match methodType with
                                 | TypeId.Fn(_ :: remainingArgs, retType) -> TypeId.Fn(remainingArgs, retType)
                                 | _ -> methodType
                             Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(currentDef.typeSid, methodSid), Some currentReceiverExpr, boundMethodType, span))
+                        | Some _ ->
+                            Result.Error(sprintf "Undefined instance member '%s' for data type" memberName)
                         | None ->
                             match currentDef.baseTypeSid with
                             | Some baseSid ->
@@ -628,6 +630,38 @@ module Analyze =
                         Result.Error(sprintf "Type '%s' does not support delegation lookup for member '%s'" (string unsupportedType) memberName)
 
         loop receiverTypeSid Set.empty receiverExpr
+
+    /// data 型定義（型名アクセス）から static メソッドを探索する。
+    let private tryResolveDataStaticMember
+        (nameEnv: NameEnv)
+        (receiverTypeSid: SymbolId)
+        (memberName: string)
+        (span: Atla.Core.Data.Span)
+        : Result<Hir.Expr, string> =
+        let bySid =
+            nameEnv.dataTypeDefs
+            |> Map.toSeq
+            |> Seq.map (fun (_, def) -> def.typeSid, def)
+            |> Map.ofSeq
+
+        let rec loop (currentSid: SymbolId) (visited: Set<int>) =
+            if visited |> Set.contains currentSid.id then
+                Result.Error("Cyclic subtype relation detected while resolving data static member")
+            else
+                match bySid |> Map.tryFind currentSid with
+                | None -> Result.Error("Undefined data type while resolving static member")
+                | Some currentDef ->
+                    match currentDef.methods |> Map.tryFind memberName with
+                    | Some (methodSid, methodType, isStatic) when isStatic ->
+                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.DataMethod(currentDef.typeSid, methodSid), None, methodType, span))
+                    | Some _ ->
+                        Result.Error(sprintf "Undefined static member '%s' for data type" memberName)
+                    | None ->
+                        match currentDef.baseTypeSid with
+                        | Some baseSid -> loop baseSid (visited |> Set.add currentSid.id)
+                        | None -> Result.Error(sprintf "Undefined static member '%s' for data type" memberName)
+
+        loop receiverTypeSid Set.empty
 
     // Generate an overload error message with available candidates when argument count does not match.
     let private noOverloadMessage (callable: Hir.Callable) (argCount: int) : string =
@@ -1153,18 +1187,25 @@ module Analyze =
                 | _ ->
                     Result.Error (sprintf "Type '%s' does not support member access" (formatTypeForDisplay nameEnv typeEnv symInfo.typ))
 
+            // 型名レシーバー（`Type'member`）で data 型 static メソッドを優先探索する。
+            let resolveMemberFromTypeName (receiverTypeSid: SymbolId) (receiverTypeName: string) : Result<Hir.Expr, string> =
+                match tryResolveDataStaticMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span with
+                | Result.Ok resolvedMember -> Result.Ok resolvedMember
+                | Result.Error _ ->
+                    match nameEnv.resolveSym receiverTypeSid with
+                    | Some symInfo ->
+                        match symInfo.kind with
+                        | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemTypeResult sysType
+                        | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Result.Error (unresolvedImportedSystemTypeMessage receiverTypeName memberAccessExpr.span)
+                        | _ -> Result.Error (sprintf "Type '%s' has no static member '%s'" receiverTypeName memberAccessExpr.memberName)
+                    | None -> Result.Error (sprintf "Undefined type symbol '%s'" receiverTypeName)
+
             let resolvedMemberResult =
                 match memberAccessExpr.receiver with
                 | :? Ast.Expr.Id as receiverId ->
                     match nameEnv.scope.ResolveType(receiverId.name) with
                     | Some (TypeId.Name sid) ->
-                        match nameEnv.resolveSym sid with
-                        | Some symInfo ->
-                            match symInfo.kind with
-                            | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemTypeResult sysType
-                            | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Result.Error (unresolvedImportedSystemTypeMessage receiverId.name memberAccessExpr.span)
-                            | _ -> Result.Error (sprintf "Type '%s' is not a system type" receiverId.name)
-                        | None -> Result.Error (sprintf "Undefined type symbol '%s'" receiverId.name)
+                        resolveMemberFromTypeName sid receiverId.name
                     | _ ->
                         let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                         let receiverType = typeEnv.resolveType receiver.typ
@@ -1209,7 +1250,7 @@ module Analyze =
                         | None ->
                             match typeEnv.resolveType receiver.typ with
                             | TypeId.Name receiverTypeSid ->
-                                match tryResolveDataMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
+                                match tryResolveDataInstanceMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
                                 | Result.Ok resolvedMember -> Result.Ok resolvedMember
                                 | Result.Error _ ->
                                     match resolveTyp nameEnv typeEnv receiver.typ with
@@ -1263,7 +1304,7 @@ module Analyze =
                     | None ->
                         match typeEnv.resolveType receiver.typ with
                         | TypeId.Name receiverTypeSid ->
-                            match tryResolveDataMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
+                            match tryResolveDataInstanceMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
                             | Result.Ok resolvedMember -> Result.Ok resolvedMember
                             | Result.Error _ ->
                                 match resolveTyp nameEnv typeEnv receiver.typ with
@@ -1594,24 +1635,29 @@ module Analyze =
                                 implDecl.methods
                                 |> List.fold
                                     (fun (methodMap, declAcc, diagAcc) methodDecl ->
+                                        // impl メソッドをシンボル表へ登録し、instance/static 種別をメタデータに保持する。
+                                        let registerImplMethod (isStatic: bool) =
+                                            if Map.containsKey methodDecl.name methodMap then
+                                                methodMap, declAcc, diagAcc @ [ Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodDecl.name implDecl.typeName, methodDecl.span) ]
+                                            else
+                                                let argTypes = methodDecl.args |> List.map bootstrapNameEnv.resolveArgType |> List.filter (fun t -> t <> TypeId.Unit)
+                                                let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
+                                                let methodType = TypeId.Fn(argTypes, retType)
+                                                let methodSid = symbolTable.NextId()
+                                                symbolTable.Add(methodSid, { name = $"{implDecl.typeName}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
+                                                Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap, (methodSid, methodDecl) :: declAcc, diagAcc
+
                                         match methodDecl.args with
                                         | (:? Ast.FnArg.Named as thisArg) :: _ ->
                                             let thisType = bootstrapNameEnv.resolveTypeExpr thisArg.typeExpr
                                             match thisArg.name, thisType with
-                                            | "this", TypeId.Name thisTypeSid when thisTypeSid.id = typeSid.id ->
-                                                if Map.containsKey methodDecl.name methodMap then
-                                                    methodMap, declAcc, diagAcc @ [ Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodDecl.name implDecl.typeName, methodDecl.span) ]
-                                                else
-                                                    let argTypes = methodDecl.args |> List.map bootstrapNameEnv.resolveArgType |> List.filter (fun t -> t <> TypeId.Unit)
-                                                    let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
-                                                    let methodType = TypeId.Fn(argTypes, retType)
-                                                    let methodSid = symbolTable.NextId()
-                                                    symbolTable.Add(methodSid, { name = $"{implDecl.typeName}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
-                                                    Map.add methodDecl.name (methodSid, methodType) methodMap, (methodSid, methodDecl) :: declAcc, diagAcc
+                                            | "this", TypeId.Name thisTypeSid when thisTypeSid.id = typeSid.id -> registerImplMethod false
+                                            | "this", _ ->
+                                                methodMap, declAcc, diagAcc @ [ Diagnostic.Error("impl instance method '(this: ...)' must target the impl type", methodDecl.span) ]
                                             | _ ->
-                                                methodMap, declAcc, diagAcc @ [ Diagnostic.Error("impl method must declare '(this: TargetType)' as first argument", methodDecl.span) ]
+                                                registerImplMethod true
                                         | _ ->
-                                            methodMap, declAcc, diagAcc @ [ Diagnostic.Error("impl method must declare '(this: TargetType)' as first argument", methodDecl.span) ])
+                                            registerImplMethod true)
                                     (dataTypeDef.methods, [], [])
 
                             let methodMap, declAcc, diagAcc = foldResult

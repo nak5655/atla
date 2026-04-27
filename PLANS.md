@@ -17,6 +17,20 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-26): impl 内 `this` 省略メソッドの static 扱い
+
+#### ミッション
+- `impl` 宣言内で先頭引数 `this` を持たないメソッドを static メソッドとして扱う。
+- 既存の `(this: TargetType)` 明示メソッドは instance メソッドとして後方互換を維持する。
+- AST -> Semantic Analysis -> HIR の責務境界を維持し、下流フェーズ契約を変更しない。
+
+#### 実行ステップ
+1. Analyze の impl メソッド登録で `instance/static` 種別を保持するメタデータを導入する。
+2. `(this: TargetType)` 先頭引数を持つメソッドは instance、それ以外は static としてシンボル登録する。
+3. data メンバー解決を instance アクセスと型名アクセスに分離し、`obj'm` は instance のみ、`Type'm` は static のみ解決する。
+4. Semantics テストを追加し、`this` なし static の成功系と、instance から static を呼んだ失敗系を回帰検証する。
+5. フルテストスイートを実行し、非退行と診断順序の安定性を確認する。
+
 ### アクティブタスク (2026-04-26): `impl A for B by b` 委譲メンバー解決
 
 #### ミッション
