@@ -1,0 +1,5 @@
+import System'Console
+
+fn hello (name: String): () = do
+    "hello, " Console'Write.
+    name Console'WriteLine.
