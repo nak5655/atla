@@ -17,6 +17,30 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-28): Atla モジュール import 実装
+
+#### ミッション
+- `import sub` / `import foo'bar` で `src/sub.atla` / `src/foo/bar.atla` の Atla モジュールを解決できるようにする。
+- 既存の .NET 型 import（例: `import System'Console`）を維持しつつ、モジュール import と共存可能にする。
+- AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL のフェーズ境界を維持し、モジュール解決は Build/Resolver + Semantics の責務に限定する。
+
+#### 実行ステップ
+1. Build/CLI 入力契約を拡張し、`src/**/*.atla` を決定的順序で収集してコンパイル入力へ渡す（現行 `src/main.atla` 単一入力を置換）。
+2. Compiler の入力モデルを「単一 source」から「複数 module source」へ拡張し、各ファイルを独立に AST 化する。
+3. モジュールテーブル（`moduleName -> sourcePath/sourceText/AST`）を構築し、`import` 依存グラフを生成する。
+4. `import` 解決を二段階化する:
+   - Atla モジュールとして解決できる場合は ModuleImport として登録
+   - それ以外は既存の ExternalTypeImport（System.Type 解決）へフォールバック
+5. モジュール依存グラフの循環検出を実装し、決定的順序で構造化診断を返す。
+6. Resolve/Analyze をトポロジカル順に適用し、`module'symbol` 参照が imported module の公開シンボルへ解決されるようにする。
+7. HIR 正規化時に import 糖衣を残さず、既存の正準呼び出し/参照ノードへ lower する（下流フェーズの契約変更を回避）。
+8. 回帰テストを追加する:
+   - 成功系: `import sub` で `sub'hello` 呼び出し
+   - ネスト: `import foo'bar`
+   - 失敗系: 未存在モジュール、循環 import、未定義シンボル
+   - 共存: .NET 型 import と Atla モジュール import の同時利用
+9. `examples/hello_module` を回帰サンプルとしてビルド検証し、ドキュメント（import 仕様）を更新する。
+
 ### アクティブタスク (2026-04-27): アポストロフィ起点のメンバー補完分岐
 
 #### ミッション

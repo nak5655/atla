@@ -111,3 +111,19 @@ fn main: () = do
             Assert.True(File.Exists(Path.Join(outDir, "DataExampleRegression.dll")))
         | None ->
             Assert.True(false, "Repository root was not found from current working directory.")
+
+    [<Fact>]
+    let ``build should succeed for examples hello_module`` () =
+        match tryFindRepositoryRoot () with
+        | Some repositoryRoot ->
+            let projectRoot = Path.Join(repositoryRoot, "examples", "hello_module")
+            let outDir = Path.Join(projectRoot, "out-regression")
+
+            if Directory.Exists(outDir) then
+                Directory.Delete(outDir, recursive = true)
+
+            let code = Console.run [| "build"; projectRoot; "-o"; outDir; "--name"; "HelloModuleRegression" |]
+            Assert.Equal(0, code)
+            Assert.True(File.Exists(Path.Join(outDir, "HelloModuleRegression.dll")))
+        | None ->
+            Assert.True(false, "Repository root was not found from current working directory.")

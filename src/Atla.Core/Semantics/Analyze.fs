@@ -21,10 +21,21 @@ module Analyze =
           fields: DataFieldDef list
           methods: Map<string, SymbolId * TypeId * bool> }
 
-    type NameEnv(symbolTable: SymbolTable, scope: Scope, dataTypeDefs: Map<string, DataTypeDef>) =
+    type ModuleExport =
+        { symbolId: SymbolId
+          typ: TypeId }
+
+    type NameEnv
+        (
+            symbolTable: SymbolTable,
+            scope: Scope,
+            dataTypeDefs: Map<string, DataTypeDef>,
+            importedModuleExports: Map<string, Map<string, ModuleExport>>
+        ) =
         member this.symbolTable = symbolTable
         member this.scope = scope
         member this.dataTypeDefs = dataTypeDefs
+        member this.importedModuleExports = importedModuleExports
 
         // TypeExprをTypeIdへ解決する。
         member this.resolveTypeExpr (typeExpr: Ast.TypeExpr) : TypeId =
@@ -102,7 +113,13 @@ module Analyze =
 
         member this.sub(): NameEnv =
             let blockScope = Scope(Some this.scope)
-            NameEnv(this.symbolTable, blockScope, this.dataTypeDefs)
+            NameEnv(this.symbolTable, blockScope, this.dataTypeDefs, this.importedModuleExports)
+
+        /// import された Atla モジュールからメンバー参照を解決する。
+        member this.tryResolveImportedModuleMember (moduleAlias: string) (memberName: string) : ModuleExport option =
+            match this.importedModuleExports.TryFind(moduleAlias) with
+            | Some members -> members.TryFind(memberName)
+            | None -> None
 
         /// 継承チェーンを辿り、`actualTypeSid <: expectedTypeSid` が成立するかを判定する。
         member this.isSubtype (actualTypeSid: SymbolId) (expectedTypeSid: SymbolId) : bool =
@@ -1203,10 +1220,14 @@ module Analyze =
             let resolvedMemberResult =
                 match memberAccessExpr.receiver with
                 | :? Ast.Expr.Id as receiverId ->
-                    match nameEnv.scope.ResolveType(receiverId.name) with
-                    | Some (TypeId.Name sid) ->
-                        resolveMemberFromTypeName sid receiverId.name
-                    | _ ->
+                    match nameEnv.tryResolveImportedModuleMember receiverId.name memberAccessExpr.memberName with
+                    | Some moduleMember ->
+                        Result.Ok(Hir.Expr.Id(moduleMember.symbolId, moduleMember.typ, memberAccessExpr.span))
+                    | None ->
+                        match nameEnv.scope.ResolveType(receiverId.name) with
+                        | Some (TypeId.Name sid) ->
+                            resolveMemberFromTypeName sid receiverId.name
+                        | _ ->
                         let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                         let receiverType = typeEnv.resolveType receiver.typ
                         match resolveRuntimeSystemType nameEnv typeEnv receiverType with
@@ -1580,11 +1601,29 @@ module Analyze =
         let sid = nameEnv.declareLocal fnDecl.name (TypeId.Fn(argTypes, retType))
         analyzeMethodCore nameEnv typeEnv sid fnDecl
 
-    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
-        match Resolve.resolveModule (symbolTable, moduleName, moduleAst) with
+    let analyzeModuleWithImports
+        (
+            symbolTable: SymbolTable,
+            typeSubst: TypeSubst,
+            moduleName: string,
+            moduleAst: Ast.Module,
+            availableModuleNames: Set<string>,
+            importedModuleExports: Map<string, Map<string, ModuleExport>>
+        )
+        : PhaseResult<Hir.Module> =
+        match Resolve.resolveModuleWithImports (symbolTable, moduleName, moduleAst, availableModuleNames) with
         | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
         | { value = Some resolvedModule } ->
-            let bootstrapNameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, Map.empty)
+            let moduleExportView =
+                resolvedModule.importedModules
+                |> Map.toList
+                |> List.choose (fun (alias, moduleName) ->
+                    importedModuleExports
+                    |> Map.tryFind moduleName
+                    |> Option.map (fun exports -> alias, exports))
+                |> Map.ofList
+
+            let bootstrapNameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, Map.empty, moduleExportView)
             let typeEnv = TypeEnv(typeSubst, TypeMetaFactory())
 
             let fields = List<Hir.Field>()
@@ -1672,7 +1711,7 @@ module Analyze =
                             updatedDefs, (List.rev declAcc) @ methodDecls, diagnostics @ diagAcc)
                     (dataTypeDefs, [], [])
 
-            let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, dataTypeDefsWithMethods)
+            let nameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, dataTypeDefsWithMethods, moduleExportView)
 
             resolvedModule.fnDecls
             |> List.iter (fun fnDecl -> methods.Add(analyzeMethod nameEnv typeEnv fnDecl))
@@ -1715,3 +1754,7 @@ module Analyze =
                     let allDiagnostics = implDiagnostics @ diagnostics
                     PhaseResult.failedWithValue untypedHirModule allDiagnostics
         | _ -> PhaseResult.failed [ Diagnostic.Error("Unknown analyze module failure", Atla.Core.Data.Span.Empty) ]
+
+    /// 既存呼び出し向け互換 API。Atla モジュール import は外部から供給しない。
+    let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
+        analyzeModuleWithImports (symbolTable, typeSubst, moduleName, moduleAst, Set.empty, Map.empty)

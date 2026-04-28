@@ -71,6 +71,28 @@ module Console =
         else
             Error $"project entrypoint not found: {candidatePath}"
 
+    /// プロジェクト配下の Atla ソースをモジュール名付きで列挙する。
+    let private collectModuleSources (projectRoot: string) : Result<Compiler.ModuleSource list, string> =
+        let srcRoot = Path.Join(projectRoot, "src")
+        if not (Directory.Exists srcRoot) then
+            Error $"project source directory not found: {srcRoot}"
+        else
+            let files =
+                Directory.GetFiles(srcRoot, "*.atla", SearchOption.AllDirectories)
+                |> Array.sort
+                |> Array.toList
+
+            let toModuleName (path: string) =
+                let relativePath = Path.GetRelativePath(srcRoot, path)
+                let withoutExtension = Path.ChangeExtension(relativePath, null)
+                withoutExtension.Replace(Path.DirectorySeparatorChar, '.').Replace(Path.AltDirectorySeparatorChar, '.')
+
+            files
+            |> List.map (fun path ->
+                ({ moduleName = toModuleName path
+                   source = File.ReadAllText(path) }: Compiler.ModuleSource))
+            |> Ok
+
 
     let run (args: string array) : int =
         match args |> Array.toList with
@@ -108,42 +130,47 @@ module Console =
                             | Error message ->
                                 Console.Error.WriteLine(message)
                                 1
-                            | Ok inputPath ->
-                                let source = File.ReadAllText(inputPath)
-                                let outDir =
-                                    match options.outDir with
-                                    | Some value -> value
-                                    | None -> Path.Join(plan.projectRoot, "out")
-                                let asmName =
-                                    match options.asmName with
-                                    | Some value when not (String.IsNullOrWhiteSpace value) -> value
-                                    | _ -> plan.projectName
-
-                                Directory.CreateDirectory(outDir) |> ignore
-
-                                let compileResult =
-                                    Compiler.compile {
-                                        asmName = asmName
-                                        source = source
-                                        outDir = outDir
-                                        dependencies = plan.dependencies
-                                    }
-
-                                printDiagnostics compileResult.diagnostics
-
-                                if compileResult.succeeded then
-                                    let dllPath = Path.Join(outDir, asmName + ".dll")
-                                    Console.WriteLine($"Generated: {dllPath}")
-
-                                    match BuildSystem.copyDependencies plan.dependencies outDir with
-                                    | Result.Error diagnostics ->
-                                        printDiagnostics diagnostics
-                                        1
-                                    | Ok copied ->
-                                        copied |> List.iter (fun path -> Console.WriteLine($"Copied: {path}"))
-                                        0
-                                else
+                            | Ok _ ->
+                                match collectModuleSources plan.projectRoot with
+                                | Error message ->
+                                    Console.Error.WriteLine(message)
                                     1
+                                | Ok modules ->
+                                    let outDir =
+                                        match options.outDir with
+                                        | Some value -> value
+                                        | None -> Path.Join(plan.projectRoot, "out")
+                                    let asmName =
+                                        match options.asmName with
+                                        | Some value when not (String.IsNullOrWhiteSpace value) -> value
+                                        | _ -> plan.projectName
+
+                                    Directory.CreateDirectory(outDir) |> ignore
+
+                                    let compileResult =
+                                        Compiler.compileModules {
+                                            asmName = asmName
+                                            modules = modules
+                                            entryModuleName = "main"
+                                            outDir = outDir
+                                            dependencies = plan.dependencies
+                                        }
+
+                                    printDiagnostics compileResult.diagnostics
+
+                                    if compileResult.succeeded then
+                                        let dllPath = Path.Join(outDir, asmName + ".dll")
+                                        Console.WriteLine($"Generated: {dllPath}")
+
+                                        match BuildSystem.copyDependencies plan.dependencies outDir with
+                                        | Result.Error diagnostics ->
+                                            printDiagnostics diagnostics
+                                            1
+                                        | Ok copied ->
+                                            copied |> List.iter (fun path -> Console.WriteLine($"Copied: {path}"))
+                                            0
+                                    else
+                                        1
         | command :: _ ->
             Console.Error.WriteLine($"unknown command: {command}")
             Console.Error.WriteLine(usage())
