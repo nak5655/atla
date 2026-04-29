@@ -798,3 +798,25 @@ fn main: () = do
             }
 
         Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``compileModules should allow imported data init via import sub'Person`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            "import sub'Person\n\nfn main: () = do\n    let p = Person { name = \"alice\" }\n    let _ = p"
+        let subSource = "data Person = { name: String }"
+
+        let result =
+            Compiler.compileModules {
+                asmName = "ImportSubPersonDataInit"
+                modules =
+                    [ { moduleName = "main"; source = mainSource }
+                      { moduleName = "sub"; source = subSource } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
