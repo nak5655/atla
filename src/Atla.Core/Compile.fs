@@ -118,7 +118,9 @@ module Compiler =
         | Result.Ok (_, ordered) -> Ok ordered
         | Result.Error diagnostics -> Result.Error diagnostics
 
-    /// HIR モジュールから公開シンボル（現時点ではトップレベル関数）を抽出する。
+    /// HIR モジュールから公開シンボル（トップレベル関数・メソッド・データ型）を抽出する。
+    /// データ型は "type:{TypeName}" というキーでエクスポートし、他モジュールが import 時に
+    /// 元の typeSid を再利用できるようにする。
     let private collectModuleExports
         (symbolTable: SymbolTable)
         (hirModule: Hir.Module)
@@ -143,7 +145,31 @@ module Compiler =
                     ({ symbolId = methodInfo.sym
                        typ = symInfo.typ }: Analyze.ModuleExport)))
 
-        valueExports @ methodExports
+        // データ型の typeSid を "type:{TypeName}" キーでエクスポートする。
+        // import sub'Person のような型 import 時に元の typeSid を再利用するために使用する。
+        let typeExports =
+            hirModule.types
+            |> List.choose (fun hirType ->
+                symbolTable.Get(hirType.sym)
+                |> Option.map (fun symInfo ->
+                    $"type:{symInfo.name}",
+                    ({ symbolId = hirType.sym
+                       typ = TypeId.Name hirType.sym }: Analyze.ModuleExport)))
+
+        // データ型のフィールド SID を "field:{TypeName}.{FieldName}" キーでエクスポートする。
+        // import sub'Person のような型 import 時に元のフィールド SID を再利用するために使用する。
+        let fieldExports =
+            hirModule.types
+            |> List.collect (fun hirType ->
+                hirType.fields
+                |> List.choose (fun field ->
+                    symbolTable.Get(field.sym)
+                    |> Option.map (fun fieldInfo ->
+                        $"field:{fieldInfo.name}",
+                        ({ symbolId = field.sym
+                           typ = field.typ }: Analyze.ModuleExport))))
+
+        valueExports @ methodExports @ typeExports @ fieldExports
         |> Map.ofList
 
     /// 複数 HIR モジュールを 1 つへ統合し、CIL 生成のランタイム制約（単一 dynamic module）に合わせる。

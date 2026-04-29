@@ -1673,8 +1673,23 @@ module Analyze =
                         | None ->
                             defs, diagnostics @ [ Diagnostic.Error(sprintf "Imported type '%s' was not found" fullTypePath, Atla.Core.Data.Span.Empty) ]
                         | Some dataDecl ->
-                            let typeSid = symbolTable.NextId()
-                            symbolTable.Add(typeSid, { name = aliasName; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
+                            // 元モジュールが "type:{TypeName}" としてエクスポートした typeSid を再利用する。
+                            // 再利用することでメソッドの引数型（元 typeSid）とレシーバー型（インポート typeSid）が
+                            // 一致し、クロスモジュールのメソッド呼び出しが正しく型検査される。
+                            let lastDotForType = fullTypePath.LastIndexOf('.')
+                            let typeNameForLookup = if lastDotForType > 0 then fullTypePath.Substring(lastDotForType + 1) else fullTypePath
+                            let sourceModuleName = if lastDotForType > 0 then fullTypePath.Substring(0, lastDotForType) else ""
+                            let sourceModuleExports = importedModuleExports |> Map.tryFind sourceModuleName |> Option.defaultValue Map.empty
+                            let typeSid, isReusingExistingType =
+                                match sourceModuleExports |> Map.tryFind $"type:{typeNameForLookup}" with
+                                | Some exportInfo ->
+                                    // 元 typeSid を再利用する。シンボルテーブルには既に登録済みのため追加不要。
+                                    exportInfo.symbolId, true
+                                | None ->
+                                    // フォールバック: 元モジュールのエクスポートが見つからない場合は新規割り当て。
+                                    let newSid = symbolTable.NextId()
+                                    symbolTable.Add(newSid, { name = aliasName; typ = TypeId.Name newSid; kind = SymbolKind.Local() })
+                                    newSid, false
                             resolvedModule.moduleScope.DeclareType(aliasName, TypeId.Name typeSid)
 
                             let resolvedFields =
@@ -1683,8 +1698,17 @@ module Analyze =
                                     match item with
                                     | :? Ast.DataItem.Field as fieldItem ->
                                         let fieldType = bootstrapNameEnv.resolveTypeExpr fieldItem.typeExpr
-                                        let fieldSid = symbolTable.NextId()
-                                        symbolTable.Add(fieldSid, { name = $"{aliasName}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
+                                        // 元モジュールが "field:{TypeName}.{FieldName}" としてエクスポートしたフィールド SID を
+                                        // 再利用する。再利用することで DataConstructor や DataField アクセスが
+                                        // CIL 生成フェーズの fieldBuilders と一致する。
+                                        let fieldSid =
+                                            match sourceModuleExports |> Map.tryFind $"field:{typeNameForLookup}.{fieldItem.name}" with
+                                            | Some exportInfo ->
+                                                exportInfo.symbolId
+                                            | None ->
+                                                let newSid = symbolTable.NextId()
+                                                symbolTable.Add(newSid, { name = $"{aliasName}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
+                                                newSid
                                         Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; span = fieldItem.span }
                                     | _ -> None)
 
@@ -1694,11 +1718,14 @@ module Analyze =
                                   delegatedByFieldName = None
                                   fields = resolvedFields
                                   methods = Map.empty }
-                            let hirFields =
-                                resolvedFields
-                                |> List.map (fun fieldDef ->
-                                    Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                            types.Add(Hir.Type(typeSid, None, hirFields, []))
+                            // 元 typeSid を再利用している場合は HIR 型ノードを追加しない。
+                            // 元モジュールの HIR に既に Hir.Type が存在するため、マージ後に重複を防ぐ。
+                            if not isReusingExistingType then
+                                let hirFields =
+                                    resolvedFields
+                                    |> List.map (fun fieldDef ->
+                                        Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                                types.Add(Hir.Type(typeSid, None, hirFields, []))
                             let importedImplMethodMap, importedImplDiagnostics =
                                 let lastDot = fullTypePath.LastIndexOf('.')
                                 if lastDot <= 0 then
