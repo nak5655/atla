@@ -17,6 +17,19 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-29): 方針A 実装（type import を module export 実体へ接続）
+
+#### ミッション
+- `import sub'Person` で導入される型名をプレースホルダではなく実体 data 定義へ接続し、`Person { ... }` の data 初期化と型注釈を成功させる。
+- 仕様優先順位 `module -> type -> .NET type` を維持しつつ、型フォールバック時は `importedTypeAliases` として決定的に保持する。
+
+#### 実行ステップ
+1. Resolve 結果へ `importedTypeAliases` を追加し、type フォールバック時は `alias -> fullTypePath` を記録する（プレースホルダ型宣言を廃止）。
+2. Compiler で全モジュール AST から `availableDataTypeDecls`（`module.type -> Ast.Decl.Data`）を構築し、Analyze に渡す。
+3. Analyze 初期化時に `importedTypeAliases` を `availableDataTypeDecls` から実体化し、`scope` と `dataTypeDefs` へ取り込む。
+4. Semantics/Lowering 回帰テストを追加し、`import sub'Person` + `Person { ... }` の成功系を固定する。
+5. `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` を実行して非退行を確認する。
+
 ### アクティブタスク (2026-04-29): import 自動判定（モジュール優先、型フォールバック）
 
 #### ミッション

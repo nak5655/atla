@@ -1803,7 +1803,8 @@ fn bad (): Int = do
         match Resolve.resolveModuleWithImports(symbolTable, "main", astModule, availableModules, availableTypes) with
         | { succeeded = true; value = Some resolved } ->
             let importedType = resolved.moduleScope.ResolveType("Bar")
-            Assert.True(importedType.IsSome, "モジュール未存在時に型 import へフォールバックできていない。")
+            Assert.True(importedType.IsNone, "Resolve フェーズでは型 alias 実体化を行わない。Analyze で実体化される。")
+            Assert.True(resolved.importedTypeAliases.ContainsKey("Bar"), "型 import alias が収集されていない。")
             Assert.False(resolved.importedModules.ContainsKey("Bar"), "型 import で importedModules が登録されてはならない。")
         | { diagnostics = diagnostics } ->
             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "

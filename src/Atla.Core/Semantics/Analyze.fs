@@ -1609,6 +1609,7 @@ module Analyze =
             moduleAst: Ast.Module,
             availableModuleNames: Set<string>,
             availableTypeFullNames: Set<string>,
+            availableDataTypeDecls: Map<string, Ast.Decl.Data>,
             importedModuleExports: Map<string, Map<string, ModuleExport>>
         )
         : PhaseResult<Hir.Module> =
@@ -1661,6 +1662,48 @@ module Analyze =
                               methods = Map.empty }
                             defs)
                     Map.empty
+
+            let importedDataTypeDefs, importedTypeDiagnostics =
+                resolvedModule.importedTypeAliases
+                |> Map.toList
+                |> List.fold
+                    (fun (defs, diagnostics) (aliasName, fullTypePath) ->
+                        match availableDataTypeDecls.TryFind(fullTypePath) with
+                        | None ->
+                            defs, diagnostics @ [ Diagnostic.Error(sprintf "Imported type '%s' was not found" fullTypePath, Atla.Core.Data.Span.Empty) ]
+                        | Some dataDecl ->
+                            let typeSid = symbolTable.NextId()
+                            symbolTable.Add(typeSid, { name = aliasName; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
+                            resolvedModule.moduleScope.DeclareType(aliasName, TypeId.Name typeSid)
+
+                            let resolvedFields =
+                                dataDecl.items
+                                |> List.choose (fun item ->
+                                    match item with
+                                    | :? Ast.DataItem.Field as fieldItem ->
+                                        let fieldType = bootstrapNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                        let fieldSid = symbolTable.NextId()
+                                        symbolTable.Add(fieldSid, { name = $"{aliasName}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
+                                        Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; span = fieldItem.span }
+                                    | _ -> None)
+
+                            let importedDef =
+                                { typeSid = typeSid
+                                  baseTypeSid = None
+                                  delegatedByFieldName = None
+                                  fields = resolvedFields
+                                  methods = Map.empty }
+                            let hirFields =
+                                resolvedFields
+                                |> List.map (fun fieldDef ->
+                                    Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                            types.Add(Hir.Type(typeSid, None, hirFields, []))
+                            Map.add aliasName importedDef defs, diagnostics)
+                    (Map.empty, [])
+
+            let dataTypeDefs =
+                importedDataTypeDefs
+                |> Map.fold (fun defs aliasName importedDef -> Map.add aliasName importedDef defs) dataTypeDefs
 
             // impl 宣言のシグネチャを先に登録し、メソッド解決を安定化する。
             let dataTypeDefsWithMethods, implMethodDecls, implDiagnostics =
@@ -1745,17 +1788,18 @@ module Analyze =
                 )
 
             // IntelliSense 用に、エラーを含む場合でも可能な限り HIR を返す。
-            if implDiagnostics |> List.exists (fun d -> d.isError) then
-                PhaseResult.failedWithValue untypedHirModule implDiagnostics
+            let resolveAndImplDiagnostics = importedTypeDiagnostics @ implDiagnostics
+            if resolveAndImplDiagnostics |> List.exists (fun d -> d.isError) then
+                PhaseResult.failedWithValue untypedHirModule resolveAndImplDiagnostics
             else
                 match Infer.inferModule (typeSubst, untypedHirModule) with
-                | Result.Ok hir -> PhaseResult.succeeded hir implDiagnostics
+                | Result.Ok hir -> PhaseResult.succeeded hir resolveAndImplDiagnostics
                 // 型推論に失敗した場合も、補完で使える部分 HIR を保持する。
                 | Result.Error diagnostics ->
-                    let allDiagnostics = implDiagnostics @ diagnostics
+                    let allDiagnostics = resolveAndImplDiagnostics @ diagnostics
                     PhaseResult.failedWithValue untypedHirModule allDiagnostics
         | _ -> PhaseResult.failed [ Diagnostic.Error("Unknown analyze module failure", Atla.Core.Data.Span.Empty) ]
 
     /// 既存呼び出し向け互換 API。Atla モジュール import は外部から供給しない。
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
-        analyzeModuleWithImports (symbolTable, typeSubst, moduleName, moduleAst, Set.empty, Set.empty, Map.empty)
+        analyzeModuleWithImports (symbolTable, typeSubst, moduleName, moduleAst, Set.empty, Set.empty, Map.empty, Map.empty)

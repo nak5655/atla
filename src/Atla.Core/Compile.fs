@@ -203,6 +203,16 @@ module Compiler =
                                             | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
                                             | _ -> None))
                                     |> Set.ofList
+                                let availableDataTypeDecls =
+                                    moduleAsts
+                                    |> Map.toList
+                                    |> List.collect (fun (moduleName, moduleAst) ->
+                                        moduleAst.decls
+                                        |> List.choose (fun decl ->
+                                            match decl with
+                                            | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl)
+                                            | _ -> None))
+                                    |> Map.ofList
 
                                 let analyzeFolder (hirModules, moduleExports, diagnostics) moduleName =
                                     let moduleAst = moduleAsts[moduleName]
@@ -214,6 +224,7 @@ module Compiler =
                                             moduleAst,
                                             availableModuleNames,
                                             availableTypeFullNames,
+                                            availableDataTypeDecls,
                                             moduleExports
                                         )
 

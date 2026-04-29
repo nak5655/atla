@@ -13,6 +13,7 @@ module Resolve =
         { moduleName: string
           moduleScope: Scope
           importedModules: Map<string, string>
+          importedTypeAliases: Map<string, string>
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
           implDecls: (SymbolId * SymbolId option * string option * Ast.Decl.Impl) list }
@@ -68,6 +69,7 @@ module Resolve =
         (availableModuleNames: Set<string>)
         (availableTypeFullNames: Set<string>)
         (importedModules: ResizeArray<string * string>)
+        (importedTypeAliases: ResizeArray<string * string>)
         (importDecl: Ast.Decl.Import)
         : Diagnostic list =
         let classPath = String.concat "." importDecl.path
@@ -76,15 +78,9 @@ module Resolve =
             importedModules.Add(shortName, classPath)
             []
         elif availableTypeFullNames.Contains(classPath) then
-            // 型 import: 末尾名をローカル型スコープへ導入する。
-            // 実体シンボルは解析順で後続に解決されるため、ここでは Name 型を先行宣言する。
-            match scope.ResolveType(shortName) with
-            | Some _ -> []
-            | None ->
-                let sid = symbolTable.NextId()
-                symbolTable.Add(sid, { name = shortName; typ = TypeId.Name sid; kind = SymbolKind.Local() })
-                scope.DeclareType(shortName, TypeId.Name sid)
-                []
+            // 型 import: Analyze で実体 data 宣言へ接続するため、ここでは alias 情報のみ保持する。
+            importedTypeAliases.Add(shortName, classPath)
+            []
         else
             // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
             match scope.ResolveType(shortName) with
@@ -121,6 +117,7 @@ module Resolve =
         let dataDecls = ResizeArray<ResolvedDataDecl>()
         let implDecls = ResizeArray<SymbolId * SymbolId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
+        let importedTypeAliases = ResizeArray<string * string>()
         let diagnostics = ResizeArray<Diagnostic>()
 
         // data 型名を先に登録し、同一モジュール内で相互参照可能にする。
@@ -140,7 +137,8 @@ module Resolve =
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Import as importDecl ->
-                let importDiagnostics = resolveImport symbolTable moduleScope availableModuleNames availableTypeFullNames importedModules importDecl
+                let importDiagnostics =
+                    resolveImport symbolTable moduleScope availableModuleNames availableTypeFullNames importedModules importedTypeAliases importDecl
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
                 ()
@@ -274,6 +272,7 @@ module Resolve =
                 { moduleName = moduleName
                   moduleScope = moduleScope
                   importedModules = importedModules |> Seq.distinct |> Map.ofSeq
+                  importedTypeAliases = importedTypeAliases |> Seq.distinct |> Map.ofSeq
                   fnDecls = Seq.toList fnDecls
                   dataDecls = Seq.toList dataDecls
                   implDecls = Seq.toList implDecls }

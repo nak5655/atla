@@ -778,12 +778,12 @@ fn main: () = do
         Assert.DoesNotContain(result.diagnostics, fun d -> d.message.Contains("Undefined data type 'Bar'"))
 
     [<Fact>]
-    let ``compileModules should fallback to type import when module is absent at resolve phase`` () =
+    let ``compileModules should fallback to type import when module is absent`` () =
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import Foo'Bar\n\nfn id (x: Bar): Bar = x\n\nfn main: Int = do\n    let v = Bar { val = 42 }\n    let _ = v id.\n    0"
+            "import Foo'Bar\n\nfn id (x: Bar): Bar = x\n\nfn main: () = do\n    let v = Bar { val = 42 }\n    let _ = v id."
         let fooSource = "data Bar = { val: Int }"
 
         let result =
@@ -797,5 +797,4 @@ fn main: () = do
                 dependencies = []
             }
 
-        Assert.False(result.succeeded)
-        Assert.Contains(result.diagnostics, fun d -> d.message.Contains("Undefined data type 'Bar'"))
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
