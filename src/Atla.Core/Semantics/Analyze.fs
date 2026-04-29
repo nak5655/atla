@@ -1664,14 +1664,14 @@ module Analyze =
                             defs)
                     Map.empty
 
-            let importedDataTypeDefs, importedImplMethodDecls, importedTypeDiagnostics =
+            let importedDataTypeDefs, importedTypeDiagnostics =
                 resolvedModule.importedTypeAliases
                 |> Map.toList
                 |> List.fold
-                    (fun (defs, methodDecls, diagnostics) (aliasName, fullTypePath) ->
+                    (fun (defs, diagnostics) (aliasName, fullTypePath) ->
                         match availableDataTypeDecls.TryFind(fullTypePath) with
                         | None ->
-                            defs, methodDecls, diagnostics @ [ Diagnostic.Error(sprintf "Imported type '%s' was not found" fullTypePath, Atla.Core.Data.Span.Empty) ]
+                            defs, diagnostics @ [ Diagnostic.Error(sprintf "Imported type '%s' was not found" fullTypePath, Atla.Core.Data.Span.Empty) ]
                         | Some dataDecl ->
                             let typeSid = symbolTable.NextId()
                             symbolTable.Add(typeSid, { name = aliasName; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
@@ -1699,49 +1699,36 @@ module Analyze =
                                 |> List.map (fun fieldDef ->
                                     Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
                             types.Add(Hir.Type(typeSid, None, hirFields, []))
-                            let importedImplMethodMap, importedImplDecls, importedImplDiagnostics =
-                                match availableDataTypeImplDecls.TryFind(fullTypePath) with
-                                | None -> Map.empty, [], []
-                                | Some implDecls ->
-                                    /// impl メソッド署名をシンボル表へ登録し、instance/static 種別つきで返す。
-                                    let registerImplMethodSignatures (targetTypeSid: SymbolId) (typeNameForDiag: string) (decls: Ast.Decl.Impl list) =
-                                        decls
-                                        |> List.fold
-                                            (fun (methodMap, declAcc, diagAcc) implDecl ->
-                                                implDecl.methods
-                                                |> List.fold
-                                                    (fun (innerMethodMap, innerDeclAcc, innerDiagAcc) methodDecl ->
-                                                        let registerImplMethod (isStatic: bool) =
-                                                            if Map.containsKey methodDecl.name innerMethodMap then
-                                                                innerMethodMap, innerDeclAcc, innerDiagAcc @ [ Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodDecl.name typeNameForDiag, methodDecl.span) ]
-                                                            else
-                                                                let argTypes = methodDecl.args |> List.map bootstrapNameEnv.resolveArgType |> List.filter (fun t -> t <> TypeId.Unit)
-                                                                let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
-                                                                let methodType = TypeId.Fn(argTypes, retType)
-                                                                let methodSid = symbolTable.NextId()
-                                                                symbolTable.Add(methodSid, { name = $"{typeNameForDiag}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
-                                                                Map.add methodDecl.name (methodSid, methodType, isStatic) innerMethodMap, (methodSid, methodDecl) :: innerDeclAcc, innerDiagAcc
-
-                                                        match methodDecl.args with
-                                                        | (:? Ast.FnArg.Named as thisArg) :: _ ->
-                                                            let thisType = bootstrapNameEnv.resolveTypeExpr thisArg.typeExpr
-                                                            match thisArg.name, thisType with
-                                                            | "this", TypeId.Name thisTypeSid when thisTypeSid.id = targetTypeSid.id -> registerImplMethod false
-                                                            | "this", _ ->
-                                                                innerMethodMap, innerDeclAcc, innerDiagAcc @ [ Diagnostic.Error("impl instance method '(this: ...)' must target the impl type", methodDecl.span) ]
-                                                            | _ ->
-                                                                registerImplMethod true
-                                                        | _ ->
-                                                            registerImplMethod true)
-                                                    (methodMap, declAcc, diagAcc))
-                                            (Map.empty, [], [])
-                                    registerImplMethodSignatures typeSid aliasName implDecls
+                            let importedImplMethodMap, importedImplDiagnostics =
+                                let lastDot = fullTypePath.LastIndexOf('.')
+                                if lastDot <= 0 then
+                                    Map.empty, []
+                                else
+                                    let moduleName = fullTypePath.Substring(0, lastDot)
+                                    let typeName = fullTypePath.Substring(lastDot + 1)
+                                    let moduleExports = importedModuleExports |> Map.tryFind moduleName |> Option.defaultValue Map.empty
+                                    let implDecls = availableDataTypeImplDecls |> Map.tryFind fullTypePath |> Option.defaultValue []
+                                    implDecls
+                                    |> List.collect (fun implDecl -> implDecl.methods)
+                                    |> List.fold
+                                        (fun (methodMap, diagAcc) methodDecl ->
+                                            let exportName = $"{typeName}.{methodDecl.name}"
+                                            match moduleExports |> Map.tryFind exportName with
+                                            | Some exportInfo ->
+                                                let isStatic =
+                                                    match methodDecl.args with
+                                                    | (:? Ast.FnArg.Named as thisArg) :: _ when thisArg.name = "this" -> false
+                                                    | _ -> true
+                                                Map.add methodDecl.name (exportInfo.symbolId, exportInfo.typ, isStatic) methodMap, diagAcc
+                                            | None ->
+                                                methodMap, diagAcc @ [ Diagnostic.Error(sprintf "Imported method '%s' for type '%s' was not found in module exports" methodDecl.name fullTypePath, methodDecl.span) ])
+                                        (Map.empty, [])
 
                             let importedDefWithMethods =
                                 { importedDef with
                                     methods = importedImplMethodMap }
-                            Map.add aliasName importedDefWithMethods defs, importedImplDecls @ methodDecls, diagnostics @ importedImplDiagnostics)
-                    (Map.empty, [], [])
+                            Map.add aliasName importedDefWithMethods defs, diagnostics @ importedImplDiagnostics)
+                    (Map.empty, [])
 
             let dataTypeDefs =
                 importedDataTypeDefs
@@ -1802,7 +1789,7 @@ module Analyze =
             resolvedModule.fnDecls
             |> List.iter (fun fnDecl -> methods.Add(analyzeMethod nameEnv typeEnv fnDecl))
 
-            (importedImplMethodDecls @ implMethodDecls)
+            implMethodDecls
             |> List.iter (fun (methodSid, methodDecl) ->
                 methods.Add(analyzeMethodCore nameEnv typeEnv methodSid methodDecl))
 

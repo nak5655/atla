@@ -123,15 +123,27 @@ module Compiler =
         (symbolTable: SymbolTable)
         (hirModule: Hir.Module)
         : Map<string, Analyze.ModuleExport> =
-        hirModule.scope.vars
-        |> Seq.map (fun kv -> kv.Key, kv.Value)
-        |> Seq.choose (fun (name, sid) ->
-            symbolTable.Get(sid)
-            |> Option.map (fun symInfo ->
-                name,
-                ({ symbolId = sid
-                   typ = symInfo.typ }: Analyze.ModuleExport)))
-        |> Seq.toList
+        let valueExports =
+            hirModule.scope.vars
+            |> Seq.map (fun kv -> kv.Key, kv.Value)
+            |> Seq.choose (fun (name, sid) ->
+                symbolTable.Get(sid)
+                |> Option.map (fun symInfo ->
+                    name,
+                    ({ symbolId = sid
+                       typ = symInfo.typ }: Analyze.ModuleExport)))
+            |> Seq.toList
+
+        let methodExports =
+            hirModule.methods
+            |> List.choose (fun methodInfo ->
+                symbolTable.Get(methodInfo.sym)
+                |> Option.map (fun symInfo ->
+                    symInfo.name,
+                    ({ symbolId = methodInfo.sym
+                       typ = symInfo.typ }: Analyze.ModuleExport)))
+
+        valueExports @ methodExports
         |> Map.ofList
 
     /// 複数 HIR モジュールを 1 つへ統合し、CIL 生成のランタイム制約（単一 dynamic module）に合わせる。
