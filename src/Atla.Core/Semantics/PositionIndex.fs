@@ -57,8 +57,19 @@ type PositionIndex =
       useSites: UseSite list
       /// シンボルIDから宣言スパンへのマップ（SymbolId.id をキーとする）。
       declSites: Map<int, Span>
+      /// ローカル束縛の可視範囲情報（位置ベース補完フィルタに使用）。
+      bindingSites: BindingSite list
       /// モジュールのトップレベルスコープ（補完候補の列挙に使用）。
       moduleScope: Scope }
+
+/// ローカル束縛（引数/let/for）の可視範囲情報。
+and BindingSite =
+    { /// 束縛されるシンボルID。
+      symbolId: SymbolId
+      /// 束縛宣言のスパン。
+      declSpan: Span
+      /// 当該束縛が可視な字句スコープ全体のスパン。
+      scopeSpan: Span }
 
 // ---------------------------------------------------------------------------
 // ヘルパー
@@ -81,12 +92,14 @@ let private spanContains (line: int) (col: int) (span: Span) : bool =
 /// F# のコーディング規約（AGENTS.md §6）に従い可変バインディングは使用しない。
 type private BuildState =
     { useSites:  UseSite list
-      declSites: Map<int, Span> }
+      declSites: Map<int, Span>
+      bindingSites: BindingSite list }
 
 /// 空のアキュムレータ。
 let private emptyState : BuildState =
     { useSites  = []
-      declSites = Map.empty }
+      declSites = Map.empty
+      bindingSites = [] }
 
 /// 宣言スパンをアキュムレータに追加する（同一 SymbolId の場合は最初の登録のみ保持）。
 let private addDecl (sid: SymbolId) (span: Span) (state: BuildState) : BuildState =
@@ -98,24 +111,41 @@ let private addDecl (sid: SymbolId) (span: Span) (state: BuildState) : BuildStat
 let private addUse (sid: SymbolId) (span: Span) (state: BuildState) : BuildState =
     { state with useSites = { span = span; symbolId = sid } :: state.useSites }
 
+/// ローカル束縛の可視範囲情報を追加する。
+let private addBindingSite (sid: SymbolId) (declSpan: Span) (scopeSpan: Span) (state: BuildState) : BuildState =
+    { state with
+        bindingSites =
+            { symbolId = sid
+              declSpan = declSpan
+              scopeSpan = scopeSpan } :: state.bindingSites }
+
 /// 式ノードを再帰的に走査してアキュムレータを更新する。
-let rec private walkExpr (expr: Hir.Expr) (state: BuildState) : BuildState =
+let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) : BuildState =
     match expr with
     | Hir.Expr.Id(sid, _, span) ->
         addUse sid span state
     | Hir.Expr.Call(_, instance, args, _, _) ->
-        let state1 = instance |> Option.fold (fun s e -> walkExpr e s) state
-        args |> List.fold (fun s e -> walkExpr e s) state1
-    | Hir.Expr.Lambda(args, _, body, _, _) ->
-        let state1 = args |> List.fold (fun s (arg: Hir.Arg) -> addDecl arg.sid arg.span s) state
-        walkExpr body state1
+        let state1 = instance |> Option.fold (fun s e -> walkExpr scopeSpan e s) state
+        args |> List.fold (fun s e -> walkExpr scopeSpan e s) state1
+    | Hir.Expr.Lambda(args, _, body, _, span) ->
+        let lambdaScope = span
+        let state1 =
+            args
+            |> List.fold
+                (fun s (arg: Hir.Arg) ->
+                    s
+                    |> addDecl arg.sid arg.span
+                    |> addBindingSite arg.sid arg.span lambdaScope)
+                state
+        walkExpr lambdaScope body state1
     | Hir.Expr.MemberAccess(_, instance, _, _) ->
-        instance |> Option.fold (fun s e -> walkExpr e s) state
-    | Hir.Expr.Block(stmts, body, _, _) ->
-        let state1 = stmts |> List.fold (fun s stmt -> walkStmt stmt s) state
-        walkExpr body state1
+        instance |> Option.fold (fun s e -> walkExpr scopeSpan e s) state
+    | Hir.Expr.Block(stmts, body, _, span) ->
+        let blockScope = span
+        let state1 = stmts |> List.fold (fun s stmt -> walkStmt blockScope stmt s) state
+        walkExpr blockScope body state1
     | Hir.Expr.If(cond, thenBr, elseBr, _, _) ->
-        state |> walkExpr cond |> walkExpr thenBr |> walkExpr elseBr
+        state |> walkExpr scopeSpan cond |> walkExpr scopeSpan thenBr |> walkExpr scopeSpan elseBr
     | Hir.Expr.Unit _
     | Hir.Expr.Int _
     | Hir.Expr.Float _
@@ -124,35 +154,53 @@ let rec private walkExpr (expr: Hir.Expr) (state: BuildState) : BuildState =
     | Hir.Expr.ExprError _ -> state
 
 /// 文ノードを走査してアキュムレータを更新する。
-and private walkStmt (stmt: Hir.Stmt) (state: BuildState) : BuildState =
+and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : BuildState =
     match stmt with
     | Hir.Stmt.Let(sid, _, value, span) ->
-        state |> addDecl sid span |> walkExpr value
+        state
+        |> addDecl sid span
+        |> addBindingSite sid span scopeSpan
+        |> walkExpr scopeSpan value
     | Hir.Stmt.Assign(_, value, _) ->
-        walkExpr value state
+        walkExpr scopeSpan value state
     | Hir.Stmt.ExprStmt(expr, _) ->
-        walkExpr expr state
+        walkExpr scopeSpan expr state
     | Hir.Stmt.For(sid, _, iterable, body, span) ->
-        let state1 = state |> addDecl sid span |> walkExpr iterable
-        body |> List.fold (fun s stmt -> walkStmt stmt s) state1
+        let forScope =
+            body
+            |> List.tryLast
+            |> Option.map (fun stmt ->
+                match stmt with
+                | Hir.Stmt.Let (_, _, _, bodySpan)
+                | Hir.Stmt.Assign (_, _, bodySpan)
+                | Hir.Stmt.ExprStmt (_, bodySpan)
+                | Hir.Stmt.For (_, _, _, _, bodySpan)
+                | Hir.Stmt.ErrorStmt (_, bodySpan) -> bodySpan)
+            |> Option.defaultValue span
+        let state1 =
+            state
+            |> addDecl sid span
+            |> addBindingSite sid span forScope
+            |> walkExpr scopeSpan iterable
+        body |> List.fold (fun s stmt -> walkStmt forScope stmt s) state1
     | Hir.Stmt.ErrorStmt _ -> state
 
 /// 単一モジュールを走査してアキュムレータを更新する。
 let private walkModule (modul: Hir.Module) (state: BuildState) : BuildState =
     let state1 =
         modul.fields |> List.fold (fun s field ->
-            s |> addDecl field.sym field.span |> walkExpr field.body) state
+            s |> addDecl field.sym field.span |> walkExpr field.span field.body) state
     let state2 =
         modul.methods |> List.fold (fun s method ->
-            s |> addDecl method.sym method.span |> walkExpr method.body) state1
+            s |> addDecl method.sym method.span |> walkExpr method.span method.body) state1
     modul.types |> List.fold (fun s typ ->
         // Hir.Type はスパンを持たないため Span.Empty を使用する。
         let s1 = addDecl typ.sym Span.Empty s
         let s2 =
             typ.fields |> List.fold (fun sField field ->
-                sField |> addDecl field.sym field.span |> walkExpr field.body) s1
+                sField |> addDecl field.sym field.span |> walkExpr field.span field.body) s1
         typ.methods |> List.fold (fun sMethod methodInfo ->
-            sMethod |> addDecl methodInfo.sym methodInfo.span |> walkExpr methodInfo.body) s2) state2
+            sMethod |> addDecl methodInfo.sym methodInfo.span |> walkExpr methodInfo.span methodInfo.body) s2) state2
 
 // ---------------------------------------------------------------------------
 // PositionIndex 構築（公開エントリポイント）
@@ -173,6 +221,7 @@ let build (assembly: Hir.Assembly) : PositionIndex =
 
     { useSites    = finalState.useSites
       declSites   = finalState.declSites
+      bindingSites = finalState.bindingSites
       moduleScope = topScope }
 
 // ---------------------------------------------------------------------------
@@ -190,3 +239,12 @@ let tryFindSymbolAt (index: PositionIndex) (line: int) (col: int) : SymbolId opt
 let tryFindDeclSpan (index: PositionIndex) (sid: SymbolId) : Span option =
     let (SymbolId id) = sid
     index.declSites |> Map.tryFind id
+
+/// 指定位置で可視なローカル束縛シンボルを返す。
+let visibleSymbolIdsAt (index: PositionIndex) (line: int) (col: int) : SymbolId list =
+    index.bindingSites
+    |> List.filter (fun binding ->
+        spanContains line col binding.scopeSpan
+        && (binding.declSpan.left.Line < line
+            || (binding.declSpan.left.Line = line && binding.declSpan.left.Column <= col)))
+    |> List.map (fun binding -> binding.symbolId)

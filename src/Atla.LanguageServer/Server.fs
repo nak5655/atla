@@ -119,6 +119,48 @@ let private resolveServerVersion (assemblyLocation: string) : string =
         with _ ->
             "0.0.0"
 
+/// 補完判定で使う識別子文字（英数字 + `_`）を判定する。
+let private isIdentifierChar (c: char) : bool =
+    Char.IsLetterOrDigit(c) || c = '_'
+
+/// 指定行のカーソル位置までの文字列を返す（範囲外は None）。
+let private tryGetLinePrefix (text: string) (line: int) (character: int) : string option =
+    let normalized = normalizeSemanticInput text
+    let lines = normalized.Split('\n')
+    if line < 0 || line >= lines.Length then None
+    else
+        let lineText = lines.[line]
+        let clamped = min (max 0 character) lineText.Length
+        Some(lineText.Substring(0, clamped))
+
+/// カーソル位置が `receiver'memberPrefix` 形式なら `(receiver, memberPrefix)` を返す。
+let private tryParseApostropheContext (linePrefix: string) : (string * string) option =
+    if String.IsNullOrEmpty(linePrefix) then None
+    else
+        let mutable i = linePrefix.Length - 1
+        while i >= 0 && isIdentifierChar linePrefix.[i] do
+            i <- i - 1
+        let memberPrefix = linePrefix.Substring(i + 1)
+        if i < 0 || linePrefix.[i] <> '\'' then None
+        else
+            let mutable j = i - 1
+            while j >= 0 && isIdentifierChar linePrefix.[j] do
+                j <- j - 1
+            let receiver = linePrefix.Substring(j + 1, i - (j + 1))
+            if String.IsNullOrWhiteSpace(receiver) then None
+            else Some(receiver, memberPrefix)
+
+/// TypeId から .NET System.Type を解決する（主に `External(SystemTypeRef)` を対象）。
+let private tryResolveSystemTypeFromTypeId (symbolTable: SymbolTable) (tid: TypeId) : Type option =
+    match tid with
+    | TypeId.Native t -> Some t
+    | TypeId.App(TypeId.Native t, _) -> Some t
+    | TypeId.Name sid ->
+        match symbolTable.Get sid with
+        | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef t) } when not (isNull t) -> Some t
+        | _ -> None
+    | _ -> None
+
 let private collectWorkspaceRoots (content: JObject) : string list =
     let rootsFromFolders =
         match content.SelectToken("$.params.workspaceFolders") with
@@ -182,7 +224,7 @@ type Server
         ?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagnostic list -> unit),
         ?assemblyLocationResolver: unit -> string,
         ?buildProjectFn: BuildRequest -> BuildResult,
-        ?compileFn: Compiler.CompileRequest -> Compiler.CompileResult
+        ?compileFn: Compiler.CompileModulesRequest -> Compiler.CompileResult
     ) =
 
     // ---- persistent state --------------------------------------------------
@@ -199,7 +241,33 @@ type Server
     let getAssemblyLocation =
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
     let buildProject = defaultArg buildProjectFn BuildSystem.buildProject
-    let compile = defaultArg compileFn Compiler.compile
+    let compile = defaultArg compileFn Compiler.compileModules
+
+    let collectModuleSourcesForProject (projectRoot: string) (normalizedUri: string) (text: string) : Compiler.ModuleSource list =
+        let srcRoot = Path.Join(projectRoot, "src")
+        let files =
+            Directory.GetFiles(srcRoot, "*.atla", SearchOption.AllDirectories)
+            |> Array.sort
+            |> Array.toList
+
+        let toModuleName (path: string) =
+            let relativePath = Path.GetRelativePath(srcRoot, path)
+            let withoutExtension = Path.ChangeExtension(relativePath, null)
+            withoutExtension.Replace(Path.DirectorySeparatorChar, '.').Replace(Path.AltDirectorySeparatorChar, '.')
+
+        files
+        |> List.map (fun path ->
+            let moduleText =
+                if StringComparer.OrdinalIgnoreCase.Equals(Path.GetFullPath(path), Path.GetFullPath(normalizedUri)) then
+                    text
+                else
+                    File.ReadAllText(path)
+            { moduleName = toModuleName path; source = moduleText })
+
+    let inferSingleDocumentModuleName (normalizedUri: string) : string =
+        normalizedUri
+        |> Path.GetFileNameWithoutExtension
+        |> fun name -> if String.IsNullOrWhiteSpace(name) then "main" else name
 
     let canCompileUri (normalizedUri: string) : bool =
         match tryUriToNormalizedPath normalizedUri with
@@ -242,7 +310,36 @@ type Server
                     buildDiagnostics |> toLspDiagnostics "atla-build" |> publish displayUri
                 | Ok dependencies ->
                     let compileResult =
-                        compile { asmName = asmName; source = text; outDir = outputDir; dependencies = dependencies }
+                        match tryUriToNormalizedPath normalizedUri with
+                        | Some normalizedPath ->
+                            match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
+                            | Some projectRoot ->
+                                let modules = collectModuleSourcesForProject projectRoot normalizedPath text
+                                let entryModuleName = inferSingleDocumentModuleName normalizedPath
+                                compile {
+                                    asmName = asmName
+                                    modules = modules
+                                    entryModuleName = entryModuleName
+                                    outDir = outputDir
+                                    dependencies = dependencies
+                                }
+                            | None ->
+                                let entryModuleName = inferSingleDocumentModuleName normalizedPath
+                                compile {
+                                    asmName = asmName
+                                    modules = [ { moduleName = entryModuleName; source = text } ]
+                                    entryModuleName = entryModuleName
+                                    outDir = outputDir
+                                    dependencies = dependencies
+                                }
+                        | None ->
+                            compile {
+                                asmName = asmName
+                                modules = [ { moduleName = "main"; source = text } ]
+                                entryModuleName = "main"
+                                outDir = outputDir
+                                dependencies = dependencies
+                            }
 
                     // 意味解析が成功した場合は HIR からインデックスを構築してキャッシュする。
                     match compileResult.hir, compileResult.symbolTable with
@@ -320,7 +417,7 @@ type Server
                     false,
                     true
                 ),
-                CompletionOptions([ "." ]),
+                CompletionOptions([ "'" ]),
                 true,
                 true
             )
@@ -430,31 +527,134 @@ type Server
             | false, _ -> None
 
     /// 補完候補リストを返す。
-    /// モジュールスコープ内の全シンボルを候補として提供する。
-    /// 現時点では位置情報は補完フィルタに使用しない（将来のスコープ絞り込み拡張用に保持）。
-    member this.GetCompletions(uri: string, _line: int, _character: int) : CompletionList =
+    /// `'` コンテキストでは受け手型メンバーのみ、それ以外では可視変数 + 可視型を返す。
+    member this.GetCompletions(uri: string, line: int, character: int) : CompletionList =
         match this.TryGetIndex uri with
         | None -> CompletionList(false, [])
         | Some(index, symbolTable) ->
-            let visibleVars = index.moduleScope.allVisibleVars()
-            let items =
-                visibleVars
-                |> List.choose (fun (name, sid) ->
-                    match symbolTable.Get sid with
-                    | None -> None
-                    | Some symInfo ->
-                        let kind =
-                            match symInfo.kind with
-                            | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
-                            | SymbolKind.Local _ -> Some CompletionItemKind.Variable
-                            | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
-                            | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
-                            | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
-                            | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
-                        // detail: VS Code の補完 UI に型シグネチャとして表示されるテキスト。
-                        let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
-                        Some(CompletionItem(name, ?kind = kind, detail = detail)))
-            CompletionList(false, items)
+            let localSymbolsAtCursor =
+                PositionIndex.visibleSymbolIdsAt index line character
+                |> List.choose (fun sid ->
+                    symbolTable.Get sid
+                    |> Option.map (fun info -> info.name, sid))
+                |> List.distinctBy fst
+
+            let localNames = localSymbolsAtCursor |> List.map fst |> Set.ofList
+            let moduleVisibleVars =
+                index.moduleScope.allVisibleVars()
+                |> List.filter (fun (name, _) -> not (localNames.Contains name))
+
+            let visibleVars = localSymbolsAtCursor @ moduleVisibleVars
+            let visibleVarMap = visibleVars |> Map.ofList
+            let visibleTypes = index.moduleScope.allVisibleTypes()
+
+            // 指定した receiver 名からメンバー探索対象の .NET 型と static/instance モードを解決する。
+            let resolveReceiverType (receiverName: string) : (Type * bool) option =
+                match visibleVarMap |> Map.tryFind receiverName with
+                | Some sid ->
+                    symbolTable.Get sid
+                    |> Option.bind (fun symInfo -> tryResolveSystemTypeFromTypeId symbolTable symInfo.typ)
+                    |> Option.map (fun t -> t, false)
+                | None ->
+                    visibleTypes
+                    |> List.tryFind (fun (name, _) -> name = receiverName)
+                    |> Option.bind (fun (_, tid) -> tryResolveSystemTypeFromTypeId symbolTable tid)
+                    |> Option.map (fun t -> t, true)
+
+            // 受け手型のメンバー候補を CompletionItem へ変換する。
+            let buildMemberItems (receiverType: Type) (isStaticReceiver: bool) (memberPrefix: string) : CompletionItem list =
+                let flags =
+                    let staticOrInstance =
+                        if isStaticReceiver then BindingFlags.Static
+                        else BindingFlags.Instance
+                    BindingFlags.Public ||| staticOrInstance
+
+                let methodItems =
+                    receiverType.GetMethods(flags)
+                    |> Seq.map (fun methodInfo ->
+                        let ps =
+                            methodInfo.GetParameters()
+                            |> Seq.map (fun p -> p.ParameterType.Name)
+                            |> String.concat ", "
+                        let detail = sprintf "%s(%s): %s" methodInfo.Name ps methodInfo.ReturnType.Name
+                        methodInfo.Name, CompletionItem(methodInfo.Name, kind = CompletionItemKind.Method, detail = detail))
+
+                let propertyItems =
+                    receiverType.GetProperties(flags)
+                    |> Seq.map (fun propInfo ->
+                        let detail = sprintf "%s: %s" propInfo.Name propInfo.PropertyType.Name
+                        propInfo.Name, CompletionItem(propInfo.Name, kind = CompletionItemKind.Field, detail = detail))
+
+                let fieldItems =
+                    receiverType.GetFields(flags)
+                    |> Seq.map (fun fieldInfo ->
+                        let detail = sprintf "%s: %s" fieldInfo.Name fieldInfo.FieldType.Name
+                        fieldInfo.Name, CompletionItem(fieldInfo.Name, kind = CompletionItemKind.Field, detail = detail))
+
+                seq {
+                    yield! methodItems
+                    yield! propertyItems
+                    yield! fieldItems
+                }
+                |> Seq.filter (fun (name, _) ->
+                    String.IsNullOrEmpty(memberPrefix)
+                    || name.StartsWith(memberPrefix, StringComparison.OrdinalIgnoreCase))
+                |> Seq.distinctBy fst
+                |> Seq.map snd
+                |> Seq.toList
+
+            let apostropheItems =
+                match tryNormalizeUri uri with
+                | None -> None
+                | Some key ->
+                    match buffers.TryGetValue key with
+                    | false, _ -> None
+                    | true, text ->
+                        match tryGetLinePrefix text line character with
+                        | None -> None
+                        | Some linePrefix ->
+                            match tryParseApostropheContext linePrefix with
+                            | None -> None
+                            | Some(receiverName, memberPrefix) ->
+                                match resolveReceiverType receiverName with
+                                | None -> Some []
+                                | Some(receiverType, isStaticReceiver) ->
+                                    Some(buildMemberItems receiverType isStaticReceiver memberPrefix)
+
+            match apostropheItems with
+            | Some memberItems ->
+                // `'` コンテキストでは受け手型メンバー探索の結果のみ返す。
+                CompletionList(false, memberItems)
+            | None ->
+                // `'` 以外は可視変数 + 可視型の候補を返す。
+                let varItems =
+                    visibleVars
+                    |> List.choose (fun (name, sid) ->
+                        match symbolTable.Get sid with
+                        | None -> None
+                        | Some symInfo ->
+                            let kind =
+                                match symInfo.kind with
+                                | SymbolKind.BuiltinOperator _ -> Some CompletionItemKind.Function
+                                | SymbolKind.Local _ -> Some CompletionItemKind.Variable
+                                | SymbolKind.Arg _ -> Some CompletionItemKind.Variable
+                                | SymbolKind.External(ExternalBinding.NativeMethodGroup _) -> Some CompletionItemKind.Method
+                                | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
+                                | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
+                            let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
+                            Some(name, CompletionItem(name, ?kind = kind, detail = detail)))
+
+                let typeItems =
+                    visibleTypes
+                    |> List.map (fun (name, tid) ->
+                        let detail = PositionIndex.formatTypeWithTable symbolTable tid
+                        name, CompletionItem(name, kind = CompletionItemKind.Class, detail = detail))
+
+                let items =
+                    (varItems @ typeItems)
+                    |> List.distinctBy fst
+                    |> List.map snd
+                CompletionList(false, items)
 
     /// カーソル位置にある識別子のホバー情報を返す。
     member this.GetHover(uri: string, line: int, character: int) : Hover option =

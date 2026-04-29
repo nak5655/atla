@@ -17,6 +17,93 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-29): LanguageServer の compileModules 移行 + Compiler.compile 削除
+
+#### ミッション
+- LanguageServer のコンパイル経路を `Compiler.compile`（単一 source）から `Compiler.compileModules`（複数モジュール）へ完全移行し、`import sub` など Atla モジュール import をエディタ診断/補完でも解決可能にする。
+- `Compiler.compile` 互換 API を削除し、コンパイル入口を `compileModules` に一本化する。
+- 破壊的変更を許容しつつ、AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL のフェーズ境界と既存不変条件を維持する。
+
+#### 実行ステップ
+1. **Server API 破壊的更新**: `Server` の `compileFn` 依存注入シグネチャを `CompileRequest -> CompileResult` から `CompileModulesRequest -> CompileResult` へ変更する。
+2. **LSP 入力収集実装**: `compileAndPublish` で「開いているドキュメント単体」ではなく、対象プロジェクトの `src/**/*.atla` を決定的順序で収集し、編集中ドキュメントはバッファ内容で上書きした `modules` 配列を組み立てる。
+3. **エントリモジュール決定**: `main.atla` を `entryModuleName = "main"` として固定し、未存在時は構造化診断を返す。
+4. **依存解決接続**: 既存 `buildProject` 由来の依存 DLL 解決を維持しつつ、`compileModules` 呼び出しへ接続する。
+5. **Compiler 入口整理**: `Compiler.compile` を削除し、呼び出し側（LanguageServer/テスト）をすべて `compileModules` へ移行する。未使用となる単一 source 前提コードは削除する。
+6. **テスト更新（LanguageServer）**:
+   - `import sub` を含む複数ファイル入力で diagnostics が解決される回帰を追加。
+   - バッファ未保存変更が `modules` 収集に反映される回帰を追加。
+   - 既存 compileFn モックを新シグネチャへ更新。
+7. **テスト更新（Compiler/Console）**:
+   - `compileModules` のみを前提としたテストへ整理し、`compile` 依存テストを置換または削除。
+   - import cycle / module not found / .NET 型 import 共存の回帰を追加。
+8. **ドキュメント更新**: `PLANS.md` 実行メモ、必要なら開発者向け API 説明（Compiler 入口）を更新する。
+9. **検証**: `Atla.Core.Tests` / `Atla.Console.Tests` / `Atla.LanguageServer.Tests` を実行し、診断順序と phase 不変条件の非退行を確認する。
+
+### アクティブタスク (2026-04-28): Atla モジュール import 実装
+
+#### ミッション
+- `import sub` / `import foo'bar` で `src/sub.atla` / `src/foo/bar.atla` の Atla モジュールを解決できるようにする。
+- 既存の .NET 型 import（例: `import System'Console`）を維持しつつ、モジュール import と共存可能にする。
+- AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL のフェーズ境界を維持し、モジュール解決は Build/Resolver + Semantics の責務に限定する。
+
+#### 実行ステップ
+1. Build/CLI 入力契約を拡張し、`src/**/*.atla` を決定的順序で収集してコンパイル入力へ渡す（現行 `src/main.atla` 単一入力を置換）。
+2. Compiler の入力モデルを「単一 source」から「複数 module source」へ拡張し、各ファイルを独立に AST 化する。
+3. モジュールテーブル（`moduleName -> sourcePath/sourceText/AST`）を構築し、`import` 依存グラフを生成する。
+4. `import` 解決を二段階化する:
+   - Atla モジュールとして解決できる場合は ModuleImport として登録
+   - それ以外は既存の ExternalTypeImport（System.Type 解決）へフォールバック
+5. モジュール依存グラフの循環検出を実装し、決定的順序で構造化診断を返す。
+6. Resolve/Analyze をトポロジカル順に適用し、`module'symbol` 参照が imported module の公開シンボルへ解決されるようにする。
+7. HIR 正規化時に import 糖衣を残さず、既存の正準呼び出し/参照ノードへ lower する（下流フェーズの契約変更を回避）。
+8. 回帰テストを追加する:
+   - 成功系: `import sub` で `sub'hello` 呼び出し
+   - ネスト: `import foo'bar`
+   - 失敗系: 未存在モジュール、循環 import、未定義シンボル
+   - 共存: .NET 型 import と Atla モジュール import の同時利用
+9. `examples/hello_module` を回帰サンプルとしてビルド検証し、ドキュメント（import 仕様）を更新する。
+
+### アクティブタスク (2026-04-27): アポストロフィ起点のメンバー補完分岐
+
+#### ミッション
+- 補完トリガーを `.` から `'` へ切り替え、ドット補完を無効化する。
+- `'` で起動した補完は受け手型のメンバー探索のみに限定し、`Console'` で `WriteLine` 候補を返す。
+- `'` 以外の補完では可視変数に加えて可視型も候補へ含める。
+
+#### 実行ステップ
+1. LanguageServer initialize の `CompletionOptions` を `'` トリガーへ更新する。
+2. `GetCompletions` に apostrophe 文脈判定（受け手識別子 + 入力中メンバー接頭辞抽出）を実装する。
+3. apostrophe 文脈時は受け手解決（可視変数優先、次に可視型）を行い、受け手型の public メンバーのみを候補化する。
+4. 非 apostrophe 文脈の補完候補を「可視変数 + 可視型」に拡張するため、`Scope` へ可視型列挙 API を追加する。
+5. IntelliSense テストを追加・更新し、`Console'` で `WriteLine` が補完されること・非 apostrophe で変数/型が補完されることを回帰検証する。
+6. 関連テストスイートを実行して非退行を確認する。
+
+### アクティブタスク (2026-04-27): IntelliSense 向け部分 HIR キャッシュ + 最新入力優先補完
+
+#### ミッション
+- 途中入力で構文/意味エラーが存在しても IntelliSense 用の HIR キャッシュを生成・更新し、`Console'` のような未完了メンバーアクセスでも補完を継続可能にする。
+- 既存 `analyzeModule` の現行挙動は維持せず、IDE/コンパイル双方で部分 HIR を返せる経路へ統一する（破壊的変更を許容）。
+- 補完候補は「最新入力から生成したキャッシュ」を最優先とし、古い成功キャッシュへのフォールバックを禁止する。
+- 補完時に位置スコープ絞り込みを導入し、モジュール全体列挙からカーソル位置可視範囲ベースの候補提示へ改善する。
+
+#### 実行ステップ
+1. `PhaseResult`/`Analyze.analyzeModule` の契約を見直し、エラー診断を保持しつつ部分 HIR を返せる結果型へ再設計する（必要に応じて既存 API を置換）。
+2. `Compiler.compile` の意味解析分岐を更新し、意味エラー時でも `hir` と `symbolTable` を `CompileResult` に格納する。字句/構文解析失敗時のみ `hir=None` を許容する。
+3. `Server.compileAndPublish` を更新し、最新入力のコンパイル結果が部分 HIR を返した場合は常に `hirCache` を上書きする。HIR が生成不能な場合のみキャッシュ削除する。
+4. `GetCompletions` に位置スコープ絞り込みを実装し、`PositionIndex` の情報を使ってカーソル位置で可視なシンボル集合のみを候補化する。
+5. LanguageServer テストを追加・更新し、以下を回帰検証する:
+   - 途中入力 + 診断ありで補完が継続すること
+   - 最新入力が常に補完結果へ反映されること（古いキャッシュ非採用）
+   - 位置に応じて候補集合が絞り込まれること
+6. Compiler/Semantics テストを追加・更新し、意味エラーを含む入力でも部分 HIR が返る契約を固定化する。
+7. フルテストスイートを実行し、AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL の不変条件と診断順序の非退行を確認する。
+
+#### 実行メモ (2026-04-27)
+- `Analyze.analyzeModule` は意味エラー時でも部分 HIR を返す契約へ変更し、`Compiler.compile` で下流フェーズ停止 + HIR/SymbolTable 返却へ接続した。
+- `PositionIndex` にローカル束縛の可視範囲インデックスを追加し、`GetCompletions` はカーソル位置の字句可視シンボル優先 + モジュール可視シンボル補完へ更新した。
+- 途中入力（`Console'`）でも補完キャッシュが空にならない回帰と、宣言前変数を候補から除外する位置スコープ絞り込み回帰を追加した。
+
 ### アクティブタスク (2026-04-26): impl 内 `this` 省略メソッドの static 扱い
 
 #### ミッション

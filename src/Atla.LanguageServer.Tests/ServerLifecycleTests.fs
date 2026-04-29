@@ -21,6 +21,29 @@ module ServerLifecycleTests =
         sprintf "file://%s" normalizedPathForOs
 
     [<Fact>]
+    let ``initialize sets completion trigger to apostrophe only`` () =
+        let server = Server()
+        let content = JObject.Parse("""
+        {
+          "params": {
+            "capabilities": {
+              "textDocument": {
+                "publishDiagnostics": { "relatedInformation": true },
+                "semanticTokens": { "tokenTypes": ["keyword", "number", "string", "variable", "type"] }
+              }
+            }
+          }
+        }
+        """)
+
+        let result = server.Initialize(content)
+        let resultJson = JObject.FromObject(result)
+        let triggers =
+            resultJson.["capabilities"].["completionProvider"].["triggerCharacters"].Values<string>()
+            |> Seq.toList
+        Assert.Equal<string list>(["'"], triggers)
+
+    [<Fact>]
     let ``normalize uri makes file key deterministic`` () =
         let server = Server()
 
@@ -54,7 +77,7 @@ module ServerLifecycleTests =
     let ``compile dispatches dependencies when workspace root URI uses percent-encoded drive letter`` () =
         // VSCode on Windows can send workspace root URIs with percent-encoded colons (d%3A).
         // collectWorkspaceRoots must decode these so dependency resolution finds atla.yaml.
-        let capturedRequests = ResizeArray<Compiler.CompileRequest>()
+        let capturedRequests = ResizeArray<Compiler.CompileModulesRequest>()
         let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-pct-root-{System.Guid.NewGuid():N}")
 
         try
@@ -81,7 +104,7 @@ module ServerLifecycleTests =
                       }
                   diagnostics = [] }
 
-            let compile (request: Compiler.CompileRequest) : Compiler.CompileResult =
+            let compile (request: Compiler.CompileModulesRequest) : Compiler.CompileResult =
                 capturedRequests.Add(request)
                 { succeeded = true; diagnostics = []; hir = None; symbolTable = None }
 
@@ -217,7 +240,7 @@ module ServerLifecycleTests =
 
     [<Fact>]
     let ``compile and publish injects dependencies resolved from build plan`` () =
-        let capturedRequests = ResizeArray<Compiler.CompileRequest>()
+        let capturedRequests = ResizeArray<Compiler.CompileModulesRequest>()
         let published = ResizeArray<string * int * string>()
         let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-dependency-inject-{System.Guid.NewGuid():N}")
         let srcDir = Path.Join(tempRoot, "src")
@@ -241,7 +264,7 @@ module ServerLifecycleTests =
                   }
               diagnostics = [] }
 
-        let compile (request: Compiler.CompileRequest) : Compiler.CompileResult =
+        let compile (request: Compiler.CompileModulesRequest) : Compiler.CompileResult =
             capturedRequests.Add(request)
             { succeeded = true
               diagnostics = []
@@ -284,7 +307,7 @@ module ServerLifecycleTests =
               plan = None
               diagnostics = [ Atla.Core.Semantics.Data.Diagnostic.Error("manifest parse failed", Span.Empty) ] }
 
-        let compile (_: Compiler.CompileRequest) : Compiler.CompileResult =
+        let compile (_: Compiler.CompileModulesRequest) : Compiler.CompileResult =
             compileCalled <- true
             { succeeded = true
               diagnostics = []
@@ -358,4 +381,3 @@ module ServerLifecycleTests =
         List.iter2 (fun (uri1: string, count1: int) (uri2: string, count2: int) ->
             Assert.Equal(uri1, uri2)
             Assert.Equal(count1, count2)) first second
-

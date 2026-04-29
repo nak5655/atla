@@ -67,3 +67,18 @@ type Scope(parent: Scope option) =
         let localNames = localVars |> List.map fst |> Set.ofList
         let filteredParentVars = parentVars |> List.filter (fun (name, _) -> not (localNames.Contains name))
         localVars @ filteredParentVars
+
+    /// スコープ内で参照可能な全型を (name, TypeId) のリストとして返す。
+    /// 内側のスコープが外側の同名型に優先される（各 name は最大1エントリのみ含まれる）。
+    member this.allVisibleTypes() : (string * TypeId) list =
+        let parentTypes =
+            match parent with
+            | Some p -> p.allVisibleTypes()
+            | None -> []
+        let localTypes =
+            _types
+            |> Seq.map (fun kv -> kv.Key, kv.Value)
+            |> Seq.toList
+        let localNames = localTypes |> List.map fst |> Set.ofList
+        let filteredParentTypes = parentTypes |> List.filter (fun (name, _) -> not (localNames.Contains name))
+        localTypes @ filteredParentTypes
