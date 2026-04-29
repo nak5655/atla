@@ -1768,6 +1768,48 @@ fn bad (): Int = do
             let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
             Assert.True(false, $"Resolve.resolveModule failed: {message}")
 
+
+    /// import ターゲットがモジュールと型の両方で存在する場合、モジュール解決を優先する。
+    [<Fact>]
+    let ``Resolve.resolveModule prefers module import when module and type share same path`` () =
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "Foo"; "Bar" ], span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl ])
+        let symbolTable = SymbolTable()
+
+        let availableModules = Set.ofList [ "Foo.Bar" ]
+        let availableTypes = Set.ofList [ "Foo.Bar" ]
+
+        match Resolve.resolveModuleWithImports(symbolTable, "main", astModule, availableModules, availableTypes) with
+        | { succeeded = true; value = Some resolved } ->
+            Assert.True(resolved.importedModules.ContainsKey("Bar"), "モジュール import が優先されていない。")
+            let importedType = resolved.moduleScope.ResolveType("Bar")
+            Assert.True(importedType.IsNone, "モジュール優先時に型 import を同時適用してはならない。")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Resolve.resolveModuleWithImports failed: {message}")
+
+    /// モジュールが存在しない場合、availableTypeFullNames で指定された型 import にフォールバックする。
+    [<Fact>]
+    let ``Resolve.resolveModule falls back to type import when module does not exist`` () =
+        let span = Span.Empty
+        let importDecl = Ast.Decl.Import([ "Foo"; "Bar" ], span) :> Ast.Decl
+        let astModule = Ast.Module([ importDecl ])
+        let symbolTable = SymbolTable()
+
+        let availableModules = Set.empty<string>
+        let availableTypes = Set.ofList [ "Foo.Bar" ]
+
+        match Resolve.resolveModuleWithImports(symbolTable, "main", astModule, availableModules, availableTypes) with
+        | { succeeded = true; value = Some resolved } ->
+            let importedType = resolved.moduleScope.ResolveType("Bar")
+            Assert.True(importedType.IsNone, "Resolve フェーズでは型 alias 実体化を行わない。Analyze で実体化される。")
+            Assert.True(resolved.importedTypeAliases.ContainsKey("Bar"), "型 import alias が収集されていない。")
+            Assert.False(resolved.importedModules.ContainsKey("Bar"), "型 import で importedModules が登録されてはならない。")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Resolve.resolveModuleWithImports failed: {message}")
+
     /// ロードされていないアセンブリの型を import すると Warning 診断が出る。
     [<Fact>]
     let ``import of unresolvable type emits a Warning diagnostic`` () =

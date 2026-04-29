@@ -13,6 +13,7 @@ module Resolve =
         { moduleName: string
           moduleScope: Scope
           importedModules: Map<string, string>
+          importedTypeAliases: Map<string, string>
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
           implDecls: (SymbolId * SymbolId option * string option * Ast.Decl.Impl) list }
@@ -66,13 +67,19 @@ module Resolve =
         (symbolTable: SymbolTable)
         (scope: Scope)
         (availableModuleNames: Set<string>)
+        (availableTypeFullNames: Set<string>)
         (importedModules: ResizeArray<string * string>)
+        (importedTypeAliases: ResizeArray<string * string>)
         (importDecl: Ast.Decl.Import)
         : Diagnostic list =
         let classPath = String.concat "." importDecl.path
         let shortName = Array.last (classPath.Split('.'))
         if availableModuleNames.Contains(classPath) then
             importedModules.Add(shortName, classPath)
+            []
+        elif availableTypeFullNames.Contains(classPath) then
+            // 型 import: Analyze で実体 data 宣言へ接続するため、ここでは alias 情報のみ保持する。
+            importedTypeAliases.Add(shortName, classPath)
             []
         else
             // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
@@ -93,7 +100,7 @@ module Resolve =
                 | _ -> []
 
     let resolveModuleWithImports
-        (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module, availableModuleNames: Set<string>)
+        (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module, availableModuleNames: Set<string>, availableTypeFullNames: Set<string>)
         : PhaseResult<ResolvedModule> =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
@@ -110,6 +117,7 @@ module Resolve =
         let dataDecls = ResizeArray<ResolvedDataDecl>()
         let implDecls = ResizeArray<SymbolId * SymbolId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
+        let importedTypeAliases = ResizeArray<string * string>()
         let diagnostics = ResizeArray<Diagnostic>()
 
         // data 型名を先に登録し、同一モジュール内で相互参照可能にする。
@@ -129,7 +137,8 @@ module Resolve =
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Import as importDecl ->
-                let importDiagnostics = resolveImport symbolTable moduleScope availableModuleNames importedModules importDecl
+                let importDiagnostics =
+                    resolveImport symbolTable moduleScope availableModuleNames availableTypeFullNames importedModules importedTypeAliases importDecl
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
                 ()
@@ -263,6 +272,7 @@ module Resolve =
                 { moduleName = moduleName
                   moduleScope = moduleScope
                   importedModules = importedModules |> Seq.distinct |> Map.ofSeq
+                  importedTypeAliases = importedTypeAliases |> Seq.distinct |> Map.ofSeq
                   fnDecls = Seq.toList fnDecls
                   dataDecls = Seq.toList dataDecls
                   implDecls = Seq.toList implDecls }
@@ -270,4 +280,4 @@ module Resolve =
 
     /// 既存呼び出し向け互換 API。Atla モジュール import 判定は行わない。
     let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : PhaseResult<ResolvedModule> =
-        resolveModuleWithImports (symbolTable, moduleName, moduleAst, Set.empty)
+        resolveModuleWithImports (symbolTable, moduleName, moduleAst, Set.empty, Set.empty)
