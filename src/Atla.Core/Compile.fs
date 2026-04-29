@@ -23,12 +23,6 @@ module Compiler =
         { moduleName: string
           source: string }
 
-    type CompileRequest =
-        { asmName: string
-          source: string
-          outDir: string
-          dependencies: ResolvedDependency list }
-
     type CompileModulesRequest =
         { asmName: string
           modules: ModuleSource list
@@ -146,7 +140,15 @@ module Compiler =
 
         hirModules
         |> List.collect (fun modul -> modul.scope.vars |> Seq.map (fun kv -> kv.Key, kv.Value) |> Seq.toList)
-        |> List.iter (fun (name, sid) -> mergedScope.DeclareVar(name, sid))
+        |> List.iter (fun (name, sid) ->
+            if not (mergedScope.vars.ContainsKey(name)) then
+                mergedScope.DeclareVar(name, sid))
+
+        hirModules
+        |> List.collect (fun modul -> modul.scope.types |> Seq.map (fun kv -> kv.Key, kv.Value) |> Seq.toList)
+        |> List.iter (fun (name, tid) ->
+            if not (mergedScope.types.ContainsKey(name)) then
+                mergedScope.DeclareType(name, tid))
 
         let mergedTypes = hirModules |> List.collect (fun modul -> modul.types)
         let mergedFields = hirModules |> List.collect (fun modul -> modul.fields)
@@ -243,13 +245,3 @@ module Compiler =
                                 DependencyLoader.unloadDependencies dependencyLoadContext
             with ex ->
                 failed [ Diagnostic.Error($"Compilation failed: {ex.Message}", Span.Empty) ] None None
-
-    /// 既存 API 互換の単一モジュールコンパイル入口。
-    let compile (request: CompileRequest) : CompileResult =
-        compileModules {
-            asmName = request.asmName
-            modules = [ { moduleName = "main"; source = request.source } ]
-            entryModuleName = "main"
-            outDir = request.outDir
-            dependencies = request.dependencies
-        }

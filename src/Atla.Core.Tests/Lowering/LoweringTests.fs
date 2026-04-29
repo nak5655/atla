@@ -7,6 +7,21 @@ open Xunit
 open Atla.Compiler
 
 module LoweringTests =
+    type SingleCompileRequest =
+        { asmName: string
+          source: string
+          outDir: string
+          dependencies: Compiler.ResolvedDependency list }
+
+    let private compileSingle (request: SingleCompileRequest) : Compiler.CompileResult =
+        Compiler.compileModules {
+            asmName = request.asmName
+            modules = [ { moduleName = "main"; source = request.source } ]
+            entryModuleName = "main"
+            outDir = request.outDir
+            dependencies = request.dependencies
+        }
+
     [<Fact>]
     let ``hello`` () =
         let program = """
@@ -19,7 +34,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "HelloWorld"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "HelloWorld"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "HelloWorld.dll")
@@ -58,7 +73,7 @@ fn main: () = greet.
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "NullaryCall"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "NullaryCall"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "NullaryCall.dll")
@@ -95,7 +110,7 @@ fn main: () = () greet.
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "UnitArgIsNotNullary"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "UnitArgIsNotNullary"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.False(res.succeeded)
         Assert.Contains(res.diagnostics, fun d -> d.message.Contains("different number of arguments"))
 
@@ -122,7 +137,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "FizzBuzz"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "FizzBuzz"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "FizzBuzz.dll")
@@ -173,7 +188,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "Fibonacci"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "Fibonacci"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "Fibonacci.dll")
@@ -210,7 +225,7 @@ fn main: Int = 7
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "ExitCodeProgram"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "ExitCodeProgram"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ExitCodeProgram.dll")
@@ -248,7 +263,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "SplitOptionalArg"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "SplitOptionalArg"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "SplitOptionalArg.dll")
@@ -267,7 +282,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "ArrayIndexAccess"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "ArrayIndexAccess"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ArrayIndexAccess.dll")
@@ -309,7 +324,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "ArrayIndexAccessSplit"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "ArrayIndexAccessSplit"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ArrayIndexAccessSplit.dll")
@@ -353,7 +368,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "ArrayStringAnnotated"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "ArrayStringAnnotated"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "ArrayStringAnnotated.dll")
@@ -398,7 +413,7 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let res = Compiler.compile { asmName = "RangeArrayLengthLoop"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let res = compileSingle { asmName = "RangeArrayLengthLoop"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(res.succeeded)
 
         let dllPath = Path.Join(outDir, "RangeArrayLengthLoop.dll")
@@ -435,7 +450,7 @@ fn main: Int = 0
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let result = Compiler.compile { asmName = "CompileResultSuccess"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let result = compileSingle { asmName = "CompileResultSuccess"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.True(result.succeeded)
         Assert.Empty(result.diagnostics)
 
@@ -448,7 +463,7 @@ fn main: Int =
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let result = Compiler.compile { asmName = "CompileResultFailure"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        let result = compileSingle { asmName = "CompileResultFailure"; source = program.Trim(); outDir = outDir; dependencies = [] }
         Assert.False(result.succeeded)
         Assert.NotEmpty(result.diagnostics)
         Assert.Contains(result.diagnostics, fun diagnostic -> diagnostic.isError)
@@ -472,7 +487,7 @@ fn main: Int = 0
               nativeRuntimePaths = [] }
 
         let result =
-            Compiler.compile
+            compileSingle
                 { asmName = "MissingDependencyProgram"
                   source = program.Trim()
                   outDir = outDir
@@ -501,7 +516,7 @@ fn main: Int = 0
               nativeRuntimePaths = [] }
 
         let result =
-            Compiler.compile
+            compileSingle
                 { asmName = "InvalidDependencyProgram"
                   source = program.Trim()
                   outDir = outDir
@@ -535,7 +550,7 @@ fn main: () = do
               nativeRuntimePaths = [] }
 
         let result =
-            Compiler.compile
+            compileSingle
                 { asmName = "JsonImportWithDependency"
                   source = program.Trim()
                   outDir = outDir
@@ -569,7 +584,7 @@ fn main: () = do
               nativeRuntimePaths = [] }
 
         let result =
-            Compiler.compile
+            compileSingle
                 { asmName = "JsonImportRuntimePathPriority"
                   source = program.Trim()
                   outDir = outDir
@@ -590,7 +605,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let result =
-            Compiler.compile
+            compileSingle
                 { asmName = "JsonImportMissingType"
                   source = program.Trim()
                   outDir = outDir
@@ -640,7 +655,7 @@ fn main: () = do
               nativeRuntimePaths = [] }
 
         let result =
-            Compiler.compile
+            compileSingle
                 { asmName = "DependencyConflictProgram"
                   source = "fn main: Int = 0"
                   outDir = outDir
@@ -671,7 +686,7 @@ fn main: () = do
               nativeRuntimePaths = [] }
 
         let compileOnce () =
-            Compiler.compile
+            compileSingle
                 { asmName = "DependencyDeterminismProgram"
                   source = "fn main: Int = 0"
                   outDir = outDir
@@ -708,7 +723,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let res =
-            Compiler.compile
+            compileSingle
                 { asmName = "ImportedTypeParam"
                   source = program.Trim()
                   outDir = outDir

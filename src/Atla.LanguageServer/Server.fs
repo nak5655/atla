@@ -224,7 +224,7 @@ type Server
         ?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagnostic list -> unit),
         ?assemblyLocationResolver: unit -> string,
         ?buildProjectFn: BuildRequest -> BuildResult,
-        ?compileFn: Compiler.CompileRequest -> Compiler.CompileResult
+        ?compileFn: Compiler.CompileModulesRequest -> Compiler.CompileResult
     ) =
 
     // ---- persistent state --------------------------------------------------
@@ -241,7 +241,33 @@ type Server
     let getAssemblyLocation =
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
     let buildProject = defaultArg buildProjectFn BuildSystem.buildProject
-    let compile = defaultArg compileFn Compiler.compile
+    let compile = defaultArg compileFn Compiler.compileModules
+
+    let collectModuleSourcesForProject (projectRoot: string) (normalizedUri: string) (text: string) : Compiler.ModuleSource list =
+        let srcRoot = Path.Join(projectRoot, "src")
+        let files =
+            Directory.GetFiles(srcRoot, "*.atla", SearchOption.AllDirectories)
+            |> Array.sort
+            |> Array.toList
+
+        let toModuleName (path: string) =
+            let relativePath = Path.GetRelativePath(srcRoot, path)
+            let withoutExtension = Path.ChangeExtension(relativePath, null)
+            withoutExtension.Replace(Path.DirectorySeparatorChar, '.').Replace(Path.AltDirectorySeparatorChar, '.')
+
+        files
+        |> List.map (fun path ->
+            let moduleText =
+                if StringComparer.OrdinalIgnoreCase.Equals(Path.GetFullPath(path), Path.GetFullPath(normalizedUri)) then
+                    text
+                else
+                    File.ReadAllText(path)
+            { moduleName = toModuleName path; source = moduleText })
+
+    let inferSingleDocumentModuleName (normalizedUri: string) : string =
+        normalizedUri
+        |> Path.GetFileNameWithoutExtension
+        |> fun name -> if String.IsNullOrWhiteSpace(name) then "main" else name
 
     let canCompileUri (normalizedUri: string) : bool =
         match tryUriToNormalizedPath normalizedUri with
@@ -284,7 +310,36 @@ type Server
                     buildDiagnostics |> toLspDiagnostics "atla-build" |> publish displayUri
                 | Ok dependencies ->
                     let compileResult =
-                        compile { asmName = asmName; source = text; outDir = outputDir; dependencies = dependencies }
+                        match tryUriToNormalizedPath normalizedUri with
+                        | Some normalizedPath ->
+                            match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
+                            | Some projectRoot ->
+                                let modules = collectModuleSourcesForProject projectRoot normalizedPath text
+                                let entryModuleName = inferSingleDocumentModuleName normalizedPath
+                                compile {
+                                    asmName = asmName
+                                    modules = modules
+                                    entryModuleName = entryModuleName
+                                    outDir = outputDir
+                                    dependencies = dependencies
+                                }
+                            | None ->
+                                let entryModuleName = inferSingleDocumentModuleName normalizedPath
+                                compile {
+                                    asmName = asmName
+                                    modules = [ { moduleName = entryModuleName; source = text } ]
+                                    entryModuleName = entryModuleName
+                                    outDir = outputDir
+                                    dependencies = dependencies
+                                }
+                        | None ->
+                            compile {
+                                asmName = asmName
+                                modules = [ { moduleName = "main"; source = text } ]
+                                entryModuleName = "main"
+                                outDir = outputDir
+                                dependencies = dependencies
+                            }
 
                     // 意味解析が成功した場合は HIR からインデックスを構築してキャッシュする。
                     match compileResult.hir, compileResult.symbolTable with
