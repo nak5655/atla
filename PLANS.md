@@ -17,6 +17,22 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-29): imported type 初期化の型優先確定 + export 名前空間分離
+
+#### ミッション
+- `Person { ... }` のような data 初期化を overload 解決へ誤遷移させず、型解決優先で決定的に data 初期化として解析する。
+- imported impl 用に追加した method export が通常の module member 解決へ混入しないよう、公開シンボル名前空間を分離する。
+- `import sub'Person` + `p'sayHello` の経路で `Undefined type 'unknown'` / `Unknown method symbol` / `No overload matched argument count 1` を根本解消する。
+
+#### 実行ステップ
+1. Analyze の `DataInit` 解析経路を見直し、`Type` 解決成功時は apply/overload 経路へフォールバックしない制御へ修正する。
+2. `ModuleExport` を用途別（通常値公開 / 型メソッド公開）に分離し、`tryResolveImportedModuleMember` は通常値公開のみ参照する。
+3. imported type の `methods` マップ構築は型メソッド公開のみ参照し、定義元モジュールの `SymbolId` を再利用する（import 側で新規採番しない）。
+4. imported instance method の型表現を正規化し、`this` 付き型/束縛後型の差異で下流呼び出し判定が揺れないようにする。
+5. imported impl の duplicate / invalid `this` 診断は定義元モジュール解析へ集約し、import 側での重複診断を抑止する。
+6. `examples/hello_module` をビルドし、`Person { ... }` と `p'sayHello` の両方が成功することを確認する。
+7. `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` に回帰テストを追加し、型 import + data 初期化 + instance member access を固定化する。
+
 ### アクティブタスク (2026-04-29): imported impl 本体解析の分離（signature-only import）
 
 #### ミッション
