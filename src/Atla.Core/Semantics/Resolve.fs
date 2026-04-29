@@ -12,6 +12,7 @@ module Resolve =
     type ResolvedModule =
         { moduleName: string
           moduleScope: Scope
+          importedModules: Map<string, string>
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
           implDecls: (SymbolId * SymbolId option * string option * Ast.Decl.Impl) list }
@@ -61,27 +62,39 @@ module Resolve =
 
     // import 宣言を処理し、型・変数スコープへ登録する。
     // 対象の .NET 型がロード済みアセンブリ内に見つからない場合は Warning 診断を返す。
-    let private resolveImport (symbolTable: SymbolTable) (scope: Scope) (importDecl: Ast.Decl.Import) : Diagnostic list =
+    let private resolveImport
+        (symbolTable: SymbolTable)
+        (scope: Scope)
+        (availableModuleNames: Set<string>)
+        (importedModules: ResizeArray<string * string>)
+        (importDecl: Ast.Decl.Import)
+        : Diagnostic list =
         let classPath = String.concat "." importDecl.path
         let shortName = Array.last (classPath.Split('.'))
-        // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
-        match scope.ResolveType(shortName) with
-        | Some _ -> []
-        | None ->
-            let sid = declareSystemType symbolTable scope classPath
+        if availableModuleNames.Contains(classPath) then
+            importedModules.Add(shortName, classPath)
+            []
+        else
+            // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
+            match scope.ResolveType(shortName) with
+            | Some _ -> []
+            | None ->
+                let sid = declareSystemType symbolTable scope classPath
 
-            // declareSystemType が型を解決できたか確認する。
-            // 解決できなかった場合（sysType が null）は依存関係の設定不備を示す Warning を返す。
-            match symbolTable.Get(sid) with
-            | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when isNull sysType ->
-                [ Diagnostic.Warning(
-                      sprintf
-                          "import '%s': type could not be resolved from loaded assemblies. Ensure the dependency providing this type is listed in atla.yaml and has been restored."
-                          classPath,
-                      importDecl.span) ]
-            | _ -> []
+                // declareSystemType が型を解決できたか確認する。
+                // 解決できなかった場合（sysType が null）は依存関係の設定不備を示す Warning を返す。
+                match symbolTable.Get(sid) with
+                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when isNull sysType ->
+                    [ Diagnostic.Warning(
+                          sprintf
+                              "import '%s': type could not be resolved from loaded assemblies. Ensure the dependency providing this type is listed in atla.yaml and has been restored."
+                              classPath,
+                          importDecl.span) ]
+                | _ -> []
 
-    let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : PhaseResult<ResolvedModule> =
+    let resolveModuleWithImports
+        (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module, availableModuleNames: Set<string>)
+        : PhaseResult<ResolvedModule> =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
         moduleScope.DeclareType("Bool", TypeId.Bool)
@@ -96,6 +109,7 @@ module Resolve =
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
         let implDecls = ResizeArray<SymbolId * SymbolId option * string option * Ast.Decl.Impl>()
+        let importedModules = ResizeArray<string * string>()
         let diagnostics = ResizeArray<Diagnostic>()
 
         // data 型名を先に登録し、同一モジュール内で相互参照可能にする。
@@ -115,7 +129,7 @@ module Resolve =
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Import as importDecl ->
-                let importDiagnostics = resolveImport symbolTable moduleScope importDecl
+                let importDiagnostics = resolveImport symbolTable moduleScope availableModuleNames importedModules importDecl
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
                 ()
@@ -248,7 +262,12 @@ module Resolve =
             PhaseResult.succeeded
                 { moduleName = moduleName
                   moduleScope = moduleScope
+                  importedModules = importedModules |> Seq.distinct |> Map.ofSeq
                   fnDecls = Seq.toList fnDecls
                   dataDecls = Seq.toList dataDecls
                   implDecls = Seq.toList implDecls }
                 allDiagnostics
+
+    /// 既存呼び出し向け互換 API。Atla モジュール import 判定は行わない。
+    let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : PhaseResult<ResolvedModule> =
+        resolveModuleWithImports (symbolTable, moduleName, moduleAst, Set.empty)

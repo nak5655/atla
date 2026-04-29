@@ -17,6 +17,53 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-29): LanguageServer の compileModules 移行 + Compiler.compile 削除
+
+#### ミッション
+- LanguageServer のコンパイル経路を `Compiler.compile`（単一 source）から `Compiler.compileModules`（複数モジュール）へ完全移行し、`import sub` など Atla モジュール import をエディタ診断/補完でも解決可能にする。
+- `Compiler.compile` 互換 API を削除し、コンパイル入口を `compileModules` に一本化する。
+- 破壊的変更を許容しつつ、AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL のフェーズ境界と既存不変条件を維持する。
+
+#### 実行ステップ
+1. **Server API 破壊的更新**: `Server` の `compileFn` 依存注入シグネチャを `CompileRequest -> CompileResult` から `CompileModulesRequest -> CompileResult` へ変更する。
+2. **LSP 入力収集実装**: `compileAndPublish` で「開いているドキュメント単体」ではなく、対象プロジェクトの `src/**/*.atla` を決定的順序で収集し、編集中ドキュメントはバッファ内容で上書きした `modules` 配列を組み立てる。
+3. **エントリモジュール決定**: `main.atla` を `entryModuleName = "main"` として固定し、未存在時は構造化診断を返す。
+4. **依存解決接続**: 既存 `buildProject` 由来の依存 DLL 解決を維持しつつ、`compileModules` 呼び出しへ接続する。
+5. **Compiler 入口整理**: `Compiler.compile` を削除し、呼び出し側（LanguageServer/テスト）をすべて `compileModules` へ移行する。未使用となる単一 source 前提コードは削除する。
+6. **テスト更新（LanguageServer）**:
+   - `import sub` を含む複数ファイル入力で diagnostics が解決される回帰を追加。
+   - バッファ未保存変更が `modules` 収集に反映される回帰を追加。
+   - 既存 compileFn モックを新シグネチャへ更新。
+7. **テスト更新（Compiler/Console）**:
+   - `compileModules` のみを前提としたテストへ整理し、`compile` 依存テストを置換または削除。
+   - import cycle / module not found / .NET 型 import 共存の回帰を追加。
+8. **ドキュメント更新**: `PLANS.md` 実行メモ、必要なら開発者向け API 説明（Compiler 入口）を更新する。
+9. **検証**: `Atla.Core.Tests` / `Atla.Console.Tests` / `Atla.LanguageServer.Tests` を実行し、診断順序と phase 不変条件の非退行を確認する。
+
+### アクティブタスク (2026-04-28): Atla モジュール import 実装
+
+#### ミッション
+- `import sub` / `import foo'bar` で `src/sub.atla` / `src/foo/bar.atla` の Atla モジュールを解決できるようにする。
+- 既存の .NET 型 import（例: `import System'Console`）を維持しつつ、モジュール import と共存可能にする。
+- AST -> Semantic Analysis -> HIR -> Frame Allocation -> MIR -> CIL のフェーズ境界を維持し、モジュール解決は Build/Resolver + Semantics の責務に限定する。
+
+#### 実行ステップ
+1. Build/CLI 入力契約を拡張し、`src/**/*.atla` を決定的順序で収集してコンパイル入力へ渡す（現行 `src/main.atla` 単一入力を置換）。
+2. Compiler の入力モデルを「単一 source」から「複数 module source」へ拡張し、各ファイルを独立に AST 化する。
+3. モジュールテーブル（`moduleName -> sourcePath/sourceText/AST`）を構築し、`import` 依存グラフを生成する。
+4. `import` 解決を二段階化する:
+   - Atla モジュールとして解決できる場合は ModuleImport として登録
+   - それ以外は既存の ExternalTypeImport（System.Type 解決）へフォールバック
+5. モジュール依存グラフの循環検出を実装し、決定的順序で構造化診断を返す。
+6. Resolve/Analyze をトポロジカル順に適用し、`module'symbol` 参照が imported module の公開シンボルへ解決されるようにする。
+7. HIR 正規化時に import 糖衣を残さず、既存の正準呼び出し/参照ノードへ lower する（下流フェーズの契約変更を回避）。
+8. 回帰テストを追加する:
+   - 成功系: `import sub` で `sub'hello` 呼び出し
+   - ネスト: `import foo'bar`
+   - 失敗系: 未存在モジュール、循環 import、未定義シンボル
+   - 共存: .NET 型 import と Atla モジュール import の同時利用
+9. `examples/hello_module` を回帰サンプルとしてビルド検証し、ドキュメント（import 仕様）を更新する。
+
 ### アクティブタスク (2026-04-27): アポストロフィ起点のメンバー補完分岐
 
 #### ミッション
