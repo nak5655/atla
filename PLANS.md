@@ -17,6 +17,41 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### TODO (2026-04-29): `hello_module` import/type/member 解決の収束
+
+- [ ] **Phase 0: 再現固定**
+  - [ ] `examples/hello_module` の失敗ケースを回帰テスト化する。
+  - [ ] `Person { ... }` の式が AST 上 `DataInit` であることを検証するテストを追加する。
+  - [ ] `p'sayHello` が期待経路（data instance member）で解決されることを検証する。
+
+- [ ] **Phase 1: DataInit 優先確定**
+  - [ ] `Analyze` の `DataInit` 経路を優先し、成功時に apply/overload へフォールバックしないよう修正する。
+  - [ ] `No overload matched argument count 1` が `Person { ... }` で再発しないことを確認する。
+
+- [ ] **Phase 2: export 名前空間分離**
+  - [ ] `ModuleExport` を通常値公開と型メソッド公開に分離する。
+  - [ ] `tryResolveImportedModuleMember` は通常値公開のみ参照するようにする。
+  - [ ] imported type method 連携は型メソッド公開のみ参照するようにする。
+
+- [ ] **Phase 3: imported impl 連携の正規化**
+  - [ ] import 側で imported impl method symbol を新規採番しない。
+  - [ ] 定義元モジュールの `SymbolId/TypeId` を再利用する。
+  - [ ] import 側で imported impl 本体を `analyzeMethodCore` しない。
+  - [ ] duplicate / invalid `this` 診断責務を定義元モジュール側へ集約する。
+
+- [ ] **Phase 4: 呼び出し契約の整合**
+  - [ ] imported data method の型表現を local data method と同一契約へ正規化する。
+  - [ ] receiver 暗黙追加（apply 経路）と arity 判定が矛盾しないことを確認する。
+
+- [ ] **Phase 5: 回帰テスト拡充**
+  - [ ] 成功系: `import sub'Person` + `Person { ... }` + `p'sayHello`。
+  - [ ] 失敗系: imported method 不在時の診断、invalid `this`、duplicate method。
+  - [ ] 混在系: module import と type import の共存ケース。
+
+- [ ] **Phase 6: 最終検証**
+  - [ ] `dotnet run --project src/Atla.Console -- build examples/hello_module` を成功させる。
+  - [ ] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` を実行して非退行を確認する。
+
 ### アクティブタスク (2026-04-29): `hello_module` 失敗の段階的収束（DataInit 優先 + export 分離）
 
 #### ミッション
