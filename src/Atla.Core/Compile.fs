@@ -193,6 +193,16 @@ module Compiler =
                                 let symbolTable = SymbolTable()
                                 let typeSubst = TypeSubst()
                                 let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
+                                let availableTypeFullNames =
+                                    moduleAsts
+                                    |> Map.toList
+                                    |> List.collect (fun (moduleName, moduleAst) ->
+                                        moduleAst.decls
+                                        |> List.choose (fun decl ->
+                                            match decl with
+                                            | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
+                                            | _ -> None))
+                                    |> Set.ofList
 
                                 let analyzeFolder (hirModules, moduleExports, diagnostics) moduleName =
                                     let moduleAst = moduleAsts[moduleName]
@@ -203,6 +213,7 @@ module Compiler =
                                             moduleName,
                                             moduleAst,
                                             availableModuleNames,
+                                            availableTypeFullNames,
                                             moduleExports
                                         )
 

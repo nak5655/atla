@@ -1608,10 +1608,11 @@ module Analyze =
             moduleName: string,
             moduleAst: Ast.Module,
             availableModuleNames: Set<string>,
+            availableTypeFullNames: Set<string>,
             importedModuleExports: Map<string, Map<string, ModuleExport>>
         )
         : PhaseResult<Hir.Module> =
-        match Resolve.resolveModuleWithImports (symbolTable, moduleName, moduleAst, availableModuleNames) with
+        match Resolve.resolveModuleWithImports (symbolTable, moduleName, moduleAst, availableModuleNames, availableTypeFullNames) with
         | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
         | { value = Some resolvedModule } ->
             let moduleExportView =
@@ -1757,4 +1758,4 @@ module Analyze =
 
     /// 既存呼び出し向け互換 API。Atla モジュール import は外部から供給しない。
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
-        analyzeModuleWithImports (symbolTable, typeSubst, moduleName, moduleAst, Set.empty, Map.empty)
+        analyzeModuleWithImports (symbolTable, typeSubst, moduleName, moduleAst, Set.empty, Set.empty, Map.empty)

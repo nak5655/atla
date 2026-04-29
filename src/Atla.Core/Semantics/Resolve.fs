@@ -66,6 +66,7 @@ module Resolve =
         (symbolTable: SymbolTable)
         (scope: Scope)
         (availableModuleNames: Set<string>)
+        (availableTypeFullNames: Set<string>)
         (importedModules: ResizeArray<string * string>)
         (importDecl: Ast.Decl.Import)
         : Diagnostic list =
@@ -74,6 +75,16 @@ module Resolve =
         if availableModuleNames.Contains(classPath) then
             importedModules.Add(shortName, classPath)
             []
+        elif availableTypeFullNames.Contains(classPath) then
+            // 型 import: 末尾名をローカル型スコープへ導入する。
+            // 実体シンボルは解析順で後続に解決されるため、ここでは Name 型を先行宣言する。
+            match scope.ResolveType(shortName) with
+            | Some _ -> []
+            | None ->
+                let sid = symbolTable.NextId()
+                symbolTable.Add(sid, { name = shortName; typ = TypeId.Name sid; kind = SymbolKind.Local() })
+                scope.DeclareType(shortName, TypeId.Name sid)
+                []
         else
             // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
             match scope.ResolveType(shortName) with
@@ -93,7 +104,7 @@ module Resolve =
                 | _ -> []
 
     let resolveModuleWithImports
-        (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module, availableModuleNames: Set<string>)
+        (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module, availableModuleNames: Set<string>, availableTypeFullNames: Set<string>)
         : PhaseResult<ResolvedModule> =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
@@ -129,7 +140,7 @@ module Resolve =
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Import as importDecl ->
-                let importDiagnostics = resolveImport symbolTable moduleScope availableModuleNames importedModules importDecl
+                let importDiagnostics = resolveImport symbolTable moduleScope availableModuleNames availableTypeFullNames importedModules importDecl
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
                 ()
@@ -270,4 +281,4 @@ module Resolve =
 
     /// 既存呼び出し向け互換 API。Atla モジュール import 判定は行わない。
     let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : PhaseResult<ResolvedModule> =
-        resolveModuleWithImports (symbolTable, moduleName, moduleAst, Set.empty)
+        resolveModuleWithImports (symbolTable, moduleName, moduleAst, Set.empty, Set.empty)

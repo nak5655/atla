@@ -17,6 +17,21 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-29): import 自動判定（モジュール優先、型フォールバック）
+
+#### ミッション
+- `import Foo'Bar` を単一構文のまま維持し、`Foo.Bar` がモジュールとして存在すればモジュール import、存在しなければ型 import として解決する。
+- モジュール/型の両方が存在する場合はモジュール import を優先し、決定的な解決順序を固定する。
+- 既存の .NET 型 import を非退行で維持する。
+
+#### 実行ステップ
+1. コンパイル入口で全モジュール AST から `modulePath.typeName` 形式の利用可能型フル名セットを構築する。
+2. `Analyze.analyzeModuleWithImports` と `Resolve.resolveModuleWithImports` に `availableTypeFullNames` を追加し、隣接フェーズ間でのみ情報を受け渡す。
+3. `resolveImport` を `module存在判定 -> 型存在判定 -> .NET 型解決` の順に再実装する。
+4. 型 import 成功時はローカル型名（末尾セグメント）を `moduleScope` へ宣言し、重複宣言時は既存解決を再利用して安定化する。
+5. Semantics 回帰テストを追加し、(a) module 優先、(b) type フォールバック、(c) 既存 .NET 型 import 非退行を検証する。
+6. `dotnet test` を実行し、診断順序と既存フェーズ不変条件の非退行を確認する。
+
 ### アクティブタスク (2026-04-29): LanguageServer の compileModules 移行 + Compiler.compile 削除
 
 #### ミッション
