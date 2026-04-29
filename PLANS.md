@@ -17,6 +17,21 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-29): imported impl 本体解析の分離（signature-only import）
+
+#### ミッション
+- `import sub'Person` で取り込む impl 情報を「メソッドシグネチャ参照」に限定し、import 側モジュール文脈で imported impl 本体を解析しない。
+- `Undefined type 'unknown'`（import 側スコープで定義元 impl 本体を解析してしまう不整合）を解消する。
+- imported type の member access 解決を維持しつつ、メソッド実体は常に定義元モジュールのシンボルへ一意に紐付ける。
+
+#### 実行ステップ
+1. Analyze の imported impl 取り込み処理を見直し、`importedImplMethodDecls` を `analyzeMethodCore` 対象から除外する（import 側で impl 本体を解析しない）。
+2. Compile のモジュール公開情報を拡張し、type method の公開シンボル（`TypeName.MethodName -> SymbolId/TypeId`）を参照可能にする。
+3. Analyze で imported data type の `methods` マップを構築する際、新規 `SymbolId` を採番せず、定義元モジュールの公開メソッドシンボルを再利用する。
+4. imported impl に対する duplicate / invalid `this` 診断は「定義元モジュール解析時の診断」を正とし、import 側では重複発報しない方針へ整理する。
+5. `examples/hello_module` で `p'sayHello` が成功し、`Undefined type 'unknown'` と `Unknown method symbol` の両方が再発しないことを確認する。
+6. `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` に回帰テストを追加し、imported instance member access の成功系を固定化する。
+
 ### アクティブタスク (2026-04-29): type import 時の impl メタデータ取り込み
 
 #### ミッション
