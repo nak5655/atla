@@ -751,3 +751,51 @@ fn main: () = do
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("ok", stdout.Trim())
+
+
+    [<Fact>]
+    let ``compileModules should prefer module import when module and type path collide`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource = "import Foo'Bar\n\nfn main: Int = 7 Foo'Bar'make."
+        let fooBarSource = "fn make (x: Int): Int = x"
+        let fooSource = "data Bar = { val: Int }"
+
+        let result =
+            Compiler.compileModules {
+                asmName = "ImportModulePriority"
+                modules =
+                    [ { moduleName = "main"; source = mainSource }
+                      { moduleName = "Foo.Bar"; source = fooBarSource }
+                      { moduleName = "Foo"; source = fooSource } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains("Undefined type 'unknown'"))
+        Assert.DoesNotContain(result.diagnostics, fun d -> d.message.Contains("Undefined data type 'Bar'"))
+
+    [<Fact>]
+    let ``compileModules should fallback to type import when module is absent at resolve phase`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            "import Foo'Bar\n\nfn id (x: Bar): Bar = x\n\nfn main: Int = do\n    let v = Bar { val = 42 }\n    let _ = v id.\n    0"
+        let fooSource = "data Bar = { val: Int }"
+
+        let result =
+            Compiler.compileModules {
+                asmName = "ImportTypeFallback"
+                modules =
+                    [ { moduleName = "main"; source = mainSource }
+                      { moduleName = "Foo"; source = fooSource } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains("Undefined data type 'Bar'"))
