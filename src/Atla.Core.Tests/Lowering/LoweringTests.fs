@@ -820,3 +820,30 @@ fn main: () = do
             }
 
         Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``compileModules should allow calling imported data type methods via import sub'Person`` () =
+        // Regression test: import sub'Person 経由で型をインポートし、そのメソッドを呼び出せることを検証する。
+        // 修正前は cross-module import 時に新しい typeSid が割り当てられ、メソッド引数型との不一致で
+        // "No overload matched argument count 1" が発生していた。
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            "import sub\nimport sub'Person\n\nfn main: () = do\n    let p = Person { name = \"alice\" }\n    p'greet."
+
+        let subSource =
+            "import System'Console\n\ndata Person = { name: String }\n\nimpl Person\n    fn greet (this: Person): () = do\n        this'name Console'WriteLine."
+
+        let result =
+            Compiler.compileModules {
+                asmName = "ImportSubPersonMethodCall"
+                modules =
+                    [ { moduleName = "main"; source = mainSource }
+                      { moduleName = "sub"; source = subSource } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
