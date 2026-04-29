@@ -123,15 +123,27 @@ module Compiler =
         (symbolTable: SymbolTable)
         (hirModule: Hir.Module)
         : Map<string, Analyze.ModuleExport> =
-        hirModule.scope.vars
-        |> Seq.map (fun kv -> kv.Key, kv.Value)
-        |> Seq.choose (fun (name, sid) ->
-            symbolTable.Get(sid)
-            |> Option.map (fun symInfo ->
-                name,
-                ({ symbolId = sid
-                   typ = symInfo.typ }: Analyze.ModuleExport)))
-        |> Seq.toList
+        let valueExports =
+            hirModule.scope.vars
+            |> Seq.map (fun kv -> kv.Key, kv.Value)
+            |> Seq.choose (fun (name, sid) ->
+                symbolTable.Get(sid)
+                |> Option.map (fun symInfo ->
+                    name,
+                    ({ symbolId = sid
+                       typ = symInfo.typ }: Analyze.ModuleExport)))
+            |> Seq.toList
+
+        let methodExports =
+            hirModule.methods
+            |> List.choose (fun methodInfo ->
+                symbolTable.Get(methodInfo.sym)
+                |> Option.map (fun symInfo ->
+                    symInfo.name,
+                    ({ symbolId = methodInfo.sym
+                       typ = symInfo.typ }: Analyze.ModuleExport)))
+
+        valueExports @ methodExports
         |> Map.ofList
 
     /// 複数 HIR モジュールを 1 つへ統合し、CIL 生成のランタイム制約（単一 dynamic module）に合わせる。
@@ -213,6 +225,22 @@ module Compiler =
                                             | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl)
                                             | _ -> None))
                                     |> Map.ofList
+                                let availableDataTypeImplDecls =
+                                    moduleAsts
+                                    |> Map.toList
+                                    |> List.collect (fun (moduleName, moduleAst) ->
+                                        moduleAst.decls
+                                        |> List.choose (fun decl ->
+                                            match decl with
+                                            | :? Ast.Decl.Impl as implDecl -> Some (moduleName, implDecl)
+                                            | _ -> None))
+                                    |> List.fold
+                                        (fun (acc: Map<string, Ast.Decl.Impl list>) (moduleName, implDecl) ->
+                                            let fullTypePath = $"{moduleName}.{implDecl.typeName}"
+                                            match Map.tryFind fullTypePath acc with
+                                            | Some impls -> Map.add fullTypePath (impls @ [ implDecl ]) acc
+                                            | None -> Map.add fullTypePath [ implDecl ] acc)
+                                        Map.empty
 
                                 let analyzeFolder (hirModules, moduleExports, diagnostics) moduleName =
                                     let moduleAst = moduleAsts[moduleName]
@@ -225,6 +253,7 @@ module Compiler =
                                             availableModuleNames,
                                             availableTypeFullNames,
                                             availableDataTypeDecls,
+                                            availableDataTypeImplDecls,
                                             moduleExports
                                         )
 

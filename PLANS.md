@@ -17,6 +17,102 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### TODO (2026-04-29): `hello_module` import/type/member 解決の収束
+
+- [ ] **Phase 0: 再現固定**
+  - [ ] `examples/hello_module` の失敗ケースを回帰テスト化する。
+  - [ ] `Person { ... }` の式が AST 上 `DataInit` であることを検証するテストを追加する。
+  - [ ] `p'sayHello` が期待経路（data instance member）で解決されることを検証する。
+
+- [ ] **Phase 1: DataInit 優先確定**
+  - [ ] `Analyze` の `DataInit` 経路を優先し、成功時に apply/overload へフォールバックしないよう修正する。
+  - [ ] `No overload matched argument count 1` が `Person { ... }` で再発しないことを確認する。
+
+- [ ] **Phase 2: export 名前空間分離**
+  - [ ] `ModuleExport` を通常値公開と型メソッド公開に分離する。
+  - [ ] `tryResolveImportedModuleMember` は通常値公開のみ参照するようにする。
+  - [ ] imported type method 連携は型メソッド公開のみ参照するようにする。
+
+- [ ] **Phase 3: imported impl 連携の正規化**
+  - [ ] import 側で imported impl method symbol を新規採番しない。
+  - [ ] 定義元モジュールの `SymbolId/TypeId` を再利用する。
+  - [ ] import 側で imported impl 本体を `analyzeMethodCore` しない。
+  - [ ] duplicate / invalid `this` 診断責務を定義元モジュール側へ集約する。
+
+- [ ] **Phase 4: 呼び出し契約の整合**
+  - [ ] imported data method の型表現を local data method と同一契約へ正規化する。
+  - [ ] receiver 暗黙追加（apply 経路）と arity 判定が矛盾しないことを確認する。
+
+- [ ] **Phase 5: 回帰テスト拡充**
+  - [ ] 成功系: `import sub'Person` + `Person { ... }` + `p'sayHello`。
+  - [ ] 失敗系: imported method 不在時の診断、invalid `this`、duplicate method。
+  - [ ] 混在系: module import と type import の共存ケース。
+
+- [ ] **Phase 6: 最終検証**
+  - [ ] `dotnet run --project src/Atla.Console -- build examples/hello_module` を成功させる。
+  - [ ] `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` を実行して非退行を確認する。
+
+### アクティブタスク (2026-04-29): `hello_module` 失敗の段階的収束（DataInit 優先 + export 分離）
+
+#### ミッション
+- `examples/hello_module` の `No overload matched argument count 1` を解消し、`Person { ... }` と `p'sayHello` を同時に成功させる。
+- imported type / imported impl 取り込みで発生した解決経路の干渉を分離し、AST -> Semantic Analysis の不変条件を回復する。
+
+#### 実行ステップ
+1. `examples/hello_module` 最小ケースを固定する回帰テストを追加し、`Person { ... }` が `Ast.Expr.DataInit` として解析されることを検証する。
+2. Analyze の `DataInit` 経路を明示的に優先し、`DataInit` 解析成功時は apply/overload 経路へフォールバックしない制御へ修正する。
+3. `ModuleExport` を「通常値公開」と「型メソッド公開」に分離し、`tryResolveImportedModuleMember` は通常値公開のみ参照する。
+4. imported type の `methods` 構築は型メソッド公開のみ参照し、定義元 `SymbolId` を再利用する（import 側で新規 method symbol は採番しない）。
+5. imported method の呼び出し型を正規化し、instance receiver を暗黙追加する apply 経路と矛盾しない型契約へ合わせる。
+6. `examples/hello_module` のビルド確認と `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` 実行で非退行を確認する。
+
+### アクティブタスク (2026-04-29): imported type 初期化の型優先確定 + export 名前空間分離
+
+#### ミッション
+- `Person { ... }` のような data 初期化を overload 解決へ誤遷移させず、型解決優先で決定的に data 初期化として解析する。
+- imported impl 用に追加した method export が通常の module member 解決へ混入しないよう、公開シンボル名前空間を分離する。
+- `import sub'Person` + `p'sayHello` の経路で `Undefined type 'unknown'` / `Unknown method symbol` / `No overload matched argument count 1` を根本解消する。
+
+#### 実行ステップ
+1. Analyze の `DataInit` 解析経路を見直し、`Type` 解決成功時は apply/overload 経路へフォールバックしない制御へ修正する。
+2. `ModuleExport` を用途別（通常値公開 / 型メソッド公開）に分離し、`tryResolveImportedModuleMember` は通常値公開のみ参照する。
+3. imported type の `methods` マップ構築は型メソッド公開のみ参照し、定義元モジュールの `SymbolId` を再利用する（import 側で新規採番しない）。
+4. imported instance method の型表現を正規化し、`this` 付き型/束縛後型の差異で下流呼び出し判定が揺れないようにする。
+5. imported impl の duplicate / invalid `this` 診断は定義元モジュール解析へ集約し、import 側での重複診断を抑止する。
+6. `examples/hello_module` をビルドし、`Person { ... }` と `p'sayHello` の両方が成功することを確認する。
+7. `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` に回帰テストを追加し、型 import + data 初期化 + instance member access を固定化する。
+
+### アクティブタスク (2026-04-29): imported impl 本体解析の分離（signature-only import）
+
+#### ミッション
+- `import sub'Person` で取り込む impl 情報を「メソッドシグネチャ参照」に限定し、import 側モジュール文脈で imported impl 本体を解析しない。
+- `Undefined type 'unknown'`（import 側スコープで定義元 impl 本体を解析してしまう不整合）を解消する。
+- imported type の member access 解決を維持しつつ、メソッド実体は常に定義元モジュールのシンボルへ一意に紐付ける。
+
+#### 実行ステップ
+1. Analyze の imported impl 取り込み処理を見直し、`importedImplMethodDecls` を `analyzeMethodCore` 対象から除外する（import 側で impl 本体を解析しない）。
+2. Compile のモジュール公開情報を拡張し、type method の公開シンボル（`TypeName.MethodName -> SymbolId/TypeId`）を参照可能にする。
+3. Analyze で imported data type の `methods` マップを構築する際、新規 `SymbolId` を採番せず、定義元モジュールの公開メソッドシンボルを再利用する。
+4. imported impl に対する duplicate / invalid `this` 診断は「定義元モジュール解析時の診断」を正とし、import 側では重複発報しない方針へ整理する。
+5. `examples/hello_module` で `p'sayHello` が成功し、`Undefined type 'unknown'` と `Unknown method symbol` の両方が再発しないことを確認する。
+6. `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` に回帰テストを追加し、imported instance member access の成功系を固定化する。
+
+### アクティブタスク (2026-04-29): type import 時の impl メタデータ取り込み
+
+#### ミッション
+- `import sub'Person` で取り込まれる data 型に対して、型情報だけでなく `impl` 由来のメソッドシグネチャも意味解析へ連携する。
+- `p'sayHello` のような imported data instance member access をローカル data 型と同等に解決可能にする。
+- AST -> Semantic Analysis -> HIR のフェーズ境界を維持し、下流（Frame Allocation/MIR/CIL）契約を変更しない。
+
+#### 実行ステップ
+1. Compiler で全モジュール AST から `availableDataTypeImplDecls`（`module.type -> Ast.Decl.Impl list`）を構築し、`Analyze.analyzeModuleWithImports` へ受け渡す。
+2. Analyze の `importedDataTypeDefs` 構築を拡張し、`availableDataTypeImplDecls` を参照して imported data 型の `methods` マップを初期化する。
+3. 既存のローカル impl シグネチャ登録処理を共通化し、imported/local の双方で同一規則（`this` 判定、duplicate 診断、型解決）を適用する。
+4. `tryResolveDataInstanceMember` の成功経路を回帰固定するため、`import sub'Person` + `p'sayHello` の成功系 Semantics テストを追加する。
+5. 失敗系として imported impl の不正定義（instance `this` 不一致、duplicate method）診断が決定的順序で返ることをテストする。
+6. `examples/hello_module` ビルドで再現している member access エラーが解消することを確認する。
+7. `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` を実行し、意味解析と Lowering の非退行を検証する。
+
 ### アクティブタスク (2026-04-29): 方針A 実装（type import を module export 実体へ接続）
 
 #### ミッション

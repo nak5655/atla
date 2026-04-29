@@ -1610,6 +1610,7 @@ module Analyze =
             availableModuleNames: Set<string>,
             availableTypeFullNames: Set<string>,
             availableDataTypeDecls: Map<string, Ast.Decl.Data>,
+            availableDataTypeImplDecls: Map<string, Ast.Decl.Impl list>,
             importedModuleExports: Map<string, Map<string, ModuleExport>>
         )
         : PhaseResult<Hir.Module> =
@@ -1698,7 +1699,35 @@ module Analyze =
                                 |> List.map (fun fieldDef ->
                                     Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
                             types.Add(Hir.Type(typeSid, None, hirFields, []))
-                            Map.add aliasName importedDef defs, diagnostics)
+                            let importedImplMethodMap, importedImplDiagnostics =
+                                let lastDot = fullTypePath.LastIndexOf('.')
+                                if lastDot <= 0 then
+                                    Map.empty, []
+                                else
+                                    let moduleName = fullTypePath.Substring(0, lastDot)
+                                    let typeName = fullTypePath.Substring(lastDot + 1)
+                                    let moduleExports = importedModuleExports |> Map.tryFind moduleName |> Option.defaultValue Map.empty
+                                    let implDecls = availableDataTypeImplDecls |> Map.tryFind fullTypePath |> Option.defaultValue []
+                                    implDecls
+                                    |> List.collect (fun implDecl -> implDecl.methods)
+                                    |> List.fold
+                                        (fun (methodMap, diagAcc) methodDecl ->
+                                            let exportName = $"{typeName}.{methodDecl.name}"
+                                            match moduleExports |> Map.tryFind exportName with
+                                            | Some exportInfo ->
+                                                let isStatic =
+                                                    match methodDecl.args with
+                                                    | (:? Ast.FnArg.Named as thisArg) :: _ when thisArg.name = "this" -> false
+                                                    | _ -> true
+                                                Map.add methodDecl.name (exportInfo.symbolId, exportInfo.typ, isStatic) methodMap, diagAcc
+                                            | None ->
+                                                methodMap, diagAcc @ [ Diagnostic.Error(sprintf "Imported method '%s' for type '%s' was not found in module exports" methodDecl.name fullTypePath, methodDecl.span) ])
+                                        (Map.empty, [])
+
+                            let importedDefWithMethods =
+                                { importedDef with
+                                    methods = importedImplMethodMap }
+                            Map.add aliasName importedDefWithMethods defs, diagnostics @ importedImplDiagnostics)
                     (Map.empty, [])
 
             let dataTypeDefs =
@@ -1802,4 +1831,4 @@ module Analyze =
 
     /// 既存呼び出し向け互換 API。Atla モジュール import は外部から供給しない。
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
-        analyzeModuleWithImports (symbolTable, typeSubst, moduleName, moduleAst, Set.empty, Set.empty, Map.empty, Map.empty)
+        analyzeModuleWithImports (symbolTable, typeSubst, moduleName, moduleAst, Set.empty, Set.empty, Map.empty, Map.empty, Map.empty)
