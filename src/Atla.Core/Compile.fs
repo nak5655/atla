@@ -213,6 +213,22 @@ module Compiler =
                                             | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl)
                                             | _ -> None))
                                     |> Map.ofList
+                                let availableDataTypeImplDecls =
+                                    moduleAsts
+                                    |> Map.toList
+                                    |> List.collect (fun (moduleName, moduleAst) ->
+                                        moduleAst.decls
+                                        |> List.choose (fun decl ->
+                                            match decl with
+                                            | :? Ast.Decl.Impl as implDecl -> Some (moduleName, implDecl)
+                                            | _ -> None))
+                                    |> List.fold
+                                        (fun (acc: Map<string, Ast.Decl.Impl list>) (moduleName, implDecl) ->
+                                            let fullTypePath = $"{moduleName}.{implDecl.typeName}"
+                                            match Map.tryFind fullTypePath acc with
+                                            | Some impls -> Map.add fullTypePath (impls @ [ implDecl ]) acc
+                                            | None -> Map.add fullTypePath [ implDecl ] acc)
+                                        Map.empty
 
                                 let analyzeFolder (hirModules, moduleExports, diagnostics) moduleName =
                                     let moduleAst = moduleAsts[moduleName]
@@ -225,6 +241,7 @@ module Compiler =
                                             availableModuleNames,
                                             availableTypeFullNames,
                                             availableDataTypeDecls,
+                                            availableDataTypeImplDecls,
                                             moduleExports
                                         )
 

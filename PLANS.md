@@ -17,6 +17,22 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-29): type import 時の impl メタデータ取り込み
+
+#### ミッション
+- `import sub'Person` で取り込まれる data 型に対して、型情報だけでなく `impl` 由来のメソッドシグネチャも意味解析へ連携する。
+- `p'sayHello` のような imported data instance member access をローカル data 型と同等に解決可能にする。
+- AST -> Semantic Analysis -> HIR のフェーズ境界を維持し、下流（Frame Allocation/MIR/CIL）契約を変更しない。
+
+#### 実行ステップ
+1. Compiler で全モジュール AST から `availableDataTypeImplDecls`（`module.type -> Ast.Decl.Impl list`）を構築し、`Analyze.analyzeModuleWithImports` へ受け渡す。
+2. Analyze の `importedDataTypeDefs` 構築を拡張し、`availableDataTypeImplDecls` を参照して imported data 型の `methods` マップを初期化する。
+3. 既存のローカル impl シグネチャ登録処理を共通化し、imported/local の双方で同一規則（`this` 判定、duplicate 診断、型解決）を適用する。
+4. `tryResolveDataInstanceMember` の成功経路を回帰固定するため、`import sub'Person` + `p'sayHello` の成功系 Semantics テストを追加する。
+5. 失敗系として imported impl の不正定義（instance `this` 不一致、duplicate method）診断が決定的順序で返ることをテストする。
+6. `examples/hello_module` ビルドで再現している member access エラーが解消することを確認する。
+7. `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` を実行し、意味解析と Lowering の非退行を検証する。
+
 ### アクティブタスク (2026-04-29): 方針A 実装（type import を module export 実体へ接続）
 
 #### ミッション
