@@ -17,6 +17,20 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-29): `hello_module` 失敗の段階的収束（DataInit 優先 + export 分離）
+
+#### ミッション
+- `examples/hello_module` の `No overload matched argument count 1` を解消し、`Person { ... }` と `p'sayHello` を同時に成功させる。
+- imported type / imported impl 取り込みで発生した解決経路の干渉を分離し、AST -> Semantic Analysis の不変条件を回復する。
+
+#### 実行ステップ
+1. `examples/hello_module` 最小ケースを固定する回帰テストを追加し、`Person { ... }` が `Ast.Expr.DataInit` として解析されることを検証する。
+2. Analyze の `DataInit` 経路を明示的に優先し、`DataInit` 解析成功時は apply/overload 経路へフォールバックしない制御へ修正する。
+3. `ModuleExport` を「通常値公開」と「型メソッド公開」に分離し、`tryResolveImportedModuleMember` は通常値公開のみ参照する。
+4. imported type の `methods` 構築は型メソッド公開のみ参照し、定義元 `SymbolId` を再利用する（import 側で新規 method symbol は採番しない）。
+5. imported method の呼び出し型を正規化し、instance receiver を暗黙追加する apply 経路と矛盾しない型契約へ合わせる。
+6. `examples/hello_module` のビルド確認と `dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` 実行で非退行を確認する。
+
 ### アクティブタスク (2026-04-29): imported type 初期化の型優先確定 + export 名前空間分離
 
 #### ミッション
