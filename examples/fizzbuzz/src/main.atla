@@ -3,13 +3,13 @@ import System'Console
 import System'Linq'Enumerable
 
 fn fizzbuzz (n: Int): () =
-    for i in 1 Enumerable'Range. n Enumerable'Range.
-        if
+    for i in 1 n Enumerable'Range.
+        let s = if
             | i % 15 == 0 => "FizzBuzz"
             | i % 5 == 0 => "Buzz"
             | i % 3 == 0 => "Fizz"
             | else => i'ToString.
-        Console'WriteLine.
+        s Console'WriteLine.
 
 fn main: () = do
     let n = Console'ReadLine. Int32'Parse.
