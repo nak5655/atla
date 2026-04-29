@@ -1,5 +1,8 @@
 import System'Console
 
-fn hello (name: String): () = do
-    "hello, " Console'Write.
-    name Console'WriteLine.
+data Person = { name: String, age: Int }
+
+impl Person
+    fn sayHello (this: Person): () = do
+        "hello, " Console'Write.
+        this'name Console'WriteLine.
