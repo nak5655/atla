@@ -185,7 +185,7 @@ module ExprAnalyze =
                                 match symInfo.kind with
                                 | SymbolKind.External(ExternalBinding.SystemTypeRef systemType) when not (obj.ReferenceEquals(systemType, null)) ->
                                     let memberInfos =
-                                        systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                                        NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
                                         |> Seq.filter (fun memberInfo -> memberInfo.Name = memberName)
                                         |> Seq.toList
 
@@ -219,7 +219,7 @@ module ExprAnalyze =
                                 Result.Error(sprintf "Undefined delegate field type for '%s'" delegateFieldName)
                     | TypeId.Native systemType ->
                         let memberInfos =
-                            systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                            NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
                             |> Seq.filter (fun memberInfo -> memberInfo.Name = memberName)
                             |> Seq.toList
 
@@ -907,7 +907,7 @@ module ExprAnalyze =
                         match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverType with
                         | Some systemType ->
                             let memberInfos =
-                                systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                                NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
                                 |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
                                 |> Seq.toList
                             match NativeInterop.resolveNativeMember typeEnv memberInfos tid with
@@ -961,7 +961,7 @@ module ExprAnalyze =
                     match TypeId.tryToRuntimeSystemType receiverType with
                     | Some systemType ->
                         let memberInfos =
-                            systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                            NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
                             |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
                             |> Seq.toList
                         match NativeInterop.resolveNativeMember typeEnv memberInfos tid with

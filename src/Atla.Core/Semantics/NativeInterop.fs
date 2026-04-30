@@ -22,7 +22,39 @@ module NativeInterop =
         typeEnv.resolveType tid
         |> TypeId.tryResolveToSystemType resolveNameType
 
+    /// 受け手型の public instance メンバー候補を、実装型 + 実装インターフェースから決定的順序で収集する。
+    /// 明示的インターフェース実装により実装型側で直接見えないメンバー（例: ICollection<T>.Add）も候補化する。
+    let getPublicInstanceMembersIncludingInterfaces (systemType: System.Type) : MemberInfo list =
+        let directMembers =
+            systemType.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+            |> Array.toList
+
+        let interfaceMembers =
+            systemType.GetInterfaces()
+            |> Array.sortBy (fun iface -> iface.FullName)
+            |> Array.toList
+            |> List.collect (fun iface ->
+                iface.GetMembers(BindingFlags.Public ||| BindingFlags.Instance)
+                |> Array.toList)
+
+        let allMembers = directMembers @ interfaceMembers
+        allMembers
+        |> List.distinctBy (fun memberInfo ->
+            let declaringTypeName =
+                if obj.ReferenceEquals(memberInfo.DeclaringType, null) then
+                    ""
+                else
+                    memberInfo.DeclaringType.AssemblyQualifiedName
+
+            memberInfo.MemberType, memberInfo.Name, declaringTypeName)
+
     let resolveNativeMember (typeEnv: TypeEnv) (memberInfos: MemberInfo list) (tid: TypeId) : (MemberInfo * TypeId) list =
+        let resolvedExpectedType = typeEnv.resolveType tid
+        let isUnconstrainedExpectedType =
+            match resolvedExpectedType with
+            | TypeId.Meta _ -> true
+            | _ -> false
+
         let exactResult = List<MemberInfo * TypeId>()
         let optionalResult = List<MemberInfo * TypeId>()
         for memberInfo in memberInfos do
@@ -31,7 +63,7 @@ module NativeInterop =
                 let parameterTypes = [ for p in methodInfo.GetParameters() -> TypeId.fromSystemType p.ParameterType ]
                 let returnType = TypeId.fromSystemType methodInfo.ReturnType
                 let methodType = TypeId.Fn(parameterTypes, returnType)
-                match tid with
+                match resolvedExpectedType with
                 | TypeId.Fn(expectedArgs, expectedRet) ->
                     let parameters = methodInfo.GetParameters() |> Array.toList
                     let requiredParamCount = parameters |> List.filter (fun p -> not p.IsOptional) |> List.length
@@ -45,15 +77,15 @@ module NativeInterop =
                         else
                             optionalResult.Add(memberInfo, TypeId.Fn(expectedArgs, returnType))
                 | _ ->
-                    if typeEnv.canUnify methodType tid then
+                    if isUnconstrainedExpectedType || typeEnv.canUnify methodType resolvedExpectedType then
                         exactResult.Add(memberInfo, methodType)
             | :? FieldInfo as fieldInfo ->
                 let fieldType = TypeId.fromSystemType fieldInfo.FieldType
-                if typeEnv.canUnify fieldType tid then
+                if isUnconstrainedExpectedType || typeEnv.canUnify fieldType resolvedExpectedType then
                     exactResult.Add(memberInfo, fieldType)
             | :? PropertyInfo as propertyInfo ->
                 let propertyType = TypeId.fromSystemType propertyInfo.PropertyType
-                if typeEnv.canUnify propertyType tid then
+                if isUnconstrainedExpectedType || typeEnv.canUnify propertyType resolvedExpectedType then
                     exactResult.Add(memberInfo, propertyType)
             | _ -> ()
         if exactResult.Count > 0 then
