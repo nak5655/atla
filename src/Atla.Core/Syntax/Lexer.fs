@@ -38,7 +38,7 @@ module Lexer =
         // block
         "return"; "continue"; "break";
         // boolean
-        "true"; "false";
+        "True"; "False";
         // arrows
         "->"; "=>";
     ]

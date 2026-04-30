@@ -2029,3 +2029,51 @@ fn main (): () = do
         Assert.False(result.succeeded)
         Assert.True(result.diagnostics |> List.exists (fun diagnostic -> diagnostic.isError))
         Assert.True(result.value.IsSome, "意味エラー時も IntelliSense 用の部分 HIR を返す必要があります。")
+
+    [<Fact>]
+    let ``Bool literal true is analyzed to Hir.Expr.Bool with TypeId.Bool`` () =
+        let span = Span.Empty
+        let retType = Ast.TypeExpr.Id("Bool", span) :> Ast.TypeExpr
+        let body = Ast.Expr.Bool(true, span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([fnDecl])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Bool (value, _) ->
+                Assert.True(value, "expected true")
+                Assert.Equal(TypeId.Bool, hirModule.methods.Head.body.typ)
+            | other -> Assert.True(false, $"expected Hir.Expr.Bool but got {other}")
+        | { diagnostics = diagnostics } ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toDisplayText())
+                |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``Bool literal false is analyzed to Hir.Expr.Bool with TypeId.Bool`` () =
+        let span = Span.Empty
+        let retType = Ast.TypeExpr.Id("Bool", span) :> Ast.TypeExpr
+        let body = Ast.Expr.Bool(false, span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let astModule = Ast.Module([fnDecl])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Bool (value, _) ->
+                Assert.False(value, "expected false")
+                Assert.Equal(TypeId.Bool, hirModule.methods.Head.body.typ)
+            | other -> Assert.True(false, $"expected Hir.Expr.Bool but got {other}")
+        | { diagnostics = diagnostics } ->
+            let message =
+                diagnostics
+                |> List.map (fun err -> err.toDisplayText())
+                |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")

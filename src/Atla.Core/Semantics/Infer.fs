@@ -8,6 +8,7 @@ module Infer =
 
         match expr with
         | Hir.Expr.Unit _
+        | Hir.Expr.Bool _
         | Hir.Expr.Int _
         | Hir.Expr.Float _
         | Hir.Expr.String _ -> expr

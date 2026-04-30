@@ -66,6 +66,7 @@ module Layout =
     let rec private layoutExpr (state: LayoutState) (expr: ClosedHir.Expr) : Result<LayoutState * KNormal, Diagnostic> =
         match expr with
         | ClosedHir.Expr.Unit _ -> Ok (state, { ins = []; res = None })
+        | ClosedHir.Expr.Bool (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Bool value)) })
         | ClosedHir.Expr.Int (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) })
         | ClosedHir.Expr.Float (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) })
         | ClosedHir.Expr.String (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) })
