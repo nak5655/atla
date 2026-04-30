@@ -295,7 +295,7 @@ module ServerLifecycleTests =
         Assert.Contains(published |> Seq.toList, fun (_, count, _) -> count = 0)
 
     [<Fact>]
-    let ``project compile keeps main as entry module even when editing non main document`` () =
+    let ``project compile isolates diagnostics to edited non main document`` () =
         let capturedRequests = ResizeArray<Compiler.CompileModulesRequest>()
         let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-entry-main-{System.Guid.NewGuid():N}")
         let srcDir = Path.Join(tempRoot, "src")
@@ -335,7 +335,9 @@ module ServerLifecycleTests =
         server.OpenDocument(openedUri, "data CalculatorWindow = { value: Int }")
 
         let request = capturedRequests |> Seq.exactlyOne
-        Assert.Equal("main", request.entryModuleName)
+        Assert.Equal("CalculatorWindow", request.entryModuleName)
+        let moduleSource = request.modules |> Seq.exactlyOne
+        Assert.Equal("CalculatorWindow", moduleSource.moduleName)
 
     [<Fact>]
     let ``build failure publishes diagnostics as build source and skips compiler`` () =

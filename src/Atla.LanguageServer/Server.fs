@@ -269,6 +269,35 @@ type Server
         |> Path.GetFileNameWithoutExtension
         |> fun name -> if String.IsNullOrWhiteSpace(name) then "main" else name
 
+    /// プロジェクト配下ファイルの診断コンパイル戦略を決定する。
+    /// `main.atla` 編集時はプロジェクト全体、その他は単一ファイルのみを対象にして
+    /// 別ファイル由来の診断が現在ファイルへ混入しないようにする。
+    let buildCompileRequestForDocument
+        (projectRoot: string)
+        (normalizedPath: string)
+        (text: string)
+        (asmName: string)
+        (outputDir: string)
+        (dependencies: Compiler.ResolvedDependency list)
+        : Compiler.CompileModulesRequest =
+        let fileName = Path.GetFileName(normalizedPath)
+        let isMainDocument = StringComparer.OrdinalIgnoreCase.Equals(fileName, "main.atla")
+
+        if isMainDocument then
+            let modules = collectModuleSourcesForProject projectRoot normalizedPath text
+            { asmName = asmName
+              modules = modules
+              entryModuleName = "main"
+              outDir = outputDir
+              dependencies = dependencies }
+        else
+            let moduleName = inferSingleDocumentModuleName normalizedPath
+            { asmName = asmName
+              modules = [ { moduleName = moduleName; source = text } ]
+              entryModuleName = moduleName
+              outDir = outputDir
+              dependencies = dependencies }
+
     let canCompileUri (normalizedUri: string) : bool =
         match tryUriToNormalizedPath normalizedUri with
         | None -> false
@@ -314,18 +343,8 @@ type Server
                         | Some normalizedPath ->
                             match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
                             | Some projectRoot ->
-                                let modules = collectModuleSourcesForProject projectRoot normalizedPath text
-                                // プロジェクト配下では CLI ビルドと同じ `main` をエントリに固定する。
-                                // 開いているファイル名を使うと、`CalculatorWindow.atla` などを編集中に
-                                // `entry module '<file>' was not found` が先行して本来診断を隠してしまう。
-                                let entryModuleName = "main"
-                                compile {
-                                    asmName = asmName
-                                    modules = modules
-                                    entryModuleName = entryModuleName
-                                    outDir = outputDir
-                                    dependencies = dependencies
-                                }
+                                buildCompileRequestForDocument projectRoot normalizedPath text asmName outputDir dependencies
+                                |> compile
                             | None ->
                                 let entryModuleName = inferSingleDocumentModuleName normalizedPath
                                 compile {
