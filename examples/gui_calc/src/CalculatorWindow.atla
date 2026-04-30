@@ -1,4 +1,4 @@
-import Avalonia'Window
+import Avalonia'Controls'Window
 import Avalonia'Thickness
 import Avalonia'Controls'TextBox
 import Avalonia'Controls'StackPanel
@@ -23,7 +23,7 @@ impl CalculatorWindow
         window'Content = root
 
         CalculatorWindow
-            { _window: window
+            { _window = window
             }
 
 impl CalculatorWindow for Window by _window
