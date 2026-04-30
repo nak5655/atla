@@ -17,6 +17,18 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### 完了タスク (2026-04-30): `gui_calc` ビルドエラー修正
+
+#### 修正内容
+1. `examples/gui_calc/src/CalculatorWindow.atla`:
+   - `import Avalonia'Window` → `import Avalonia'Controls'Window` (`Avalonia.Window` は存在しない)
+   - `import Avalonia'Controls'Orientation` → `import Avalonia'Layout'Orientation` (`Orientation` の正しい名前空間)
+   - `{ _window: window }` → `{ _window = window }` (データコンストラクタ構文エラー)
+2. `src/Atla.Core/Semantics/ExprAnalyze.fs`:
+   - `do` ブロック末尾 `ExprStmt` を `unit` ではなくブロックの期待型 `tid` で解析するよう修正
+   - オーバーロード解決の `methodMatchesTypes` で `typeEnv.canUnify` の過度な許容を `isSubtypeCompatible` に置き換え
+   - `tryPickBestMethod` に特化度タイブレーキング（支配関係で最特化オーバーロードを選択）を追加
+
 ### アクティブタスク (2026-04-30): `gui_calc` delegated instance member 解決修正
 
 #### ミッション
@@ -674,7 +686,7 @@
 - 2026-04-25: 代入文の AST を `Assign(name, ...)` から `Assign(targetExpr, ...)` へ拡張し、`window'Width = 320` のようなメンバー代入を Semantic Analysis で setter 呼び出しへ lower する実装を開始した。
 - 2026-04-25: `Atla.Core.Tests` の旧呼び出し/メンバー構文サンプルを新構文へ更新し、`dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj` が全件成功する状態へ復帰した。
 - 2026-04-25: Layout の call lowering で `instance` を `args` 先頭へ結合する修正方針を採用し、メソッド候補選択は receiver を除く引数数で評価する方針を確定した。
-- 2026-04-25: static literal field（enum 定数含む）は `ldsfld` ではなく即値ロードへ変換する CIL 修正方針を採用した。
+- 2026-04-30: `gui_calc` ビルドエラー修正: `CalculatorWindow.atla` の誤 import（`Avalonia'Window`→`Avalonia'Controls'Window`, `Avalonia'Controls'Orientation`→`Avalonia'Layout'Orientation`）とコンストラクタ構文誤り（`:`→`=`）を修正。コンパイラ側では `do` ブロック末尾式の期待型伝播バグおよびオーバーロード解決の過許容・タイブレーキング欠如を修正した。
 
 ## 参照
 - 履歴計画: `notes/plans-archive.md`

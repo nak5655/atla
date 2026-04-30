@@ -521,23 +521,21 @@ module ExprAnalyze =
                     Hir.Expr.ExprError("Expression is not a generic callable target", tid, genericApplyExpr.span)
         | :? Ast.Expr.Block as blockExpr ->
             let blockNameEnv = nameEnv.sub()
-            let stmts = blockExpr.stmts |> List.map (analyzeStmt blockNameEnv typeEnv)
-            match List.last stmts with
-            | Hir.Stmt.ExprStmt (expr, _) ->
-                // 末尾式が既にエラーの場合は型不一致チェックをスキップして根本エラーをそのまま伝播する。
-                // これにより "Undefined member 'Foo'" のような根本エラーの後に
-                // 症状としての "Cannot unify" エラーが余分に報告されるのを防ぐ。
-                match expr with
-                | Hir.Expr.ExprError _ ->
-                    let leadingStmts = stmts |> List.take (stmts.Length - 1)
-                    Hir.Expr.Block(leadingStmts, expr, tid, blockExpr.span)
-                | _ ->
-                    match unifyOrError nameEnv typeEnv tid expr.typ blockExpr.span with
-                    | Result.Ok _ ->
-                        let leadingStmts = stmts |> List.take (stmts.Length - 1)
-                        Hir.Expr.Block(leadingStmts, expr, tid, blockExpr.span)
-                    | Result.Error exprErr -> exprErr
+            // 末尾 ExprStmt は block の期待型 tid で解析する。
+            // analyzeStmt が常に unit を期待型として使うため、DataInit のような具体型を返す式が
+            // 末尾に来ると "Cannot unify: unit and T" エラーになる不具合を回避する。
+            match List.last blockExpr.stmts with
+            | :? Ast.Stmt.ExprStmt as lastExprStmt ->
+                let leadingStmts =
+                    blockExpr.stmts
+                    |> List.take (blockExpr.stmts.Length - 1)
+                    |> List.map (analyzeStmt blockNameEnv typeEnv)
+                // 末尾式を block の期待型で解析する。エラーはそのまま伝播させ、
+                // 根本原因以外の "Cannot unify" が余分に報告されるのを防ぐ。
+                let lastExpr = analyzeExpr blockNameEnv typeEnv lastExprStmt.expr tid
+                Hir.Expr.Block(leadingStmts, lastExpr, tid, blockExpr.span)
             | _ ->
+                let stmts = blockExpr.stmts |> List.map (analyzeStmt blockNameEnv typeEnv)
                 let unitExpr = Hir.Expr.Unit ({ left = blockExpr.span.right; right = blockExpr.span.right })
                 Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
@@ -584,7 +582,50 @@ module ExprAnalyze =
                         |> Array.skip suppliedCount
                         |> Array.forall (fun p -> p.IsOptional && (NativeInterop.tryDefaultArgExpr p applyExpr.span |> Option.isSome))
 
+                // Name（インポート型）と Native（リフレクション型）の間のサブタイプ互換性を判定する。
+                // typeEnv.canUnify は Name/Native をすべて互換とするため、
+                // delegation チェーンを辿って実際の .NET 型との互換性を厳密に検証する。
+                let isSubtypeCompatible (actualType: TypeId) (expectedType: TypeId) : bool =
+                    let resolvedActual = typeEnv.resolveType actualType
+                    let resolvedExpected = typeEnv.resolveType expectedType
+                    // シンボルIDから .NET SystemType を解決するヘルパー。
+                    let tryResolveSysType (sid: SymbolId) =
+                        match nameEnv.resolveSym sid with
+                        | Some symInfo ->
+                            match symInfo.kind with
+                            | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> Some sysType
+                            | _ -> None
+                        | None -> None
+                    // delegation チェーンを辿り、actualSid の実体が expectedSysType の派生型か判定する。
+                    let dataDefsBySidLocal =
+                        nameEnv.dataTypeDefs
+                        |> Map.toSeq
+                        |> Seq.map (fun (_, def) -> def.typeSid, def)
+                        |> Map.ofSeq
+                    let rec isNameSubtypeOfNative (sid: SymbolId) (expectedSysType: System.Type) (vis: Set<int>) =
+                        if vis.Contains sid.id then false
+                        else
+                            match tryResolveSysType sid with
+                            | Some sysType -> expectedSysType.IsAssignableFrom(sysType)
+                            | None ->
+                                match dataDefsBySidLocal |> Map.tryFind sid with
+                                | Some def ->
+                                    match def.baseTypeSid with
+                                    | Some bs -> isNameSubtypeOfNative bs expectedSysType (vis.Add sid.id)
+                                    | None -> false
+                                | None -> false
+                    match resolvedExpected, resolvedActual with
+                    | _ when resolvedActual = resolvedExpected -> true
+                    | TypeId.Name expectedSid, TypeId.Name actualSid ->
+                        expectedSid = actualSid || nameEnv.isSubtype actualSid expectedSid
+                    | TypeId.Native expectedSysType, TypeId.Name actualSid ->
+                        isNameSubtypeOfNative actualSid expectedSysType Set.empty
+                    | TypeId.Native expectedSysType, TypeId.Native actualSysType ->
+                        expectedSysType.IsAssignableFrom(actualSysType)
+                    | _ -> typeEnv.canUnify actualType expectedType
+
                 // method 候補が実引数型と期待戻り型に適合するか判定する。
+                // canUnify ではなく isSubtypeCompatible を使うことで、不適切なオーバーロードを排除する。
                 let methodMatchesTypes (methodInfo: MethodInfo) : bool =
                     let suppliedTypes = suppliedParameterTypes methodInfo
                     if suppliedTypes.Length <> allArgs.Length then
@@ -592,7 +633,7 @@ module ExprAnalyze =
                     else
                         let argsMatch =
                             List.zip allArgs suppliedTypes
-                            |> List.forall (fun (actualArg, expectedType) -> typeEnv.canUnify actualArg.typ expectedType)
+                            |> List.forall (fun (actualArg, expectedType) -> isSubtypeCompatible actualArg.typ expectedType)
 
                         if not argsMatch then
                             false
@@ -600,7 +641,8 @@ module ExprAnalyze =
                             let expectedReturnType = TypeId.fromSystemType methodInfo.ReturnType
                             typeEnv.canUnify callRetType expectedReturnType
 
-                // 同一スコア候補が複数ある場合は曖昧として扱うため、最高スコアの候補を返す。
+                // 最もスコアの高い候補を返し、同スコアが複数ある場合はパラメータ型の特化度で決定する。
+                // これにより、サブタイプが複数のインターフェイスを実装するケースで曖昧さを解消できる。
                 let tryPickBestMethod (methods: MethodInfo list) : MethodInfo option =
                     let scoreMethod (methodInfo: MethodInfo) =
                         let suppliedTypes = suppliedParameterTypes methodInfo
@@ -616,7 +658,31 @@ module ExprAnalyze =
                         let bestMethods = scored |> List.filter (fun (_, score) -> score = bestScore) |> List.map fst
                         match bestMethods with
                         | [methodInfo] -> Some methodInfo
-                        | _ -> None
+                        | [] -> None
+                        | _ ->
+                            // 同スコアが複数ある場合、より特化したオーバーロードを選択する。
+                            // m1 が m2 より特化している: 各引数型で m1 のパラメータ型が m2 のパラメータ型の
+                            // サブタイプであり、かつ少なくとも一つは真に派生型である。
+                            let isMoreSpecific (m1: MethodInfo) (m2: MethodInfo) =
+                                let params1 = m1.GetParameters()
+                                let params2 = m2.GetParameters()
+                                if params1.Length <> params2.Length then false
+                                else
+                                    let zipped = Array.zip params1 params2
+                                    (zipped |> Array.forall (fun (p1, p2) ->
+                                        p2.ParameterType.IsAssignableFrom(p1.ParameterType)))
+                                    && (zipped |> Array.exists (fun (p1, p2) ->
+                                        p2.ParameterType.IsAssignableFrom(p1.ParameterType)
+                                        && not (p1.ParameterType.IsAssignableFrom(p2.ParameterType))))
+                            // 他のいずれの候補にも支配されないオーバーロードを残す。
+                            let nonDominated =
+                                bestMethods
+                                |> List.filter (fun m ->
+                                    not (bestMethods |> List.exists (fun other ->
+                                        not (obj.ReferenceEquals(other, m)) && isMoreSpecific other m)))
+                            match nonDominated with
+                            | [methodInfo] -> Some methodInfo
+                            | _ -> None
 
                 let resolvedCall =
                     match resolvedCallable with
