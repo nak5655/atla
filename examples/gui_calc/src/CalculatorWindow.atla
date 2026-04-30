@@ -6,6 +6,7 @@ import Avalonia'Controls'StackPanel
 import Avalonia'Controls'RowDefinitions
 import Avalonia'Controls'ColumnDefinitions
 import Avalonia'Layout'Orientation
+import Avalonia'Layout'HorizontalAlignment
 
 data CalculatorWindow = 
     { _window: Window

@@ -691,6 +691,18 @@
 5. テストと拡張の静的チェックを実行する。
 
 
+### アクティブタスク (2026-04-30): gui_calc `root'Children'Add` 未解決の回帰テスト追加
+
+#### ミッション
+- `examples/gui_calc` で発生した `Undefined member 'Add' for type 'Avalonia.Controls.Controls'` の原因を絞り込む。
+- .NET 連携メンバー解決で、実装型だけでなく実装インターフェース由来メンバーも候補化する仕様へ段階的に修正する。
+
+#### 実行ステップ
+1. `NativeInterop` に instance メンバー候補収集ヘルパーを追加し、`GetInterfaces()` を含めて決定的順序で候補化する。
+2. `ExprAnalyze` の .NET instance member 解決経路を新ヘルパーへ切り替える。
+3. `Atla.Console.Tests` の `examples/gui_calc` 回帰テストで失敗挙動（exit code 1）を維持しつつ、追加診断ログで未解決原因を可視化する次ステップへ接続する。
+
+
 ## 検証
 - 警告ゼロでビルド成功。
 - フルテスト合格。
