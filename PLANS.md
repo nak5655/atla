@@ -718,3 +718,13 @@
 ## 参照
 - 履歴計画: `notes/plans-archive.md`
 - 技術ノート索引: `notes/README.md`
+
+### アクティブタスク (2026-04-30): LanguageServer 診断の別ファイル混入抑止
+
+#### ミッション
+- LanguageServer で編集中ファイルに、同一プロジェクト内の別ファイル由来の診断が混入して表示される問題を抑止する。
+
+#### 実行ステップ
+1. `Server.compileAndPublish` の診断公開経路を見直し、プロジェクト配下の非 `main.atla` 編集時は単一ドキュメント単位で診断を生成する。
+2. 回帰テストを追加し、プロジェクト compile 経路が無条件に全ファイル診断を公開しないことを固定化する。
+3. `dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` で非退行を確認する。
