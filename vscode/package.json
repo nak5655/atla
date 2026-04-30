@@ -54,7 +54,8 @@
                 ],
                 "aliases": [
                     "Atla"
-                ]
+                ],
+                "configuration": "./language-configuration.json"
             }
         ],
         "configuration": {
