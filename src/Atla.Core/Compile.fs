@@ -90,7 +90,16 @@ module Compiler =
                 match decl with
                 | :? Ast.Decl.Import as importDecl ->
                     let importName = String.concat "." importDecl.path
-                    if moduleNames.Contains(importName) then Some importName else None
+                    if moduleNames.Contains(importName) then
+                        // `import foo'bar` が Atla モジュールとして存在する場合はそのまま依存に追加する。
+                        Some importName
+                    elif importDecl.path.Length >= 2 then
+                        // `import Foo'Bar` が型 import として解決される場合でも、
+                        // `Foo` モジュールを先行解析しないと exported method 参照が欠落するため依存へ加える。
+                        let parentModuleName = importDecl.path |> List.take (importDecl.path.Length - 1) |> String.concat "."
+                        if moduleNames.Contains(parentModuleName) then Some parentModuleName else None
+                    else
+                        None
                 | _ -> None)
 
         let rec visit (stack: string list) (visited: Set<string>) (ordered: string list) (moduleName: string)
