@@ -6,19 +6,24 @@ import Avalonia'Controls'Orientation
 
 data CalculatorWindow = 
     { _window: Window
-    , _display: TextBox
-    , _currentValue: Float
-    , _pendingOperator: String
-    , _clearOnNextDigit: Bool
+    #, _display: TextBox
+    #, _currentValue: Float
+    #, _pendingOperator: String
+    #, _clearOnNextDigit: Bool
     }
 
-impl CalculatorWindow =
+impl CalculatorWindow
     fn new: CalculatorWindow = do
-        let root = StackPanel'new.
+        let root = StackPanel.
         root'Orientation = Orientation'Vertical
-        root'Margin = Thickness'new(8.0)
+        root'Margin = 8.0 Thickness.
         root'Spacing = 8.0
     
-        _window'Content = root
+        let window = Window.
+        window'Content = root
+
+        CalculatorWindow
+            { _window: window
+            }
 
 impl CalculatorWindow for Window by _window
