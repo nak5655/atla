@@ -331,7 +331,7 @@ module GenTests =
         let typeSym = SymbolId 600
         let mainSym = SymbolId 601
 
-        let mirType = Mir.Type("MyError", typeSym, Some(TypeId.Native typeof<Exception>), [], [], [])
+        let mirType = Mir.Type("MyError", typeSym, Some(TypeId.Native typeof<Exception>), (* fields *) [], (* ctors *) [], (* methods *) [])
 
         let mainMethod =
             Mir.Method(

@@ -401,11 +401,11 @@ module Gen =
                 match typ.baseType with
                 | Some baseTid ->
                     let resolvedBase = resolveType env baseTid
-                    if obj.ReferenceEquals(resolvedBase, null) then
+                    if isNull resolvedBase then
                         typeof<obj>.GetConstructor([||])
                     else
                         let baseCtor = resolvedBase.GetConstructor([||])
-                        if obj.ReferenceEquals(baseCtor, null) then typeof<obj>.GetConstructor([||])
+                        if isNull baseCtor then typeof<obj>.GetConstructor([||])
                         else baseCtor
                 | None -> typeof<obj>.GetConstructor([||])
             ctorIL.Emit(OpCodes.Call, baseCtorInfo)
