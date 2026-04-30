@@ -103,12 +103,19 @@ module Analyze =
                                 |> List.choose (fun item ->
                                     match item with
                                     | :? Ast.DataItem.Field as fieldItem ->
-                                        let fieldType = bootstrapNameEnv.resolveTypeExpr fieldItem.typeExpr
                                         // 元モジュールが "field:{TypeName}.{FieldName}" としてエクスポートしたフィールド SID を
                                         // 再利用する。再利用することで DataConstructor や DataField アクセスが
                                         // CIL 生成フェーズの fieldBuilders と一致する。
+                                        // 型情報も export 由来を優先し、import 先モジュールが外部型を import していなくても
+                                        // 定義元と同じ TypeId で member 解決できるようにする。
+                                        let exportedFieldInfoOpt =
+                                            sourceModuleExports |> Map.tryFind $"field:{typeNameForLookup}.{fieldItem.name}"
+                                        let fieldType =
+                                            match exportedFieldInfoOpt with
+                                            | Some exportInfo -> exportInfo.typ
+                                            | None -> bootstrapNameEnv.resolveTypeExpr fieldItem.typeExpr
                                         let fieldSid =
-                                            match sourceModuleExports |> Map.tryFind $"field:{typeNameForLookup}.{fieldItem.name}" with
+                                            match exportedFieldInfoOpt with
                                             | Some exportInfo ->
                                                 exportInfo.symbolId
                                             | None ->
@@ -173,10 +180,46 @@ module Analyze =
                                                 methodMap, diagAcc @ [ Diagnostic.Error(sprintf "Imported method '%s' for type '%s' was not found in module exports" methodDecl.name fullTypePath, methodDecl.span) ])
                                         (Map.empty, [])
 
+                            // imported impl 宣言から `for`（基底型）と `by`（委譲先フィールド）を抽出し、
+                            // インスタンスメンバー解決が定義元モジュールと同じ情報で実行できるようにする。
+                            let importedBaseTypeSidOpt, importedDelegatedByFieldNameOpt, importedDelegationDiagnostics =
+                                let implDecls = availableDataTypeImplDecls |> Map.tryFind fullTypePath |> Option.defaultValue []
+                                let preferredDelegatedImplOpt =
+                                    implDecls
+                                    |> List.tryFind (fun implDecl -> implDecl.byFieldName.IsSome && implDecl.forTypeName.IsSome)
+
+                                match preferredDelegatedImplOpt with
+                                | None -> None, None, []
+                                | Some delegatedImplDecl ->
+                                    let resolvedBaseTypeSidOpt =
+                                        match delegatedImplDecl.forTypeName with
+                                        | None -> None
+                                        | Some forTypeName ->
+                                            match resolvedModule.moduleScope.ResolveType(forTypeName) with
+                                            | Some(TypeId.Name baseTypeSid) -> Some baseTypeSid
+                                            | _ ->
+                                                match sourceModuleExports |> Map.tryFind $"type:{forTypeName}" with
+                                                | Some exportInfo -> Some exportInfo.symbolId
+                                                | None -> None
+
+                                    let delegatedByFieldNameOpt, delegationDiagnostics =
+                                        match delegatedImplDecl.byFieldName with
+                                        | None -> None, []
+                                        | Some byFieldName ->
+                                            let hasField = resolvedFields |> List.exists (fun fieldDef -> fieldDef.name = byFieldName)
+                                            if hasField then
+                                                Some byFieldName, []
+                                            else
+                                                None, [ Diagnostic.Error(sprintf "Delegate field '%s' is not defined in imported data '%s'" byFieldName aliasName, delegatedImplDecl.span) ]
+
+                                    resolvedBaseTypeSidOpt, delegatedByFieldNameOpt, delegationDiagnostics
+
                             let importedDefWithMethods =
                                 { importedDef with
+                                    baseTypeSid = importedBaseTypeSidOpt
+                                    delegatedByFieldName = importedDelegatedByFieldNameOpt
                                     methods = importedImplMethodMap }
-                            Map.add aliasName importedDefWithMethods defs, diagnostics @ importedImplDiagnostics)
+                            Map.add aliasName importedDefWithMethods defs, diagnostics @ importedImplDiagnostics @ importedDelegationDiagnostics)
                     (Map.empty, [])
 
             let dataTypeDefs =
