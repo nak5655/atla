@@ -614,6 +614,20 @@
 3. README の機能説明に新しい補完トリガー仕様（`'`）を追記する。
 4. `npm run check` を実行し、lint/typecheck/build の非退行を確認する。
 
+### アクティブタスク (2026-04-30): `#` 行コメント導入と VS Code コメント設定
+
+#### ミッション
+- `#` を delimiter から廃止し、`#` 起点の行コメントを lexer で無視する。
+- VS Code 拡張で `#` を line comment として扱えるようにする。
+
+#### 実行ステップ
+1. Lexer に `lineComment` パーサーを追加し、tokenize からコメントを除去する。
+2. `#` を delimiter 一覧から削除し、既存字句との衝突がないことを確認する。
+3. Lexer テストに行コメント（単独行/行末/EOF 終端/文字列内 `#`）を追加する。
+4. VS Code 拡張へ language configuration を追加し、`comments.lineComment` を `#` に設定する。
+5. テストと拡張の静的チェックを実行する。
+
+
 ## 検証
 - 警告ゼロでビルド成功。
 - フルテスト合格。

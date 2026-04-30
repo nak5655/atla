@@ -42,10 +42,17 @@ module Lexer =
         // arrows
         "->"; "=>";
     ]
-    let delims = ['''; '"'; '`'; '#'; ','; ';'; ':'; '('; ')'; '['; ']'; '{'; '}']
+    let delims = ['''; '"'; '`'; ','; ';'; ':'; '('; ')'; '['; ']'; '{'; '}']
     let opSigns = ['+'; '-'; '*'; '/'; '%'; '<'; '>'; '='; '!'; '^'; '&'; '|'; '?'; '.']
     
     let ws = AcceptIf (fun c -> System.Char.IsWhiteSpace(c.char))
+    /// Parse a single-line comment that starts with '#' and ends at newline or EOF.
+    let lineComment: PackratParser<SourceChar, unit> =
+        AcceptIf (fun c -> c.char = '#') <&> Many (AcceptIf (fun c -> c.char <> '\n')) |>> fun _ -> ()
+
+    /// Parse whitespace/comment trivia and discard them before/after tokens.
+    let trivia: PackratParser<SourceChar, unit> =
+        (ws |>> fun _ -> ()) <|> lineComment
     let alpha = AcceptIf (fun c -> System.Char.IsLetter(c.char))
     let alpha_ = alpha <|> (AcceptIf (fun c -> c.char = '_'))
     let digit = AcceptIf (fun c -> System.Char.IsDigit(c.char))
@@ -103,4 +110,4 @@ module Lexer =
             Token.String(strContent, { left = openQuote.span.left; right = closeQuote.span.right })
 
     let tokenize : PackratParser<SourceChar, Token list> = 
-        Many (ws) &> SepBy ((asToken keyword) <|> (asToken string) <|> (asToken delim) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many ws) <& Many ws <& Eoi |>> fun tokens -> tokens
+        Many (trivia) &> SepBy ((asToken keyword) <|> (asToken string) <|> (asToken delim) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many trivia) <& Many trivia <& Eoi |>> fun tokens -> tokens
