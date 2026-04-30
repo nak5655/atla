@@ -395,7 +395,20 @@ module Gen =
             let defaultCtor = typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [||])
             let ctorIL = defaultCtor.GetILGenerator()
             ctorIL.Emit(OpCodes.Ldarg_0)
-            ctorIL.Emit(OpCodes.Call, typeof<obj>.GetConstructor([||]))
+            // 基底型が指定されている場合はその型のパラメータなしコンストラクタを呼ぶ。
+            // 指定なし、またはパラメータなしコンストラクタが存在しない場合は Object のコンストラクタを呼ぶ。
+            let baseCtorInfo =
+                match typ.baseType with
+                | Some baseTid ->
+                    let resolvedBase = resolveType env baseTid
+                    if obj.ReferenceEquals(resolvedBase, null) then
+                        typeof<obj>.GetConstructor([||])
+                    else
+                        let baseCtor = resolvedBase.GetConstructor([||])
+                        if obj.ReferenceEquals(baseCtor, null) then typeof<obj>.GetConstructor([||])
+                        else baseCtor
+                | None -> typeof<obj>.GetConstructor([||])
+            ctorIL.Emit(OpCodes.Call, baseCtorInfo)
             ctorIL.Emit(OpCodes.Ret)
             env.typeCtors.[typ.sym] <- defaultCtor
 

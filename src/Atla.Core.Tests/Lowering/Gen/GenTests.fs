@@ -320,3 +320,51 @@ module GenTests =
         let delObj = mainMi.Invoke(null, [| "captured-env" |]) :?> System.Func<int, int>
         let result = delObj.Invoke(7)
         Assert.Equal(7, result)
+
+    /// データ型に基底型（impl T for Base by field）が指定されている場合、
+    /// デフォルトコンストラクタが Object ではなく基底型のコンストラクタを呼ぶことを検証する。
+    /// これにより AvaloniaObject などの Dispatcher 初期化が正しく行われる。
+    [<Fact>]
+    let ``GenAssembly default constructor calls base type constructor when baseType is set`` () =
+        // Exception を基底型として持つ型を作成する。
+        // Exception のコンストラクタが呼ばれていれば Message プロパティが "" を返す（null でない）。
+        let typeSym = SymbolId 600
+        let mainSym = SymbolId 601
+
+        let mirType = Mir.Type("MyError", typeSym, Some(TypeId.Native typeof<Exception>), [], [], [])
+
+        let mainMethod =
+            Mir.Method(
+                "main",
+                mainSym,
+                [],
+                TypeId.Unit,
+                [ Mir.Ins.Ret ],
+                Mir.Frame.empty)
+
+        let assembly =
+            Mir.Assembly(
+                "GenBaseCtorCall",
+                [ Mir.Module("MainModule", [ mirType ], [ mainMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-base-ctor-call.dll")
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        let myErrorType = loaded.GetType("MyError")
+        Assert.NotNull(myErrorType)
+
+        // Exception を継承しているはず
+        Assert.True(typeof<Exception>.IsAssignableFrom(myErrorType), "MyError should extend Exception")
+
+        // デフォルトコンストラクタでインスタンス生成が成功し、Exception.Message が null でないことを確認する。
+        let instance = Activator.CreateInstance(myErrorType) :?> Exception
+        Assert.NotNull(instance)
+        Assert.NotNull(instance.Message)
