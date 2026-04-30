@@ -344,6 +344,10 @@ module ExprAnalyze =
             match unifyOrError nameEnv typeEnv tid TypeId.Int intExpr.span with
             | Result.Ok _ -> Hir.Expr.Int(intExpr.value, intExpr.span)
             | Result.Error exprErr -> exprErr
+        | :? Ast.Expr.Bool as boolExpr ->
+            match unifyOrError nameEnv typeEnv tid TypeId.Bool boolExpr.span with
+            | Result.Ok _ -> Hir.Expr.Bool(boolExpr.value, boolExpr.span)
+            | Result.Error exprErr -> exprErr
         | :? Ast.Expr.Float as floatExpr ->
             match unifyOrError nameEnv typeEnv tid TypeId.Float floatExpr.span with
             | Result.Ok _ -> Hir.Expr.Float(floatExpr.value, floatExpr.span)

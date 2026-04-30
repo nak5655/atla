@@ -69,6 +69,14 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        type Bool(value: bool, span: Span) =
+            member this.value = value
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type Float(value: float, span: Span) =
             member this.value = value
             member this.span = span

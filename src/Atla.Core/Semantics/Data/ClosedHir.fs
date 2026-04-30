@@ -20,6 +20,7 @@ module ClosedHir =
     /// env-class クロージャー変換が生成する `EnvFieldLoad` / `ClosureCreate` を含む。
     type Expr =
         | Unit of span: Span
+        | Bool of value: bool * span: Span
         | Int of value: int * span: Span
         | Float of value: float * span: Span
         | String of value: string * span: Span
@@ -44,6 +45,7 @@ module ClosedHir =
         member this.typ =
             match this with
             | Unit _ -> TypeId.Unit
+            | Bool _ -> TypeId.Bool
             | Int _ -> TypeId.Int
             | Float _ -> TypeId.Float
             | String _ -> TypeId.String
@@ -61,6 +63,7 @@ module ClosedHir =
         member this.span =
             match this with
             | Unit span -> span
+            | Bool (_, span) -> span
             | Int (_, span) -> span
             | Float (_, span) -> span
             | String (_, span) -> span
@@ -133,6 +136,7 @@ module ClosedHir =
         let mapped =
             match expr with
             | Unit _
+            | Bool _
             | Int _
             | Float _
             | String _
@@ -169,6 +173,7 @@ module ClosedHir =
         let acc' = f acc expr
         match expr with
         | Unit _
+        | Bool _
         | Int _
         | Float _
         | String _
@@ -224,7 +229,7 @@ module ClosedHir =
         (expr: Expr) : 'acc =
         let ctx' = descend ctx expr
         match expr with
-        | Unit _ | Int _ | Float _ | String _ | Null _ | Id _ | ExprError _
+        | Unit _ | Bool _ | Int _ | Float _ | String _ | Null _ | Id _ | ExprError _
         | EnvFieldLoad _ | ClosureCreate _ ->
             leaf ctx' expr
         | Call (_, instance, args, _, _) ->

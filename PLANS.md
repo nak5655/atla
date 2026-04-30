@@ -17,6 +17,23 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-30): Bool型実装
+
+#### ミッション
+- リテラル `True` / `False` を持つ Bool 型を実装する。
+- .NET の `System.Boolean` (`bool`) と互換性を持たせる。
+
+#### 実行ステップ
+1. `Ast.fs` に `Ast.Expr.Bool` を追加する。
+2. `Parser.fs` の `factor()` に `true` / `false` キーワードの解析を追加する（`Ast.Expr.Bool` を生成）。
+3. `Hir.fs` に `Bool` ケースを追加し、`typ` / `span` / `getDiagnostics` / `mapExpr` / `foldExpr` を更新する。
+4. `ClosedHir.fs` に `Bool` ケースを追加し、全トラバーサル関数を更新する。
+5. `ExprAnalyze.fs` で `Ast.Expr.Bool` → `Hir.Expr.Bool` に変換する。
+6. `ClosureConversion.fs` で `Hir.Expr.Bool` → `ClosedHir.Expr.Bool` に変換する。
+7. `Layout.fs` で `ClosedHir.Expr.Bool` → `Mir.Value.ImmVal(Mir.Imm.Bool)` に変換する。
+8. テストを追加してビルド・テストを実行する。
+
+
 ### 完了タスク (2026-04-30): `gui_calc` ビルドエラー修正
 
 #### 修正内容

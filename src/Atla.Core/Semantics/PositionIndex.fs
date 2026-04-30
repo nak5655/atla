@@ -147,6 +147,7 @@ let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) 
     | Hir.Expr.If(cond, thenBr, elseBr, _, _) ->
         state |> walkExpr scopeSpan cond |> walkExpr scopeSpan thenBr |> walkExpr scopeSpan elseBr
     | Hir.Expr.Unit _
+    | Hir.Expr.Bool _
     | Hir.Expr.Int _
     | Hir.Expr.Float _
     | Hir.Expr.String _

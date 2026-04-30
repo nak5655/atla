@@ -43,6 +43,7 @@ module ClosureConversion =
     let rec private convertHirExpr (expr: Hir.Expr) : ClosedHir.Expr =
         match expr with
         | Hir.Expr.Unit span -> ClosedHir.Expr.Unit span
+        | Hir.Expr.Bool (v, span) -> ClosedHir.Expr.Bool(v, span)
         | Hir.Expr.Int (v, span) -> ClosedHir.Expr.Int(v, span)
         | Hir.Expr.Float (v, span) -> ClosedHir.Expr.Float(v, span)
         | Hir.Expr.String (v, span) -> ClosedHir.Expr.String(v, span)
@@ -263,6 +264,7 @@ module ClosureConversion =
         (state: ConversionState) : ClosedHir.Expr * ConversionState =
         match expr with
         | Hir.Expr.Unit span -> ClosedHir.Expr.Unit span, state
+        | Hir.Expr.Bool (v, span) -> ClosedHir.Expr.Bool(v, span), state
         | Hir.Expr.Int (v, span) -> ClosedHir.Expr.Int(v, span), state
         | Hir.Expr.Float (v, span) -> ClosedHir.Expr.Float(v, span), state
         | Hir.Expr.String (v, span) -> ClosedHir.Expr.String(v, span), state

@@ -921,3 +921,51 @@ impl Wrapper for Base by inner
                 Assert.True(false, "impl declaration with for/by clause was not parsed")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses true literal as Bool`` () =
+        let program = "fn main (): Bool = true"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Bool as boolExpr ->
+                    Assert.True(boolExpr.value, "expected true literal")
+                | other ->
+                    Assert.True(false, $"expected Ast.Expr.Bool but got {other.GetType().Name}")
+            | None ->
+                Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses false literal as Bool`` () =
+        let program = "fn main (): Bool = false"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Bool as boolExpr ->
+                    Assert.False(boolExpr.value, "expected false literal")
+                | other ->
+                    Assert.True(false, $"expected Ast.Expr.Bool but got {other.GetType().Name}")
+            | None ->
+                Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

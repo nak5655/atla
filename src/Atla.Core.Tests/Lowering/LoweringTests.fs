@@ -847,3 +847,42 @@ fn main: () = do
             }
 
         Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``Bool literals compile and return correct values`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    true Console'WriteLine.
+    false Console'WriteLine.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "BoolLiterals"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "BoolLiterals.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        let lines = stdout.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
+        Assert.Equal("True", lines.[0].Trim())
+        Assert.Equal("False", lines.[1].Trim())

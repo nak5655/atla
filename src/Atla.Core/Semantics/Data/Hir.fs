@@ -29,6 +29,7 @@ module Hir =
 
     type Expr =
         | Unit of span: Span
+        | Bool of value: bool * span: Span
         | Int of value: int * span: Span
         | Float of value: float * span: Span
         | String of value: string * span: Span
@@ -44,6 +45,7 @@ module Hir =
         member this.typ =
             match this with
             | Unit _ -> TypeId.Unit
+            | Bool _ -> TypeId.Bool
             | Int _ -> TypeId.Int
             | Float _ -> TypeId.Float
             | String _ -> TypeId.String
@@ -59,6 +61,7 @@ module Hir =
         member this.span =
             match this with
             | Unit (span) -> span
+            | Bool (_, span) -> span
             | Int (_, span) -> span
             | Float (_, span) -> span
             | String (_, span) -> span
@@ -175,6 +178,7 @@ module Hir =
         let mapped =
             match expr with
             | Unit _
+            | Bool _
             | Int _
             | Float _
             | String _
@@ -209,6 +213,7 @@ module Hir =
         let acc' = f acc expr
         match expr with
         | Unit _
+        | Bool _
         | Int _
         | Float _
         | String _
@@ -249,7 +254,7 @@ module Hir =
     /// `Expr` ツリーを Reader 文脈（`ctx`）を保持しながら畳み込む。
     /// - `descend`: 各 Expr ノードに降りる前に文脈を更新（例: Lambda 境界で bound をリセット）
     /// - `afterStmt`: Block 内 Stmt 処理後に文脈を更新（例: Let 束縛の逐次追加）
-    /// - `leaf`: リーフノード（Unit / Int / Float / String / Null / Id / ExprError）で値を生成
+    /// - `leaf`: リーフノード（Unit / Bool / Int / Float / String / Null / Id / ExprError）で値を生成
     /// - `merge` / `zero`: 兄弟ノードの結果を合成
     let rec foldExprWithCtx
         (descend: 'ctx -> Expr -> 'ctx)
@@ -261,7 +266,7 @@ module Hir =
         (expr: Expr) : 'acc =
         let ctx' = descend ctx expr
         match expr with
-        | Unit _ | Int _ | Float _ | String _ | Null _ | Id _ | ExprError _ ->
+        | Unit _ | Bool _ | Int _ | Float _ | String _ | Null _ | Id _ | ExprError _ ->
             leaf ctx' expr
         | Call (_, instance, args, _, _) ->
             let instAcc =

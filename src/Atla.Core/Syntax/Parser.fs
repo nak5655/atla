@@ -104,6 +104,13 @@ module Parser =
     let int: PackratParser<Token, Ast.Expr.Int> = AcceptMatch (fun t -> match t with :? Token.Int as st -> Some(Ast.Expr.Int(st.value, st.span)) | _ -> None)
     let float: PackratParser<Token, Ast.Expr.Float> = AcceptMatch (fun t -> match t with :? Token.Float as st -> Some(Ast.Expr.Float(st.value, st.span)) | _ -> None)
     let str: PackratParser<Token, Ast.Expr.String> = AcceptMatch (fun t -> match t with :? Token.String as st -> Some(Ast.Expr.String(st.value, st.span)) | _ -> None)
+    /// `true` / `false` キーワードを Bool リテラルとして解析する。
+    let bool: PackratParser<Token, Ast.Expr.Bool> =
+        AcceptMatch (fun t ->
+            match t with
+            | :? Token.Keyword as kw when kw.str = "true"  -> Some(Ast.Expr.Bool(true,  kw.span))
+            | :? Token.Keyword as kw when kw.str = "false" -> Some(Ast.Expr.Bool(false, kw.span))
+            | _ -> None)
     let unit: PackratParser<Token, Ast.Expr> = delim '(' <&> delim ')' |>> fun (l, r) -> Ast.Expr.Unit({ left = l.span.left; right = r.span.right })
     let rec paren (): PackratParser<Token, Ast.Expr> =
         Delay (fun () -> 
@@ -148,7 +155,7 @@ module Parser =
 
     and factor (): PackratParser<Token, Ast.Expr> =
         Delay (fun () -> 
-            unit <|> paren () <|> ifExpr () <|> doExpr () <|> dataInitExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str)
+            unit <|> paren () <|> ifExpr () <|> doExpr () <|> dataInitExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool)
         )
 
     and postfixMemberAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
