@@ -26,8 +26,11 @@
     <Compile Include="Semantics\Data\PhaseResult.fs" />
     <Compile Include="Semantics\Data\Hir.fs" />
     <Compile Include="Semantics\Data\ClosedHir.fs" />
+    <Compile Include="Semantics\Data\AnalyzeEnv.fs" />
     <Compile Include="Semantics\Resolve.fs" />
     <Compile Include="Semantics\Infer.fs" />
+    <Compile Include="Semantics\NativeInterop.fs" />
+    <Compile Include="Semantics\ExprAnalyze.fs" />
     <Compile Include="Semantics\Analyze.fs" />
     <Compile Include="Semantics\PositionIndex.fs" />
     <Compile Include="Lowering\Data\Mir.fs" />
