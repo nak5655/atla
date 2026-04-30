@@ -588,37 +588,38 @@ module ExprAnalyze =
                 let isSubtypeCompatible (actualType: TypeId) (expectedType: TypeId) : bool =
                     let resolvedActual = typeEnv.resolveType actualType
                     let resolvedExpected = typeEnv.resolveType expectedType
+                    // シンボルIDから .NET SystemType を解決するヘルパー。
+                    let tryResolveSysType (sid: SymbolId) =
+                        match nameEnv.resolveSym sid with
+                        | Some symInfo ->
+                            match symInfo.kind with
+                            | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> Some sysType
+                            | _ -> None
+                        | None -> None
+                    // delegation チェーンを辿り、actualSid の実体が expectedSysType の派生型か判定する。
+                    let dataDefsBySidLocal =
+                        nameEnv.dataTypeDefs
+                        |> Map.toSeq
+                        |> Seq.map (fun (_, def) -> def.typeSid, def)
+                        |> Map.ofSeq
+                    let rec isNameSubtypeOfNative (sid: SymbolId) (expectedSysType: System.Type) (vis: Set<int>) =
+                        if vis.Contains sid.id then false
+                        else
+                            match tryResolveSysType sid with
+                            | Some sysType -> expectedSysType.IsAssignableFrom(sysType)
+                            | None ->
+                                match dataDefsBySidLocal |> Map.tryFind sid with
+                                | Some def ->
+                                    match def.baseTypeSid with
+                                    | Some bs -> isNameSubtypeOfNative bs expectedSysType (vis.Add sid.id)
+                                    | None -> false
+                                | None -> false
                     match resolvedExpected, resolvedActual with
                     | _ when resolvedActual = resolvedExpected -> true
                     | TypeId.Name expectedSid, TypeId.Name actualSid ->
                         expectedSid = actualSid || nameEnv.isSubtype actualSid expectedSid
                     | TypeId.Native expectedSysType, TypeId.Name actualSid ->
-                        // delegation チェーンを辿って実際の .NET 型との互換性を検証する
-                        let dataDefsBySidLocal =
-                            nameEnv.dataTypeDefs
-                            |> Map.toSeq
-                            |> Seq.map (fun (_, def) -> def.typeSid, def)
-                            |> Map.ofSeq
-                        let tryResolveSysType (sid: SymbolId) =
-                            match nameEnv.resolveSym sid with
-                            | Some symInfo ->
-                                match symInfo.kind with
-                                | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> Some sysType
-                                | _ -> None
-                            | None -> None
-                        let rec isSub (sid: SymbolId) (vis: Set<int>) =
-                            if vis.Contains sid.id then false
-                            else
-                                match tryResolveSysType sid with
-                                | Some sysType -> expectedSysType.IsAssignableFrom(sysType)
-                                | None ->
-                                    match dataDefsBySidLocal |> Map.tryFind sid with
-                                    | Some def ->
-                                        match def.baseTypeSid with
-                                        | Some bs -> isSub bs (vis.Add sid.id)
-                                        | None -> false
-                                    | None -> false
-                        isSub actualSid Set.empty
+                        isNameSubtypeOfNative actualSid expectedSysType Set.empty
                     | TypeId.Native expectedSysType, TypeId.Native actualSysType ->
                         expectedSysType.IsAssignableFrom(actualSysType)
                     | _ -> typeEnv.canUnify actualType expectedType
@@ -665,12 +666,12 @@ module ExprAnalyze =
                             let isMoreSpecific (m1: MethodInfo) (m2: MethodInfo) =
                                 let params1 = m1.GetParameters()
                                 let params2 = m2.GetParameters()
-                                params1.Length = params2.Length
-                                && (Array.zip params1 params2
-                                    |> Array.forall (fun (p1, p2) ->
+                                if params1.Length <> params2.Length then false
+                                else
+                                    let zipped = Array.zip params1 params2
+                                    (zipped |> Array.forall (fun (p1, p2) ->
                                         p2.ParameterType.IsAssignableFrom(p1.ParameterType)))
-                                && (Array.zip params1 params2
-                                    |> Array.exists (fun (p1, p2) ->
+                                    && (zipped |> Array.exists (fun (p1, p2) ->
                                         p2.ParameterType.IsAssignableFrom(p1.ParameterType)
                                         && not (p1.ParameterType.IsAssignableFrom(p2.ParameterType))))
                             // 他のいずれの候補にも支配されないオーバーロードを残す。
