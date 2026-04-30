@@ -17,6 +17,16 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-30): `gui_calc` LanguageServer 診断差分修正
+
+#### ミッション
+- `examples/gui_calc` を LanguageServer で開いた際に `entry module 'calculatorwindow' was not found` のみが表示され、CLI ビルド時の本来診断と乖離する問題を解消する。
+
+#### 実行ステップ
+1. LanguageServer のプロジェクトコンパイル経路で `entryModuleName` を開いているファイル名ではなく `main` に固定し、Console ビルド経路と一致させる。
+2. 回帰テストを追加し、`src/main.atla` と `src/CalculatorWindow.atla` を含むプロジェクトで `entryModuleName = "main"` が使用されることを固定する。
+3. `dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` で非退行を確認する。
+
 ### アクティブタスク (2026-04-30): Bool型実装
 
 #### ミッション
