@@ -2029,3 +2029,42 @@ fn main (): () = do
         Assert.False(result.succeeded)
         Assert.True(result.diagnostics |> List.exists (fun diagnostic -> diagnostic.isError))
         Assert.True(result.value.IsSome, "意味エラー時も IntelliSense 用の部分 HIR を返す必要があります。")
+
+    /// impl T for Base by field を宣言した場合、HIR.Type に delegatedByFieldName が伝播されることを確認する。
+    /// これにより Gen フェーズで委譲型が CIL 継承を使わないよう制御できる（二重ウィンドウバグの修正）。
+    [<Fact>]
+    let ``analyzeModule propagates delegatedByFieldName to HIR type when impl for by is declared`` () =
+        let source = """
+import System'DateTime
+data Clock = { dt: DateTime }
+impl Clock for DateTime by dt
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let clockType =
+                        hirModule.types
+                        |> List.tryFind (fun t ->
+                            match symbolTable.Get(t.sym) with
+                            | Some symInfo -> symInfo.name = "Clock"
+                            | None -> false)
+                    Assert.True(clockType.IsSome, "Clock type should be present in HIR")
+                    Assert.Equal(Some "dt", clockType.Value.delegatedByFieldName)
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun diagnostic -> diagnostic.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

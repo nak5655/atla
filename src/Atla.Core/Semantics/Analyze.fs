@@ -59,7 +59,7 @@ module Analyze =
                             resolvedFields
                             |> List.map (fun fieldDef ->
                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                        types.Add(Hir.Type(resolvedDataDecl.typeSid, None, hirFields, []))
+                        types.Add(Hir.Type(resolvedDataDecl.typeSid, None, None, hirFields, []))
                         Map.add
                             resolvedDataDecl.decl.name
                             { typeSid = resolvedDataDecl.typeSid
@@ -138,7 +138,7 @@ module Analyze =
                                     resolvedFields
                                     |> List.map (fun fieldDef ->
                                         Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                                types.Add(Hir.Type(typeSid, None, hirFields, []))
+                                types.Add(Hir.Type(typeSid, None, None, hirFields, []))
                             let importedImplMethodMap, importedImplDiagnostics =
                                 let lastDot = fullTypePath.LastIndexOf('.')
                                 if lastDot <= 0 then
@@ -285,11 +285,17 @@ module Analyze =
             |> List.iter (fun (methodSid, methodDecl) ->
                 methods.Add(ExprAnalyze.analyzeMethodCore nameEnv typeEnv methodSid methodDecl))
 
-            // impl で確定した基底型情報を HIR.Type へ反映する。
+            // impl で確定した基底型情報と委譲フィールド名を HIR.Type へ反映する。
             let baseTypeBySid =
                 dataTypeDefsWithMethods
                 |> Map.toSeq
                 |> Seq.map (fun (_, def) -> def.typeSid.id, (def.baseTypeSid |> Option.map TypeId.Name))
+                |> Map.ofSeq
+
+            let delegationFieldBySid =
+                dataTypeDefsWithMethods
+                |> Map.toSeq
+                |> Seq.map (fun (_, def) -> def.typeSid.id, def.delegatedByFieldName)
                 |> Map.ofSeq
 
             let typedTypes =
@@ -297,7 +303,8 @@ module Analyze =
                 |> Seq.toList
                 |> List.map (fun typ ->
                     let baseTypeOpt = baseTypeBySid |> Map.tryFind typ.sym.id |> Option.flatten
-                    Hir.Type(typ.sym, baseTypeOpt, typ.fields, typ.methods))
+                    let delegatedByFieldNameOpt = delegationFieldBySid |> Map.tryFind typ.sym.id |> Option.flatten
+                    Hir.Type(typ.sym, baseTypeOpt, delegatedByFieldNameOpt, typ.fields, typ.methods))
 
             let untypedHirModule =
                 Hir.Module(

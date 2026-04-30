@@ -358,7 +358,7 @@ module ClosureConversion =
                     let liftedMethod = ClosedHir.Method(liftedMethodSid, methodArgs, rewrittenBodyWithEnv, liftedMethodType, span)
 
                     // env-class の ClosedHir.Type を生成する。
-                    let envType = ClosedHir.Type(envTypeSid, None, envFields, [])
+                    let envType = ClosedHir.Type(envTypeSid, None, None, envFields, [])
 
                     // ClosureCreate 式を生成する。
                     let capturedForCreate = capturedMetadata |> List.map (fun cm -> SymbolId cm.sid, cm.typ, cm.isMutable)
@@ -458,6 +458,7 @@ module ClosureConversion =
                         ClosedHir.Type(
                             hirType.sym,
                             hirType.baseType,
+                            hirType.delegatedByFieldName,
                             hirType.fields |> List.map (fun f -> ClosedHir.Field(f.sym, f.typ, convertHirExpr f.body, f.span)),
                             convertedTypeMethods))
                 let allTypes = convertedTypes @ generatedTypes

@@ -131,9 +131,12 @@ module Hir =
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics
 
-    type Type(sid: SymbolId, baseType: TypeId option, fields: Field list, methods: Method list) =
+    type Type(sid: SymbolId, baseType: TypeId option, delegatedByFieldName: string option, fields: Field list, methods: Method list) =
         member this.sym = sid
         member this.baseType = baseType
+        /// `impl T for Base by field` 委譲を使用している場合のフィールド名。
+        /// 指定がある場合は CIL レベルで Base を継承せず、フィールドへの委譲のみを行う。
+        member this.delegatedByFieldName = delegatedByFieldName
         member this.fields = fields
         member this.methods = methods
         member this.hasError =
