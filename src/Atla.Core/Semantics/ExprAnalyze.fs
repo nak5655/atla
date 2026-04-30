@@ -782,15 +782,17 @@ module ExprAnalyze =
                     // .NET メソッドへ関数値を渡す際に、引数の型を具体的なデリゲート型へ特殊化する。
                     // また、impl T for Base by field で委譲を宣言した型を .NET の Base 型引数として渡す場合、
                     // CIL 継承を使用しないため、委譲フィールドを明示的に取り出してコンパイラが型安全性を保証する。
+                    // bySid マップは引数ごとに再構築しないよう、呼び出しの外側で一度だけ作成する。
+                    let dataDefsBySid =
+                        nameEnv.dataTypeDefs
+                        |> Map.toSeq
+                        |> Seq.map (fun (_, def) -> def.typeSid, def)
+                        |> Map.ofSeq
+
                     let coerceDelegatedArg (arg: Hir.Expr) (expectedSysType: System.Type) : Hir.Expr =
                         match typeEnv.resolveType arg.typ with
                         | TypeId.Name argSid ->
-                            let bySid =
-                                nameEnv.dataTypeDefs
-                                |> Map.toSeq
-                                |> Seq.map (fun (_, def) -> def.typeSid, def)
-                                |> Map.ofSeq
-                            match bySid |> Map.tryFind argSid with
+                            match dataDefsBySid |> Map.tryFind argSid with
                             | Some def ->
                                 match def.delegatedByFieldName with
                                 | Some fieldName ->
@@ -805,7 +807,7 @@ module ExprAnalyze =
                                                 | Some symInfo ->
                                                     match symInfo.kind with
                                                     | SymbolKind.External(ExternalBinding.SystemTypeRef sysType)
-                                                        when not (obj.ReferenceEquals(sysType, null)) ->
+                                                        when not (isNull sysType) ->
                                                         expectedSysType.IsAssignableFrom(sysType)
                                                     | _ -> false
                                                 | None -> false
