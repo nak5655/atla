@@ -108,8 +108,8 @@ module Parser =
     let bool: PackratParser<Token, Ast.Expr.Bool> =
         AcceptMatch (fun t ->
             match t with
-            | :? Token.Keyword as kw when kw.str = "true"  -> Some(Ast.Expr.Bool(true,  kw.span))
-            | :? Token.Keyword as kw when kw.str = "false" -> Some(Ast.Expr.Bool(false, kw.span))
+            | :? Token.Keyword as kw when kw.str = "True"  -> Some(Ast.Expr.Bool(true,  kw.span))
+            | :? Token.Keyword as kw when kw.str = "False" -> Some(Ast.Expr.Bool(false, kw.span))
             | _ -> None)
     let unit: PackratParser<Token, Ast.Expr> = delim '(' <&> delim ')' |>> fun (l, r) -> Ast.Expr.Unit({ left = l.span.left; right = r.span.right })
     let rec paren (): PackratParser<Token, Ast.Expr> =

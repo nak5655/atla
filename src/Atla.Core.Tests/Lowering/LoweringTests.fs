@@ -854,8 +854,8 @@ fn main: () = do
 import System'Console
 
 fn main: () = do
-    true Console'WriteLine.
-    false Console'WriteLine.
+    True Console'WriteLine.
+    False Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))

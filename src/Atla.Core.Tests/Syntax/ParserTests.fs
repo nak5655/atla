@@ -924,7 +924,7 @@ impl Wrapper for Base by inner
 
     [<Fact>]
     let ``fileModule parses true literal as Bool`` () =
-        let program = "fn main (): Bool = true"
+        let program = "fn main (): Bool = True"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -948,7 +948,7 @@ impl Wrapper for Base by inner
 
     [<Fact>]
     let ``fileModule parses false literal as Bool`` () =
-        let program = "fn main (): Bool = false"
+        let program = "fn main (): Bool = False"
 
         match parseModule program with
         | Success (astModule, _) ->
