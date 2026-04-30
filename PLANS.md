@@ -17,6 +17,17 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-30): `gui_calc` delegated instance member 解決修正
+
+#### ミッション
+- `examples/gui_calc` で `CalculatorWindow` imported type の `impl ... for Window by _window` 委譲情報が意味解析へ伝搬されず、`window'Title` 等が `Type 'CalculatorWindow' does not support member access` で失敗する問題を解消する。
+
+#### 実行ステップ
+1. imported type 取り込み処理で `availableDataTypeImplDecls` から `for` / `by` 情報を抽出し、`DataTypeDef.baseTypeSid` と `delegatedByFieldName` に反映する。
+2. `by` 指定フィールドが imported data の field 定義に存在することを検証し、欠落時は決定的診断を返す。
+3. `examples/gui_calc` ビルド回帰テストを追加し、`CalculatorWindow` の委譲経路を固定する。
+4. `dotnet test src/Atla.Console.Tests/Atla.Console.Tests.fsproj` を実行して非退行を確認する。
+
 ### アクティブタスク (2026-04-30): `gui_calc` imported static method export 整合
 
 #### ミッション
