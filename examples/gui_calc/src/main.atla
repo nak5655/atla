@@ -7,7 +7,7 @@ import CalculatorWindow'CalculatorWindow
 
 fn appMain (app: Application) (args: Array String): () = do
     let window = CalculatorWindow'new.
-    window'Title = "Hello, Avalonia!"
+    window'Title = "Calc"
     window'Width = 320.0
     window'Height = 480.0
     window'WindowStartupLocation = WindowStartupLocation'CenterScreen

@@ -1,7 +1,10 @@
 import Avalonia'Controls'Window
 import Avalonia'Thickness
+import Avalonia'Controls'Grid
 import Avalonia'Controls'TextBox
 import Avalonia'Controls'StackPanel
+import Avalonia'Controls'RowDefinitions
+import Avalonia'Controls'ColumnDefinitions
 import Avalonia'Layout'Orientation
 
 data CalculatorWindow = 
@@ -18,7 +21,23 @@ impl CalculatorWindow
         root'Orientation = Orientation'Vertical
         root'Margin = 8.0 Thickness.
         root'Spacing = 8.0
+
+        let display = TextBox.
+        display'Text = "0"
+        display'IsReadOnly = True
+        display'FontSize = 32.0
+        display'HorizontalAlignment = HorizontalAlignment'Stretch
+        display'HorizontalContentAlignment = HorizontalAlignment'Right
+
+        display root'Children'Add.
     
+        let grid = Grid.
+        grid'RowDefinitions = "Auto,Auto,Auto,Auto,Auto" RowDefinitions.
+        grid'ColumnDefinitions = "*,*,*,*" ColumnDefinitions.
+        grid'Margin = 0 8 0 0 Thickness.
+
+        grid root'Children'Add.
+
         let window = Window.
         window'Content = root
 
