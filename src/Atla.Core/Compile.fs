@@ -124,7 +124,7 @@ module Compiler =
     let private collectModuleExports
         (symbolTable: SymbolTable)
         (hirModule: Hir.Module)
-        : Map<string, Analyze.ModuleExport> =
+        : Map<string, AnalyzeEnv.ModuleExport> =
         let valueExports =
             hirModule.scope.vars
             |> Seq.map (fun kv -> kv.Key, kv.Value)
@@ -133,7 +133,7 @@ module Compiler =
                 |> Option.map (fun symInfo ->
                     name,
                     ({ symbolId = sid
-                       typ = symInfo.typ }: Analyze.ModuleExport)))
+                       typ = symInfo.typ }: AnalyzeEnv.ModuleExport)))
             |> Seq.toList
 
         let methodExports =
@@ -143,7 +143,7 @@ module Compiler =
                 |> Option.map (fun symInfo ->
                     symInfo.name,
                     ({ symbolId = methodInfo.sym
-                       typ = symInfo.typ }: Analyze.ModuleExport)))
+                       typ = symInfo.typ }: AnalyzeEnv.ModuleExport)))
 
         // データ型の typeSid を "type:{TypeName}" キーでエクスポートする。
         // import sub'Person のような型 import 時に元の typeSid を再利用するために使用する。
@@ -154,7 +154,7 @@ module Compiler =
                 |> Option.map (fun symInfo ->
                     $"type:{symInfo.name}",
                     ({ symbolId = hirType.sym
-                       typ = TypeId.Name hirType.sym }: Analyze.ModuleExport)))
+                       typ = TypeId.Name hirType.sym }: AnalyzeEnv.ModuleExport)))
 
         // データ型のフィールド SID を "field:{TypeName}.{FieldName}" キーでエクスポートする。
         // import sub'Person のような型 import 時に元のフィールド SID を再利用するために使用する。
@@ -167,7 +167,7 @@ module Compiler =
                     |> Option.map (fun fieldInfo ->
                         $"field:{fieldInfo.name}",
                         ({ symbolId = field.sym
-                           typ = field.typ }: Analyze.ModuleExport))))
+                           typ = field.typ }: AnalyzeEnv.ModuleExport))))
 
         valueExports @ methodExports @ typeExports @ fieldExports
         |> Map.ofList
