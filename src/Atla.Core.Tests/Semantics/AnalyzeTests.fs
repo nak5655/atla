@@ -110,6 +110,41 @@ fn main (): Int = do
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
+    /// 回帰テスト: do ブロック末尾式の型が unit でない場合に
+    /// "Cannot unify: unit and T" が誤報告されなかったことを検証する。
+    /// DataInit（具体型を直接返す式）を末尾に置くパターン。
+    [<Fact>]
+    let ``do block with non-unit last expression returns correct type`` () =
+        let program = """
+data Point = { x: Int, y: Int }
+fn makePoint (): Point = do
+    let xv = 1
+    let yv = 2
+    Point { x = xv, y = yv }
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true } -> ()
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
     [<Fact>]
     let ``semantic analysis preserves Ast.Expr.Error message`` () =
         let span = Span.Empty
