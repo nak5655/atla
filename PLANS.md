@@ -17,6 +17,18 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-04-30): `gui_calc` imported static method export 整合
+
+#### ミッション
+- `examples/gui_calc` の `CalculatorWindow'new.` が `Imported method 'new' ... was not found in module exports` で失敗する問題を解消する。
+- module export 生成と imported type method 解決の命名契約を単一化し、静的 `impl` メソッドの cross-module 解決を安定化する。
+
+#### 実行ステップ
+1. `Compile.collectModuleExports` と `Analyze` の imported method lookup のキー契約を確認し、差分点を最小修正で統一する。
+2. imported impl method lookup にフォールバックキー探索を導入し、定義済み export 名の揺れでも決定的に解決できるようにする。
+3. `examples/gui_calc` ビルド回帰を追加し、`CalculatorWindow'new.` 経路を固定する。
+4. `dotnet test` と `dotnet run --project src/Atla.Console -- build examples/gui_calc` を実行して非退行を確認する。
+
 ### TODO (2026-04-29): `hello_module` import/type/member 解決の収束
 
 - [ ] **Phase 0: 再現固定**
@@ -570,6 +582,7 @@
 - 2026-04-25: 旧構文由来のテスト失敗は、テスト内サンプルコードを dot-only call / apostrophe member-access 構文へ移行することで解消できた（実装コード側で旧構文互換を追加しない方針を維持）。
 - 2026-04-25: `Layout.layoutExpr` の `ClosedHir.Expr.Call` 分岐で `instance` が破棄されており、インスタンスメソッド呼び出し時に receiver 未積載の不正 IL（`InvalidProgramException`）が発生することを確認した。
 - 2026-04-26: Lexer の keyword 判定が単語境界を見ておらず、`intercept` などが `in` + `tercept` に分割される問題を確認したため、単語境界チェックを導入した。
+- 2026-04-30: `examples/gui_calc` の失敗は `CalculatorWindow` 型 import 時に `CalculatorWindow.new` が module exports に見つからないことが直接原因で、import 側 lookup キー契約と export 名揺れの吸収が必要だと判明した。
 
 ### アクティブタスク (2026-04-26): examples 回帰テストの整合（`gui_hello` / `data`）
 

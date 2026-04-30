@@ -140,13 +140,29 @@ module Analyze =
                                     let moduleName = fullTypePath.Substring(0, lastDot)
                                     let typeName = fullTypePath.Substring(lastDot + 1)
                                     let moduleExports = importedModuleExports |> Map.tryFind moduleName |> Option.defaultValue Map.empty
+                                    let allImportedExports = importedModuleExports |> Map.toList |> List.map snd
                                     let implDecls = availableDataTypeImplDecls |> Map.tryFind fullTypePath |> Option.defaultValue []
                                     implDecls
                                     |> List.collect (fun implDecl -> implDecl.methods)
                                     |> List.fold
                                         (fun (methodMap, diagAcc) methodDecl ->
-                                            let exportName = $"{typeName}.{methodDecl.name}"
-                                            match moduleExports |> Map.tryFind exportName with
+                                            // imported impl method の export 名はフェーズ進化で揺れる可能性があるため、
+                                            // 期待キー（Type.Method）を優先しつつ互換キーへ決定的順序でフォールバックする。
+                                            let exportKeyCandidates =
+                                                [ $"{typeName}.{methodDecl.name}"
+                                                  $"{fullTypePath}.{methodDecl.name}"
+                                                  methodDecl.name ]
+
+                                            let exportInfoOpt =
+                                                exportKeyCandidates
+                                                |> List.tryPick (fun key ->
+                                                    match moduleExports |> Map.tryFind key with
+                                                    | Some exportInfo -> Some exportInfo
+                                                    | None ->
+                                                        allImportedExports
+                                                        |> List.tryPick (fun exports -> exports |> Map.tryFind key))
+
+                                            match exportInfoOpt with
                                             | Some exportInfo ->
                                                 let isStatic =
                                                     match methodDecl.args with
