@@ -396,10 +396,11 @@ module Gen =
             let ctorIL = defaultCtor.GetILGenerator()
             ctorIL.Emit(OpCodes.Ldarg_0)
             // 基底型が指定されている場合はその型のパラメータなしコンストラクタを呼ぶ。
+            // ただし委譲フィールドがある場合（impl T for Base by field）は CIL 継承しないため Object を使う。
             // 指定なし、またはパラメータなしコンストラクタが存在しない場合は Object のコンストラクタを呼ぶ。
             let baseCtorInfo =
-                match typ.baseType with
-                | Some baseTid ->
+                match typ.baseType, typ.delegatedByFieldName with
+                | Some baseTid, None ->
                     let resolvedBase = resolveType env baseTid
                     if isNull resolvedBase then
                         typeof<obj>.GetConstructor([||])
@@ -407,7 +408,7 @@ module Gen =
                         let baseCtor = resolvedBase.GetConstructor([||])
                         if isNull baseCtor then typeof<obj>.GetConstructor([||])
                         else baseCtor
-                | None -> typeof<obj>.GetConstructor([||])
+                | _ -> typeof<obj>.GetConstructor([||])
             ctorIL.Emit(OpCodes.Call, baseCtorInfo)
             ctorIL.Emit(OpCodes.Ret)
             env.typeCtors.[typ.sym] <- defaultCtor
@@ -447,13 +448,15 @@ module Gen =
 
         // 型を先に宣言してTypeId.Name解決を可能にする
         for typ in modul.types do
+            // 委譲フィールドがある場合（impl T for Base by field）は CIL 継承を使わない。
+            // 委譲はフィールドを通じて行われるため、型自体は object を継承する。
             let resolvedBaseType =
-                match typ.baseType with
-                | Some baseTid ->
+                match typ.baseType, typ.delegatedByFieldName with
+                | Some baseTid, None ->
                     match resolveType env baseTid with
                     | null -> typeof<obj>
                     | runtimeBaseType -> runtimeBaseType
-                | None -> typeof<obj>
+                | _ -> typeof<obj>
             typ.builder <- moduleBuilder.DefineType(typ.name, TypeAttributes.Public, resolvedBaseType)
             env.typeBuilders.Add(typ.sym, typ.builder)
 

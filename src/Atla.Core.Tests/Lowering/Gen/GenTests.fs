@@ -15,7 +15,7 @@ module GenTests =
         let mainSym = SymbolId 101
         let useFooSym = SymbolId 102
 
-        let mirType = Mir.Type("Foo", typeSym, None, [], [], [])
+        let mirType = Mir.Type("Foo", typeSym, None, (* delegatedByFieldName *) None, [], [], [])
 
         let mainMethod =
             Mir.Method(
@@ -331,7 +331,7 @@ module GenTests =
         let typeSym = SymbolId 600
         let mainSym = SymbolId 601
 
-        let mirType = Mir.Type("MyError", typeSym, Some(TypeId.Native typeof<Exception>), (* fields *) [], (* ctors *) [], (* methods *) [])
+        let mirType = Mir.Type("MyError", typeSym, Some(TypeId.Native typeof<Exception>), (* delegatedByFieldName *) None, (* fields *) [], (* ctors *) [], (* methods *) [])
 
         let mainMethod =
             Mir.Method(
@@ -368,3 +368,56 @@ module GenTests =
         let instance = Activator.CreateInstance(myErrorType) :?> Exception
         Assert.NotNull(instance)
         Assert.NotNull(instance.Message)
+
+    /// impl T for Base by field（委譲フィールドあり）の場合、
+    /// 生成される CIL 型が Base を継承しないことを検証する。
+    /// これにより委譲型を使用したときに Base インスタンスが2つ生成されるバグを防ぐ。
+    [<Fact>]
+    let ``GenAssembly does not inherit base type when delegatedByFieldName is set`` () =
+        let typeSym = SymbolId 700
+        let mainSym = SymbolId 701
+
+        // delegatedByFieldName = Some "_inner" の場合、Exception を継承しない。
+        let mirType =
+            Mir.Type(
+                "DelegatedType",
+                typeSym,
+                Some(TypeId.Native typeof<Exception>),
+                Some "_inner",
+                [],
+                [],
+                [])
+
+        let mainMethod =
+            Mir.Method(
+                "main",
+                mainSym,
+                [],
+                TypeId.Unit,
+                [ Mir.Ins.Ret ],
+                Mir.Frame.empty)
+
+        let assembly =
+            Mir.Assembly(
+                "GenDelegationNoCilInheritance",
+                [ Mir.Module("MainModule", [ mirType ], [ mainMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-delegation-no-cil-inherit.dll")
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        let delegatedType = loaded.GetType("DelegatedType")
+        Assert.NotNull(delegatedType)
+
+        // 委譲フィールドがあるため Exception を継承しないはず（object を継承する）。
+        Assert.False(
+            typeof<Exception>.IsAssignableFrom(delegatedType),
+            "DelegatedType should NOT extend Exception when delegatedByFieldName is set (composition, not inheritance)")
+        Assert.Equal(typeof<obj>, delegatedType.BaseType)

@@ -487,7 +487,7 @@ module Layout =
                 | Result.Error e -> (e :: errs, oks)
                 | Ok m -> (errs, m :: oks)) ([], [])
         if List.isEmpty methodErrors then
-            Result.Ok(Mir.Type(typeName, hirType.sym, hirType.baseType, fields, [], List.rev methodSuccesses))
+            Result.Ok(Mir.Type(typeName, hirType.sym, hirType.baseType, hirType.delegatedByFieldName, fields, [], List.rev methodSuccesses))
         else
             Result.Error(List.rev methodErrors |> List.head)
 
@@ -562,7 +562,7 @@ module Layout =
                 match baseTypeResult with
                 | Result.Error e -> Result.Error [ e ]
                 | Result.Ok baseType when List.isEmpty invokeErrors ->
-                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.baseType, baseType.fields, baseType.ctors, baseType.methods @ (List.rev invokeSuccesses)))
+                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.baseType, baseType.delegatedByFieldName, baseType.fields, baseType.ctors, baseType.methods @ (List.rev invokeSuccesses)))
                 | Result.Ok _ ->
                     Result.Error (List.rev invokeErrors))
 

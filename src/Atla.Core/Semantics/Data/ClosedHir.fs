@@ -100,9 +100,11 @@ module ClosedHir =
         member this.span = span
 
     /// クロージャー変換後の型定義。
-    type Type(sid: SymbolId, baseType: TypeId option, fields: Field list, methods: Method list) =
+    type Type(sid: SymbolId, baseType: TypeId option, delegatedByFieldName: string option, fields: Field list, methods: Method list) =
         member this.sym = sid
         member this.baseType = baseType
+        /// `impl T for Base by field` 委譲フィールド名。指定がある場合は CIL で Base を継承しない。
+        member this.delegatedByFieldName = delegatedByFieldName
         member this.fields = fields
         member this.methods = methods
 

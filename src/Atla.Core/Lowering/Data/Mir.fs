@@ -190,11 +190,13 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Type(name: string, sid: SymbolId, baseType: TypeId option, fields: Field list, ctors: Constructor list, methods: Method list) =
+    type Type(name: string, sid: SymbolId, baseType: TypeId option, delegatedByFieldName: string option, fields: Field list, ctors: Constructor list, methods: Method list) =
         let mutable _builder: TypeBuilder option = None
         member this.name = name
         member this.sym = sid
         member this.baseType = baseType
+        /// `impl T for Base by field` 委譲フィールド名。指定がある場合は CIL で Base を継承しない。
+        member this.delegatedByFieldName = delegatedByFieldName
         member this.fields = fields
         member this.ctors = ctors
         member this.methods = methods

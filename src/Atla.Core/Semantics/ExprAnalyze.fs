@@ -780,7 +780,51 @@ module ExprAnalyze =
                         | _ -> allArgs
 
                     // .NET メソッドへ関数値を渡す際に、引数の型を具体的なデリゲート型へ特殊化する。
-                    // これにより Layout フェーズで正しいデリゲート型（Action<>/Func<> 等）が使用される。
+                    // また、impl T for Base by field で委譲を宣言した型を .NET の Base 型引数として渡す場合、
+                    // CIL 継承を使用しないため、委譲フィールドを明示的に取り出してコンパイラが型安全性を保証する。
+                    // bySid マップは引数ごとに再構築しないよう、呼び出しの外側で一度だけ作成する。
+                    let dataDefsBySid =
+                        nameEnv.dataTypeDefs
+                        |> Map.toSeq
+                        |> Seq.map (fun (_, def) -> def.typeSid, def)
+                        |> Map.ofSeq
+
+                    let coerceDelegatedArg (arg: Hir.Expr) (expectedSysType: System.Type) : Hir.Expr =
+                        match typeEnv.resolveType arg.typ with
+                        | TypeId.Name argSid ->
+                            match dataDefsBySid |> Map.tryFind argSid with
+                            | Some def ->
+                                match def.delegatedByFieldName with
+                                | Some fieldName ->
+                                    match def.fields |> List.tryFind (fun f -> f.name = fieldName) with
+                                    | Some fieldDef ->
+                                        // 委譲フィールドの型が期待する .NET 型と互換があれば、フィールドを取り出す。
+                                        let fieldIsCompatible =
+                                            match typeEnv.resolveType fieldDef.typ with
+                                            | TypeId.Native sysType -> expectedSysType.IsAssignableFrom(sysType)
+                                            | TypeId.Name fieldTypeSid ->
+                                                match nameEnv.resolveSym fieldTypeSid with
+                                                | Some symInfo ->
+                                                    match symInfo.kind with
+                                                    | SymbolKind.External(ExternalBinding.SystemTypeRef sysType)
+                                                        when not (isNull sysType) ->
+                                                        expectedSysType.IsAssignableFrom(sysType)
+                                                    | _ -> false
+                                                | None -> false
+                                            | _ -> false
+                                        if fieldIsCompatible then
+                                            Hir.Expr.MemberAccess(
+                                                Hir.Member.DataField(def.typeSid, fieldDef.sid),
+                                                Some arg,
+                                                fieldDef.typ,
+                                                arg.span)
+                                        else
+                                            arg
+                                    | None -> arg
+                                | None -> arg
+                            | None -> arg
+                        | _ -> arg
+
                     let specializedCallArgs =
                         match callableExpr with
                         | Hir.Callable.NativeMethod mi ->
@@ -794,6 +838,17 @@ module ExprAnalyze =
                                     // 関数型の引数を .NET デリゲート型で注釈し直す。
                                     | Hir.Expr.Id(sid, TypeId.Fn _, span), TypeId.Native t when TypeId.isDelegateType t ->
                                         Hir.Expr.Id(sid, nativeParamType, span)
+                                    // 委譲型の引数を委譲フィールドに取り出す。
+                                    | _, TypeId.Native expectedSysType ->
+                                        coerceDelegatedArg arg expectedSysType
+                                    | _ -> arg
+                                else arg)
+                        | Hir.Callable.NativeConstructor ci ->
+                            let mParams = ci.GetParameters()
+                            callArgs |> List.mapi (fun i arg ->
+                                if i < mParams.Length then
+                                    match TypeId.fromSystemType mParams.[i].ParameterType with
+                                    | TypeId.Native expectedSysType -> coerceDelegatedArg arg expectedSysType
                                     | _ -> arg
                                 else arg)
                         | _ -> callArgs
