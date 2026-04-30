@@ -315,7 +315,10 @@ type Server
                             match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
                             | Some projectRoot ->
                                 let modules = collectModuleSourcesForProject projectRoot normalizedPath text
-                                let entryModuleName = inferSingleDocumentModuleName normalizedPath
+                                // プロジェクト配下では CLI ビルドと同じ `main` をエントリに固定する。
+                                // 開いているファイル名を使うと、`CalculatorWindow.atla` などを編集中に
+                                // `entry module '<file>' was not found` が先行して本来診断を隠してしまう。
+                                let entryModuleName = "main"
                                 compile {
                                     asmName = asmName
                                     modules = modules

@@ -291,7 +291,51 @@ module ServerLifecycleTests =
         let request = capturedRequests |> Seq.exactlyOne
         Assert.Single(request.dependencies) |> ignore
         Assert.Equal("Sample.Dependency", request.dependencies.Head.name)
+        Assert.Equal("main", request.entryModuleName)
         Assert.Contains(published |> Seq.toList, fun (_, count, _) -> count = 0)
+
+    [<Fact>]
+    let ``project compile keeps main as entry module even when editing non main document`` () =
+        let capturedRequests = ResizeArray<Compiler.CompileModulesRequest>()
+        let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-entry-main-{System.Guid.NewGuid():N}")
+        let srcDir = Path.Join(tempRoot, "src")
+        Directory.CreateDirectory(srcDir) |> ignore
+        File.WriteAllText(Path.Join(tempRoot, "atla.yaml"), "package:\n  name: \"gui_calc\"\n  version: \"0.1.0\"\n")
+        File.WriteAllText(Path.Join(srcDir, "main.atla"), "fn main: Int = 0")
+
+        let buildProject (_: BuildRequest) : BuildResult =
+            { succeeded = true
+              plan = Some { projectName = "gui_calc"; projectVersion = "0.1.0"; projectRoot = tempRoot; dependencies = [] }
+              diagnostics = [] }
+
+        let compile (request: Compiler.CompileModulesRequest) : Compiler.CompileResult =
+            capturedRequests.Add(request)
+            { succeeded = true; diagnostics = []; hir = None; symbolTable = None }
+
+        let server = Server((fun _ _ -> ()), buildProjectFn = buildProject, compileFn = compile)
+
+        let initializeContent = JObject.Parse($"""
+        {{
+          "params": {{
+            "rootUri": "{System.Uri(tempRoot).AbsoluteUri}",
+            "capabilities": {{
+              "textDocument": {{
+                "publishDiagnostics": {{ "relatedInformation": true }},
+                "semanticTokens": {{ "tokenTypes": ["keyword", "number", "string", "variable", "type"] }}
+              }}
+            }}
+          }}
+        }}
+        """)
+
+        server.Initialize(initializeContent) |> ignore
+        server.IsAvailablePublishDiagnostics <- true
+
+        let openedUri = System.Uri(Path.Join(srcDir, "CalculatorWindow.atla")).AbsoluteUri
+        server.OpenDocument(openedUri, "data CalculatorWindow = { value: Int }")
+
+        let request = capturedRequests |> Seq.exactlyOne
+        Assert.Equal("main", request.entryModuleName)
 
     [<Fact>]
     let ``build failure publishes diagnostics as build source and skips compiler`` () =
