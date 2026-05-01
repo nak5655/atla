@@ -1385,6 +1385,46 @@ fn createBuilder (): StringBuilder = StringBuilder.
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
+    /// 回帰テスト: クラスとそのインターフェース双方に同名プロパティが存在する場合でも
+    /// "Ambiguous member" が報告されないことを検証する。
+    /// System.Collections.ArrayList.Count はクラス本体と ICollection / IList などの
+    /// 複数インターフェース全てに Count プロパティが存在するためこのケースを確認できる。
+    [<Fact>]
+    let ``member access on property defined on both class and interface should not be ambiguous`` () =
+        let program = """
+import System'Collections'ArrayList
+
+fn main (): () = do
+    let list = ArrayList.
+    let count = list'Count
+    ()
+"""
+
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "ArrayList'Count へのメンバーアクセスで Ambiguous member エラーが発生しました。")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
     [<Fact>]
     let ``member access assignment with writable property should be analyzed`` () =
         let program = """
