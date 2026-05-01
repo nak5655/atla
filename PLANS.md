@@ -17,6 +17,16 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-05-01): Windows での entryModuleName 大文字小文字保持修正
+
+#### ミッション
+- LanguageServer の単一ドキュメントコンパイルで `entryModuleName` 推論時に Windows パス正規化がケースを失う不具合を修正し、`CalculatorWindow` などファイル名由来モジュール名の大文字小文字を保持する。
+
+#### 実行ステップ
+1. URI→パス変換を「比較用正規化」と「表示/推論用（ケース保持）」に分離し、`inferSingleDocumentModuleName` へはケース保持パスを渡す。
+2. `project compile isolates diagnostics to edited non main document` 回帰テストを維持し、Windows 相当 URI でも `entryModuleName = "CalculatorWindow"` になることを検証する。
+3. `dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` を実行して非退行を確認する。
+
 ### アクティブタスク (2026-04-30): `gui_calc` LanguageServer 診断差分修正
 
 #### ミッション
