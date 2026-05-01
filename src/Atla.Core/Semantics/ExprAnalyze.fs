@@ -165,43 +165,60 @@ module ExprAnalyze =
                             | None -> tryResolveFromDelegatedField currentDef
 
         and tryResolveFromDelegatedField (currentDef: DataTypeDef) : Result<Hir.Expr, string> =
+            eprintfn "DEBUG tryResolveFromDelegatedField: memberName=%s delegatedByFieldName=%A" memberName currentDef.delegatedByFieldName
             match currentDef.delegatedByFieldName with
             | None -> Result.Error(sprintf "Undefined member '%s' for data type" memberName)
             | Some delegateFieldName ->
                 match currentDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = delegateFieldName) with
                 | None ->
+                    eprintfn "DEBUG: field '%s' not found, fields=%A" delegateFieldName (currentDef.fields |> List.map (fun f -> f.name))
                     Result.Error(sprintf "Delegate field '%s' not found on data type while resolving member" delegateFieldName)
                 | Some delegateFieldDef ->
                     let delegatedReceiver =
                         Hir.Expr.MemberAccess(Hir.Member.DataField(currentDef.typeSid, delegateFieldDef.sid), Some receiverExpr, delegateFieldDef.typ, span)
 
-                    match typeEnv.resolveType delegateFieldDef.typ with
+                    let resolvedFieldType = typeEnv.resolveType delegateFieldDef.typ
+                    eprintfn "DEBUG: delegateFieldDef.typ=%A, resolved=%A" delegateFieldDef.typ resolvedFieldType
+                    match resolvedFieldType with
                     | TypeId.Name delegateTypeSid ->
+                        eprintfn "DEBUG: TypeId.Name delegateTypeSid=%A, bySid.ContainsKey=%b" delegateTypeSid (bySid |> Map.containsKey delegateTypeSid)
                         if bySid |> Map.containsKey delegateTypeSid then
                             loop delegateTypeSid Set.empty delegatedReceiver
                         else
-                            match nameEnv.resolveSym delegateTypeSid with
+                            let symInfoOpt = nameEnv.resolveSym delegateTypeSid
+                            eprintfn "DEBUG: nameEnv.resolveSym=%A" (symInfoOpt |> Option.map (fun s -> sprintf "kind=%A" s.kind))
+                            match symInfoOpt with
                             | Some symInfo ->
                                 match symInfo.kind with
                                 | SymbolKind.External(ExternalBinding.SystemTypeRef systemType) when not (obj.ReferenceEquals(systemType, null)) ->
+                                    eprintfn "DEBUG: systemType=%s, looking for member '%s'" systemType.FullName memberName
                                     let memberInfos =
                                         NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
                                         |> Seq.filter (fun memberInfo -> memberInfo.Name = memberName)
                                         |> Seq.toList
 
-                                    match NativeInterop.resolveNativeMember typeEnv memberInfos expectedType with
+                                    eprintfn "DEBUG: found %d members named '%s' expectedType=%A" memberInfos.Length memberName expectedType
+                                    let resolvedMembers = NativeInterop.resolveNativeMember typeEnv memberInfos expectedType
+                                    eprintfn "DEBUG: resolveNativeMember returned %d results" resolvedMembers.Length
+                                    match resolvedMembers with
                                     | [memberInfo, resolvedMemberType] ->
+                                        eprintfn "DEBUG: single result '%s' isMI=%b" memberInfo.Name (memberInfo :? MethodInfo)
                                         match memberInfo with
                                         | :? MethodInfo as methodInfo ->
+                                            eprintfn "DEBUG: returning Result.Ok NativeMethod %s" methodInfo.Name
                                             Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod(methodInfo), Some delegatedReceiver, resolvedMemberType, span))
                                         | :? FieldInfo as fieldInfo ->
                                             Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField(fieldInfo), Some delegatedReceiver, resolvedMemberType, span))
                                         | :? PropertyInfo as propertyInfo ->
                                             Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty(propertyInfo), Some delegatedReceiver, resolvedMemberType, span))
                                         | _ ->
+                                            eprintfn "DEBUG: Unsupported member type"
                                             Result.Error(sprintf "Unsupported delegated member type for '%s'" memberName)
-                                    | [] -> Result.Error(sprintf "Undefined member '%s' for delegated type '%s'" memberName systemType.FullName)
+                                    | [] ->
+                                        eprintfn "DEBUG: 0 results from resolveNativeMember for '%s'" memberName
+                                        Result.Error(sprintf "Undefined member '%s' for delegated type '%s'" memberName systemType.FullName)
                                     | members ->
+                                        eprintfn "DEBUG: %d results from resolveNativeMember for '%s'" members.Length memberName
                                         let methodInfos =
                                             members
                                             |> List.choose (fun (memberInfo, _) ->
@@ -209,9 +226,12 @@ module ExprAnalyze =
                                                 | :? MethodInfo as methodInfo -> Some methodInfo
                                                 | _ -> None)
 
+                                        eprintfn "DEBUG: methodInfos=%d members=%d" methodInfos.Length members.Length
                                         if methodInfos.Length = members.Length then
+                                            eprintfn "DEBUG: returning Result.Ok NativeMethodGroup"
                                             Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some delegatedReceiver, expectedType, span))
                                         else
+                                            eprintfn "DEBUG: returning Result.Error Ambiguous"
                                             Result.Error(sprintf "Ambiguous delegated member '%s' for type '%s'" memberName systemType.FullName)
                                 | _ ->
                                     Result.Error(sprintf "Delegate field '%s' type does not support delegated member lookup" delegateFieldName)
