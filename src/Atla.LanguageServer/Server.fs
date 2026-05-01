@@ -279,9 +279,12 @@ type Server
     /// プロジェクト配下ファイルの診断コンパイル戦略を決定する。
     /// `main.atla` 編集時はプロジェクト全体、その他は単一ファイルのみを対象にして
     /// 別ファイル由来の診断が現在ファイルへ混入しないようにする。
+    /// `displayPath` はオリジナルの大文字小文字を保持したパス（モジュール名の導出に使用）で、
+    /// `normalizedPath` はキー比較用の正規化済みパス（ファイル探索・マニフェスト検索に使用）。
     let buildCompileRequestForDocument
         (projectRoot: string)
         (normalizedPath: string)
+        (displayPath: string)
         (text: string)
         (asmName: string)
         (outputDir: string)
@@ -298,7 +301,9 @@ type Server
               outDir = outputDir
               dependencies = dependencies }
         else
-            let moduleName = inferSingleDocumentModuleName normalizedPath
+            // モジュール名はオリジナルの大文字小文字を保持した displayPath から導出する。
+            // Windows では normalizedPath がキー正規化で小文字化されているため使用できない。
+            let moduleName = inferSingleDocumentModuleName displayPath
             { asmName = asmName
               modules = [ { moduleName = moduleName; source = text } ]
               entryModuleName = moduleName
@@ -348,12 +353,18 @@ type Server
                     let compileResult =
                         match tryUriToNormalizedPath normalizedUri with
                         | Some normalizedPath ->
+                            // displayUri はオリジナルの大文字小文字を保持しているため、
+                            // モジュール名の導出に使用するケース保持パスを取得する。
+                            // Windows では normalizedUri がキー正規化で小文字化されているため
+                            // normalizedPath からは正しい名前を得られない。
+                            let displayPath =
+                                tryUriToNormalizedPath displayUri |> Option.defaultValue normalizedPath
                             match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
                             | Some projectRoot ->
-                                buildCompileRequestForDocument projectRoot normalizedPath text asmName outputDir dependencies
+                                buildCompileRequestForDocument projectRoot normalizedPath displayPath text asmName outputDir dependencies
                                 |> compile
                             | None ->
-                                let entryModuleName = inferSingleDocumentModuleName normalizedPath
+                                let entryModuleName = inferSingleDocumentModuleName displayPath
                                 compile {
                                     asmName = asmName
                                     modules = [ { moduleName = entryModuleName; source = text } ]
