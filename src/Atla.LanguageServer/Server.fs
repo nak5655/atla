@@ -66,8 +66,13 @@ let private toLspDiagnostics
     |> List.map snd
 
 
+/// 比較・表示用途で使うため、パス区切りのみ統一しつつ大文字小文字は保持する。
+let private normalizePathPreserveCase (path: string) : string =
+    Path.GetFullPath(path).Replace('\\', '/')
+
+/// URI キー比較用途のため、Windows のみ大文字小文字を正規化する。
 let private normalizePathForKey (path: string) : string =
-    let full = Path.GetFullPath(path).Replace('\\', '/')
+    let full = normalizePathPreserveCase path
     if Path.DirectorySeparatorChar = '\\' then full.ToLowerInvariant() else full
 
 /// On Windows, <c>Uri.LocalPath</c> retains a spurious leading <c>/</c> when the
@@ -100,12 +105,14 @@ let private tryNormalizeUri (uriText: string) : string option =
             None
 
 let private pathIsUnder (candidatePath: string) (rootPath: string) : bool =
-    candidatePath = rootPath || candidatePath.StartsWith(rootPath + "/", StringComparison.Ordinal)
+    let candidateKey = normalizePathForKey candidatePath
+    let rootKey = normalizePathForKey rootPath
+    candidateKey = rootKey || candidateKey.StartsWith(rootKey + "/", StringComparison.Ordinal)
 
 let private tryUriToNormalizedPath (uriText: string) : string option =
     let mutable u = Unchecked.defaultof<Uri>
     if Uri.TryCreate(uriText, UriKind.Absolute, &u) && u.IsFile then
-        Some(u.LocalPath |> fixWindowsLocalPath |> normalizePathForKey)
+        Some(u.LocalPath |> fixWindowsLocalPath |> normalizePathPreserveCase)
     else
         None
 
