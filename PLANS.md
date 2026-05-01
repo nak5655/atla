@@ -17,6 +17,17 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-05-01): dot-call の instanceArgs 自動追加モデル再定義
+
+#### ミッション
+- `display root'Children'Add.` が `Call(root'Children'Add, [display])` として 1 引数扱いになるよう、適用式解析の呼び出し契約を再定義する。
+
+#### 実行ステップ
+1. `ExprAnalyze` の apply 解析で `MemberAccess` receiver を `allArgs` へ注入しない。
+2. `Hir.Expr.Call` の `instance` に receiver を保持し、引数列は明示引数のみとする。
+3. .NET メソッド候補照合・既定引数補完・引数特殊化を明示引数基準へ更新する。
+4. `examples/gui_calc` のビルドで `Add` オーバーロード解決が成功することを確認する。
+
 ### アクティブタスク (2026-05-01): Windows での entryModuleName 大文字小文字保持修正
 
 #### ミッション
