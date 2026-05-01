@@ -679,7 +679,22 @@ module ExprAnalyze =
                                         not (obj.ReferenceEquals(other, m)) && isMoreSpecific other m)))
                             match nonDominated with
                             | [methodInfo] -> Some methodInfo
-                            | _ -> None
+                            | [] -> None
+                            | candidates ->
+                                // パラメータ型では区別できない場合、宣言型の派生階層でタイブレークする。
+                                // より派生した宣言型を持つメソッドを優先する。
+                                // 例: AvaloniaList<T>.Add(T) vs ICollection<T>.Add(T) → 前者を選択。
+                                let isMostDerived (m: MethodInfo) =
+                                    let mDeclType = m.DeclaringType
+                                    not (obj.ReferenceEquals(mDeclType, null))
+                                    && candidates |> List.forall (fun other ->
+                                        obj.ReferenceEquals(other, m)
+                                        || obj.ReferenceEquals(other.DeclaringType, null)
+                                        || other.DeclaringType.IsAssignableFrom(mDeclType))
+                                let mostDerived = candidates |> List.filter isMostDerived
+                                match mostDerived with
+                                | [methodInfo] -> Some methodInfo
+                                | _ -> None
 
                 let resolvedCall =
                     match resolvedCallable with
