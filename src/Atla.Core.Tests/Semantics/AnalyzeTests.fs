@@ -1603,6 +1603,59 @@ fn apply (f: Int -> Int) (x: Int): Int = x f.
         Assert.True(canUnify (TypeId.Fn([ TypeId.Int ], TypeId.Unit)) (TypeId.Native typeof<System.Action<int>>), "Fn([Int], Unit) は Action<int> と統一できなければならない。")
         Assert.False(canUnify (TypeId.Fn([ TypeId.Int ], TypeId.Int)) (TypeId.Native typeof<System.Action<int>>), "Fn([Int], Int) は戻り値の型が異なるため Action<int> と統一できてはならない。")
 
+    /// Native 型同士の canUnify が .NET サブタイプ関係（IsAssignableFrom）を尊重することを検証する。
+    /// InvalidOperationException は Exception を継承するため、Native(InvalidOperationException) は Native(Exception) と互換でなければならない。
+    [<Fact>]
+    let ``canUnify Native types respects .NET subtype inheritance`` () =
+        let subst = TypeSubst()
+        let canUnify a b = Type.canUnify subst a b
+        // 等値は引き続き互換。
+        Assert.True(canUnify (TypeId.Native typeof<System.InvalidOperationException>) (TypeId.Native typeof<System.InvalidOperationException>), "同じ型は自己と互換でなければならない。")
+        // サブタイプは親型と互換（InvalidOperationException は Exception を継承する）。
+        Assert.True(canUnify (TypeId.Native typeof<System.InvalidOperationException>) (TypeId.Native typeof<System.Exception>), "サブタイプ（InvalidOperationException）は親型（Exception）と互換でなければならない。")
+        // 親型はサブタイプと互換ではない（逆方向は拒否）。
+        Assert.False(canUnify (TypeId.Native typeof<System.Exception>) (TypeId.Native typeof<System.InvalidOperationException>), "親型（Exception）はサブタイプ（InvalidOperationException）と互換であってはならない。")
+        // 無関係な型同士は互換ではない。
+        Assert.False(canUnify (TypeId.Native typeof<System.InvalidOperationException>) (TypeId.Native typeof<System.IO.IOException>), "無関係な型同士は互換であってはならない。")
+
+    /// サブタイプ引数を受け取るメソッド（ArrayList.Add）が正常に解決されることを検証する。
+    /// System.Collections.ArrayList の Add は object 型を受け取るが、InvalidOperationException（サブタイプ）を渡せなければならない。
+    [<Fact>]
+    let ``Add method on collection resolves with subtype argument`` () =
+        let program = """
+import System'Collections'ArrayList
+import System'InvalidOperationException
+
+fn addSubtype: () = do
+    let list = ArrayList.
+    let ex = InvalidOperationException.
+    let _ = ex list'Add.
+    ()
+"""
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "ArrayList.Add を InvalidOperationException（サブタイプ）引数で呼ぶ解析が失敗してはならない。")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
     /// `Hir.Method.args` が宣言順で引数を保持することを検証する。
     [<Fact>]
     let ``Hir.Method.args preserves parameter declaration order`` () =
