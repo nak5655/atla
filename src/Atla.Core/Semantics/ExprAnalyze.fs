@@ -548,16 +548,15 @@ module ExprAnalyze =
             let funcType = analyzedArgs |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, callRetType)
             let analyzedFunc = analyzeExpr nameEnv typeEnv applyExpr.func funcType
             let callable = exprAsCallable nameEnv typeEnv analyzedFunc
-            let instanceArgs =
+            let callInstance =
                 match analyzedFunc with
-                | Hir.Expr.MemberAccess (_, Some instance, _, _) -> [ instance ]
-                | _ -> []
+                | Hir.Expr.MemberAccess (_, Some instance, _, _) -> Some instance
+                | _ -> None
             match callable with
             | Some resolvedCallable ->
-                let allArgs = instanceArgs @ analyzedArgs
-                let suppliedParameterCount (methodInfo: MethodInfo) =
-                    let instanceOffset = if methodInfo.IsStatic then 0 else 1
-                    max 0 (allArgs.Length - instanceOffset)
+                let allArgs = analyzedArgs
+                let suppliedParameterCount (_methodInfo: MethodInfo) =
+                    allArgs.Length
 
                 // 呼び出し時の実引数に対応する論理パラメータ型列を返す。
                 // インスタンスメソッドは先頭に receiver 型を補う。
@@ -567,14 +566,8 @@ module ExprAnalyze =
                         |> Array.toList
                         |> List.map (fun p -> TypeId.fromSystemType p.ParameterType)
 
-                    let logicalParameterTypes =
-                        if methodInfo.IsStatic then
-                            parameterTypes
-                        else
-                            TypeId.fromSystemType methodInfo.DeclaringType :: parameterTypes
-
-                    let suppliedCount = min logicalParameterTypes.Length allArgs.Length
-                    logicalParameterTypes |> List.take suppliedCount
+                    let suppliedCount = min parameterTypes.Length allArgs.Length
+                    parameterTypes |> List.take suppliedCount
 
                 let canApplyWithOptionalDefaults (methodInfo: MethodInfo) =
                     let parameters = methodInfo.GetParameters()
@@ -789,9 +782,8 @@ module ExprAnalyze =
                         match callableExpr with
                         | Hir.Callable.NativeMethod mi ->
                             let mParams = mi.GetParameters()
-                            let instanceOffset = if mi.IsStatic then 0 else 1
                             callArgs |> List.mapi (fun i arg ->
-                                let paramIdx = i - instanceOffset
+                                let paramIdx = i
                                 if paramIdx >= 0 && paramIdx < mParams.Length then
                                     let nativeParamType = TypeId.fromSystemType mParams.[paramIdx].ParameterType
                                     match arg, nativeParamType with
@@ -803,7 +795,7 @@ module ExprAnalyze =
                         | _ -> callArgs
 
                     match unifyOrError nameEnv typeEnv tid callRetType applyExpr.span with
-                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, None, specializedCallArgs, callRetType, applyExpr.span)
+                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, callInstance, specializedCallArgs, callRetType, applyExpr.span)
                     | Result.Error exprErr -> exprErr
                 | None ->
                     Hir.Expr.ExprError(noOverloadMessage resolvedCallable allArgs.Length, tid, applyExpr.span)
