@@ -685,9 +685,12 @@ module ExprAnalyze =
                                 // より派生した宣言型を持つメソッドを優先する。
                                 // 例: AvaloniaList<T>.Add(T) vs ICollection<T>.Add(T) → 前者を選択。
                                 let isMostDerived (m: MethodInfo) =
-                                    candidates |> List.forall (fun other ->
+                                    let mDeclType = m.DeclaringType
+                                    not (obj.ReferenceEquals(mDeclType, null))
+                                    && candidates |> List.forall (fun other ->
                                         obj.ReferenceEquals(other, m)
-                                        || other.DeclaringType.IsAssignableFrom(m.DeclaringType))
+                                        || obj.ReferenceEquals(other.DeclaringType, null)
+                                        || other.DeclaringType.IsAssignableFrom(mDeclType))
                                 let mostDerived = candidates |> List.filter isMostDerived
                                 match mostDerived with
                                 | [methodInfo] -> Some methodInfo
