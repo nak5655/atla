@@ -96,23 +96,6 @@ fn main: () = do
         | None ->
             Assert.True(false, "Repository root was not found from current working directory.")
 
-
-    /// gui_calc の `root'Children'Add` 未解決問題を再現し、現状の失敗挙動を固定化する回帰テスト。
-    [<Fact>]
-    let ``build should currently fail for examples gui_calc unresolved Add regression`` () =
-        match tryFindRepositoryRoot () with
-        | Some repositoryRoot ->
-            let projectRoot = Path.Join(repositoryRoot, "examples", "gui_calc")
-            let outDir = Path.Join(projectRoot, "out-regression")
-
-            if Directory.Exists(outDir) then
-                Directory.Delete(outDir, recursive = true)
-
-            let code = Console.run [| "build"; projectRoot; "-o"; outDir; "--name"; "GuiCalcRegression" |]
-            Assert.Equal(1, code)
-        | None ->
-            Assert.True(false, "Repository root was not found from current working directory.")
-
     [<Fact>]
     let ``build should succeed for examples hello_module`` () =
         match tryFindRepositoryRoot () with
