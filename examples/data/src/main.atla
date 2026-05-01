@@ -1,8 +1,0 @@
-import System'Console
-import System'Linq'Enumerable
-
-fn main: () = do
-    let line = Console'ReadLine.
-    let tokens = " " line'Split.
-    for i in 0 tokens'Length Enumerable'Range.
-        tokens !! i Console'WriteLine.
