@@ -46,7 +46,17 @@ module NativeInterop =
                 else
                     memberInfo.DeclaringType.AssemblyQualifiedName
 
-            memberInfo.MemberType, memberInfo.Name, declaringTypeName)
+            // メソッドはオーバーロードを区別するため、パラメータ型列もキーに含める。
+            // フィールド・プロパティはオーバーロードがないので名前だけで識別できる。
+            let paramKey =
+                match memberInfo with
+                | :? MethodInfo as mi ->
+                    mi.GetParameters()
+                    |> Array.map (fun p -> p.ParameterType.AssemblyQualifiedName)
+                    |> String.concat ","
+                | _ -> ""
+
+            memberInfo.MemberType, memberInfo.Name, declaringTypeName, paramKey)
 
     let resolveNativeMember (typeEnv: TypeEnv) (memberInfos: MemberInfo list) (tid: TypeId) : (MemberInfo * TypeId) list =
         let resolvedExpectedType = typeEnv.resolveType tid
