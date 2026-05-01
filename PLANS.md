@@ -17,6 +17,18 @@
 - 不変条件に影響する変更には必ずテストを追加・更新する。
 
 ## 計画
+### アクティブタスク (2026-05-01): `gui_calc` 失敗固定テスト撤去と再ビルド計画
+
+#### ミッション
+- `examples/gui_calc` の失敗を期待する回帰テストを削除し、ビルド成功へ向けた実装計画を明確化する。
+
+#### 実行ステップ
+1. `Atla.Console.Tests` から `examples/gui_calc` 失敗固定テストを削除し、現状の失敗を正当化するテスト依存を解消する。
+2. 既存診断（`Add` オーバーロード解決、`Content` 曖昧性、delegation/member access、`Start` 未解決）を意味解析フェーズ別に分解し、修正順序を定義する。
+3. dot-call/apply の instance 引数モデルを一本化し、`root'Children'Add.` の引数扱いを明示引数 1 件として解決できるようにする。
+4. imported type の委譲メンバー解決（`impl ... for ... by ...`）と静的メンバー解決を同一契約で再検証し、`CalculatorWindow'new.` / `window'Title` 系を安定化する。
+5. `examples/gui_calc` をビルド成功させる回帰テストへ置換し、`dotnet test` と `dotnet run --project src/Atla.Console -- build examples/gui_calc` で完了判定する。
+
 ### アクティブタスク (2026-05-01): dot-call の instanceArgs 自動追加モデル再定義
 
 #### ミッション
