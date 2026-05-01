@@ -11,6 +11,7 @@ module Analyze =
         (
             symbolTable: SymbolTable,
             typeSubst: TypeSubst,
+            typeMetaFactory: TypeMetaFactory,
             moduleName: string,
             moduleAst: Ast.Module,
             availableModuleNames: Set<string>,
@@ -33,7 +34,9 @@ module Analyze =
                 |> Map.ofList
 
             let bootstrapNameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, Map.empty, moduleExportView)
-            let typeEnv = TypeEnv(typeSubst, TypeMetaFactory())
+            // typeMetaFactory は複数モジュールをまたいで共有されるため、
+            // 各モジュールで新しいファクトリを生成すると TypeSubst 上のメタ ID が衝突する。
+            let typeEnv = TypeEnv(typeSubst, typeMetaFactory)
 
             let fields = List<Hir.Field>()
             let methods = List<Hir.Method>()
@@ -323,4 +326,4 @@ module Analyze =
 
     /// 既存呼び出し向け互換 API。Atla モジュール import は外部から供給しない。
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
-        analyzeModuleWithImports (symbolTable, typeSubst, moduleName, moduleAst, Set.empty, Set.empty, Map.empty, Map.empty, Map.empty)
+        analyzeModuleWithImports (symbolTable, typeSubst, TypeMetaFactory(), moduleName, moduleAst, Set.empty, Set.empty, Map.empty, Map.empty, Map.empty)

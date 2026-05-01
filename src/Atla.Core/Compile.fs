@@ -239,6 +239,10 @@ module Compiler =
                             try
                                 let symbolTable = SymbolTable()
                                 let typeSubst = TypeSubst()
+                                // typeMetaFactory を全モジュール間で共有し、メタ ID の衝突を防ぐ。
+                                // 各モジュールごとに新しいファクトリを生成すると、先に解析したモジュールが
+                                // typeSubst に書き込んだメタ束縛を後続モジュールが誤って参照してしまう。
+                                let typeMetaFactory = TypeMetaFactory()
                                 let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
                                 let availableTypeFullNames =
                                     moduleAsts
@@ -283,6 +287,7 @@ module Compiler =
                                         Analyze.analyzeModuleWithImports(
                                             symbolTable,
                                             typeSubst,
+                                            typeMetaFactory,
                                             moduleName,
                                             moduleAst,
                                             availableModuleNames,
