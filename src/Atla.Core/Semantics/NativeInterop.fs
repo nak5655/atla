@@ -79,14 +79,13 @@ module NativeInterop =
             else
                 // クラスメンバー間では宣言型が最も派生したものを選ぶ。
                 // m が「最も派生」= 他のすべての候補の宣言型が m の宣言型の祖先（または同一）。
+                // DeclaringType は実際の MemberInfo では null になり得ないため null チェックは省略する。
                 let mostDerived =
                     candidates
                     |> List.filter (fun (mi, _) ->
                         candidates
                         |> List.forall (fun (other, _) ->
                             obj.ReferenceEquals(mi, other)
-                            || obj.ReferenceEquals(mi.DeclaringType, null)
-                            || obj.ReferenceEquals(other.DeclaringType, null)
                             || other.DeclaringType.IsAssignableFrom(mi.DeclaringType)))
                 match mostDerived with
                 | [ _ ] -> mostDerived
