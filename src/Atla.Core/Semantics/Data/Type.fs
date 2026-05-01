@@ -138,7 +138,9 @@ module Type =
             List.length leftArgs = List.length rightArgs
             && canUnify subst leftHead rightHead
             && (List.zip leftArgs rightArgs |> List.forall (fun (leftArg, rightArg) -> canUnify subst leftArg rightArg))
-        | Native t1, Native t2 when t1 = t2 -> true
+        // .NET の継承・インターフェース実装を考慮したサブタイプ互換チェック。
+        // t2.IsAssignableFrom(t1) は t1 = t2 の場合も true を返すため、等値チェックを包含する。
+        | Native t1, Native t2 -> t2.IsAssignableFrom(t1)
         | Name id1, Name id2 when id1 = id2 -> true
         // Name（インポート型名）と Native（リフレクション由来の型）は互換とみなす。
         | Name _, Native _
