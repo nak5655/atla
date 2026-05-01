@@ -58,6 +58,39 @@ module NativeInterop =
 
             memberInfo.MemberType, memberInfo.Name, declaringTypeName, paramKey)
 
+    /// 複数のプロパティ・フィールド候補が残った場合に最も派生したクラス型の宣言を優先して絞り込む。
+    /// インターフェース由来のメンバーはクラス由来より低優先で扱う。これにより、クラスとそれが実装する
+    /// インターフェースの両方に同名プロパティが存在するケース（例: ContentControl.Content と
+    /// IContentControl.Content）で誤って "Ambiguous member" が報告されるのを防ぐ。
+    let private narrowNonMethodCandidates (results: (MemberInfo * TypeId) list) : (MemberInfo * TypeId) list =
+        // 全員がメソッドなら対象外（メソッドオーバーロードの解決は別ロジックで扱う）。
+        let allMethods = results |> List.forall (fun (mi, _) -> mi :? MethodInfo)
+        if allMethods || results.Length <= 1 then
+            results
+        else
+            // クラス（非インターフェース）由来のメンバーを優先する。
+            let classMembers =
+                results
+                |> List.filter (fun (mi, _) ->
+                    not (obj.ReferenceEquals(mi.DeclaringType, null)) && not mi.DeclaringType.IsInterface)
+            let candidates = if classMembers.IsEmpty then results else classMembers
+            if candidates.Length <= 1 then
+                candidates
+            else
+                // クラスメンバー間では宣言型が最も派生したものを選ぶ。
+                // m が「最も派生」= 他のすべての候補の宣言型が m の宣言型の祖先（または同一）。
+                // DeclaringType は実際の MemberInfo では null になり得ないため null チェックは省略する。
+                let mostDerived =
+                    candidates
+                    |> List.filter (fun (mi, _) ->
+                        candidates
+                        |> List.forall (fun (other, _) ->
+                            obj.ReferenceEquals(mi, other)
+                            || other.DeclaringType.IsAssignableFrom(mi.DeclaringType)))
+                match mostDerived with
+                | [ _ ] -> mostDerived
+                | _ -> candidates
+
     let resolveNativeMember (typeEnv: TypeEnv) (memberInfos: MemberInfo list) (tid: TypeId) : (MemberInfo * TypeId) list =
         let resolvedExpectedType = typeEnv.resolveType tid
         let isUnconstrainedExpectedType =
@@ -98,10 +131,11 @@ module NativeInterop =
                 if isUnconstrainedExpectedType || typeEnv.canUnify propertyType resolvedExpectedType then
                     exactResult.Add(memberInfo, propertyType)
             | _ -> ()
+        // プロパティ・フィールドで複数候補が残った場合はクラス優先・最派生型優先で絞り込む。
         if exactResult.Count > 0 then
-            Seq.toList exactResult
+            narrowNonMethodCandidates (Seq.toList exactResult)
         else
-            Seq.toList optionalResult
+            narrowNonMethodCandidates (Seq.toList optionalResult)
 
     type EnumeratorMembers =
         { iteratorType: System.Type
