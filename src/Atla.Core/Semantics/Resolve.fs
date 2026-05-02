@@ -143,18 +143,19 @@ module Resolve =
             | :? Ast.Decl.Data ->
                 ()
             | :? Ast.Decl.Impl as implDecl ->
-                let typeResolution = moduleScope.ResolveType(implDecl.typeName)
+                let implTargetTypeName = implDecl.forTypeName |> Option.defaultValue implDecl.typeName
+                let typeResolution = moduleScope.ResolveType(implTargetTypeName)
                 match typeResolution with
                 | Some (TypeId.Name typeSid) ->
                     let isDataType =
                         dataDecls
                         |> Seq.exists (fun dataDecl -> dataDecl.typeSid.id = typeSid.id)
                     if not isDataType then
-                        diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data type in this module" implDecl.typeName, implDecl.span))
+                        diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data type in this module" implTargetTypeName, implDecl.span))
                     else
                         // `impl A as DotNetClass` の `as` 句を解決し .NET 基底型を返す。
-                        // `impl B for A` の `for` 句を解決し Atla 基底型を返す。
-                        // 結果は TypeId option として統一して保持する。
+                        // `impl B for A` の `for` 句は「A が B のサブタイプ」を意味するため、
+                        // `B` を基底型として解決して保持する。
                         let resolvedBaseTypeOpt =
                             match implDecl.asTypeName, implDecl.forTypeName with
                             | Some asTypeName, _ ->
@@ -187,15 +188,15 @@ module Resolve =
                                 | None ->
                                     diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': type '%s' is not defined. Use 'import' to import it." implDecl.typeName asTypeName asTypeName, implDecl.span))
                                     None
-                            | None, Some forTypeName ->
-                                // `impl B for A` 形式: A は Atla の data 型でなければならない。
-                                match moduleScope.ResolveType(forTypeName) with
+                            | None, Some _ ->
+                                // `impl B for A` 形式: B は Atla の data 型でなければならない。
+                                match moduleScope.ResolveType(implDecl.typeName) with
                                 | Some (TypeId.Name baseTypeSid) -> Some (TypeId.Name baseTypeSid)
                                 | Some _ ->
-                                    diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl base type '%s'" forTypeName, implDecl.span))
+                                    diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl base type '%s'" implDecl.typeName, implDecl.span))
                                     None
                                 | None ->
-                                    diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl base type '%s'" forTypeName, implDecl.span))
+                                    diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl base type '%s'" implDecl.typeName, implDecl.span))
                                     None
                             | None, None -> None
 
@@ -250,13 +251,21 @@ module Resolve =
                             | Some _, None -> false
                             | _ -> true
 
+                        let targetTypeSid =
+                            match implDecl.forTypeName with
+                            | Some subtypeTypeName ->
+                                match moduleScope.ResolveType(subtypeTypeName) with
+                                | Some (TypeId.Name sid) -> sid
+                                | _ -> typeSid
+                            | None -> typeSid
+
                         let hasExistingImpl =
                             if not hasResolvableRoleKey then
                                 false
                             else
                                 implDecls
                                 |> Seq.exists (fun (sid, existingBaseTypeOpt, _, _) ->
-                                    sid.id = typeSid.id
+                                    sid.id = targetTypeSid.id
                                     && existingBaseTypeOpt = resolvedBaseTypeOpt)
 
                         if hasExistingImpl then
@@ -264,11 +273,12 @@ module Resolve =
                             | Some asName, _ ->
                                 diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block for .NET base type '%s'" implDecl.typeName asName, implDecl.span))
                             | _, Some roleName ->
-                                diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block for role '%s'" implDecl.typeName roleName, implDecl.span))
+                                let targetTypeName = implDecl.forTypeName |> Option.defaultValue implDecl.typeName
+                                diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block for role '%s'" targetTypeName roleName, implDecl.span))
                             | None, None ->
                                 diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has a default impl block" implDecl.typeName, implDecl.span))
                         elif hasResolvableRoleKey then
-                            implDecls.Add(typeSid, resolvedBaseTypeOpt, byFieldNameOpt, implDecl)
+                            implDecls.Add(targetTypeSid, resolvedBaseTypeOpt, byFieldNameOpt, implDecl)
                 | Some _ ->
                     diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl target '%s'" implDecl.typeName, implDecl.span))
                 | None ->

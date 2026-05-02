@@ -48,7 +48,7 @@ import System'DateTime
 
 data Clock = { dt: DateTime }
 
-impl Clock for DateTime by dt
+impl DateTime for Clock by dt
 
 fn year (c: Clock): Int = c'Year
 ```

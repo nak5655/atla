@@ -773,3 +773,16 @@
 1. `Server.compileAndPublish` の診断公開経路を見直し、プロジェクト配下の非 `main.atla` 編集時は単一ドキュメント単位で診断を生成する。
 2. 回帰テストを追加し、プロジェクト compile 経路が無条件に全ファイル診断を公開しないことを固定化する。
 3. `dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj` で非退行を確認する。
+
+### アクティブタスク (2026-05-02): `impl B for A` の語順意味修正
+
+#### ミッション
+- `impl B for A` を「A が B のサブタイプ」として解釈するように意味規則を修正する。
+- 既存の `impl ... for ... by ...` 委譲も新しい語順意味に合わせて整合させる。
+
+#### 実行ステップ
+1. Resolver の `for` 解決で base/subtype の対応を反転する。
+2. 重複 `impl` 判定キーを新しい target（A）基準に更新する。
+3. 継承循環検証の辺方向を `A -> B` に更新する。
+4. Parser/Semantics/README の例とテスト期待値を新仕様へ更新する。
+5. テスト実行で回帰確認する。
