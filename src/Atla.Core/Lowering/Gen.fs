@@ -133,9 +133,54 @@ module Gen =
             | false, _ ->
                 failwithf "Unknown method symbol for delegate creation: %A" sid
 
+    /// MIR 値が genValue によって CIL スタックへ積まれるときの .NET 型を返す。
+    /// RegVal はフレームから型を逆引きする。型を確定できない場合は None を返す。
+    let private getValueStackType (frame: Mir.Frame) (value: Mir.Value) : Type option =
+        match value with
+        | Mir.Value.ImmVal imm ->
+            match imm with
+            | Mir.Imm.Bool _   -> Some typeof<bool>
+            | Mir.Imm.Int _    -> Some typeof<int32>
+            | Mir.Imm.Float _  -> Some typeof<float>
+            | Mir.Imm.String _ -> Some typeof<string>
+            | Mir.Imm.Null     -> None
+        | Mir.Value.RegVal reg ->
+            // Reg → SymbolId の逆引きは重いが、フレームサイズが小さいため許容する。
+            let findSid (regMap: Map<SymbolId, Mir.Reg>) =
+                regMap |> Map.tryFindKey (fun _ r -> r = reg)
+            let sidOpt =
+                findSid frame.args
+                |> Option.orElseWith (fun () -> findSid frame.locs)
+            match sidOpt with
+            | None -> None
+            | Some sid ->
+                let tidOpt =
+                    frame.argTypes |> Map.tryFind sid
+                    |> Option.orElseWith (fun () -> frame.locTypes |> Map.tryFind sid)
+                tidOpt |> Option.bind TypeId.tryToRuntimeSystemType
+        | Mir.Value.FieldVal fi -> Some fi.FieldType
+        | _ -> None
+
+    /// 数値型の暗黙的な拡大変換（widening）が必要な場合に変換命令を発行する。
+    /// int32 → float64/float32/int64、float32 → float64 などを対象とする。
+    /// 型が一致するか非数値型の場合は何も発行しない。
+    let private emitNumericCoercionIfNeeded (gen: ILGenerator) (expectedType: Type) (actualTypeOpt: Type option) =
+        match actualTypeOpt with
+        | None -> ()
+        | Some actualType when actualType = expectedType -> ()
+        | Some t ->
+            if   t = typeof<int32>   && expectedType = typeof<float>   then gen.Emit(OpCodes.Conv_R8)
+            elif t = typeof<int32>   && expectedType = typeof<float32> then gen.Emit(OpCodes.Conv_R4)
+            elif t = typeof<int32>   && expectedType = typeof<int64>   then gen.Emit(OpCodes.Conv_I8)
+            elif t = typeof<int32>   && expectedType = typeof<uint64>  then gen.Emit(OpCodes.Conv_U8)
+            elif t = typeof<int64>   && expectedType = typeof<float>   then gen.Emit(OpCodes.Conv_R8)
+            elif t = typeof<float32> && expectedType = typeof<float>   then gen.Emit(OpCodes.Conv_R8)
+            elif t = typeof<float>   && expectedType = typeof<float32> then gen.Emit(OpCodes.Conv_R4)
+
     // MIR命令をIL命令列へ変換する。
     // ilLabels/ilOffsets はメソッドごとに作成したラベル解決状態を受け取る。
-    let private genIns (env: Env) (gen: ILGenerator) (ilLabels: Dictionary<Mir.LabelId, Label>) (ilOffsets: Dictionary<Mir.LabelId, int>) (ins: Mir.Ins) =
+    // frame はレジスタ型の解決および数値型強制変換に使用する。
+    let private genIns (env: Env) (frame: Mir.Frame) (gen: ILGenerator) (ilLabels: Dictionary<Mir.LabelId, Label>) (ilOffsets: Dictionary<Mir.LabelId, int>) (ins: Mir.Ins) =
         let emitMethodCall (methodInfo: MethodInfo) =
             if methodInfo.IsStatic then
                 gen.Emit(OpCodes.Call, methodInfo)
@@ -146,7 +191,10 @@ module Gen =
             else
                 gen.Emit(OpCodes.Call, methodInfo)
 
+        // 各実引数を CIL スタックへ積み、パラメーター型との数値型不一致があれば変換命令を発行する。
+        // 構造体インスタンスメソッドの receiver は ldloca/ldarga でアドレスロードし、変換は行わない。
         let emitMethodArgs (methodInfo: MethodInfo) (args: Mir.Value list) =
+            let parameters = methodInfo.GetParameters()
             match args with
             | receiver :: rest when not methodInfo.IsStatic && methodInfo.DeclaringType.IsValueType ->
                 match receiver with
@@ -154,11 +202,20 @@ module Gen =
                 | Mir.Value.RegVal (Mir.Reg.Arg index) -> gen.Emit(OpCodes.Ldarga, index)
                 | _ -> genValue env gen receiver
 
-                for arg in rest do
+                // rest[i] は parameters[i] に対応する。
+                rest |> List.iteri (fun i arg ->
                     genValue env gen arg
+                    if i < parameters.Length then
+                        emitNumericCoercionIfNeeded gen parameters.[i].ParameterType (getValueStackType frame arg))
             | _ ->
-                for arg in args do
+                // 静的メソッド: args[i] → parameters[i]
+                // インスタンスメソッド（非値型）: args[0] はレシーバー（parameters なし）、args[i] (i≥1) → parameters[i-1]
+                let isInstance = not methodInfo.IsStatic
+                args |> List.iteri (fun i arg ->
                     genValue env gen arg
+                    let paramIdx = if isInstance then i - 1 else i
+                    if paramIdx >= 0 && paramIdx < parameters.Length then
+                        emitNumericCoercionIfNeeded gen parameters.[paramIdx].ParameterType (getValueStackType frame arg))
 
         match ins with
         // 単純代入
@@ -199,8 +256,12 @@ module Gen =
                 emitMethodArgs mi args
                 emitMethodCall mi
             | Choice2Of2 ci ->
-                for arg in args do
+                // コンストラクタ呼び出し（call ctor 形式）: パラメーター型に合わせて数値変換を行う。
+                let ctorParams = ci.GetParameters()
+                args |> List.iteri (fun i arg ->
                     genValue env gen arg
+                    if i < ctorParams.Length then
+                        emitNumericCoercionIfNeeded gen ctorParams.[i].ParameterType (getValueStackType frame arg))
                 gen.Emit(OpCodes.Call, ci)
         | Mir.Ins.CallSym (sid, args) ->
             for arg in args do
@@ -224,8 +285,12 @@ module Gen =
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         | Mir.Ins.New (dst, ctor, args) ->
-            for arg in args do
+            // コンストラクタ引数をスタックへ積み、パラメーター型との数値型不一致があれば変換命令を発行する。
+            let ctorParams = ctor.GetParameters()
+            args |> List.iteri (fun i arg ->
                 genValue env gen arg
+                if i < ctorParams.Length then
+                    emitNumericCoercionIfNeeded gen ctorParams.[i].ParameterType (getValueStackType frame arg))
             gen.Emit(OpCodes.Newobj, ctor)
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
@@ -338,7 +403,7 @@ module Gen =
 
         // 本体命令を順に生成
         for ins in ctor.body do
-            genIns _env gen ilLabels ilOffsets ins
+            genIns _env ctor.frame gen ilLabels ilOffsets ins
 
     // メソッド本体を生成する
     let private genMethod (_env: Env) (method: Mir.Method) =
@@ -367,7 +432,7 @@ module Gen =
 
         // 本体命令を順に生成
         for ins in method.body do
-            genIns _env gen ilLabels ilOffsets ins
+            genIns _env method.frame gen ilLabels ilOffsets ins
 
     // 型メンバー（フィールド/コンストラクタ/メソッド）を生成し、mainメソッドがあれば返す
     let private genType (env: Env) (typ: Mir.Type) : MethodInfo option =
