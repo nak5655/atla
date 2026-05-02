@@ -2659,3 +2659,94 @@ fn setLink (e: MyError): () = do
                 Assert.True(false, "Module A analysis returned no HIR module")
         | Result.Error message, _ | _, Result.Error message ->
             Assert.True(false, $"Parse error: {message}")
+
+    /// 回帰テスト: `impl X as DotNetBase` 型を引数に取る関数へ X 型の値を渡せる。
+    /// unifyOrError 内の isSubtypeOfSystemType が TypeId.Native ベース型を辿れることを検証する (Fix 1)。
+    [<Fact>]
+    let ``semantic analysis accepts impl-as data type passed as native base type function argument`` () =
+        // getMsg は Exception 型の引数を取る Atla 関数。
+        // MyError は impl MyError as Exception を宣言しているため
+        // MyError の値を getMsg に渡せなければならない。
+        let source = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+fn getMsg (e: Exception): String = e'Message
+fn test (): String = do
+    let err = MyError { code = 42 }
+    err getMsg.
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let testMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodDef ->
+                            match symbolTable.Get(methodDef.sym) with
+                            | Some symInfo -> symInfo.name = "test"
+                            | None -> false)
+                    Assert.True(testMethod.IsSome, "Expected 'test' to succeed: impl-as type passed as native base type argument")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun d -> d.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    /// 回帰テスト: `impl X as DotNetBase` 型を .NET 静的メソッドのオーバーロード解決で正しく選択する。
+    /// isSubtypeCompatible 内の isNameSubtypeOfNative が TypeId.Native ベース型を辿れることを検証する (Fix 2)。
+    [<Fact>]
+    let ``semantic analysis resolves native static method overload for impl-as data type argument`` () =
+        // ExceptionDispatchInfo.Capture(Exception) は Exception 引数を取る静的メソッド。
+        // impl MyError as Exception により MyError :< Exception が成立するため Capture が選択される。
+        let source = """
+import System'Exception
+import System'Runtime'ExceptionServices'ExceptionDispatchInfo
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+fn test (): ExceptionDispatchInfo = do
+    let err = MyError { code = 1 }
+    err ExceptionDispatchInfo'Capture.
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let testMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodDef ->
+                            match symbolTable.Get(methodDef.sym) with
+                            | Some symInfo -> symInfo.name = "test"
+                            | None -> false)
+                    Assert.True(testMethod.IsSome, "Expected 'test' to succeed: impl-as type passed to native static method via overload resolution")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun d -> d.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
