@@ -870,7 +870,7 @@ impl Line
 data B =
     { value: Int }
 impl B for A
-    fn evaluate (this: B): Int =
+    fn evaluate (this: A): Int =
         this'value
 """
 
@@ -899,7 +899,7 @@ data Wrapper =
     { value: Int
     , inner: Base
     }
-impl Wrapper for Base by inner
+impl Base for Wrapper by inner
 """
 
         match parseModule program with
@@ -913,9 +913,9 @@ impl Wrapper for Base by inner
 
             match implDecl with
             | Some parsedImplDecl ->
-                Assert.Equal("Wrapper", parsedImplDecl.typeName)
+                Assert.Equal("Base", parsedImplDecl.typeName)
                 Assert.True(parsedImplDecl.asTypeName.IsNone)
-                Assert.Equal(Some "Base", parsedImplDecl.forTypeName)
+                Assert.Equal(Some "Wrapper", parsedImplDecl.forTypeName)
                 Assert.Equal(Some "inner", parsedImplDecl.byFieldName)
                 Assert.Empty(parsedImplDecl.methods)
             | None ->
