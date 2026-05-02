@@ -336,7 +336,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
         let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("this", span) :> Ast.Expr, "slope", span) :> Ast.Expr
         let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, span)
-        let implDecl = Ast.Decl.Impl("Line", None, None, [ evalFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", None, None, None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
             Ast.Expr.DataInit(
@@ -375,7 +375,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
-        let implDecl = Ast.Decl.Impl("Line", None, None, [ oneFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", None, None, None, [ oneFn ], span) :> Ast.Decl
         let staticCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(Ast.Expr.Id("Line", span) :> Ast.Expr, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
         let mainDecl = Ast.Decl.Fn("main", [], intType, staticCall, span) :> Ast.Decl
 
@@ -403,7 +403,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
-        let implDecl = Ast.Decl.Impl("Line", None, None, [ oneFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", None, None, None, [ oneFn ], span) :> Ast.Decl
         let lineInit =
             Ast.Expr.DataInit(
                 "Line",
@@ -591,6 +591,105 @@ impl Line for Reader
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports error for impl as with interface type`` () =
+        // IDisposable はインターフェイスなので impl ... as IDisposable は禁止。
+        let source = """
+import System'IDisposable
+data Resource = { id: Int }
+impl Resource as IDisposable
+    fn dispose (this: Resource): Unit = ()
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasExpectedDiagnostic =
+                        diagnostics
+                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("cannot inherit from interface type"))
+                    Assert.True(hasExpectedDiagnostic, "Expected 'cannot inherit from interface type' diagnostic was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for impl as interface")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports error for impl as with sealed class`` () =
+        // System.Math はシールドクラスなので impl ... as Math は禁止。
+        let source = """
+import System'Math
+data Token = { value: Int }
+impl Token as Math
+    fn run (this: Token): Unit = ()
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasExpectedDiagnostic =
+                        diagnostics
+                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("cannot inherit from sealed class"))
+                    Assert.True(hasExpectedDiagnostic, "Expected 'cannot inherit from sealed class' diagnostic was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for impl as sealed class")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports error for impl as with unimported type`` () =
+        // import なしで as 句を使おうとした場合のエラー。
+        let source = """
+data Widget = { id: Int }
+impl Widget as UnknownBase
+    fn run (this: Widget): Unit = ()
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasExpectedDiagnostic =
+                        diagnostics
+                        |> List.exists (fun diagnostic ->
+                            diagnostic.message.Contains("UnknownBase") &&
+                            (diagnostic.message.Contains("not defined") || diagnostic.message.Contains("not an imported")))
+                    Assert.True(hasExpectedDiagnostic, "Expected error about undefined 'as' type was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for impl as unimported type")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+
 
     [<Fact>]
     let ``semantic analysis handles chained dot-only calls`` () =

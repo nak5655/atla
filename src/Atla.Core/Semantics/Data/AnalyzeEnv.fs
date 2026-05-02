@@ -12,7 +12,7 @@ module AnalyzeEnv =
 
     type DataTypeDef =
         { typeSid: SymbolId
-          baseTypeSid: SymbolId option
+          baseType: TypeId option
           delegatedByFieldName: string option
           fields: DataFieldDef list
           methods: Map<string, SymbolId * TypeId * bool> }
@@ -118,6 +118,7 @@ module AnalyzeEnv =
             | None -> None
 
         /// 継承チェーンを辿り、`actualTypeSid <: expectedTypeSid` が成立するかを判定する。
+        /// Atla 型の `TypeId.Name` チェーンのみを辿る。`TypeId.Native`（.NET 継承）は終端とみなす。
         member this.isSubtype (actualTypeSid: SymbolId) (expectedTypeSid: SymbolId) : bool =
             let bySid =
                 this.dataTypeDefs
@@ -133,9 +134,9 @@ module AnalyzeEnv =
                 else
                     match bySid |> Map.tryFind currentSid with
                     | Some currentDef ->
-                        match currentDef.baseTypeSid with
-                        | Some baseSid -> loop baseSid (visited |> Set.add currentSid.id)
-                        | None -> false
+                        match currentDef.baseType with
+                        | Some (TypeId.Name baseSid) -> loop baseSid (visited |> Set.add currentSid.id)
+                        | _ -> false
                     | None -> false
 
             loop actualTypeSid Set.empty

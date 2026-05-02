@@ -16,7 +16,7 @@ module Resolve =
           importedTypeAliases: Map<string, string>
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
-          implDecls: (SymbolId * SymbolId option * string option * Ast.Decl.Impl) list }
+          implDecls: (SymbolId * TypeId option * string option * Ast.Decl.Impl) list }
 
     let private tryResolveSystemType (classPath: string) : System.Type option =
         match System.Type.GetType(classPath) with
@@ -115,7 +115,7 @@ module Resolve =
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
-        let implDecls = ResizeArray<SymbolId * SymbolId option * string option * Ast.Decl.Impl>()
+        let implDecls = ResizeArray<SymbolId * TypeId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
         let importedTypeAliases = ResizeArray<string * string>()
         let diagnostics = ResizeArray<Diagnostic>()
@@ -152,21 +152,54 @@ module Resolve =
                     if not isDataType then
                         diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data type in this module" implDecl.typeName, implDecl.span))
                     else
-                        // `impl B for A` の `for` 句を解決し、基底型 SymbolId を保持する。
-                        let resolvedBaseTypeSidOpt =
-                            match implDecl.forTypeName with
-                            | None -> None
-                            | Some forTypeName ->
+                        // `impl A as DotNetClass` の `as` 句を解決し .NET 基底型を返す。
+                        // `impl B for A` の `for` 句を解決し Atla 基底型を返す。
+                        // 結果は TypeId option として統一して保持する。
+                        let resolvedBaseTypeOpt =
+                            match implDecl.asTypeName, implDecl.forTypeName with
+                            | Some asTypeName, _ ->
+                                // `impl A as B` 形式: B は import 済みの .NET クラスでなければならない。
+                                match moduleScope.ResolveType(asTypeName) with
+                                | Some (TypeId.Name asSid) ->
+                                    match symbolTable.Get(asSid) with
+                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
+                                        if sysType.IsInterface then
+                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': cannot inherit from interface type '%s'" implDecl.typeName asTypeName sysType.FullName, implDecl.span))
+                                            None
+                                        elif sysType.IsSealed then
+                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': cannot inherit from sealed class '%s'" implDecl.typeName asTypeName sysType.FullName, implDecl.span))
+                                            None
+                                        elif not sysType.IsClass then
+                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': type '%s' is not a class" implDecl.typeName asTypeName sysType.FullName, implDecl.span))
+                                            None
+                                        else
+                                            Some (TypeId.Native sysType)
+                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef _) } ->
+                                        // sysType が null（解決失敗）のケース。
+                                        diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': the .NET type could not be resolved. Ensure it is imported and the dependency is restored." implDecl.typeName asTypeName, implDecl.span))
+                                        None
+                                    | _ ->
+                                        diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': '%s' is not an imported .NET type" implDecl.typeName asTypeName asTypeName, implDecl.span))
+                                        None
+                                | Some _ ->
+                                    diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': '%s' must be an imported .NET type" implDecl.typeName asTypeName asTypeName, implDecl.span))
+                                    None
+                                | None ->
+                                    diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': type '%s' is not defined. Use 'import' to import it." implDecl.typeName asTypeName asTypeName, implDecl.span))
+                                    None
+                            | None, Some forTypeName ->
+                                // `impl B for A` 形式: A は Atla の data 型でなければならない。
                                 match moduleScope.ResolveType(forTypeName) with
-                                | Some (TypeId.Name baseTypeSid) -> Some baseTypeSid
+                                | Some (TypeId.Name baseTypeSid) -> Some (TypeId.Name baseTypeSid)
                                 | Some _ ->
                                     diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl base type '%s'" forTypeName, implDecl.span))
                                     None
                                 | None ->
                                     diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl base type '%s'" forTypeName, implDecl.span))
                                     None
+                            | None, None -> None
 
-                        if implDecl.byFieldName.IsSome && implDecl.forTypeName.IsNone then
+                        if implDecl.byFieldName.IsSome && implDecl.forTypeName.IsNone && implDecl.asTypeName.IsNone then
                             diagnostics.Add(Diagnostic.Error("'impl ... by ...' requires an explicit 'for' base type", implDecl.span))
 
                         let byFieldNameOpt =
@@ -210,9 +243,10 @@ module Resolve =
 
                         // impl ブロックの個数制約:
                         // - `impl T`（for なし）は型ごとに 1 つ
+                        // - `impl T as DotNetClass` は（T, DotNetClass）ごとに 1 つ
                         // - `impl T for Role` は (T, Role) ごとに 1 つ
                         let hasResolvableRoleKey =
-                            match implDecl.forTypeName, resolvedBaseTypeSidOpt with
+                            match implDecl.forTypeName, resolvedBaseTypeOpt with
                             | Some _, None -> false
                             | _ -> true
 
@@ -221,20 +255,20 @@ module Resolve =
                                 false
                             else
                                 implDecls
-                                |> Seq.exists (fun (sid, existingBaseTypeSidOpt, _, _) ->
-                                    let existingBaseKey = existingBaseTypeSidOpt |> Option.map (fun existingSid -> existingSid.id)
-                                    let resolvedBaseKey = resolvedBaseTypeSidOpt |> Option.map (fun resolvedSid -> resolvedSid.id)
+                                |> Seq.exists (fun (sid, existingBaseTypeOpt, _, _) ->
                                     sid.id = typeSid.id
-                                    && existingBaseKey = resolvedBaseKey)
+                                    && existingBaseTypeOpt = resolvedBaseTypeOpt)
 
                         if hasExistingImpl then
-                            match implDecl.forTypeName with
-                            | Some roleName ->
+                            match implDecl.asTypeName, implDecl.forTypeName with
+                            | Some asName, _ ->
+                                diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block for .NET base type '%s'" implDecl.typeName asName, implDecl.span))
+                            | _, Some roleName ->
                                 diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block for role '%s'" implDecl.typeName roleName, implDecl.span))
-                            | None ->
+                            | None, None ->
                                 diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has a default impl block" implDecl.typeName, implDecl.span))
                         elif hasResolvableRoleKey then
-                            implDecls.Add(typeSid, resolvedBaseTypeSidOpt, byFieldNameOpt, implDecl)
+                            implDecls.Add(typeSid, resolvedBaseTypeOpt, byFieldNameOpt, implDecl)
                 | Some _ ->
                     diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl target '%s'" implDecl.typeName, implDecl.span))
                 | None ->
@@ -244,9 +278,13 @@ module Resolve =
             | _ -> diagnostics.Add(Diagnostic.Error("Unsupported declaration type in module", decl.span))
 
         // data 型の継承関係（impl B for A）に循環がないことを検証する。
+        // `TypeId.Native`（.NET 継承）は Atla 型チェーンに含まれないため除外する。
         let implBaseMap =
             implDecls
-            |> Seq.choose (fun (typeSid, baseTypeSidOpt, _, _) -> baseTypeSidOpt |> Option.map (fun baseSid -> typeSid, baseSid))
+            |> Seq.choose (fun (typeSid, baseTypeOpt, _, _) ->
+                match baseTypeOpt with
+                | Some (TypeId.Name baseSid) -> Some (typeSid, baseSid)
+                | _ -> None)
             |> Map.ofSeq
 
         let hasInheritanceCycle (startSid: SymbolId) : bool =
