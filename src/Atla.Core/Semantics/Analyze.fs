@@ -190,15 +190,15 @@ module Analyze =
 
                                 // `impl X as DotNetBase` パターンを先にチェックする。
                                 // この場合、モジュールエクスポートの "implBase:{TypeName}" キーから .NET 基底型を復元する。
-                                let asImplDeclOpt = implDecls |> List.tryFind (fun implDecl -> implDecl.asTypeName.IsSome)
-                                match asImplDeclOpt with
-                                | Some _ ->
+                                // asTypeName.IsSome の有無のみを確認し、宣言の内容は不要なため Some _ でマッチする。
+                                let hasAsImpl = implDecls |> List.exists (fun implDecl -> implDecl.asTypeName.IsSome)
+                                if hasAsImpl then
                                     let baseTypeOpt =
                                         sourceModuleExports
                                         |> Map.tryFind $"implBase:{typeNameForLookup}"
                                         |> Option.map (fun exportInfo -> exportInfo.typ)
                                     baseTypeOpt, None, []
-                                | None ->
+                                else
 
                                 let preferredDelegatedImplOpt =
                                     implDecls

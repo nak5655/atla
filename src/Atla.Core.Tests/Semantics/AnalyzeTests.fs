@@ -2387,6 +2387,63 @@ fn bad (e: MyError): String = e'NonExistentMember
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
+    // クロスモジュール `impl X as DotNetBase` テスト共通ヘルパー。
+    // ソース文字列を解析してモジュール名と AST のペアを返す。
+    let private parseSourceModule (moduleName: string) (source: string) : Result<string * Ast.Module, string> =
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) -> Ok (moduleName, astModule)
+            | Failure (reason, _) -> Result.Error (sprintf "Parsing failed in '%s': %s" moduleName reason)
+        | Failure (reason, _) -> Result.Error (sprintf "Lexing failed in '%s': %s" moduleName reason)
+
+    // HIR モジュールからモジュールエクスポートマップを構築する（Compile.fs の collectModuleExports に対応する）。
+    // `implBase:{TypeName}` エントリを含む、クロスモジュール解析テスト用のヘルパー。
+    let private buildModuleExports (symbolTable: SymbolTable) (hirModule: Hir.Module) : Map<string, ModuleExport> =
+        let typeExports =
+            hirModule.types
+            |> List.choose (fun hirType ->
+                symbolTable.Get(hirType.sym)
+                |> Option.map (fun symInfo ->
+                    $"type:{symInfo.name}",
+                    { symbolId = hirType.sym; typ = TypeId.Name hirType.sym }))
+            |> Map.ofList
+        let methodExports =
+            hirModule.methods
+            |> List.choose (fun methodInfo ->
+                symbolTable.Get(methodInfo.sym)
+                |> Option.map (fun symInfo ->
+                    symInfo.name,
+                    { symbolId = methodInfo.sym; typ = symInfo.typ }))
+            |> Map.ofList
+        let fieldExports =
+            hirModule.types
+            |> List.collect (fun hirType ->
+                hirType.fields
+                |> List.choose (fun field ->
+                    symbolTable.Get(field.sym)
+                    |> Option.map (fun fieldInfo ->
+                        $"field:{fieldInfo.name}",
+                        { symbolId = field.sym; typ = field.typ })))
+            |> Map.ofList
+        // impl X as Y で確定した .NET 基底型を "implBase:{TypeName}" キーでエクスポートする。
+        let implBaseExports =
+            hirModule.types
+            |> List.choose (fun hirType ->
+                match hirType.baseType with
+                | None -> None
+                | Some baseType ->
+                    symbolTable.Get(hirType.sym)
+                    |> Option.map (fun symInfo ->
+                        $"implBase:{symInfo.name}",
+                        { symbolId = hirType.sym; typ = baseType }))
+            |> Map.ofList
+        [ typeExports; methodExports; fieldExports; implBaseExports ]
+        |> List.fold (fun acc m -> Map.fold (fun a k v -> Map.add k v a) acc m) Map.empty
+
     /// クロスモジュールの `impl X as DotNetBase` で、import 先からインスタンスプロパティを読み取れることを検証する。
     /// 回帰テスト: import 後に baseType が None になり "does not support member access" が出ていたバグの修正確認。
     [<Fact>]
@@ -2403,18 +2460,7 @@ impl MyError as Exception
 import ModuleA'MyError
 fn getMessage (e: MyError): String = e'Message
 """
-        let parseSource moduleName source =
-            let input: Input<SourceChar> = StringInput source
-            match Lexer.tokenize input Position.Zero with
-            | Success (tokens, _) ->
-                let tokenInput = TokenInput(tokens)
-                let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-                match Parser.fileModule() tokenInput start with
-                | Success (astModule, _) -> Ok (moduleName, astModule)
-                | Failure (reason, span) -> Result.Error (sprintf "Parsing failed in '%s': %s" moduleName reason)
-            | Failure (reason, _) -> Result.Error (sprintf "Lexing failed in '%s': %s" moduleName reason)
-
-        match parseSource "ModuleA" moduleASource, parseSource "ModuleB" moduleBSource with
+        match parseSourceModule "ModuleA" moduleASource, parseSourceModule "ModuleB" moduleBSource with
         | Ok (nameA, astA), Ok (nameB, astB) ->
             let moduleAsts = Map.ofList [ nameA, astA; nameB, astB ]
 
@@ -2473,48 +2519,7 @@ fn getMessage (e: MyError): String = e'Message
                 let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                 Assert.True(false, $"Module A analysis failed: {message}")
             | { value = Some hirModuleA } ->
-                // "implBase:MyError" エクスポートを含むエクスポートマップを構築する。
-                let typeExports =
-                    hirModuleA.types
-                    |> List.choose (fun hirType ->
-                        symbolTable.Get(hirType.sym)
-                        |> Option.map (fun symInfo ->
-                            $"type:{symInfo.name}",
-                            ({ symbolId = hirType.sym; typ = TypeId.Name hirType.sym }: AnalyzeEnv.ModuleExport)))
-                    |> Map.ofList
-                let methodExports =
-                    hirModuleA.methods
-                    |> List.choose (fun methodInfo ->
-                        symbolTable.Get(methodInfo.sym)
-                        |> Option.map (fun symInfo ->
-                            symInfo.name,
-                            ({ symbolId = methodInfo.sym; typ = symInfo.typ }: AnalyzeEnv.ModuleExport)))
-                    |> Map.ofList
-                let fieldExports =
-                    hirModuleA.types
-                    |> List.collect (fun hirType ->
-                        hirType.fields
-                        |> List.choose (fun field ->
-                            symbolTable.Get(field.sym)
-                            |> Option.map (fun fieldInfo ->
-                                $"field:{fieldInfo.name}",
-                                ({ symbolId = field.sym; typ = field.typ }: AnalyzeEnv.ModuleExport))))
-                    |> Map.ofList
-                // impl X as Y で確定した .NET 基底型を "implBase:{TypeName}" キーでエクスポートする。
-                let implBaseExports =
-                    hirModuleA.types
-                    |> List.choose (fun hirType ->
-                        match hirType.baseType with
-                        | None -> None
-                        | Some baseType ->
-                            symbolTable.Get(hirType.sym)
-                            |> Option.map (fun symInfo ->
-                                $"implBase:{symInfo.name}",
-                                ({ symbolId = hirType.sym; typ = baseType }: AnalyzeEnv.ModuleExport)))
-                    |> Map.ofList
-                let moduleAExports =
-                    [ typeExports; methodExports; fieldExports; implBaseExports ]
-                    |> List.fold (fun acc m -> Map.fold (fun a k v -> Map.add k v a) acc m) Map.empty
+                let moduleAExports = buildModuleExports symbolTable hirModuleA
 
                 // モジュール B を解析し、MyError'Message が解決できることを確認する。
                 let moduleBResult =
@@ -2550,18 +2555,7 @@ import ModuleA'MyError
 fn setLink (e: MyError): () = do
     e'HelpLink = "https://example.com"
 """
-        let parseSource moduleName source =
-            let input: Input<SourceChar> = StringInput source
-            match Lexer.tokenize input Position.Zero with
-            | Success (tokens, _) ->
-                let tokenInput = TokenInput(tokens)
-                let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-                match Parser.fileModule() tokenInput start with
-                | Success (astModule, _) -> Ok (moduleName, astModule)
-                | Failure (reason, _) -> Result.Error (sprintf "Parsing failed in '%s': %s" moduleName reason)
-            | Failure (reason, _) -> Result.Error (sprintf "Lexing failed in '%s': %s" moduleName reason)
-
-        match parseSource "ModuleA" moduleASource, parseSource "ModuleB" moduleBSource with
+        match parseSourceModule "ModuleA" moduleASource, parseSourceModule "ModuleB" moduleBSource with
         | Ok (nameA, astA), Ok (nameB, astB) ->
             let moduleAsts = Map.ofList [ nameA, astA; nameB, astB ]
             let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
@@ -2617,46 +2611,7 @@ fn setLink (e: MyError): () = do
                 let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                 Assert.True(false, $"Module A analysis failed: {message}")
             | { value = Some hirModuleA } ->
-                let typeExports =
-                    hirModuleA.types
-                    |> List.choose (fun hirType ->
-                        symbolTable.Get(hirType.sym)
-                        |> Option.map (fun symInfo ->
-                            $"type:{symInfo.name}",
-                            ({ symbolId = hirType.sym; typ = TypeId.Name hirType.sym }: AnalyzeEnv.ModuleExport)))
-                    |> Map.ofList
-                let methodExports =
-                    hirModuleA.methods
-                    |> List.choose (fun methodInfo ->
-                        symbolTable.Get(methodInfo.sym)
-                        |> Option.map (fun symInfo ->
-                            symInfo.name,
-                            ({ symbolId = methodInfo.sym; typ = symInfo.typ }: AnalyzeEnv.ModuleExport)))
-                    |> Map.ofList
-                let fieldExports =
-                    hirModuleA.types
-                    |> List.collect (fun hirType ->
-                        hirType.fields
-                        |> List.choose (fun field ->
-                            symbolTable.Get(field.sym)
-                            |> Option.map (fun fieldInfo ->
-                                $"field:{fieldInfo.name}",
-                                ({ symbolId = field.sym; typ = field.typ }: AnalyzeEnv.ModuleExport))))
-                    |> Map.ofList
-                let implBaseExports =
-                    hirModuleA.types
-                    |> List.choose (fun hirType ->
-                        match hirType.baseType with
-                        | None -> None
-                        | Some baseType ->
-                            symbolTable.Get(hirType.sym)
-                            |> Option.map (fun symInfo ->
-                                $"implBase:{symInfo.name}",
-                                ({ symbolId = hirType.sym; typ = baseType }: AnalyzeEnv.ModuleExport)))
-                    |> Map.ofList
-                let moduleAExports =
-                    [ typeExports; methodExports; fieldExports; implBaseExports ]
-                    |> List.fold (fun acc m -> Map.fold (fun a k v -> Map.add k v a) acc m) Map.empty
+                let moduleAExports = buildModuleExports symbolTable hirModuleA
 
                 let moduleBResult =
                     Analyze.analyzeModuleWithImports(
