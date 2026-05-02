@@ -189,7 +189,7 @@ module Resolve =
                                     diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': type '%s' is not defined. Use 'import' to import it." implDecl.typeName asTypeName asTypeName, implDecl.span))
                                     None
                             | None, Some _ ->
-                                // `impl B for A` 形式: B は Atla の data 型、かつ A は imported .NET インターフェイスのみ許可する。
+                                // `impl B for A` 形式: A は Atla の data 型、B は imported .NET インターフェイスのみ許可する。
                                 match moduleScope.ResolveType(implDecl.typeName) with
                                 | Some (TypeId.Name baseTypeSid) ->
                                     match symbolTable.Get(baseTypeSid) with
