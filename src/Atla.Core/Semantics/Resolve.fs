@@ -188,14 +188,30 @@ module Resolve =
                                     diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': type '%s' is not defined. Use 'import' to import it." implDecl.typeName asTypeName asTypeName, implDecl.span))
                                     None
                             | None, Some forTypeName ->
-                                // `impl B for A` 形式: A は Atla の data 型でなければならない。
+                                // `impl B for A` 形式: A は import 済み .NET インターフェイスでなければならない。
                                 match moduleScope.ResolveType(forTypeName) with
-                                | Some (TypeId.Name baseTypeSid) -> Some (TypeId.Name baseTypeSid)
+                                | Some (TypeId.Name forSid) ->
+                                    match symbolTable.Get(forSid) with
+                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
+                                        if sysType.IsInterface then
+                                            Some (TypeId.Native sysType)
+                                        elif sysType.IsClass then
+                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': .NET class type '%s' is not allowed; only interfaces are supported" implDecl.typeName forTypeName sysType.FullName, implDecl.span))
+                                            None
+                                        else
+                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': .NET type '%s' is not an interface" implDecl.typeName forTypeName sysType.FullName, implDecl.span))
+                                            None
+                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef _) } ->
+                                        diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': the .NET type could not be resolved. Ensure it is imported and the dependency is restored." implDecl.typeName forTypeName, implDecl.span))
+                                        None
+                                    | _ ->
+                                        diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': '%s' must be an imported .NET interface type" implDecl.typeName forTypeName forTypeName, implDecl.span))
+                                        None
                                 | Some _ ->
-                                    diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl base type '%s'" forTypeName, implDecl.span))
+                                    diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': '%s' must be an imported .NET interface type" implDecl.typeName forTypeName forTypeName, implDecl.span))
                                     None
                                 | None ->
-                                    diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl base type '%s'" forTypeName, implDecl.span))
+                                    diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': type '%s' is not defined. Use 'import' to import a .NET interface." implDecl.typeName forTypeName forTypeName, implDecl.span))
                                     None
                             | None, None -> None
 
@@ -277,8 +293,8 @@ module Resolve =
                 fnDecls.Add(fnDecl)
             | _ -> diagnostics.Add(Diagnostic.Error("Unsupported declaration type in module", decl.span))
 
-        // data 型の継承関係（impl B for A）に循環がないことを検証する。
-        // `TypeId.Native`（.NET 継承）は Atla 型チェーンに含まれないため除外する。
+        // `impl ... for ...` の TypeId.Name 連鎖に循環がないことを検証する。
+        // 現行仕様では for 句は interface を要求するため通常は Native になるが、保守のため Name 連鎖検証は維持する。
         let implBaseMap =
             implDecls
             |> Seq.choose (fun (typeSid, baseTypeOpt, _, _) ->
