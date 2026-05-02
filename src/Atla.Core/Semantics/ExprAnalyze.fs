@@ -100,6 +100,8 @@ module ExprAnalyze =
                     | Some candidateDef ->
                         match candidateDef.baseType with
                         | Some (TypeId.Name baseSid) -> isSubtypeOfSystemType baseSid expectedSystemType (visited |> Set.add candidateSid.id)
+                        // `impl X as DotNetBase`: X の直接 .NET 基底型との互換チェック。
+                        | Some (TypeId.Native baseSysType) -> expectedSystemType.IsAssignableFrom(baseSysType)
                         | _ -> false
                     | None -> false
 
@@ -655,6 +657,8 @@ module ExprAnalyze =
                                 | Some def ->
                                     match def.baseType with
                                     | Some (TypeId.Name bs) -> isNameSubtypeOfNative bs expectedSysType (vis.Add sid.id)
+                                    // `impl X as DotNetBase`: X の直接 .NET 基底型との互換チェック。
+                                    | Some (TypeId.Native baseSysType) -> expectedSysType.IsAssignableFrom(baseSysType)
                                     | _ -> false
                                 | None -> false
                     match resolvedExpected, resolvedActual with
