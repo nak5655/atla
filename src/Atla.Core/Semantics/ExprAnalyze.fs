@@ -162,6 +162,36 @@ module ExprAnalyze =
                                 match loop baseSid (visited |> Set.add currentSid.id) currentReceiverExpr with
                                 | Result.Ok resolved -> Result.Ok resolved
                                 | Result.Error _ -> tryResolveFromDelegatedField currentDef
+                            | Some (TypeId.Native sysType) ->
+                                // `impl X as DotNetBase` のケース: .NET 継承チェーンのメンバーを直接探索する。
+                                // CIL 上は X が DotNetBase のサブクラスなので currentReceiverExpr をそのまま receiver として使用できる。
+                                let memberInfos =
+                                    NativeInterop.getPublicInstanceMembersIncludingInterfaces sysType
+                                    |> Seq.filter (fun memberInfo -> memberInfo.Name = memberName)
+                                    |> Seq.toList
+                                match NativeInterop.resolveNativeMember typeEnv memberInfos expectedType with
+                                | [memberInfo, resolvedMemberType] ->
+                                    match memberInfo with
+                                    | :? MethodInfo as methodInfo ->
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod(methodInfo), Some currentReceiverExpr, resolvedMemberType, span))
+                                    | :? FieldInfo as fieldInfo ->
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField(fieldInfo), Some currentReceiverExpr, resolvedMemberType, span))
+                                    | :? PropertyInfo as propertyInfo ->
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty(propertyInfo), Some currentReceiverExpr, resolvedMemberType, span))
+                                    | _ ->
+                                        Result.Error(sprintf "Unsupported member type for '%s'" memberName)
+                                | [] -> tryResolveFromDelegatedField currentDef
+                                | members ->
+                                    let methodInfos =
+                                        members
+                                        |> List.choose (fun (memberInfo, _) ->
+                                            match memberInfo with
+                                            | :? MethodInfo as methodInfo -> Some methodInfo
+                                            | _ -> None)
+                                    if methodInfos.Length = members.Length then
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some currentReceiverExpr, expectedType, span))
+                                    else
+                                        Result.Error(sprintf "Ambiguous member '%s' for type '%s'" memberName sysType.FullName)
                             | _ -> tryResolveFromDelegatedField currentDef
 
         and tryResolveFromDelegatedField (currentDef: DataTypeDef) : Result<Hir.Expr, string> =
