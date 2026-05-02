@@ -3,7 +3,7 @@ import Avalonia'Controls'Window
 import Avalonia'Controls'WindowStartupLocation
 import Avalonia'AppBuilder
 import Avalonia'Controls'DesktopApplicationExtensions
-import CalculatorWindow'CalculatorWindow
+import Calculator'CalculatorWindow
 
 fn appMain (app: Application) (args: Array String): () = do
     let window = CalculatorWindow'new.

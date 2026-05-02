@@ -9,14 +9,14 @@ import Avalonia'Layout'Orientation
 import Avalonia'Layout'HorizontalAlignment
 
 data CalculatorWindow = 
-    { _window: Window
+    { 
     #, _display: TextBox
     #, _currentValue: Float
     #, _pendingOperator: String
-    #, _clearOnNextDigit: Bool
+       _clearOnNextDigit: Bool
     }
 
-impl CalculatorWindow
+impl CalculatorWindow as Window
     fn new: CalculatorWindow = do
         let root = StackPanel.
         root'Orientation = Orientation'Vertical
@@ -39,11 +39,9 @@ impl CalculatorWindow
 
         grid root'Children'Add.
 
-        let window = Window.
+        let window = CalculatorWindow
+            { _clearOnNextDigit = False
+            }
         window'Content = root
 
-        CalculatorWindow
-            { _window = window
-            }
-
-impl CalculatorWindow for Window by _window
+        window
