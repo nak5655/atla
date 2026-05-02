@@ -368,3 +368,59 @@ module GenTests =
         let instance = Activator.CreateInstance(myErrorType) :?> Exception
         Assert.NotNull(instance)
         Assert.NotNull(instance.Message)
+
+    /// 数値型の暗黙的拡大変換（int32 → float64）が Newobj 命令の引数で正しく発行されることを検証する。
+    /// 修正前は conv.r8 が発行されず InvalidProgramException が発生していた（gui_calc の再現）。
+    [<Fact>]
+    let ``GenAssembly emits conv_r8 when int32 arg is passed to newobj expecting double`` () =
+        let mainSym = SymbolId 700
+        let resultSid = SymbolId 701
+
+        // Math.Round(double value, int digits) を用いて int32 → double 変換を検証する。
+        // double 型の引数を要求するメソッドに int32 を渡すと、変換命令が必要。
+        let mathRoundMethod =
+            typeof<Math>.GetMethod("Round", [| typeof<float>; typeof<int> |])
+        Assert.NotNull(mathRoundMethod)
+
+        // frame: resultSid → Loc(0) : Float
+        let _, mainFrame = Mir.Frame.addLoc resultSid TypeId.Float Mir.Frame.empty
+
+        let mainMethod =
+            Mir.Method(
+                "main",
+                mainSym,
+                [],
+                TypeId.Float,
+                // Math.Round(3 /*int32 → conv.r8 → float64*/, 2 /*int32 matches int param*/)
+                // Math.Round(3.0, 2) = 3.0（整数値を小数点以下 2 桁に丸めても変化しない）
+                [ Mir.Ins.CallAssign(Mir.Reg.Loc 0, mathRoundMethod,
+                      [ Mir.Value.ImmVal(Mir.Imm.Int 3)
+                        Mir.Value.ImmVal(Mir.Imm.Int 2) ])
+                  Mir.Ins.RetValue(Mir.Value.RegVal(Mir.Reg.Loc 0)) ],
+                mainFrame)
+
+        let assembly =
+            Mir.Assembly(
+                "GenNumericCoercion",
+                [ Mir.Module("MainModule", [], [ mainMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-numeric-coercion.dll")
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        let globalsType = loaded.GetType("MainModule.Globals")
+        Assert.NotNull(globalsType)
+
+        let mainMi = globalsType.GetMethod("main", BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static)
+        Assert.NotNull(mainMi)
+
+        // InvalidProgramException が発生しないこと、および正しい計算結果（3.0）が返ることを確認する。
+        let result = mainMi.Invoke(null, [||]) :?> float
+        Assert.Equal(3.0, result)
