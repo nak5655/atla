@@ -422,14 +422,12 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Assert.True(false, "Semantic analysis unexpectedly succeeded for instance access to static impl method")
 
     [<Fact>]
-    let ``semantic analysis reports cyclic subtype relation declared by impl for`` () =
+    let ``semantic analysis reports error when impl for target is local data type`` () =
         let source = """
 data A = { value: Int }
 data B = { value: Int }
 impl A for B
     fn asInt (this: A): Int = this'value
-impl B for A
-    fn asInt (this: B): Int = this'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -443,24 +441,24 @@ impl B for A
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
                 | { succeeded = false; diagnostics = diagnostics } ->
-                    let hasCycleDiagnostic =
+                    let hasExpectedDiagnostic =
                         diagnostics
-                        |> List.exists (fun d -> d.toDisplayText().Contains("Cyclic subtype relation detected"))
-                    Assert.True(hasCycleDiagnostic, "Expected cyclic subtype relation diagnostic was not reported")
+                        |> List.exists (fun d -> d.toDisplayText().Contains("must be an imported .NET interface type"))
+                    Assert.True(hasExpectedDiagnostic, "Expected interface-only impl for diagnostic was not reported")
                 | _ ->
-                    Assert.True(false, "Semantic analysis unexpectedly succeeded for cyclic subtype relation")
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for impl for local data type")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``semantic analysis resolves delegated native member via impl for by`` () =
+    let ``semantic analysis reports error for impl for with .NET class`` () =
         let source = """
-import System'DateTime
-data Clock = { dt: DateTime }
-impl Clock for DateTime by dt
-fn year (c: Clock): Int = c'Year
+import System'Math
+data Clock = { dt: Int }
+impl Clock for Math
+    fn year (this: Clock): Int = this'dt
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -473,20 +471,13 @@ fn year (c: Clock): Int = c'Year
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
-                | { succeeded = true; value = Some hirModule } ->
-                    let yearMethod =
-                        hirModule.methods
-                        |> List.tryFind (fun methodDef ->
-                            match symbolTable.Get(methodDef.sym) with
-                            | Some symInfo -> symInfo.name = "year"
-                            | None -> false)
-                    Assert.True(yearMethod.IsSome, "Expected delegated-member consumer method 'year' to be analyzed successfully")
-                | { diagnostics = diagnostics } ->
-                    let message =
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasExpectedDiagnostic =
                         diagnostics
-                        |> List.map (fun diagnostic -> diagnostic.toDisplayText())
-                        |> String.concat "; "
-                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("only interfaces are supported"))
+                    Assert.True(hasExpectedDiagnostic, "Expected '.NET class is not allowed' diagnostic was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for impl for .NET class")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
@@ -495,12 +486,12 @@ fn year (c: Clock): Int = c'Year
     [<Fact>]
     let ``semantic analysis allows multiple impl for blocks when roles differ`` () =
         let source = """
+import System'IComparable
+import System'IFormattable
 data Shape = { value: Int }
-data Reader = { marker: Int }
-data Writer = { marker: Int }
-impl Shape for Reader
+impl Shape for IComparable
     fn read (this: Shape): Int = this'value
-impl Shape for Writer
+impl Shape for IFormattable
     fn write (this: Shape): Int = this'value
 """
 
@@ -563,10 +554,10 @@ impl Line
     let ``semantic analysis reports duplicate impl blocks for same role`` () =
         let source = """
 data Line = { value: Int }
-data Reader = { marker: Int }
-impl Line for Reader
+import System'IComparable
+impl Line for IComparable
     fn first (this: Line): Int = this'value
-impl Line for Reader
+impl Line for IComparable
     fn second (this: Line): Int = this'value
 """
 
@@ -583,7 +574,7 @@ impl Line for Reader
                 | { succeeded = false; diagnostics = diagnostics } ->
                     let hasExpectedDiagnostic =
                         diagnostics
-                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("already has an impl block for role 'Reader'"))
+                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("already has an impl block for role 'IComparable'"))
                     Assert.True(hasExpectedDiagnostic, "Expected duplicate role impl diagnostic was not reported")
                 | _ ->
                     Assert.True(false, "Semantic analysis unexpectedly succeeded for duplicate role impl blocks")
