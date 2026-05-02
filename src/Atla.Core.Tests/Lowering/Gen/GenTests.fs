@@ -391,8 +391,8 @@ module GenTests =
                 mainSym,
                 [],
                 TypeId.Float,
-                // Math.Round(3 /*int32 coerced to float64*/, 2 /*int32 matches int param*/)
-                // → 期待値 3.0 を Loc(0) へ格納して返す。
+                // Math.Round(3 /*int32 → conv.r8 → float64*/, 2 /*int32 matches int param*/)
+                // Math.Round(3.0, 2) = 3.0（整数値を小数点以下 2 桁に丸めても変化しない）
                 [ Mir.Ins.CallAssign(Mir.Reg.Loc 0, mathRoundMethod,
                       [ Mir.Value.ImmVal(Mir.Imm.Int 3)
                         Mir.Value.ImmVal(Mir.Imm.Int 2) ])

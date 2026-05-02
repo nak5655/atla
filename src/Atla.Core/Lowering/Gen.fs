@@ -134,7 +134,9 @@ module Gen =
                 failwithf "Unknown method symbol for delegate creation: %A" sid
 
     /// MIR 値が genValue によって CIL スタックへ積まれるときの .NET 型を返す。
-    /// RegVal はフレームから型を逆引きする。型を確定できない場合は None を返す。
+    /// RegVal はフレームの argTypes / locTypes から逆引きする。型を確定できない場合は None を返す。
+    /// フレームのサイズは関数のローカル変数数に比例し、実用的に小さいため線形探索の逆引きは許容される。
+    /// フレームが Reg → TypeId の直接マップを持つように改善した場合はその構造を使うこと。
     let private getValueStackType (frame: Mir.Frame) (value: Mir.Value) : Type option =
         match value with
         | Mir.Value.ImmVal imm ->
@@ -145,7 +147,7 @@ module Gen =
             | Mir.Imm.String _ -> Some typeof<string>
             | Mir.Imm.Null     -> None
         | Mir.Value.RegVal reg ->
-            // Reg → SymbolId の逆引きは重いが、フレームサイズが小さいため許容する。
+            // SymbolId → Reg のマップを Reg → SymbolId へ逆引きしてから型を取得する。
             let findSid (regMap: Map<SymbolId, Mir.Reg>) =
                 regMap |> Map.tryFindKey (fun _ r -> r = reg)
             let sidOpt =
@@ -161,21 +163,34 @@ module Gen =
         | Mir.Value.FieldVal fi -> Some fi.FieldType
         | _ -> None
 
-    /// 数値型の暗黙的な拡大変換（widening）が必要な場合に変換命令を発行する。
-    /// int32 → float64/float32/int64、float32 → float64 などを対象とする。
+    /// ネイティブメソッド・コンストラクター呼び出し時に必要な数値型変換命令を発行する。
+    /// CIL の型安全性規則により、スタック上の型とパラメーター期待型が一致しない数値型の
+    /// 組み合わせは invalid program となるため、以下の変換を自動挿入する:
+    ///   int32  → float64 (conv.r8)  widening
+    ///   int32  → float32 (conv.r4)  widening
+    ///   int32  → int64   (conv.i8)  widening
+    ///   int32  → uint64  (conv.u8)  widening
+    ///   int64  → float64 (conv.r8)  widening
+    ///   float32 → float64 (conv.r8) widening
+    ///   float64 → float32 (conv.r4) narrowing（Atla の Float は float64 だが、
+    ///                                           ネイティブ API が float32 を要求する場合に必要）
     /// 型が一致するか非数値型の場合は何も発行しない。
     let private emitNumericCoercionIfNeeded (gen: ILGenerator) (expectedType: Type) (actualTypeOpt: Type option) =
         match actualTypeOpt with
         | None -> ()
         | Some actualType when actualType = expectedType -> ()
         | Some t ->
-            if   t = typeof<int32>   && expectedType = typeof<float>   then gen.Emit(OpCodes.Conv_R8)
-            elif t = typeof<int32>   && expectedType = typeof<float32> then gen.Emit(OpCodes.Conv_R4)
-            elif t = typeof<int32>   && expectedType = typeof<int64>   then gen.Emit(OpCodes.Conv_I8)
-            elif t = typeof<int32>   && expectedType = typeof<uint64>  then gen.Emit(OpCodes.Conv_U8)
-            elif t = typeof<int64>   && expectedType = typeof<float>   then gen.Emit(OpCodes.Conv_R8)
-            elif t = typeof<float32> && expectedType = typeof<float>   then gen.Emit(OpCodes.Conv_R8)
-            elif t = typeof<float>   && expectedType = typeof<float32> then gen.Emit(OpCodes.Conv_R4)
+            match t, expectedType with
+            | t, e when t = typeof<int32>   && e = typeof<float>   -> gen.Emit(OpCodes.Conv_R8)
+            | t, e when t = typeof<int32>   && e = typeof<float32> -> gen.Emit(OpCodes.Conv_R4)
+            | t, e when t = typeof<int32>   && e = typeof<int64>   -> gen.Emit(OpCodes.Conv_I8)
+            | t, e when t = typeof<int32>   && e = typeof<uint64>  -> gen.Emit(OpCodes.Conv_U8)
+            | t, e when t = typeof<int64>   && e = typeof<float>   -> gen.Emit(OpCodes.Conv_R8)
+            | t, e when t = typeof<float32> && e = typeof<float>   -> gen.Emit(OpCodes.Conv_R8)
+            // float64 → float32: Atla の Float は float64 だが、ネイティブ API が float32 を
+            // 要求する場合は精度を落として変換する（CIL の型検証を通すために必要）。
+            | t, e when t = typeof<float>   && e = typeof<float32> -> gen.Emit(OpCodes.Conv_R4)
+            | _ -> ()
 
     // MIR命令をIL命令列へ変換する。
     // ilLabels/ilOffsets はメソッドごとに作成したラベル解決状態を受け取る。
