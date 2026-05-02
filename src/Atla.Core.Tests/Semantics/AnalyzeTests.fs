@@ -2269,3 +2269,119 @@ fn main (): () = do
                 |> List.map (fun err -> err.toDisplayText())
                 |> String.concat "; "
             Assert.True(false, $"semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``semantic analysis resolves inherited native property read via impl as`` () =
+        // System.Exception は非シール・非インターフェイスクラス。Message プロパティを持つ。
+        // impl MyError as Exception により MyError 型の変数から .Message を読み取れる必要がある。
+        let source = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+fn getMessage (e: MyError): String = e'Message
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let getMessageMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodDef ->
+                            match symbolTable.Get(methodDef.sym) with
+                            | Some symInfo -> symInfo.name = "getMessage"
+                            | None -> false)
+                    Assert.True(getMessageMethod.IsSome, "Expected 'getMessage' to be analyzed successfully with native base property read")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun diagnostic -> diagnostic.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis resolves inherited native property assignment via impl as`` () =
+        // System.Exception.HelpLink は読み書き可能な String プロパティ。
+        // impl MyError as Exception により MyError 型の変数への .HelpLink 代入が通る必要がある。
+        let source = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+fn setLink (e: MyError): () = do
+    e'HelpLink = "https://example.com"
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let setLinkMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodDef ->
+                            match symbolTable.Get(methodDef.sym) with
+                            | Some symInfo -> symInfo.name = "setLink"
+                            | None -> false)
+                    Assert.True(setLinkMethod.IsSome, "Expected 'setLink' to be analyzed successfully with native base property assignment")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun diagnostic -> diagnostic.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports error for undefined member on impl as native base type`` () =
+        // impl MyError as Exception でも存在しないメンバーへのアクセスはエラーになる必要がある。
+        let source = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+fn bad (e: MyError): String = e'NonExistentMember
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasError =
+                        diagnostics
+                        |> List.exists (fun diagnostic -> diagnostic.isError)
+                    Assert.True(hasError, "Expected an error diagnostic for undefined member on impl-as type")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for undefined member access on impl-as type")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
