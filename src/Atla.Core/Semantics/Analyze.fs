@@ -187,6 +187,19 @@ module Analyze =
                             // インスタンスメンバー解決が定義元モジュールと同じ情報で実行できるようにする。
                             let importedBaseTypeOpt, importedDelegatedByFieldNameOpt, importedDelegationDiagnostics =
                                 let implDecls = availableDataTypeImplDecls |> Map.tryFind fullTypePath |> Option.defaultValue []
+
+                                // `impl X as DotNetBase` パターンを先にチェックする。
+                                // この場合、モジュールエクスポートの "implBase:{TypeName}" キーから .NET 基底型を復元する。
+                                // asTypeName.IsSome の有無のみを確認し、宣言の内容は不要なため Some _ でマッチする。
+                                let hasAsImpl = implDecls |> List.exists (fun implDecl -> implDecl.asTypeName.IsSome)
+                                if hasAsImpl then
+                                    let baseTypeOpt =
+                                        sourceModuleExports
+                                        |> Map.tryFind $"implBase:{typeNameForLookup}"
+                                        |> Option.map (fun exportInfo -> exportInfo.typ)
+                                    baseTypeOpt, None, []
+                                else
+
                                 let preferredDelegatedImplOpt =
                                     implDecls
                                     |> List.tryFind (fun implDecl -> implDecl.byFieldName.IsSome && implDecl.forTypeName.IsSome)

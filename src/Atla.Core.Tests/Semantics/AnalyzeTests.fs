@@ -6,6 +6,7 @@ open Atla.Core.Syntax
 open Atla.Core.Syntax.Data
 open Atla.Core.Semantics
 open Atla.Core.Semantics.Data
+open Atla.Core.Semantics.Data.AnalyzeEnv
 open Atla.Core.Lowering
 
 module AnalyzeTests =
@@ -2415,3 +2416,246 @@ fn bad (e: MyError): String = e'NonExistentMember
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    // クロスモジュール `impl X as DotNetBase` テスト共通ヘルパー。
+    // ソース文字列を解析してモジュール名と AST のペアを返す。
+    let private parseSourceModule (moduleName: string) (source: string) : Result<string * Ast.Module, string> =
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) -> Ok (moduleName, astModule)
+            | Failure (reason, _) -> Result.Error (sprintf "Parsing failed in '%s': %s" moduleName reason)
+        | Failure (reason, _) -> Result.Error (sprintf "Lexing failed in '%s': %s" moduleName reason)
+
+    // HIR モジュールからモジュールエクスポートマップを構築する（Compile.fs の collectModuleExports に対応する）。
+    // `implBase:{TypeName}` エントリを含む、クロスモジュール解析テスト用のヘルパー。
+    let private buildModuleExports (symbolTable: SymbolTable) (hirModule: Hir.Module) : Map<string, ModuleExport> =
+        let typeExports =
+            hirModule.types
+            |> List.choose (fun hirType ->
+                symbolTable.Get(hirType.sym)
+                |> Option.map (fun symInfo ->
+                    $"type:{symInfo.name}",
+                    { symbolId = hirType.sym; typ = TypeId.Name hirType.sym }))
+            |> Map.ofList
+        let methodExports =
+            hirModule.methods
+            |> List.choose (fun methodInfo ->
+                symbolTable.Get(methodInfo.sym)
+                |> Option.map (fun symInfo ->
+                    symInfo.name,
+                    { symbolId = methodInfo.sym; typ = symInfo.typ }))
+            |> Map.ofList
+        let fieldExports =
+            hirModule.types
+            |> List.collect (fun hirType ->
+                hirType.fields
+                |> List.choose (fun field ->
+                    symbolTable.Get(field.sym)
+                    |> Option.map (fun fieldInfo ->
+                        $"field:{fieldInfo.name}",
+                        { symbolId = field.sym; typ = field.typ })))
+            |> Map.ofList
+        // impl X as Y で確定した .NET 基底型を "implBase:{TypeName}" キーでエクスポートする。
+        let implBaseExports =
+            hirModule.types
+            |> List.choose (fun hirType ->
+                match hirType.baseType with
+                | None -> None
+                | Some baseType ->
+                    symbolTable.Get(hirType.sym)
+                    |> Option.map (fun symInfo ->
+                        $"implBase:{symInfo.name}",
+                        { symbolId = hirType.sym; typ = baseType }))
+            |> Map.ofList
+        [ typeExports; methodExports; fieldExports; implBaseExports ]
+        |> List.fold (fun acc m -> Map.fold (fun a k v -> Map.add k v a) acc m) Map.empty
+
+    /// クロスモジュールの `impl X as DotNetBase` で、import 先からインスタンスプロパティを読み取れることを検証する。
+    /// 回帰テスト: import 後に baseType が None になり "does not support member access" が出ていたバグの修正確認。
+    [<Fact>]
+    let ``cross-module impl as restores base type and resolves native property read`` () =
+        // モジュール A: MyError を Exception のサブクラスとして定義する。
+        let moduleASource = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+"""
+        // モジュール B: ModuleA から MyError を import して Exception 由来の Message プロパティを読み取る。
+        let moduleBSource = """
+import ModuleA'MyError
+fn getMessage (e: MyError): String = e'Message
+"""
+        match parseSourceModule "ModuleA" moduleASource, parseSourceModule "ModuleB" moduleBSource with
+        | Ok (nameA, astA), Ok (nameB, astB) ->
+            let moduleAsts = Map.ofList [ nameA, astA; nameB, astB ]
+
+            // Compile.fs と同じ方法で利用可能型・impl 宣言マップを構築する。
+            let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
+            let availableTypeFullNames =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
+                        | _ -> None))
+                |> Set.ofList
+            let availableDataTypeDecls =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl)
+                        | _ -> None))
+                |> Map.ofList
+            let availableDataTypeImplDecls =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Impl as implDecl -> Some (moduleName, implDecl)
+                        | _ -> None))
+                |> List.fold
+                    (fun (acc: Map<string, Ast.Decl.Impl list>) (moduleName, implDecl) ->
+                        let key = $"{moduleName}.{implDecl.typeName}"
+                        match Map.tryFind key acc with
+                        | Some impls -> Map.add key (impls @ [ implDecl ]) acc
+                        | None -> Map.add key [ implDecl ] acc)
+                    Map.empty
+
+            let symbolTable = SymbolTable()
+            let typeSubst = TypeSubst()
+            let typeMetaFactory = TypeMetaFactory()
+
+            // モジュール A を先に解析し、エクスポートマップを構築する。
+            let moduleAResult =
+                Analyze.analyzeModuleWithImports(
+                    symbolTable, typeSubst, typeMetaFactory, nameA, astA,
+                    availableModuleNames, availableTypeFullNames,
+                    availableDataTypeDecls, availableDataTypeImplDecls, Map.empty)
+
+            match moduleAResult with
+            | { succeeded = false; diagnostics = diagnostics } ->
+                let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                Assert.True(false, $"Module A analysis failed: {message}")
+            | { value = Some hirModuleA } ->
+                let moduleAExports = buildModuleExports symbolTable hirModuleA
+
+                // モジュール B を解析し、MyError'Message が解決できることを確認する。
+                let moduleBResult =
+                    Analyze.analyzeModuleWithImports(
+                        symbolTable, typeSubst, typeMetaFactory, nameB, astB,
+                        availableModuleNames, availableTypeFullNames,
+                        availableDataTypeDecls, availableDataTypeImplDecls,
+                        Map.ofList [ nameA, moduleAExports ])
+
+                match moduleBResult with
+                | { succeeded = true } -> ()
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Module B analysis failed (cross-module impl-as property read): {message}")
+            | { value = None } ->
+                Assert.True(false, "Module A analysis returned no HIR module")
+        | Result.Error message, _ | _, Result.Error message ->
+            Assert.True(false, $"Parse error: {message}")
+
+    /// クロスモジュールの `impl X as DotNetBase` で、import 先からプロパティへ代入できることを検証する。
+    [<Fact>]
+    let ``cross-module impl as restores base type and resolves native property assignment`` () =
+        // モジュール A: MyError を Exception のサブクラスとして定義する。
+        let moduleASource = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+"""
+        // モジュール B: ModuleA から MyError を import して HelpLink（読み書き可能）へ代入する。
+        let moduleBSource = """
+import ModuleA'MyError
+fn setLink (e: MyError): () = do
+    e'HelpLink = "https://example.com"
+"""
+        match parseSourceModule "ModuleA" moduleASource, parseSourceModule "ModuleB" moduleBSource with
+        | Ok (nameA, astA), Ok (nameB, astB) ->
+            let moduleAsts = Map.ofList [ nameA, astA; nameB, astB ]
+            let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
+            let availableTypeFullNames =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
+                        | _ -> None))
+                |> Set.ofList
+            let availableDataTypeDecls =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl)
+                        | _ -> None))
+                |> Map.ofList
+            let availableDataTypeImplDecls =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Impl as implDecl -> Some (moduleName, implDecl)
+                        | _ -> None))
+                |> List.fold
+                    (fun (acc: Map<string, Ast.Decl.Impl list>) (moduleName, implDecl) ->
+                        let key = $"{moduleName}.{implDecl.typeName}"
+                        match Map.tryFind key acc with
+                        | Some impls -> Map.add key (impls @ [ implDecl ]) acc
+                        | None -> Map.add key [ implDecl ] acc)
+                    Map.empty
+
+            let symbolTable = SymbolTable()
+            let typeSubst = TypeSubst()
+            let typeMetaFactory = TypeMetaFactory()
+
+            let moduleAResult =
+                Analyze.analyzeModuleWithImports(
+                    symbolTable, typeSubst, typeMetaFactory, nameA, astA,
+                    availableModuleNames, availableTypeFullNames,
+                    availableDataTypeDecls, availableDataTypeImplDecls, Map.empty)
+
+            match moduleAResult with
+            | { succeeded = false; diagnostics = diagnostics } ->
+                let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                Assert.True(false, $"Module A analysis failed: {message}")
+            | { value = Some hirModuleA } ->
+                let moduleAExports = buildModuleExports symbolTable hirModuleA
+
+                let moduleBResult =
+                    Analyze.analyzeModuleWithImports(
+                        symbolTable, typeSubst, typeMetaFactory, nameB, astB,
+                        availableModuleNames, availableTypeFullNames,
+                        availableDataTypeDecls, availableDataTypeImplDecls,
+                        Map.ofList [ nameA, moduleAExports ])
+
+                match moduleBResult with
+                | { succeeded = true } -> ()
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Module B analysis failed (cross-module impl-as property assignment): {message}")
+            | { value = None } ->
+                Assert.True(false, "Module A analysis returned no HIR module")
+        | Result.Error message, _ | _, Result.Error message ->
+            Assert.True(false, $"Parse error: {message}")

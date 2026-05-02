@@ -178,7 +178,21 @@ module Compiler =
                         ({ symbolId = field.sym
                            typ = field.typ }: AnalyzeEnv.ModuleExport))))
 
-        valueExports @ methodExports @ typeExports @ fieldExports
+        // `impl X as DotNetBase` で確定した .NET 基底型を "implBase:{TypeName}" キーでエクスポートする。
+        // import 先モジュールで DataTypeDef.baseType を復元し、継承チェーンのメンバー解決を可能にする。
+        let implBaseExports =
+            hirModule.types
+            |> List.choose (fun hirType ->
+                match hirType.baseType with
+                | None -> None
+                | Some baseType ->
+                    symbolTable.Get(hirType.sym)
+                    |> Option.map (fun symInfo ->
+                        $"implBase:{symInfo.name}",
+                        ({ symbolId = hirType.sym
+                           typ = baseType }: AnalyzeEnv.ModuleExport)))
+
+        valueExports @ methodExports @ typeExports @ fieldExports @ implBaseExports
         |> Map.ofList
 
     /// 複数 HIR モジュールを 1 つへ統合し、CIL 生成のランタイム制約（単一 dynamic module）に合わせる。
