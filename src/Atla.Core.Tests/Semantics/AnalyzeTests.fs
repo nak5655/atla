@@ -455,12 +455,12 @@ impl B for A
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``semantic analysis resolves delegated native member via impl for by`` () =
+    let ``semantic analysis resolves delegated native interface member via impl for by`` () =
         let source = """
-import System'DateTime
-data Clock = { dt: DateTime }
-impl DateTime for Clock by dt
-fn year (c: Clock): Int = c'Year
+import System'IDisposable
+data Box = { items: IDisposable }
+impl IDisposable for Box by items
+fn close (b: Box): () = b'Dispose.
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -487,6 +487,36 @@ fn year (c: Clock): Int = c'Year
                         |> List.map (fun diagnostic -> diagnostic.toDisplayText())
                         |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports error when impl for uses native class`` () =
+        let source = """
+import System'DateTime
+data Clock = { dt: DateTime }
+impl DateTime for Clock by dt
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasExpectedDiagnostic =
+                        diagnostics
+                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("must be a .NET interface type"))
+                    Assert.True(hasExpectedDiagnostic, "Expected class-rejection diagnostic for impl for was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for impl for with native class")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->

@@ -189,9 +189,30 @@ module Resolve =
                                     diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': type '%s' is not defined. Use 'import' to import it." implDecl.typeName asTypeName asTypeName, implDecl.span))
                                     None
                             | None, Some _ ->
-                                // `impl B for A` 形式: B は Atla の data 型でなければならない。
+                                // `impl B for A` 形式: B は Atla の data 型、かつ A は imported .NET インターフェイスのみ許可する。
                                 match moduleScope.ResolveType(implDecl.typeName) with
-                                | Some (TypeId.Name baseTypeSid) -> Some (TypeId.Name baseTypeSid)
+                                | Some (TypeId.Name baseTypeSid) ->
+                                    match symbolTable.Get(baseTypeSid) with
+                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
+                                        if sysType.IsInterface then
+                                            Some (TypeId.Native sysType)
+                                        else
+                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': '%s' must be a .NET interface type" implDecl.typeName implTargetTypeName sysType.FullName, implDecl.span))
+                                            None
+                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef _) } ->
+                                        diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': the .NET type could not be resolved. Ensure it is imported and the dependency is restored." implDecl.typeName implTargetTypeName, implDecl.span))
+                                        None
+                                    | _ ->
+                                        Some (TypeId.Name baseTypeSid)
+                                | Some (TypeId.Native sysType) when not (obj.ReferenceEquals(sysType, null)) ->
+                                    if sysType.IsInterface then
+                                        Some (TypeId.Native sysType)
+                                    else
+                                        diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': '%s' must be a .NET interface type" implDecl.typeName implTargetTypeName sysType.FullName, implDecl.span))
+                                        None
+                                | Some (TypeId.Native _) ->
+                                    diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' for '%s': the .NET type could not be resolved. Ensure it is imported and the dependency is restored." implDecl.typeName implTargetTypeName, implDecl.span))
+                                    None
                                 | Some _ ->
                                     diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl base type '%s'" implDecl.typeName, implDecl.span))
                                     None
