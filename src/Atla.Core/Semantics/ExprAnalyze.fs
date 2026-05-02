@@ -555,14 +555,30 @@ module ExprAnalyze =
             match callable with
             | Some resolvedCallable ->
                 let allArgs = analyzedArgs
+
+                // 拡張メソッドがインスタンスレシーバー付きで呼ばれているか判定する。
+                // 拡張メソッドの GetParameters() には this パラメータが含まれるが、
+                // ユーザーが明示的に渡す引数ではないため論理引数から除外する必要がある。
+                let isExtMethodWithInstance (methodInfo: MethodInfo) =
+                    methodInfo.IsStatic
+                    && methodInfo.IsDefined(typeof<System.Runtime.CompilerServices.ExtensionAttribute>, false)
+                    && callInstance.IsSome
+
+                // 拡張メソッドの this を除いた論理パラメータ配列を返す。
+                // 通常のインスタンスメソッドやスタティックメソッドはそのまま返す。
+                let logicalParams (methodInfo: MethodInfo) : ParameterInfo array =
+                    let parameters = methodInfo.GetParameters()
+                    if isExtMethodWithInstance methodInfo then Array.skip 1 parameters
+                    else parameters
+
                 let suppliedParameterCount (_methodInfo: MethodInfo) =
                     allArgs.Length
 
                 // 呼び出し時の実引数に対応する論理パラメータ型列を返す。
-                // インスタンスメソッドは先頭に receiver 型を補う。
+                // 拡張メソッドの場合は this パラメータを除いた残りのパラメータと照合する。
                 let suppliedParameterTypes (methodInfo: MethodInfo) : TypeId list =
                     let parameterTypes =
-                        methodInfo.GetParameters()
+                        logicalParams methodInfo
                         |> Array.toList
                         |> List.map (fun p -> TypeId.fromSystemType p.ParameterType)
 
@@ -570,7 +586,7 @@ module ExprAnalyze =
                     parameterTypes |> List.take suppliedCount
 
                 let canApplyWithOptionalDefaults (methodInfo: MethodInfo) =
-                    let parameters = methodInfo.GetParameters()
+                    let parameters = logicalParams methodInfo
                     let suppliedCount = suppliedParameterCount methodInfo
                     if suppliedCount > parameters.Length then
                         false
@@ -703,7 +719,8 @@ module ExprAnalyze =
                             methods
                             |> List.filter (fun methodInfo ->
                                 let suppliedCount = suppliedParameterCount methodInfo
-                                let parameterCount = methodInfo.GetParameters().Length
+                                // 拡張メソッドの this パラメータを除いた論理パラメータ数で照合する。
+                                let parameterCount = (logicalParams methodInfo).Length
                                 (parameterCount = suppliedCount || (parameterCount > suppliedCount && canApplyWithOptionalDefaults methodInfo))
                                 && methodMatchesTypes methodInfo)
 
@@ -735,7 +752,8 @@ module ExprAnalyze =
                             Some (Hir.Callable.NativeConstructor ctorInfo, callRetType)
                         | _ -> None
                     | Hir.Callable.NativeMethod methodInfo ->
-                        if methodInfo.GetParameters().Length = suppliedParameterCount methodInfo || canApplyWithOptionalDefaults methodInfo then
+                        // 拡張メソッドの this を除いた論理パラメータ数でアリティ照合する。
+                        if (logicalParams methodInfo).Length = suppliedParameterCount methodInfo || canApplyWithOptionalDefaults methodInfo then
                             Some (resolvedCallable, TypeId.fromSystemType methodInfo.ReturnType)
                         else
                             None
@@ -773,8 +791,9 @@ module ExprAnalyze =
                 | Some (callableExpr, callRetType) ->
                     let callArgs =
                         match callableExpr with
-                        | Hir.Callable.NativeMethod methodInfo when methodInfo.GetParameters().Length > suppliedParameterCount methodInfo ->
-                            let parameters = methodInfo.GetParameters()
+                        | Hir.Callable.NativeMethod methodInfo when (logicalParams methodInfo).Length > suppliedParameterCount methodInfo ->
+                            // 拡張メソッドの this を除いた論理パラメータからデフォルト引数を補完する。
+                            let parameters = logicalParams methodInfo
                             let suppliedCount = suppliedParameterCount methodInfo
                             let missingDefaults =
                                 parameters
@@ -793,12 +812,14 @@ module ExprAnalyze =
 
                     // .NET メソッドへ関数値を渡す際に、引数の型を具体的なデリゲート型へ特殊化する。
                     // これにより Layout フェーズで正しいデリゲート型（Action<>/Func<> 等）が使用される。
+                    // 拡張メソッドの場合は GetParameters()[0] が this パラメータなので 1 オフセットする。
                     let specializedCallArgs =
                         match callableExpr with
                         | Hir.Callable.NativeMethod mi ->
                             let mParams = mi.GetParameters()
+                            let paramOffset = if isExtMethodWithInstance mi then 1 else 0
                             callArgs |> List.mapi (fun i arg ->
-                                let paramIdx = i
+                                let paramIdx = i + paramOffset
                                 if paramIdx >= 0 && paramIdx < mParams.Length then
                                     let nativeParamType = TypeId.fromSystemType mParams.[paramIdx].ParameterType
                                     match arg, nativeParamType with
