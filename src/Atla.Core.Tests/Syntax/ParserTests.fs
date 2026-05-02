@@ -914,6 +914,7 @@ impl Wrapper for Base by inner
             match implDecl with
             | Some parsedImplDecl ->
                 Assert.Equal("Wrapper", parsedImplDecl.typeName)
+                Assert.True(parsedImplDecl.asTypeName.IsNone)
                 Assert.Equal(Some "Base", parsedImplDecl.forTypeName)
                 Assert.Equal(Some "inner", parsedImplDecl.byFieldName)
                 Assert.Empty(parsedImplDecl.methods)
@@ -921,6 +922,69 @@ impl Wrapper for Base by inner
                 Assert.True(false, "impl declaration with for/by clause was not parsed")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses impl declaration with as clause`` () =
+        let program = """
+data MyButton =
+    { label: String
+    }
+impl MyButton as Button
+    fn click (this: MyButton): Unit = ()
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
+                    | _ -> None)
+
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.Equal("MyButton", parsedImplDecl.typeName)
+                Assert.Equal(Some "Button", parsedImplDecl.asTypeName)
+                Assert.True(parsedImplDecl.forTypeName.IsNone)
+                Assert.True(parsedImplDecl.byFieldName.IsNone)
+                Assert.Single(parsedImplDecl.methods) |> ignore
+            | None ->
+                Assert.True(false, "impl declaration with as clause was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses impl as clause with no methods`` () =
+        let program = """
+data Widget =
+    { id: Int
+    }
+impl Widget as Control
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
+                    | _ -> None)
+
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.Equal("Widget", parsedImplDecl.typeName)
+                Assert.Equal(Some "Control", parsedImplDecl.asTypeName)
+                Assert.True(parsedImplDecl.forTypeName.IsNone)
+                Assert.True(parsedImplDecl.byFieldName.IsNone)
+                Assert.Empty(parsedImplDecl.methods)
+            | None ->
+                Assert.True(false, "impl as declaration without methods was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+
 
     [<Fact>]
     let ``fileModule parses true literal as Bool`` () =

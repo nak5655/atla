@@ -66,7 +66,7 @@ module Analyze =
                         Map.add
                             resolvedDataDecl.decl.name
                             { typeSid = resolvedDataDecl.typeSid
-                              baseTypeSid = None
+                              baseType = None
                               delegatedByFieldName = None
                               fields = resolvedFields
                               methods = Map.empty }
@@ -130,7 +130,7 @@ module Analyze =
 
                             let importedDef =
                                 { typeSid = typeSid
-                                  baseTypeSid = None
+                                  baseType = None
                                   delegatedByFieldName = None
                                   fields = resolvedFields
                                   methods = Map.empty }
@@ -185,7 +185,7 @@ module Analyze =
 
                             // imported impl 宣言から `for`（基底型）と `by`（委譲先フィールド）を抽出し、
                             // インスタンスメンバー解決が定義元モジュールと同じ情報で実行できるようにする。
-                            let importedBaseTypeSidOpt, importedDelegatedByFieldNameOpt, importedDelegationDiagnostics =
+                            let importedBaseTypeOpt, importedDelegatedByFieldNameOpt, importedDelegationDiagnostics =
                                 let implDecls = availableDataTypeImplDecls |> Map.tryFind fullTypePath |> Option.defaultValue []
                                 let preferredDelegatedImplOpt =
                                     implDecls
@@ -194,15 +194,15 @@ module Analyze =
                                 match preferredDelegatedImplOpt with
                                 | None -> None, None, []
                                 | Some delegatedImplDecl ->
-                                    let resolvedBaseTypeSidOpt =
+                                    let resolvedBaseTypeOpt =
                                         match delegatedImplDecl.forTypeName with
                                         | None -> None
                                         | Some forTypeName ->
                                             match resolvedModule.moduleScope.ResolveType(forTypeName) with
-                                            | Some(TypeId.Name baseTypeSid) -> Some baseTypeSid
+                                            | Some(TypeId.Name baseTypeSid) -> Some (TypeId.Name baseTypeSid)
                                             | _ ->
                                                 match sourceModuleExports |> Map.tryFind $"type:{forTypeName}" with
-                                                | Some exportInfo -> Some exportInfo.symbolId
+                                                | Some exportInfo -> Some (TypeId.Name exportInfo.symbolId)
                                                 | None -> None
 
                                     let delegatedByFieldNameOpt, delegationDiagnostics =
@@ -215,11 +215,11 @@ module Analyze =
                                             else
                                                 None, [ Diagnostic.Error(sprintf "Delegate field '%s' is not defined in imported data '%s'" byFieldName aliasName, delegatedImplDecl.span) ]
 
-                                    resolvedBaseTypeSidOpt, delegatedByFieldNameOpt, delegationDiagnostics
+                                    resolvedBaseTypeOpt, delegatedByFieldNameOpt, delegationDiagnostics
 
                             let importedDefWithMethods =
                                 { importedDef with
-                                    baseTypeSid = importedBaseTypeSidOpt
+                                    baseType = importedBaseTypeOpt
                                     delegatedByFieldName = importedDelegatedByFieldNameOpt
                                     methods = importedImplMethodMap }
                             Map.add aliasName importedDefWithMethods defs, diagnostics @ importedImplDiagnostics @ importedDelegationDiagnostics)
@@ -233,7 +233,7 @@ module Analyze =
             let dataTypeDefsWithMethods, implMethodDecls, implDiagnostics =
                 resolvedModule.implDecls
                 |> List.fold
-                    (fun (defs, methodDecls, diagnostics) (typeSid, baseTypeSidOpt, byFieldNameOpt, implDecl) ->
+                    (fun (defs, methodDecls, diagnostics) (typeSid, baseTypeOpt, byFieldNameOpt, implDecl) ->
                         match defs |> Map.tryFind implDecl.typeName with
                         | None ->
                             defs, methodDecls, diagnostics @ [ Diagnostic.Error(sprintf "Undefined impl target type '%s'" implDecl.typeName, implDecl.span) ]
@@ -274,7 +274,7 @@ module Analyze =
                                     implDecl.typeName
                                     { dataTypeDef with
                                         methods = methodMap
-                                        baseTypeSid = baseTypeSidOpt
+                                        baseType = baseTypeOpt
                                         delegatedByFieldName = byFieldNameOpt }
                             updatedDefs, (List.rev declAcc) @ methodDecls, diagnostics @ diagAcc)
                     (dataTypeDefs, [], [])
@@ -289,17 +289,17 @@ module Analyze =
                 methods.Add(ExprAnalyze.analyzeMethodCore nameEnv typeEnv methodSid methodDecl))
 
             // impl で確定した基底型情報を HIR.Type へ反映する。
-            let baseTypeBySid =
+            let baseTypeById =
                 dataTypeDefsWithMethods
                 |> Map.toSeq
-                |> Seq.map (fun (_, def) -> def.typeSid.id, (def.baseTypeSid |> Option.map TypeId.Name))
+                |> Seq.map (fun (_, def) -> def.typeSid.id, def.baseType)
                 |> Map.ofSeq
 
             let typedTypes =
                 types
                 |> Seq.toList
                 |> List.map (fun typ ->
-                    let baseTypeOpt = baseTypeBySid |> Map.tryFind typ.sym.id |> Option.flatten
+                    let baseTypeOpt = baseTypeById |> Map.tryFind typ.sym.id |> Option.flatten
                     Hir.Type(typ.sym, baseTypeOpt, typ.fields, typ.methods))
 
             let untypedHirModule =

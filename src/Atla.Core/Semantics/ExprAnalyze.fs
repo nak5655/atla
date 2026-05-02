@@ -98,9 +98,9 @@ module ExprAnalyze =
                 | None ->
                     match dataDefsBySid |> Map.tryFind candidateSid with
                     | Some candidateDef ->
-                        match candidateDef.baseTypeSid with
-                        | Some baseSid -> isSubtypeOfSystemType baseSid expectedSystemType (visited |> Set.add candidateSid.id)
-                        | None -> false
+                        match candidateDef.baseType with
+                        | Some (TypeId.Name baseSid) -> isSubtypeOfSystemType baseSid expectedSystemType (visited |> Set.add candidateSid.id)
+                        | _ -> false
                     | None -> false
 
         let subtypeSatisfied =
@@ -157,12 +157,12 @@ module ExprAnalyze =
                         | Some _ ->
                             Result.Error(sprintf "Undefined instance member '%s' for data type" memberName)
                         | None ->
-                            match currentDef.baseTypeSid with
-                            | Some baseSid ->
+                            match currentDef.baseType with
+                            | Some (TypeId.Name baseSid) ->
                                 match loop baseSid (visited |> Set.add currentSid.id) currentReceiverExpr with
                                 | Result.Ok resolved -> Result.Ok resolved
                                 | Result.Error _ -> tryResolveFromDelegatedField currentDef
-                            | None -> tryResolveFromDelegatedField currentDef
+                            | _ -> tryResolveFromDelegatedField currentDef
 
         and tryResolveFromDelegatedField (currentDef: DataTypeDef) : Result<Hir.Expr, string> =
             match currentDef.delegatedByFieldName with
@@ -278,9 +278,9 @@ module ExprAnalyze =
                     | Some _ ->
                         Result.Error(sprintf "Undefined static member '%s' for data type" memberName)
                     | None ->
-                        match currentDef.baseTypeSid with
-                        | Some baseSid -> loop baseSid (visited |> Set.add currentSid.id)
-                        | None -> Result.Error(sprintf "Undefined static member '%s' for data type" memberName)
+                        match currentDef.baseType with
+                        | Some (TypeId.Name baseSid) -> loop baseSid (visited |> Set.add currentSid.id)
+                        | _ -> Result.Error(sprintf "Undefined static member '%s' for data type" memberName)
 
         loop receiverTypeSid Set.empty
 
@@ -623,9 +623,9 @@ module ExprAnalyze =
                             | None ->
                                 match dataDefsBySidLocal |> Map.tryFind sid with
                                 | Some def ->
-                                    match def.baseTypeSid with
-                                    | Some bs -> isNameSubtypeOfNative bs expectedSysType (vis.Add sid.id)
-                                    | None -> false
+                                    match def.baseType with
+                                    | Some (TypeId.Name bs) -> isNameSubtypeOfNative bs expectedSysType (vis.Add sid.id)
+                                    | _ -> false
                                 | None -> false
                     match resolvedExpected, resolvedActual with
                     | _ when resolvedActual = resolvedExpected -> true

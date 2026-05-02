@@ -356,8 +356,11 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Impl(typeName: string, forTypeName: string option, byFieldName: string option, methods: Fn list, span: Span) =
+        /// `impl TypeName as DotNetClass { methods }` — .NET クラスを継承する形式。
+        /// `asTypeName` が `Some` のとき `forTypeName` と `byFieldName` は常に `None`（パーサーが保証）。
+        type Impl(typeName: string, asTypeName: string option, forTypeName: string option, byFieldName: string option, methods: Fn list, span: Span) =
             member this.typeName = typeName
+            member this.asTypeName = asTypeName
             member this.forTypeName = forTypeName
             member this.byFieldName = byFieldName
             member this.methods = methods

@@ -532,23 +532,39 @@ module Parser =
         )
 
     and implDecl (): PackratParser<Token, Ast.Decl> =
+        // `impl A as B` と `impl A [for Role] [by field]` は相互に排他的な構文。
+        // `as` を検出した場合は .NET 継承形式として処理し、`for`/`by` は禁止する。
         Delay (fun () ->
             block (asToken (keyword "impl"))
                 (Once
-                    (tid <&> Optional (keyword "for" &> tid) <&> Optional (keyword "by" &> tid) <&> Many (asFnDecl (implMethodDecl ())) |>> fun (((typeId, forTypeIdOpt), byFieldIdOpt), methodDecls) ->
-                        let methods =
-                            methodDecls
-                            |> List.choose (fun methodDecl ->
-                                match methodDecl with
-                                | :? Ast.Decl.Fn as fn -> Some fn
-                                | _ -> None)
-                        let rightSpan =
-                            match methods |> List.tryLast with
-                            | Some lastMethod -> lastMethod.span.right
-                            | None -> typeId.span.right
-                        let forTypeName = forTypeIdOpt |> Option.map (fun forTypeId -> forTypeId.str)
-                        let byFieldName = byFieldIdOpt |> Option.map (fun byFieldId -> byFieldId.str)
-                        Ast.Decl.Impl(typeId.str, forTypeName, byFieldName, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl)
+                    ((   // 分岐1: impl A as B（for/by なし）
+                         tid <& keyword "as" <&> tid <&> Many (asFnDecl (implMethodDecl ())) |>> fun ((typeId, asTypeId), methodDecls) ->
+                             let methods =
+                                 methodDecls
+                                 |> List.choose (fun methodDecl ->
+                                     match methodDecl with
+                                     | :? Ast.Decl.Fn as fn -> Some fn
+                                     | _ -> None)
+                             let rightSpan =
+                                 match methods |> List.tryLast with
+                                 | Some lastMethod -> lastMethod.span.right
+                                 | None -> asTypeId.span.right
+                             Ast.Decl.Impl(typeId.str, Some asTypeId.str, None, None, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl)
+                     <|> // 分岐2: 既存構文 impl A [for Role] [by field]
+                         (tid <&> Optional (keyword "for" &> tid) <&> Optional (keyword "by" &> tid) <&> Many (asFnDecl (implMethodDecl ())) |>> fun (((typeId, forTypeIdOpt), byFieldIdOpt), methodDecls) ->
+                             let methods =
+                                 methodDecls
+                                 |> List.choose (fun methodDecl ->
+                                     match methodDecl with
+                                     | :? Ast.Decl.Fn as fn -> Some fn
+                                     | _ -> None)
+                             let rightSpan =
+                                 match methods |> List.tryLast with
+                                 | Some lastMethod -> lastMethod.span.right
+                                 | None -> typeId.span.right
+                             let forTypeName = forTypeIdOpt |> Option.map (fun forTypeId -> forTypeId.str)
+                             let byFieldName = byFieldIdOpt |> Option.map (fun byFieldId -> byFieldId.str)
+                             Ast.Decl.Impl(typeId.str, None, forTypeName, byFieldName, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl))
                     (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
         )
 
