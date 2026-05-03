@@ -98,6 +98,18 @@ module NativeInterop =
             | TypeId.Meta _ -> true
             | _ -> false
 
+        // Atla 側の期待引数型（expectedArg）が .NET パラメータ型（nativeParamType）に代入可能かを判定する。
+        // typeEnv.canUnify は TypeId.String と TypeId.Native typeof<obj> などのプリミティブ vs ネイティブの
+        // 組み合わせを扱えないため、tryToRuntimeSystemType + IsAssignableFrom によるサブタイプチェックも加える。
+        let isArgCompatibleWithNativeParam (expectedArg: TypeId) (nativeParamType: System.Type) : bool =
+            let nativeParamTid = TypeId.fromSystemType nativeParamType
+            if typeEnv.canUnify expectedArg nativeParamTid then
+                true
+            else
+                match TypeId.tryToRuntimeSystemType (typeEnv.resolveType expectedArg) with
+                | Some actualSysType -> nativeParamType.IsAssignableFrom(actualSysType)
+                | None -> false
+
         let exactResult = List<MemberInfo * TypeId>()
         let optionalResult = List<MemberInfo * TypeId>()
         for memberInfo in memberInfos do
@@ -113,7 +125,7 @@ module NativeInterop =
                     if
                         expectedArgs.Length >= requiredParamCount
                         && expectedArgs.Length <= parameters.Length
-                        && List.forall2 (fun expectedArg (parameterInfo: ParameterInfo) -> typeEnv.canUnify expectedArg (TypeId.fromSystemType parameterInfo.ParameterType)) expectedArgs (parameters |> List.take expectedArgs.Length)
+                        && List.forall2 (fun expectedArg (parameterInfo: ParameterInfo) -> isArgCompatibleWithNativeParam expectedArg parameterInfo.ParameterType) expectedArgs (parameters |> List.take expectedArgs.Length)
                         && typeEnv.canUnify expectedRet returnType then
                         if expectedArgs.Length = parameters.Length then
                             exactResult.Add(memberInfo, TypeId.Fn(expectedArgs, returnType))

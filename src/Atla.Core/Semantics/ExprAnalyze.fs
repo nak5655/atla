@@ -110,6 +110,12 @@ module ExprAnalyze =
             | TypeId.Name expectedSid, TypeId.Name actualSid -> nameEnv.isSubtype actualSid expectedSid
             | TypeId.Native expectedSystemType, TypeId.Name actualSid -> isSubtypeOfSystemType actualSid expectedSystemType Set.empty
             | TypeId.Native expectedSystemType, TypeId.Native actualSystemType -> expectedSystemType.IsAssignableFrom(actualSystemType)
+            // Atla プリミティブ型（String, Bool, Int, Float など）を .NET ランタイム型へ変換してサブタイプチェックを行う。
+            // 例: button'Content = label （Content: System.Object, label: String）→ typeof<string>.IsAssignableFrom(typeof<obj>) = true。
+            | TypeId.Native expectedSystemType, _ ->
+                match TypeId.tryToRuntimeSystemType resolvedActual with
+                | Some actualSystemType -> expectedSystemType.IsAssignableFrom(actualSystemType)
+                | None -> false
             | _ -> false
 
         if isNativeVoid typeEnv actual && not (isUnitContext typeEnv expected) then
@@ -669,6 +675,12 @@ module ExprAnalyze =
                         isNameSubtypeOfNative actualSid expectedSysType Set.empty
                     | TypeId.Native expectedSysType, TypeId.Native actualSysType ->
                         expectedSysType.IsAssignableFrom(actualSysType)
+                    // Atla プリミティブ型（String, Bool, Int, Float など）を .NET ランタイム型へ変換してサブタイプチェックを行う。
+                    // 例: isSubtypeCompatible TypeId.String (TypeId.Native typeof<System.Object>) → true。
+                    | TypeId.Native expectedSysType, _ ->
+                        match TypeId.tryToRuntimeSystemType resolvedActual with
+                        | Some actualSysType -> expectedSysType.IsAssignableFrom(actualSysType)
+                        | None -> typeEnv.canUnify actualType expectedType
                     | _ -> typeEnv.canUnify actualType expectedType
 
                 // method 候補が実引数型と期待戻り型に適合するか判定する。

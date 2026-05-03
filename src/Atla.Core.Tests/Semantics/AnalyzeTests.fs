@@ -1826,6 +1826,44 @@ fn addSubtype: () = do
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
+    /// プロパティの型が System.Object であっても String 値を代入できることを検証する。
+    /// Content プロパティ（obj 型）へ String を設定するケースで
+    /// "Cannot unify types: System.Object and string" が出なくなることを確認する。
+    [<Fact>]
+    let ``property assignment of String to System.Object typed property succeeds`` () =
+        let program = """
+import System'Collections'ArrayList
+
+fn test: () = do
+    let list = ArrayList.
+    let s = "hello"
+    let _ = s list'Add.
+    ()
+"""
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule() tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "ArrayList.Add に String（System.Object のサブタイプ）を渡す解析が失敗してはならない。")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun err -> err.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
     /// `Hir.Method.args` が宣言順で引数を保持することを検証する。
     [<Fact>]
     let ``Hir.Method.args preserves parameter declaration order`` () =
