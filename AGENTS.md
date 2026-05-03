@@ -45,21 +45,21 @@ All changes must preserve semantic equivalence across lowering stages and keep p
 - Phase functions must be total on valid input domains.
 
 ### Change policy (AI execution priority)
-- Backward compatibility is not required. Breaking changes are explicitly allowed when they improve correctness, architecture, or maintainability.
+- Backward compatibility must not be preserved. Prefer breaking changes whenever they improve correctness, architecture, maintainability, or simplification.
+- Do not add compatibility layers, migration shims, dual behavior flags, or deprecated paths to preserve old behavior.
 - If current code contains defects or structurally inappropriate responsibilities, better designs/proposals must be prioritized and may replace existing implementations.
 - Any code made obsolete by breaking changes must be deleted. Do not leave dead paths, compatibility shims, or unused branches behind.
 
 ---
 
-## 3) Execution Plan Workflow (Required per change)
+## 3) Execution Workflow (Required per change)
 
-1. **Plan first**: update `PLANS.md` before implementation.
-2. **Small unit**: implement the smallest coherent unit.
-3. **Test**: add/update tests for transformation boundaries and regressions.
-4. **Validate**: run full test suite.
-5. **Document**: update docs for any user-visible or invariant-impacting change.
-6. **Preserve comments**: do not remove comments from unchanged blocks.
-7. **Add comments**: document every function and major processing block.
+1. **Small unit**: implement the smallest coherent unit.
+2. **Test**: add/update tests for transformation boundaries and correctness.
+3. **Validate**: run full test suite.
+4. **Document**: update docs for any user-visible or invariant-impacting change.
+5. **Preserve comments**: do not remove comments from unchanged blocks.
+6. **Add comments**: document every function and major processing block.
 
 ### Change-control rule
 - If a task appears to require edits to `src/Atla.Core/Syntax/Lexer.fs` or `src/Atla.Core/Syntax/Parser.fs`, request explicit confirmation before changing them.
@@ -72,6 +72,7 @@ All changes must preserve semantic equivalence across lowering stages and keep p
 - Snapshot tests for AST/HIR/MIR representations are required.
 - Tests must verify both successful lowering and expected diagnostics.
 - Every bug fix requires a regression test.
+- Regression tests are **not required** for intentional specification changes; instead, update or replace existing tests to match the new specification and invariants.
 
 ---
 
