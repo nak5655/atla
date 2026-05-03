@@ -67,7 +67,7 @@ fn main: () =
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -128,7 +128,7 @@ fn keep (xs: Array String): Array String = xs
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -178,7 +178,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -255,7 +255,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let astSnapshot =
                     match moduleAst.decls with
@@ -636,7 +636,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 // AST スナップショット: 引数名の確認。
                 match moduleAst.decls with
@@ -693,7 +693,7 @@ fn bad (): Int = undefinedVar
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()

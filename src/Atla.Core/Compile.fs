@@ -71,7 +71,7 @@ module Compiler =
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) -> Ok moduleAst
             | Failure (reason, span) -> Result.Error [ Diagnostic.Error($"Parsing failed in module '{moduleName}': {reason}", span) ]
         | Failure (reason, span) ->

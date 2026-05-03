@@ -12,7 +12,7 @@ module ParserTests =
         match Lexer.tokenize input Position.Zero with
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
-            Parser.fileModule() tokenInput tokens.Head.span.left
+            Parser.fileModule tokenInput tokens.Head.span.left
         | Failure (reason, span) ->
             Failure ($"Lexing failed: {reason}", span)
 

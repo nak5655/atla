@@ -77,7 +77,7 @@ fn main (): Int = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -129,7 +129,7 @@ fn makePoint (): Point = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -175,7 +175,7 @@ fn makePoint (): Point = do
             | Success (tokens, _) ->
                 let tokenInput = TokenInput(tokens)
                 let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-                match Parser.fileModule() tokenInput start with
+                match Parser.fileModule tokenInput start with
                 | Success (moduleAst, _) ->
                     let symbolTable = SymbolTable()
                     let subst = TypeSubst()
@@ -243,7 +243,7 @@ fn main (): () = "hello" Console'WriteLine.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -286,7 +286,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -467,7 +467,7 @@ impl B for A
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -498,7 +498,7 @@ fn close (b: Box): () = b'Dispose.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -535,7 +535,7 @@ impl DateTime for Clock by dt
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -569,7 +569,7 @@ impl Shape for Writer
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -602,7 +602,7 @@ impl Line
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -635,7 +635,7 @@ impl Line for Reader
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -667,7 +667,7 @@ impl Resource as IDisposable
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -699,7 +699,7 @@ impl Token as Math
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -730,7 +730,7 @@ impl Widget as UnknownBase
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -793,7 +793,7 @@ fn main (): Int = 1 2 3 add3.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -836,7 +836,7 @@ fn main (): Int = ping.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -955,7 +955,7 @@ fn main: () =
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1000,7 +1000,7 @@ fn main: () =
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1125,7 +1125,7 @@ fn main: () = greet.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1160,7 +1160,7 @@ fn main: () = () greet.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1193,7 +1193,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1229,7 +1229,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1264,7 +1264,7 @@ fn appendExclamation (sb: StringBuilder): () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1300,7 +1300,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1328,7 +1328,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1369,7 +1369,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1409,7 +1409,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1459,7 +1459,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1492,7 +1492,7 @@ fn main (): Int = Activator'CreateInstance[Int].
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1525,7 +1525,7 @@ fn createBuilder (): StringBuilder = StringBuilder.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1565,7 +1565,7 @@ fn main (): () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1600,7 +1600,7 @@ fn main (): () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1636,7 +1636,7 @@ fn main (): () = do
             | Success (tokens, _) ->
                 let tokenInput = TokenInput(tokens)
                 let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-                match Parser.fileModule() tokenInput start with
+                match Parser.fileModule tokenInput start with
                 | Success (moduleAst, _) ->
                     let symbolTable = SymbolTable()
                     let subst = TypeSubst()
@@ -1667,7 +1667,7 @@ fn addTen (): () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1701,7 +1701,7 @@ fn apply (f: Int -> Int) (x: Int): Int = x
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let decl = moduleAst.decls.Head :?> Ast.Decl.Fn
                 let firstArg = decl.args.Head :?> Ast.FnArg.Named
@@ -1723,7 +1723,7 @@ fn apply (f: Int -> Int) (x: Int): Int = x f.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1754,7 +1754,7 @@ fn apply (f: Int -> Int) (x: Int): Int = x f.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1836,7 +1836,7 @@ fn addSubtype: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1874,7 +1874,7 @@ fn test: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1904,7 +1904,7 @@ fn apply (f: Int -> Int) (x: Int): Int = x f.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -1974,7 +1974,7 @@ fn bad (): Int = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -2175,7 +2175,7 @@ fn main (): Int = MyClass.
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -2209,7 +2209,7 @@ fn main (): Float = 2.0 * 3.0 + 1.0
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
             | Success (moduleAst, _) ->
@@ -2251,7 +2251,7 @@ fn main: () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
             | Success (moduleAst, _) ->
@@ -2291,7 +2291,7 @@ fn main (): () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
             | Success (moduleAst, _) ->
@@ -2385,7 +2385,7 @@ fn getMessage (e: MyError): String = e'Message
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -2427,7 +2427,7 @@ fn setLink (e: MyError): () = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -2467,7 +2467,7 @@ fn bad (e: MyError): String = e'NonExistentMember
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -2492,7 +2492,7 @@ fn bad (e: MyError): String = e'NonExistentMember
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) -> Ok (moduleName, astModule)
             | Failure (reason, _) -> Result.Error (sprintf "Parsing failed in '%s': %s" moduleName reason)
         | Failure (reason, _) -> Result.Error (sprintf "Lexing failed in '%s': %s" moduleName reason)
@@ -2749,7 +2749,7 @@ fn test (): String = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
@@ -2794,7 +2794,7 @@ fn test (): ExceptionDispatchInfo = do
         | Success (tokens, _) ->
             let tokenInput = TokenInput(tokens)
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
-            match Parser.fileModule() tokenInput start with
+            match Parser.fileModule tokenInput start with
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()

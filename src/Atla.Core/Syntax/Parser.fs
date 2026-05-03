@@ -1,5 +1,9 @@
 namespace Atla.Core.Syntax
 
+// FS0040: 相互再帰する値定義の初期化健全性チェックの警告を抑制する。
+// Memo コンビネータがクロージャをすぐに評価しないため、実行時に問題は発生しない。
+#nowarn "40"
+
 open Atla.Core.Data
 open Atla.Core.Syntax.Data
 open Atla.Core.Syntax.Combinators
@@ -112,54 +116,61 @@ module Parser =
             | :? Token.Keyword as kw when kw.str = "False" -> Some(Ast.Expr.Bool(false, kw.span))
             | _ -> None)
     let unit: PackratParser<Token, Ast.Expr> = delim '(' <&> delim ')' |>> fun (l, r) -> Ast.Expr.Unit({ left = l.span.left; right = r.span.right })
-    let rec paren (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> 
-            delim '(' &> expr () <& delim ')'
+
+    // 各パーサを安定した値（let rec ... and ...）として定義し、Memo で包む。
+    // これにより各パーサルールは解析セッション全体を通じて単一のメモテーブルを持ち、
+    // 同じ入力・同一位置への繰り返し呼び出しが即座にキャッシュから返される（パックラット解析）。
+    // 相互再帰は let rec ... and ... で処理される。クロージャ内では
+    // 他のパーサを即座に評価せず、解析呼び出し時まで遅延させるため、
+    // 全バインディング初期化後の値として正しく参照される。
+    let rec paren: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            (delim '(' &> expr <& delim ')') input pos
         )
-    and doExpr (): PackratParser<Token, Ast.Expr> = 
-        Delay (fun () -> 
-            block (asToken (keyword "do")) (Once ((Many1 (stmt ()) |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right })) <& Eoi) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr))
+    and doExpr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            block (asToken (keyword "do")) (Once ((Many1 stmt |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right })) <& Eoi) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)) input pos
         )
 
     // if式
-    and ifThen (): PackratParser<Token, Ast.IfBranch> =
-        Delay (fun () ->
-            block (asToken (symbol "|")) (expr() <& keyword "=>" <&> (Once (expr()) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (cond, body) -> Ast.IfBranch.Then(cond, body, { left = cond.span.left; right = body.span.right }))
+    and ifThen: PackratParser<Token, Ast.IfBranch> =
+        Memo (fun input pos ->
+            block (asToken (symbol "|")) (expr <& keyword "=>" <&> (Once expr (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (cond, body) -> Ast.IfBranch.Then(cond, body, { left = cond.span.left; right = body.span.right })) input pos
         )
 
-    and ifElse (): PackratParser<Token, Ast.IfBranch> =
-        Delay (fun () ->
-            block (asToken (symbol "|")) (keyword "else" &> keyword "=>" &> (Once (expr()) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (body) -> Ast.IfBranch.Else(body, body.span))
+    and ifElse: PackratParser<Token, Ast.IfBranch> =
+        Memo (fun input pos ->
+            block (asToken (symbol "|")) (keyword "else" &> keyword "=>" &> (Once expr (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (body) -> Ast.IfBranch.Else(body, body.span)) input pos
         )
 
-    and ifExpr (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            block (asToken (keyword "if")) (Once (Many1 (ifThen ()) <&> (ifElse ()) |>> fun (branches, elseBranch) -> Ast.Expr.If(branches @ [elseBranch], { left = branches.Head.span.left; right = (List.last branches).span.right })) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr))
+    and ifExpr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            block (asToken (keyword "if")) (Once (Many1 ifThen <&> ifElse |>> fun (branches, elseBranch) -> Ast.Expr.If(branches @ [elseBranch], { left = branches.Head.span.left; right = (List.last branches).span.right })) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)) input pos
         )
 
     // 項
-    and dataInitField (): PackratParser<Token, Ast.DataInitField> =
-        Delay (fun () ->
-            tid <& symbol "=" <&> expr ()
+    and dataInitField: PackratParser<Token, Ast.DataInitField> =
+        Memo (fun input pos ->
+            (tid <& symbol "=" <&> expr
             |>> fun (fieldId, fieldValue) ->
-                Ast.DataInitField.Field(fieldId.str, fieldValue, { left = fieldId.span.left; right = fieldValue.span.right }) :> Ast.DataInitField
+                Ast.DataInitField.Field(fieldId.str, fieldValue, { left = fieldId.span.left; right = fieldValue.span.right }) :> Ast.DataInitField) input pos
         )
 
     // `TypeName { field = value, ... }` 形式の data 初期化式を解析する。
-    and dataInitExpr (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            tid <& delim '{' <&> SepBy1 (dataInitField ()) (delim ',') <&> delim '}'
+    and dataInitExpr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            (tid <& delim '{' <&> SepBy1 dataInitField (delim ',') <&> delim '}'
             |>> fun ((typeId, fields), closeBrace) ->
-                Ast.Expr.DataInit(typeId.str, fields, { left = typeId.span.left; right = closeBrace.span.right }) :> Ast.Expr
+                Ast.Expr.DataInit(typeId.str, fields, { left = typeId.span.left; right = closeBrace.span.right }) :> Ast.Expr) input pos
         )
 
-    and factor (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> 
-            unit <|> paren () <|> ifExpr () <|> doExpr () <|> dataInitExpr () <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool)
+    and factor: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            (unit <|> paren <|> ifExpr <|> doExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool)) input pos
         )
 
-    and postfixMemberAccess (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
-        Delay (fun () -> fun input pos ->
+    and postfixMemberAccess: PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
+        Memo (fun input pos ->
             match (delim '\'') input pos with
             | Failure (reason, span) -> Failure (reason, span)
             | Success (quote, afterQuotePos) ->
@@ -177,36 +188,36 @@ module Parser =
         )
 
     // 型引数付き呼び出しの postfix を受理する（例: receiver[Application]）。
-    and postfixGenericApply (): PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
-        Delay (fun () ->
-            delim '[' &> SepBy1 (typeExpr ()) (delim ',') <&> delim ']' |>> fun (typeArgs, closeBracket) ->
+    and postfixGenericApply: PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
+        Memo (fun input pos ->
+            (delim '[' &> SepBy1 typeExpr (delim ',') <&> delim ']' |>> fun (typeArgs, closeBracket) ->
                 fun receiver ->
-                    Ast.Expr.GenericApply(receiver, typeArgs, { left = receiver.span.left; right = closeBracket.span.right }) :> Ast.Expr
+                    Ast.Expr.GenericApply(receiver, typeArgs, { left = receiver.span.left; right = closeBracket.span.right }) :> Ast.Expr) input pos
         )
 
-    and postfixExpr (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            (factor ()) <&> Many (postfixMemberAccess () <|> postfixGenericApply ())
-            |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes
+    and postfixExpr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            (factor <&> Many (postfixMemberAccess <|> postfixGenericApply)
+            |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes) input pos
         )
 
     // 代入左辺として許可される式を解析する。
     // 許可: 識別子、アポストロフィによるメンバーアクセス連鎖（例: a'b'c）。
     // 非許可: 呼び出し結果、リテラル、型引数適用、添字アクセス。
-    and assignLValueExpr (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            (asExpr id) <&> Many (postfixMemberAccess ())
-            |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes
+    and assignLValueExpr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            ((asExpr id) <&> Many postfixMemberAccess
+            |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes) input pos
         )
 
     // 単項マイナスを解析し、AST の既存 Apply 形状へ正規化する。
     // - 負の数値リテラルは literal 値へ直接畳み込む。
     // - それ以外の `-expr` は `0 - expr` 呼び出し形へ変換する。
-    and unaryTerm (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> fun input pos ->
+    and unaryTerm: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
             match (symbol "-") input pos with
             | Success (minusToken, afterMinusPos) ->
-                match unaryTerm () input afterMinusPos with
+                match unaryTerm input afterMinusPos with
                 | Success (operandExpr, nextPos) ->
                     match operandExpr with
                     | :? Ast.Expr.Int as intExpr ->
@@ -223,21 +234,21 @@ module Parser =
                         Success (negatedExpr, nextPos)
                 | Failure (reason, span) -> Failure (reason, span)
             | Failure _ ->
-                postfixExpr () input pos
+                postfixExpr input pos
         )
 
     // 呼び出し式の項
-    and term1 (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
+    and term1: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
             // TODO: 将来的には `!!` を通常の演算子解決（Id("!!") 経由）へ統一し、
             //       term1 での IndexAccess 特別扱いを削除する。
-            unaryTerm () <&> Optional (symbol "!!" &> unaryTerm ())
+            (unaryTerm <&> Optional (symbol "!!" &> unaryTerm)
             |>> fun (receiver, optIndex) ->
                 match optIndex with
                 | Some index ->
                     Ast.Expr.IndexAccess(receiver, index, { left = receiver.span.left; right = index.span.right }) :> Ast.Expr
                 | None ->
-                    receiver
+                    receiver) input pos
         )
 
     // Dot-only 呼び出し式を解析する。
@@ -248,9 +259,9 @@ module Parser =
     // - `a b f.` は `f(a, b)` に正規化される。
     // - `x f. g.` は `g(f(x))` に正規化される。
     // - `x f` / `a b f` は parse error（callee の直後に `.` 必須）。
-    and term2 (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> fun input pos ->
-            match term1 () input pos with
+    and term2: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            match term1 input pos with
             | Failure (reason, span) -> Failure (reason, span)
             | Success (head, afterHeadPos) ->
                 // 同一インデントの次文を誤って取り込まないよう、head 開始位置を基準に可視範囲を制限する。
@@ -273,7 +284,7 @@ module Parser =
                             | Some (:? Token.Symbol as sym) when sym.str <> "!!" && sym.str <> "." ->
                                 List.rev acc, tailPos
                             | _ ->
-                                match term1 () callInput tailPos with
+                                match term1 callInput tailPos with
                                 | Success (parsed, nextPos) -> collectTailTerms nextPos (parsed :: acc)
                                 | Failure _ -> List.rev acc, tailPos
 
@@ -301,15 +312,15 @@ module Parser =
         )
 
     // 二項演算
-    and binopExpr (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            List.fold (fun acc prec -> 
+    and binopExpr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            (List.fold (fun acc prec -> 
                 let op = infixOp prec
                 acc <&> (Optional (op <&> acc)) |>> fun (left, opt) -> 
                     match opt with
-                    | Some (op, right) -> Ast.Expr.Apply (Ast.Expr.Id(op.str, op.span), [left; right], { left = left.span.left; right = right.span.right })
+                    | Some (op, right) -> Ast.Expr.Apply (Ast.Expr.Id(op.str, op.span), [left; right], { left = left.span.left; right = right.span.right }) :> Ast.Expr
                     | None -> left
-            ) (term2 ()) [9 .. -1 .. 0]
+            ) term2 [9 .. -1 .. 0]) input pos
         )
 
     // lambda 引数名の重複を検証し、最初に見つかった重複名を返す。
@@ -327,8 +338,8 @@ module Parser =
     // - 引数は Id の並び、または明示ユニット引数 `()` のみを許可する。
     // - `fn -> expr` は空引数エラーとして Ast.Expr.Error を返す。
     // - 引数重複は Ast.Expr.Error を返す。
-    and lambdaExpr (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> fun input pos ->
+    and lambdaExpr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
             match (keyword "fn") input pos with
             | Failure (reason, span) -> Failure (reason, span)
             | Success (fnKw, afterFnPos) ->
@@ -350,7 +361,7 @@ module Parser =
                 match (keyword "->") lambdaInput afterArgsPos with
                 | Failure (reason, span) -> Failure (reason, span)
                 | Success (_, afterArrowPos) ->
-                    match (expr ()) lambdaInput afterArrowPos with
+                    match expr lambdaInput afterArrowPos with
                     | Failure (msg, span) ->
                         Success (Ast.Expr.Error(msg, span) :> Ast.Expr, afterArrowPos)
                     | Success (bodyExpr, nextPos) ->
@@ -366,30 +377,40 @@ module Parser =
                                 Success (Ast.Expr.Lambda(argNames, bodyExpr, lambdaSpan) :> Ast.Expr, nextPos)
         )
 
-    and expr (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> 
-            lambdaExpr () <|> binopExpr ()
+    and expr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            (lambdaExpr <|> binopExpr) input pos
         )
 
     // 文
-    and letStmt (): PackratParser<Token, Ast.Stmt> =
-        block (asToken (keyword "let")) (Once (tid <& symbol "=" <&> expr() |>> fun (id, rhs) -> Ast.Stmt.Let (id.str, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt))
+    and letStmt: PackratParser<Token, Ast.Stmt> =
+        Memo (fun input pos ->
+            block (asToken (keyword "let")) (Once (tid <& symbol "=" <&> expr |>> fun (id, rhs) -> Ast.Stmt.Let (id.str, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt)) input pos
+        )
 
-    and varStmt (): PackratParser<Token, Ast.Stmt> =
-        block (asToken (keyword "var")) (Once (tid <& symbol "=" <&> expr() |>> fun (id, rhs) -> Ast.Stmt.Var (id.str, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt))
+    and varStmt: PackratParser<Token, Ast.Stmt> =
+        Memo (fun input pos ->
+            block (asToken (keyword "var")) (Once (tid <& symbol "=" <&> expr |>> fun (id, rhs) -> Ast.Stmt.Var (id.str, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt)) input pos
+        )
 
-    and assignStmt (): PackratParser<Token, Ast.Stmt> =
-        assignLValueExpr () <& symbol "=" <&> expr()
-        |>> fun (target, rhs) -> Ast.Stmt.Assign (target, rhs, { left = target.span.left; right = rhs.span.right })
+    and assignStmt: PackratParser<Token, Ast.Stmt> =
+        Memo (fun input pos ->
+            (assignLValueExpr <& symbol "=" <&> expr
+            |>> fun (target, rhs) -> Ast.Stmt.Assign (target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt) input pos
+        )
 
-    and exprStmt (): PackratParser<Token, Ast.Stmt> =
-        expr() |>> fun e -> Ast.Stmt.ExprStmt (e, e.span)
+    and exprStmt: PackratParser<Token, Ast.Stmt> =
+        Memo (fun input pos ->
+            (expr |>> fun e -> Ast.Stmt.ExprStmt (e, e.span) :> Ast.Stmt) input pos
+        )
 
-    and returnStmt (): PackratParser<Token, Ast.Stmt> =
-        keyword "return" &> expr() |>> fun e -> Ast.Stmt.Return (e, e.span)
+    and returnStmt: PackratParser<Token, Ast.Stmt> =
+        Memo (fun input pos ->
+            (keyword "return" &> expr |>> fun e -> Ast.Stmt.Return (e, e.span) :> Ast.Stmt) input pos
+        )
 
-    and forStmt (): PackratParser<Token, Ast.Stmt> =
-        Delay (fun () -> fun input pos ->
+    and forStmt: PackratParser<Token, Ast.Stmt> =
+        Memo (fun input pos ->
             match (keyword "for") input pos with
             | Success (forKw, afterForPos) ->
                 let bodyInput = BlockInput(input, forKw.span.left) :> Input<Token>
@@ -400,14 +421,14 @@ module Parser =
                     | Success (_, afterInPos) ->
                         let iterableInput = LineInput(bodyInput, forKw.span.left.Line) :> Input<Token>
 
-                        match expr () iterableInput afterInPos with
+                        match expr iterableInput afterInPos with
                         | Success (iterable, afterIterablePos) ->
                             let bodyStartPos =
                                 match (keyword "=>") bodyInput afterIterablePos with
                                 | Success (_, afterArrowPos) -> afterArrowPos
                                 | Failure _ -> afterIterablePos
 
-                            match Many1 (stmt ()) bodyInput bodyStartPos with
+                            match Many1 stmt bodyInput bodyStartPos with
                             | Success (bodyStmts, nextPos) ->
                                 Success (Ast.Stmt.For(id.str, iterable, bodyStmts, { left = id.span.left; right = (List.last bodyStmts).span.right }) :> Ast.Stmt, nextPos)
                             | Failure (msg, span) ->
@@ -421,30 +442,30 @@ module Parser =
             | Failure (reason, span) -> Failure (reason, span)
         )
 
-    and stmt (): PackratParser<Token, Ast.Stmt> =
-        Delay (fun () -> 
-            letStmt() <|> varStmt() <|> returnStmt() <|> forStmt() <|> assignStmt() <|> exprStmt()
+    and stmt: PackratParser<Token, Ast.Stmt> =
+        Memo (fun input pos ->
+            (letStmt <|> varStmt <|> returnStmt <|> forStmt <|> assignStmt <|> exprStmt) input pos
         )
 
-    and typeExprUnit (): PackratParser<Token, Ast.TypeExpr> =
-        Delay (fun () ->
-            delim '(' <&> delim ')' |>> fun (l,r) -> Ast.TypeExpr.Unit ({ left = l.span.left; right = r.span.right })
+    and typeExprUnit: PackratParser<Token, Ast.TypeExpr> =
+        Memo (fun input pos ->
+            (delim '(' <&> delim ')' |>> fun (l,r) -> Ast.TypeExpr.Unit ({ left = l.span.left; right = r.span.right }) :> Ast.TypeExpr) input pos
         )
 
-    and typeExprId (): PackratParser<Token, Ast.TypeExpr> =
-        Delay (fun () ->
-            tid |>> fun id -> Ast.TypeExpr.Id (id.str, id.span)
+    and typeExprId: PackratParser<Token, Ast.TypeExpr> =
+        Memo (fun input pos ->
+            (tid |>> fun id -> Ast.TypeExpr.Id (id.str, id.span) :> Ast.TypeExpr) input pos
         )
         
-    and typeExprAtom (): PackratParser<Token, Ast.TypeExpr> =
-        Delay (fun () ->
-            (asTypeExpr (typeExprUnit ())) <|> (asTypeExpr (typeExprId ()))
+    and typeExprAtom: PackratParser<Token, Ast.TypeExpr> =
+        Memo (fun input pos ->
+            ((asTypeExpr typeExprUnit) <|> (asTypeExpr typeExprId)) input pos
         )
 
     // 空白区切りの型適用（例: Array String）を左結合で畳み込む。
-    and typeExprApply (): PackratParser<Token, Ast.TypeExpr> =
-        Delay (fun () ->
-            Many1 (typeExprAtom ())
+    and typeExprApply: PackratParser<Token, Ast.TypeExpr> =
+        Memo (fun input pos ->
+            (Many1 typeExprAtom
             |>> fun typeExprs ->
                 match typeExprs with
                 | [] ->
@@ -452,93 +473,93 @@ module Parser =
                     failwith "type expression list must not be empty"
                 | head :: [] -> head
                 | head :: tail ->
-                    Ast.TypeExpr.Apply(head, tail, { left = head.span.left; right = (List.last tail).span.right }) :> Ast.TypeExpr
+                    Ast.TypeExpr.Apply(head, tail, { left = head.span.left; right = (List.last tail).span.right }) :> Ast.TypeExpr) input pos
         )
 
     // 関数型（例: Int -> Int）を右結合でパースする。
     // typeExpr := typeExprApply ('->' typeExpr)?
-    and typeExpr (): PackratParser<Token, Ast.TypeExpr> =
-        Delay (fun () ->
-            typeExprApply () <&> Optional (keyword "->" &> typeExpr ())
+    and typeExpr: PackratParser<Token, Ast.TypeExpr> =
+        Memo (fun input pos ->
+            (typeExprApply <&> Optional (keyword "->" &> typeExpr)
             |>> fun (argType, retOpt) ->
                 match retOpt with
                 | None -> argType
                 | Some retType ->
-                    Ast.TypeExpr.Arrow(argType, retType, { left = argType.span.left; right = retType.span.right }) :> Ast.TypeExpr
+                    Ast.TypeExpr.Arrow(argType, retType, { left = argType.span.left; right = retType.span.right }) :> Ast.TypeExpr) input pos
         )
 
     // データ宣言
-    and dataField (): PackratParser<Token, Ast.DataItem.Field> =
-        Delay (fun () ->
-            tid <& delim ':' <&> typeExpr() |>> fun (id, typeExpr) -> Ast.DataItem.Field (id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right })
+    and dataField: PackratParser<Token, Ast.DataItem.Field> =
+        Memo (fun input pos ->
+            (tid <& delim ':' <&> typeExpr |>> fun (id, typeExpr) -> Ast.DataItem.Field (id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right })) input pos
         )
 
-    and dataItem (): PackratParser<Token, Ast.DataItem> =
-        Delay (fun () ->
-            (asDataItem (dataField ()))
+    and dataItem: PackratParser<Token, Ast.DataItem> =
+        Memo (fun input pos ->
+            (asDataItem dataField) input pos
         )
 
-    and dataDecl (): PackratParser<Token, Ast.Decl> =
-        Delay (fun () ->
-            keyword "data"
+    and dataDecl: PackratParser<Token, Ast.Decl> =
+        Memo (fun input pos ->
+            (keyword "data"
             &> Once (
-                tid <& symbol "=" <& delim '{' <&> SepBy1 (dataItem ()) (delim ',') <&> delim '}'
+                tid <& symbol "=" <& delim '{' <&> SepBy1 dataItem (delim ',') <&> delim '}'
                 |>> fun ((id, items), closeBrace) ->
-                    Ast.Decl.Data (id.str, items, { left = id.span.left; right = closeBrace.span.right })
-            ) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)
+                    Ast.Decl.Data (id.str, items, { left = id.span.left; right = closeBrace.span.right }) :> Ast.Decl
+            ) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)) input pos
         )
 
     // インポート宣言
-    and importDecl (): PackratParser<Token, Ast.Decl> =
-        Delay (fun () ->
-            block (asToken (keyword "import")) (Once (SepBy1 tid (delim '\'') |>> fun ids -> Ast.Decl.Import (ids |> List.map (fun id -> id.str), { left = ids.Head.span.left; right = (List.last ids).span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+    and importDecl: PackratParser<Token, Ast.Decl> =
+        Memo (fun input pos ->
+            block (asToken (keyword "import")) (Once (SepBy1 tid (delim '\'') |>> fun ids -> Ast.Decl.Import (ids |> List.map (fun id -> id.str), { left = ids.Head.span.left; right = (List.last ids).span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)) input pos
         )
 
     // 関数宣言
-    and fnArgNamed (): PackratParser<Token, Ast.FnArg> =
-        Delay (fun () ->
-            delim '(' &> valueIdent <& delim ':' <&> typeExpr() <& delim ')' |>> fun ((name, nameSpan), typeExpr) -> Ast.FnArg.Named(name, typeExpr, { left = nameSpan.left; right = typeExpr.span.right })
+    and fnArgNamed: PackratParser<Token, Ast.FnArg> =
+        Memo (fun input pos ->
+            (delim '(' &> valueIdent <& delim ':' <&> typeExpr <& delim ')' |>> fun ((name, nameSpan), typeExpr) -> Ast.FnArg.Named(name, typeExpr, { left = nameSpan.left; right = typeExpr.span.right }) :> Ast.FnArg) input pos
         )
 
-    and fnArgUnit (): PackratParser<Token, Ast.FnArg> =
-        Delay (fun () ->
-            delim '(' <&> delim ')' |>> fun (l,r) -> Ast.FnArg.Unit { left = l.span.left; right = r.span.right }
+    and fnArgUnit: PackratParser<Token, Ast.FnArg> =
+        Memo (fun input pos ->
+            (delim '(' <&> delim ')' |>> fun (l,r) -> Ast.FnArg.Unit { left = l.span.left; right = r.span.right } :> Ast.FnArg) input pos
         )
 
-    and fnArg (): PackratParser<Token, Ast.FnArg> =
-        Delay (fun () ->
-            fnArgUnit () <|> fnArgNamed ()
+    and fnArg: PackratParser<Token, Ast.FnArg> =
+        Memo (fun input pos ->
+            (fnArgUnit <|> fnArgNamed) input pos
         )
 
-    and fnBodyExpr (): PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            (expr ())
-            <|> (stmt () |>> fun singleStmt -> Ast.Expr.Block([singleStmt], { left = singleStmt.span.left; right = singleStmt.span.right }) :> Ast.Expr)
+    and fnBodyExpr: PackratParser<Token, Ast.Expr> =
+        Memo (fun input pos ->
+            (expr
+            <|> (stmt |>> fun singleStmt -> Ast.Expr.Block([singleStmt], { left = singleStmt.span.left; right = singleStmt.span.right }) :> Ast.Expr)) input pos
         )
 
-    and fnDecl (): PackratParser<Token, Ast.Decl> =
-        Delay (fun () ->
-            block (asToken (keyword "fn")) (Once (tid <&> Many (fnArg ()) <& delim ':' <&> typeExpr () <& symbol "=" <&> fnBodyExpr () |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+    and fnDecl: PackratParser<Token, Ast.Decl> =
+        Memo (fun input pos ->
+            block (asToken (keyword "fn")) (Once (tid <&> Many fnArg <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)) input pos
         )
 
-    and implMethodDecl (): PackratParser<Token, Ast.Decl.Fn> =
-        Delay (fun () ->
+    and implMethodDecl: PackratParser<Token, Ast.Decl.Fn> =
+        Memo (fun input pos ->
             block (asToken (keyword "fn"))
                     (Once
-                    (tid <&> Many (fnArg ()) <& delim ':' <&> typeExpr () <& symbol "=" <&> fnBodyExpr ()
+                    (tid <&> Many fnArg <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr
                      |>> fun (((id, args), ret), body) -> Ast.Decl.Fn(id.str, args, ret, body, { left = id.span.left; right = body.span.right }))
                     (fun (msg, span) ->
-                        Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), span)))
+                        Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), span))) input pos
         )
 
-    and implDecl (): PackratParser<Token, Ast.Decl> =
+    and implDecl: PackratParser<Token, Ast.Decl> =
         // `impl A as B` と `impl A [for Role] [by field]` は相互に排他的な構文。
         // `as` を検出した場合は .NET 継承形式として処理し、`for`/`by` は禁止する。
-        Delay (fun () ->
+        Memo (fun input pos ->
             block (asToken (keyword "impl"))
                 (Once
                     ((   // 分岐1: impl A as B（for/by なし）
-                         tid <& keyword "as" <&> tid <&> Many (asFnDecl (implMethodDecl ())) |>> fun ((typeId, asTypeId), methodDecls) ->
+                         tid <& keyword "as" <&> tid <&> Many (asFnDecl implMethodDecl) |>> fun ((typeId, asTypeId), methodDecls) ->
                              let methods =
                                  methodDecls
                                  |> List.choose (fun methodDecl ->
@@ -551,7 +572,7 @@ module Parser =
                                  | None -> asTypeId.span.right
                              Ast.Decl.Impl(typeId.str, Some asTypeId.str, None, None, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl)
                      <|> // 分岐2: 既存構文 impl A [for Role] [by field]
-                         (tid <&> Optional (keyword "for" &> tid) <&> Optional (keyword "by" &> tid) <&> Many (asFnDecl (implMethodDecl ())) |>> fun (((typeId, forTypeIdOpt), byFieldIdOpt), methodDecls) ->
+                         (tid <&> Optional (keyword "for" &> tid) <&> Optional (keyword "by" &> tid) <&> Many (asFnDecl implMethodDecl) |>> fun (((typeId, forTypeIdOpt), byFieldIdOpt), methodDecls) ->
                              let methods =
                                  methodDecls
                                  |> List.choose (fun methodDecl ->
@@ -565,16 +586,16 @@ module Parser =
                              let forTypeName = forTypeIdOpt |> Option.map (fun forTypeId -> forTypeId.str)
                              let byFieldName = byFieldIdOpt |> Option.map (fun byFieldId -> byFieldId.str)
                              Ast.Decl.Impl(typeId.str, None, forTypeName, byFieldName, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl))
-                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)) input pos
         )
 
-    and decl (): PackratParser<Token, Ast.Decl> =
-        Delay (fun () ->
-            dataDecl () <|> importDecl () <|> fnDecl () <|> implDecl ()
+    and decl: PackratParser<Token, Ast.Decl> =
+        Memo (fun input pos ->
+            (dataDecl <|> importDecl <|> fnDecl <|> implDecl) input pos
         )
 
     // モジュール
-    and fileModule (): PackratParser<Token, Ast.Module> =
-        Delay (fun () ->
-            Many (decl ()) <& Eoi |>> fun (decls) -> Ast.Module (decls)
+    and fileModule: PackratParser<Token, Ast.Module> =
+        Memo (fun input pos ->
+            (Many decl <& Eoi |>> fun decls -> Ast.Module (decls)) input pos
         )
