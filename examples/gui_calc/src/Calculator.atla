@@ -10,11 +10,11 @@ import Avalonia'Layout'Orientation
 import Avalonia'Layout'HorizontalAlignment
 
 data CalculatorWindow = 
-    { 
-    #, _display: TextBox
+    { _grid: Grid
+    , _display: TextBox
     #, _currentValue: Float
     #, _pendingOperator: String
-       _clearOnNextDigit: Bool
+    , _clearOnNextDigit: Bool
     }
 
 impl CalculatorWindow as Window
@@ -40,22 +40,44 @@ impl CalculatorWindow as Window
 
         grid root'Children'Add.
 
-        grid "7" 0 0 addButton.
-
         let window = CalculatorWindow
-            { _clearOnNextDigit = False
+            { _grid = grid
+            , _display = display
+            , _clearOnNextDigit = False
             }
+        
+        7 0 0 window'addDigitButton.
+        8 0 1 window'addDigitButton.
+        9 0 2 window'addDigitButton.
+
         window'Content = root
 
         window
 
-    fn addButton (grid: Grid) (label: String) (row: Int) (column: Int): () = do
+    fn addButton (this: CalculatorWindow) (label: String) (row: Int) (column: Int) (onClick: () -> ()): () = do
         let button = Button.
         button'Content = label
         button'FontSize = 20.0
         button'Margin = 4.0 Thickness.
 
+        button'Click += onClick
+
         button row Grid'SetRow.
         button column Grid'SetColumn.
 
-        button grid'Children'Add.
+        button this'_grid'Children'Add.
+
+    fn addDigitButton (this: CalculatorWindow) (digit: Int) (row: Int) (column: Int): () =
+        (digit'ToString.) row column (digit this'onDigitButtonClick.) this'addButton.
+
+    fn onDigitButtonClick (this: CalculatorWindow) (digit: Int): () -> () = do
+        fn: () = do
+            if  | this'_clearOnNextDigit -> 
+                    this'_display'Text = "0"
+                    this'_clearOnNextDigit = False
+                | else -> ()
+
+            if  | this'_display'Text == "0" && digit != "." ->
+                    this'_display'Text = digit'ToString.
+                | else -> ()
+                    this'_display'Text += digit'ToString.
