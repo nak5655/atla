@@ -941,6 +941,34 @@ fn main (): Int = ping.
         Assert.Contains(diagnostics, fun d -> d.message.Contains("Duplicate lambda parameter 'x'"))
 
     [<Fact>]
+    let ``resolveTypeExpr should resolve unit-arg arrow type () -> T as zero-arg Fn`` () =
+        // () -> T の型アノテーションは fn () -> expr（0引数ラムダ）と一致するため、
+        // TypeId.Fn([], T) に解決されるべきで、TypeId.Fn([Unit], T) であってはならない。
+        let span = Span.Empty
+        let unitType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let retType = Ast.TypeExpr.Arrow(unitType, intType, span) :> Ast.TypeExpr
+        let lambdaBody = Ast.Expr.Int(42, span) :> Ast.Expr
+        let lambdaExpr = Ast.Expr.Lambda([], lambdaBody, span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Lambda (args, retTid, _, lambdaTid, _) ->
+                Assert.Empty(args)
+                Assert.Equal(TypeId.Int, retTid)
+                Assert.Equal(TypeId.Fn([], TypeId.Int), lambdaTid)
+            | other ->
+                Assert.True(false, $"expected Hir.Expr.Lambda but got {other}")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")
+
+    [<Fact>]
     let ``analyzeExpr should preserve mutable variable capture in lambda body`` () =
         let program = """
 fn main: () =

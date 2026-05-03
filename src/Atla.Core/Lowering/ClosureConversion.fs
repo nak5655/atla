@@ -66,6 +66,8 @@ module ClosureConversion =
         match stmt with
         | Hir.Stmt.Let (sid, isMutable, value, span) -> ClosedHir.Stmt.Let(sid, isMutable, convertHirExpr value, span)
         | Hir.Stmt.Assign (sid, value, span) -> ClosedHir.Stmt.Assign(sid, convertHirExpr value, span)
+        | Hir.Stmt.StoreField (instanceExpr, typeSid, fieldSid, value, span) ->
+            ClosedHir.Stmt.StoreField(convertHirExpr instanceExpr, typeSid, fieldSid, convertHirExpr value, span)
         | Hir.Stmt.ExprStmt (expr, span) -> ClosedHir.Stmt.ExprStmt(convertHirExpr expr, span)
         | Hir.Stmt.For (sid, tid, iterable, body, span) ->
             ClosedHir.Stmt.For(sid, tid, convertHirExpr iterable, body |> List.map convertHirStmt, span)
@@ -225,6 +227,8 @@ module ClosureConversion =
             match stmt with
             | Hir.Stmt.Let (_, _, value, _) | Hir.Stmt.Assign (_, value, _) | Hir.Stmt.ExprStmt (value, _) ->
                 traverseExpr ctx captureMap value
+            | Hir.Stmt.StoreField (instanceExpr, _, _, value, _) ->
+                traverseExpr ctx (traverseExpr ctx captureMap instanceExpr) value
             | Hir.Stmt.For (sid, tid, iterable, body, _) ->
                 let m' = traverseExpr ctx captureMap iterable
                 let innerCtx =
@@ -390,6 +394,10 @@ module ClosureConversion =
         | Hir.Stmt.Assign (sid, value, span) ->
             let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod captureMap value state
             ClosedHir.Stmt.Assign(sid, rewrittenValue, span), nextState
+        | Hir.Stmt.StoreField (instanceExpr, typeSid, fieldSid, value, span) ->
+            let rewrittenInstance, state1 = rewriteExpr symbolTable ownerMethod captureMap instanceExpr state
+            let rewrittenValue, state2 = rewriteExpr symbolTable ownerMethod captureMap value state1
+            ClosedHir.Stmt.StoreField(rewrittenInstance, typeSid, fieldSid, rewrittenValue, span), state2
         | Hir.Stmt.ExprStmt (value, span) ->
             let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod captureMap value state
             ClosedHir.Stmt.ExprStmt(rewrittenValue, span), nextState

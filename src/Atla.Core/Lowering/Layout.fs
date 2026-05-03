@@ -231,6 +231,9 @@ module Layout =
                                         | Builtins.OpDiv -> Mir.OpCode.Div
                                         | Builtins.OpMod -> Mir.OpCode.Mod
                                         | Builtins.OpEq -> Mir.OpCode.Eq
+                                        | Builtins.OpNe -> Mir.OpCode.Ne
+                                        | Builtins.OpAnd -> Mir.OpCode.And
+                                        | Builtins.OpOr -> Mir.OpCode.Or
                                     Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) })
                                 | None, _ -> Result.Error (Diagnostic.Error("Missing lhs operand for builtin operator", callSpan))
                                 | _, None -> Result.Error (Diagnostic.Error("Missing rhs operand for builtin operator", callSpan))
@@ -384,6 +387,21 @@ module Layout =
             match layoutExpr state expr with
             | Result.Error e -> Result.Error e
             | Ok (state1, kn) -> Ok (state1, kn.ins)
+        | ClosedHir.Stmt.StoreField (instanceExpr, typeSid, fieldSid, value, span) ->
+            // インスタンス式をレイアウトし、値式をレイアウトしてから StoreEnvField を発行する。
+            match layoutExpr state instanceExpr with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, instKn) ->
+                match layoutExpr state1 value with
+                | Result.Error e -> Result.Error e
+                | Ok (state2, valueKn) ->
+                    match instKn.res, valueKn.res with
+                    | None, _ -> Result.Error (Diagnostic.Error("StoreField: instance expression produced no value", span))
+                    | _, None -> Result.Error (Diagnostic.Error("StoreField: value expression produced no value", span))
+                    | Some instVal, Some valueVal ->
+                        // StoreEnvField は Reg を要求するため、インスタンス値を一時レジスタへ格納する。
+                        let instReg, state3 = declareTemp state2 instanceExpr.typ
+                        Ok (state3, instKn.ins @ [ Mir.Ins.Assign(instReg, instVal) ] @ valueKn.ins @ [ Mir.Ins.StoreEnvField(instReg, typeSid, fieldSid, valueVal) ])
         | ClosedHir.Stmt.For (sid, tid, iterable, body, span) ->
             match layoutExpr state iterable with
             | Result.Error e -> Result.Error e
@@ -621,6 +639,8 @@ module Layout =
         | ClosedHir.Stmt.Let (_, _, value, _)
         | ClosedHir.Stmt.Assign (_, value, _)
         | ClosedHir.Stmt.ExprStmt (value, _) -> hasLambdaExpr value
+        | ClosedHir.Stmt.StoreField (instanceExpr, _, _, value, _) ->
+            hasLambdaExpr instanceExpr || hasLambdaExpr value
         | ClosedHir.Stmt.For (_, _, iterable, body, _) ->
             hasLambdaExpr iterable || (body |> List.exists hasLambdaStmt)
         | ClosedHir.Stmt.ErrorStmt _ -> false

@@ -72,12 +72,15 @@ impl CalculatorWindow as Window
 
     fn onDigitButtonClick (this: CalculatorWindow) (digit: Int): () -> () = do
         fn () -> do
-            if  | this'_clearOnNextDigit -> 
-                    this'_display'Text = "0"
-                    this'_clearOnNextDigit = False
-                | else -> ()
+            if  | this'_clearOnNextDigit =>
+                    do
+                        this'_display'Text = "0"
+                        this'_clearOnNextDigit = False
+                | else => ()
 
-            if  | this'_display'Text == "0" && digit != "." ->
-                    this'_display'Text = digit'ToString.
-                | else -> ()
-                    this'_display'Text += digit'ToString.
+            if  | this'_display'Text == "0" && digit'ToString. != "." =>
+                    do
+                        this'_display'Text = digit'ToString.
+                | else =>
+                    do
+                        this'_display'Text += digit'ToString.
