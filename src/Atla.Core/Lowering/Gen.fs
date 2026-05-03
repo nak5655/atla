@@ -497,9 +497,10 @@ module Gen =
 
         // インスタンスメソッド定義（クロージャー invoke メソッド）。
         // typ.methods に含まれるメソッドはすべてインスタンスメソッドとして生成する。
-        // args の先頭要素は 'this'（env インスタンス）なので CIL シグネチャからは除外する。
+        // layoutInvokeMethod がすでに 'this'（env インスタンス）を method.args から除去しているため、
+        // ここでは method.args をそのまま CIL シグネチャとして使用する。
         for method in typ.methods do
-            let explicitArgTypes = method.args |> List.tail |> List.map (resolveType env) |> List.toArray
+            let explicitArgTypes = method.args |> List.map (resolveType env) |> List.toArray
             let methodRetType = resolveMethodReturnType method.ret
             method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public, methodRetType, explicitArgTypes)
             // invoke メソッドの SymbolId を methodBuilders へ登録する（FnDelegate 値生成で使用）。
