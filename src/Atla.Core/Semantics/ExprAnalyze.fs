@@ -1221,6 +1221,72 @@ module ExprAnalyze =
             let rhs = analyzeExpr nameEnv typeEnv varStmt.value tid
             let sid = nameEnv.declareLocal varStmt.name tid
             Hir.Stmt.Let(sid, true, rhs, varStmt.span)
+        | :? Ast.Stmt.CompoundAssign as compoundAssignStmt ->
+            let analyzeAsVariableCompound sid targetType =
+                let lhsExpr = Hir.Expr.Id(sid, targetType, compoundAssignStmt.target.span)
+                let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value targetType
+                let opName =
+                    match compoundAssignStmt.op with
+                    | Ast.Stmt.CompoundAssignOp.Add -> "+"
+                    | Ast.Stmt.CompoundAssignOp.Sub -> "-"
+                let opExpr =
+                    Hir.Expr.Call(
+                        Hir.Callable.BuiltinOperator(match compoundAssignStmt.op with | Ast.Stmt.CompoundAssignOp.Add -> Builtins.Operators.OpAdd | Ast.Stmt.CompoundAssignOp.Sub -> Builtins.Operators.OpSub),
+                        None,
+                        [ lhsExpr; rhs ],
+                        targetType,
+                        compoundAssignStmt.span)
+                match unifyOrError nameEnv typeEnv targetType opExpr.typ compoundAssignStmt.span with
+                | Result.Ok _ -> Hir.Stmt.Assign(sid, opExpr, compoundAssignStmt.span)
+                | Result.Error exprErr -> Hir.Stmt.ExprStmt(exprErr, compoundAssignStmt.span)
+
+            match compoundAssignStmt.target with
+            | :? Ast.Expr.Id as idTarget ->
+                match nameEnv.resolveVar idTarget.name with
+                | [ sid ] -> analyzeAsVariableCompound sid (nameEnv.resolveSymType sid)
+                | [] ->
+                    let message = sprintf "Undefined variable '%s'" idTarget.name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+                | _ ->
+                    let message = sprintf "Ambiguous variable '%s'" idTarget.name
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+            | :? Ast.Expr.MemberAccess as memberTarget ->
+                let receiverExpr = analyzeExpr nameEnv typeEnv memberTarget.receiver (typeEnv.freshMeta ())
+                match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverExpr.typ with
+                | None ->
+                    let message = "Event compound assignment requires a native receiver type"
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+                | Some receiverType ->
+                    let flags = BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic
+                    match receiverType.GetEvent(memberTarget.memberName, flags) with
+                    | null ->
+                        let message = sprintf "Member '%s' does not support compound assignment" memberTarget.memberName
+                        Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+                    | eventInfo ->
+                        let accessorOpt =
+                            match compoundAssignStmt.op with
+                            | Ast.Stmt.CompoundAssignOp.Add -> Option.ofObj (eventInfo.GetAddMethod(true))
+                            | Ast.Stmt.CompoundAssignOp.Sub -> Option.ofObj (eventInfo.GetRemoveMethod(true))
+
+                        match accessorOpt with
+                        | None ->
+                            let message = sprintf "Event '%s' does not have a required accessor" eventInfo.Name
+                            Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+                        | Some accessor ->
+                            let handlerType = TypeId.fromSystemType eventInfo.EventHandlerType
+                            let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value handlerType
+                            let callExpr =
+                                Hir.Expr.Call(
+                                    Hir.Callable.NativeMethod accessor,
+                                    Some receiverExpr,
+                                    [ rhs ],
+                                    TypeId.Unit,
+                                    compoundAssignStmt.span)
+                            Hir.Stmt.ExprStmt(callExpr, compoundAssignStmt.span)
+            | _ ->
+                let message = "Invalid assignment target"
+                Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+
         | :? Ast.Stmt.Assign as assignStmt ->
             // 代入は左辺の形状ごとに lower する。
             // - 識別子: 既存の Hir.Stmt.Assign を利用

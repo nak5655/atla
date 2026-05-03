@@ -1033,3 +1033,55 @@ impl Widget as Control
                 Assert.True(false, "no fn declaration found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses compound add assignment`` () =
+        let program = """
+fn main (): Unit = do
+    var x = 1
+    x += 2
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl -> match decl with | :? Ast.Decl.Fn as fn -> Some fn | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    match blockExpr.stmts |> List.tryLast with
+                    | Some (:? Ast.Stmt.CompoundAssign as compoundAssignStmt) ->
+                        Assert.Equal(Ast.Stmt.CompoundAssignOp.Add, compoundAssignStmt.op)
+                    | _ -> Assert.True(false, "expected compound assignment statement")
+                | _ -> Assert.True(false, "expected block body")
+            | None -> Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses compound subtract assignment`` () =
+        let program = """
+fn main (): Unit = do
+    var x = 3
+    x -= 1
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl -> match decl with | :? Ast.Decl.Fn as fn -> Some fn | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    match blockExpr.stmts |> List.tryLast with
+                    | Some (:? Ast.Stmt.CompoundAssign as compoundAssignStmt) ->
+                        Assert.Equal(Ast.Stmt.CompoundAssignOp.Sub, compoundAssignStmt.op)
+                    | _ -> Assert.True(false, "expected compound assignment statement")
+                | _ -> Assert.True(false, "expected block body")
+            | None -> Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

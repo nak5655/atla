@@ -2851,3 +2851,28 @@ fn test (): ExceptionDispatchInfo = do
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``compound add assignment lowers to builtin operator and assign`` () =
+        let span = Span.Empty
+        let body =
+            Ast.Expr.Block([
+                Ast.Stmt.Var("x", Ast.Expr.Int(1, span) :> Ast.Expr, span) :> Ast.Stmt
+                Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Add, Ast.Expr.Id("x", span) :> Ast.Expr, Ast.Expr.Int(2, span) :> Ast.Expr, span) :> Ast.Stmt
+            ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], Ast.TypeExpr.Unit(span) :> Ast.TypeExpr, body, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Block(stmts, _, _, _) ->
+                match stmts |> List.tryLast with
+                | Some (Hir.Stmt.Assign(_, Hir.Expr.Call(Hir.Callable.BuiltinOperator _, _, _, _, _), _)) -> Assert.True(true)
+                | _ -> Assert.True(false, "expected compound assignment to become builtin operator assign")
+            | _ -> Assert.True(false, "expected block body")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun err -> err.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")

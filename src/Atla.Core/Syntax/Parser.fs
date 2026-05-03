@@ -395,8 +395,22 @@ module Parser =
 
     and assignStmt: PackratParser<Token, Ast.Stmt> =
         Memo (fun input pos ->
-            (assignLValueExpr <& symbol "=" <&> expr
-            |>> fun (target, rhs) -> Ast.Stmt.Assign (target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt) input pos
+            let parser =
+                (
+                    assignLValueExpr <& symbol "=" <&> expr
+                    |>> fun ((target: Ast.Expr), (rhs: Ast.Expr)) -> Ast.Stmt.Assign(target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt
+                )
+                <|>
+                (
+                    assignLValueExpr <& symbol "+=" <&> expr
+                    |>> fun ((target: Ast.Expr), (rhs: Ast.Expr)) -> Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Add, target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt
+                )
+                <|>
+                (
+                    assignLValueExpr <& symbol "-=" <&> expr
+                    |>> fun ((target: Ast.Expr), (rhs: Ast.Expr)) -> Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Sub, target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt
+                )
+            parser input pos
         )
 
     and exprStmt: PackratParser<Token, Ast.Stmt> =

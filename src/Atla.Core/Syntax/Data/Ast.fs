@@ -218,6 +218,21 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+
+        type CompoundAssignOp =
+            | Add
+            | Sub
+
+        type CompoundAssign(op: CompoundAssignOp, target: Expr, value: Expr, span: Span) =
+            member this.op = op
+            member this.target = target
+            member this.value = value
+            member this.span = span
+            interface Stmt with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type ExprStmt(expr: Expr, span: Span) =
             member this.expr = expr
             member this.span = span
