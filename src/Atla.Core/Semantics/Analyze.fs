@@ -265,6 +265,10 @@ module Analyze =
                                                 let methodType = TypeId.Fn(argTypes, retType)
                                                 let methodSid = symbolTable.NextId()
                                                 symbolTable.Add(methodSid, { name = $"{implDecl.typeName}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
+                                                // 静的 impl メソッドをモジュールスコープへ登録する。
+                                                // これにより、同モジュール内から addButton のようなベアネームで参照できる。
+                                                if isStatic then
+                                                    resolvedModule.moduleScope.DeclareVar(methodDecl.name, methodSid)
                                                 Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap, (methodSid, methodDecl) :: declAcc, diagAcc
 
                                         match methodDecl.args with
