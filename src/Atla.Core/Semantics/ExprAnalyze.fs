@@ -592,7 +592,24 @@ module ExprAnalyze =
                 | _ -> None
             match callable with
             | Some resolvedCallable ->
-                let allArgs = analyzedArgs
+                // `receiver'method` 形式の impl instance 呼び出しは、
+                // 先頭の receiver を暗黙 this として注入して解決する。
+                // それ以外（.NET instance 呼び出しなど）は従来どおり
+                // callInstance に receiver を保持し、引数列には含めない。
+                let effectiveCallInstance, allArgs =
+                    match resolvedCallable, callInstance with
+                    | Hir.Callable.Fn sid, Some instance ->
+                        match nameEnv.resolveSym sid with
+                        | Some symInfo ->
+                            match typeEnv.resolveType symInfo.typ with
+                            | TypeId.Fn(expectedArgs, _) when expectedArgs.Length = analyzedArgs.Length + 1 ->
+                                match expectedArgs with
+                                | expectedThis :: _ when typeEnv.canUnify instance.typ expectedThis ->
+                                    None, instance :: analyzedArgs
+                                | _ -> callInstance, analyzedArgs
+                            | _ -> callInstance, analyzedArgs
+                        | None -> callInstance, analyzedArgs
+                    | _ -> callInstance, analyzedArgs
 
                 // 拡張メソッドがインスタンスレシーバー付きで呼ばれているか判定する。
                 // 拡張メソッドの GetParameters() には this パラメータが含まれるが、
@@ -877,7 +894,7 @@ module ExprAnalyze =
                         | _ -> callArgs
 
                     match unifyOrError nameEnv typeEnv tid callRetType applyExpr.span with
-                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, callInstance, specializedCallArgs, callRetType, applyExpr.span)
+                    | Result.Ok _ -> Hir.Expr.Call(callableExpr, effectiveCallInstance, specializedCallArgs, callRetType, applyExpr.span)
                     | Result.Error exprErr -> exprErr
                 | None ->
                     Hir.Expr.ExprError(noOverloadMessage resolvedCallable allArgs.Length, tid, applyExpr.span)
