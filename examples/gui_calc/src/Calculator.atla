@@ -1,6 +1,7 @@
 import Avalonia'Controls'Window
 import Avalonia'Thickness
 import Avalonia'Controls'Grid
+import Avalonia'Controls'Button
 import Avalonia'Controls'TextBox
 import Avalonia'Controls'StackPanel
 import Avalonia'Controls'RowDefinitions
@@ -39,9 +40,22 @@ impl CalculatorWindow as Window
 
         grid root'Children'Add.
 
+        grid "7" 0 0 addButton.
+
         let window = CalculatorWindow
             { _clearOnNextDigit = False
             }
         window'Content = root
 
         window
+
+    fn addButton (grid: Grid) (label: String) (row: Int) (column: Int): () = do
+        let button = Button.
+        button'Content = label
+        button'FontSize = 20.0
+        button'Margin = 4.0 Thickness.
+
+        button row Grid'SetRow.
+        button column Grid'SetColumn.
+
+        button grid'Children'Add.
