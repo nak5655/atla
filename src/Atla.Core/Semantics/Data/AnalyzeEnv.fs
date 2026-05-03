@@ -69,11 +69,15 @@ module AnalyzeEnv =
                     | TypeId.Error message, _ -> TypeId.Error message
                     | _, Some message -> TypeId.Error message
                     | _, None -> TypeId.App(resolvedHead, resolvedArgs)
-            // 関数型（例: Int -> Int）を TypeId.Fn([arg], ret) に変換する。
+            // 関数型（例: Int -> Int, () -> ()）を TypeId.Fn に変換する。
+            // () -> T はユニット引数構文のため、0引数関数 Fn([], T) に解決する。
+            // これにより fn () -> expr（0引数ラムダ）および fn foo (): T（0引数メソッド）と整合する。
             | :? Ast.TypeExpr.Arrow as arrowTypeExpr ->
                 let argType = this.resolveTypeExpr arrowTypeExpr.arg
                 let retType = this.resolveTypeExpr arrowTypeExpr.ret
-                TypeId.Fn([ argType ], retType)
+                match argType with
+                | TypeId.Unit -> TypeId.Fn([], retType)
+                | _ -> TypeId.Fn([ argType ], retType)
             | _ -> TypeId.Error "Unsupported type expression type"
 
         member this.resolveArgType (arg: Ast.FnArg) : TypeId =
