@@ -82,6 +82,7 @@ module ClosedHir =
     and Stmt =
         | Let of sid: SymbolId * isMutable: bool * value: Expr * span: Span
         | Assign of sid: SymbolId * value: Expr * span: Span
+        | StoreField of instanceExpr: Expr * typeSid: SymbolId * fieldSid: SymbolId * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
         | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
         | ErrorStmt of message: string * span: Span
@@ -162,6 +163,8 @@ module ClosedHir =
         match stmt with
         | Let (sid, isMutable, value, span) -> Let(sid, isMutable, mapExpr f value, span)
         | Assign (sid, value, span) -> Assign(sid, mapExpr f value, span)
+        | StoreField (instanceExpr, typeSid, fieldSid, value, span) ->
+            StoreField(mapExpr f instanceExpr, typeSid, fieldSid, mapExpr f value, span)
         | ExprStmt (expr, span) -> ExprStmt(mapExpr f expr, span)
         | For (sid, tid, iterable, body, span) ->
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
@@ -202,6 +205,8 @@ module ClosedHir =
         | Let (_, _, value, _)
         | Assign (_, value, _)
         | ExprStmt (value, _) -> foldExpr f acc value
+        | StoreField (instanceExpr, _, _, value, _) ->
+            foldExpr f (foldExpr f acc instanceExpr) value
         | For (_, _, iterable, body, _) ->
             let acc' = foldExpr f acc iterable
             body |> List.fold (foldStmt f) acc'
@@ -278,6 +283,10 @@ module ClosedHir =
         match stmt with
         | Let (_, _, value, _) | Assign (_, value, _) | ExprStmt (value, _) ->
             foldExprWithCtx descend afterStmt leaf merge zero ctx value
+        | StoreField (instanceExpr, _, _, value, _) ->
+            merge
+                (foldExprWithCtx descend afterStmt leaf merge zero ctx instanceExpr)
+                (foldExprWithCtx descend afterStmt leaf merge zero ctx value)
         | For (sid, _, iterable, body, span) ->
             let iterAcc = foldExprWithCtx descend afterStmt leaf merge zero ctx iterable
             // For 反復変数 sid をボディ用の文脈へ追加する。

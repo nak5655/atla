@@ -164,6 +164,8 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
         |> walkExpr scopeSpan value
     | Hir.Stmt.Assign(_, value, _) ->
         walkExpr scopeSpan value state
+    | Hir.Stmt.StoreField(_, _, _, value, _) ->
+        walkExpr scopeSpan value state
     | Hir.Stmt.ExprStmt(expr, _) ->
         walkExpr scopeSpan expr state
     | Hir.Stmt.For(sid, _, iterable, body, span) ->
@@ -174,6 +176,7 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
                 match stmt with
                 | Hir.Stmt.Let (_, _, _, bodySpan)
                 | Hir.Stmt.Assign (_, _, bodySpan)
+                | Hir.Stmt.StoreField (_, _, _, _, bodySpan)
                 | Hir.Stmt.ExprStmt (_, bodySpan)
                 | Hir.Stmt.For (_, _, _, _, bodySpan)
                 | Hir.Stmt.ErrorStmt (_, bodySpan) -> bodySpan)

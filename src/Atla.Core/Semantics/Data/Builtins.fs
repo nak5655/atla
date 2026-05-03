@@ -8,3 +8,6 @@ module Builtins =
         | OpDiv
         | OpMod
         | OpEq
+        | OpNe
+        | OpAnd
+        | OpOr

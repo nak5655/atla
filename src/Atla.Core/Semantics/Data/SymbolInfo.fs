@@ -38,7 +38,15 @@ type SymbolTable() =
         _table.Add(sid, { name = name; typ = tid; kind = SymbolKind.BuiltinOperator op })
         sid
 
+    let addNativeMethodOp (name: string) (tid: TypeId) (methods: System.Reflection.MethodInfo list) : SymbolId =
+        let sid = SymbolId(_table.Count)
+        _table.Add(sid, { name = name; typ = tid; kind = SymbolKind.External(ExternalBinding.NativeMethodGroup methods) })
+        sid
+
     let builtinOperators : (string * SymbolId) list =
+        let strEq = typeof<string>.GetMethod("op_Equality", [| typeof<string>; typeof<string> |])
+        let strNe = typeof<string>.GetMethod("op_Inequality", [| typeof<string>; typeof<string> |])
+        let strConcat = typeof<string>.GetMethod("Concat", [| typeof<string>; typeof<string> |])
         [ ("+", addBuiltinOperator "+" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpAdd)
           ("+", addBuiltinOperator "+" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpAdd)
           ("-", addBuiltinOperator "-" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpSub)
@@ -49,7 +57,14 @@ type SymbolTable() =
           ("/", addBuiltinOperator "/" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpDiv)
           ("%", addBuiltinOperator "%" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpMod)
           ("==", addBuiltinOperator "==" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpEq)
-          ("==", addBuiltinOperator "==" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Bool)) Builtins.Operators.OpEq) ]
+          ("==", addBuiltinOperator "==" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Bool)) Builtins.Operators.OpEq)
+          ("==", addNativeMethodOp "==" (TypeId.Fn([ TypeId.String; TypeId.String ], TypeId.Bool)) (if isNull strEq then [] else [ strEq ]))
+          ("!=", addBuiltinOperator "!=" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpNe)
+          ("!=", addBuiltinOperator "!=" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Bool)) Builtins.Operators.OpNe)
+          ("!=", addNativeMethodOp "!=" (TypeId.Fn([ TypeId.String; TypeId.String ], TypeId.Bool)) (if isNull strNe then [] else [ strNe ]))
+          ("+", addNativeMethodOp "+" (TypeId.Fn([ TypeId.String; TypeId.String ], TypeId.String)) (if isNull strConcat then [] else [ strConcat ]))
+          ("&&", addBuiltinOperator "&&" (TypeId.Fn([ TypeId.Bool; TypeId.Bool ], TypeId.Bool)) Builtins.Operators.OpAnd)
+          ("||", addBuiltinOperator "||" (TypeId.Fn([ TypeId.Bool; TypeId.Bool ], TypeId.Bool)) Builtins.Operators.OpOr) ]
 
     member this.BuiltinOperators = builtinOperators
 

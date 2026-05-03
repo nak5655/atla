@@ -243,17 +243,20 @@ module Gen =
         | Mir.Ins.TAC (dest, arg1, op, arg2) ->
             genValue env gen arg1
             genValue env gen arg2
-            let opcode =
-                match op with
-                | Mir.OpCode.Add -> OpCodes.Add
-                | Mir.OpCode.Sub -> OpCodes.Sub
-                | Mir.OpCode.Mul -> OpCodes.Mul
-                | Mir.OpCode.Div -> OpCodes.Div
-                | Mir.OpCode.Mod -> OpCodes.Rem
-                | Mir.OpCode.Or -> OpCodes.Or
-                | Mir.OpCode.And -> OpCodes.And
-                | Mir.OpCode.Eq -> OpCodes.Ceq
-            gen.Emit(opcode)
+            match op with
+            | Mir.OpCode.Ne ->
+                // != は ceq の結果を論理反転する（ceq; ldc.i4.0; ceq）。
+                gen.Emit(OpCodes.Ceq)
+                gen.Emit(OpCodes.Ldc_I4_0)
+                gen.Emit(OpCodes.Ceq)
+            | Mir.OpCode.Add -> gen.Emit(OpCodes.Add)
+            | Mir.OpCode.Sub -> gen.Emit(OpCodes.Sub)
+            | Mir.OpCode.Mul -> gen.Emit(OpCodes.Mul)
+            | Mir.OpCode.Div -> gen.Emit(OpCodes.Div)
+            | Mir.OpCode.Mod -> gen.Emit(OpCodes.Rem)
+            | Mir.OpCode.Or -> gen.Emit(OpCodes.Or)
+            | Mir.OpCode.And -> gen.Emit(OpCodes.And)
+            | Mir.OpCode.Eq -> gen.Emit(OpCodes.Ceq)
             match dest with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
