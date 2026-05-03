@@ -2266,6 +2266,40 @@ fn main: () = do
 
     /// impl メソッド呼び出し結果（一時的に Meta を含み得る式）でも、WriteLine の overload を Apply 段階で解決できることを確認する。
     [<Fact>]
+    let ``semantic analysis auto-injects this for impl instance call`` () =
+        let program = """
+data CalculatorWindow = { value: Int }
+
+impl CalculatorWindow
+    fn addDigitButton (this: CalculatorWindow) (digit: Int) (row: Int) (column: Int): Int =
+        digit
+
+fn main (): Int = do
+    let window = CalculatorWindow { value = 0 }
+    7 0 0 window'addDigitButton.
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true } ->
+                    Assert.True(true)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+
+    [<Fact>]
     let ``semantic analysis resolves Console WriteLine for impl-method result`` () =
         let program = """
 import System'Console
