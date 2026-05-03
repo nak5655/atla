@@ -504,13 +504,13 @@ fn close (b: Box): () = b'Dispose.
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
                 | { succeeded = true; value = Some hirModule } ->
-                    let yearMethod =
+                    let closeMethod =
                         hirModule.methods
                         |> List.tryFind (fun methodDef ->
                             match symbolTable.Get(methodDef.sym) with
-                            | Some symInfo -> symInfo.name = "year"
+                            | Some symInfo -> symInfo.name = "close"
                             | None -> false)
-                    Assert.True(yearMethod.IsSome, "Expected delegated-member consumer method 'year' to be analyzed successfully")
+                    Assert.True(closeMethod.IsSome, "Expected delegated-member consumer method 'close' to be analyzed successfully")
                 | { diagnostics = diagnostics } ->
                     let message =
                         diagnostics

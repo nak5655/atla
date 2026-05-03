@@ -247,9 +247,11 @@ module Analyze =
                 resolvedModule.implDecls
                 |> List.fold
                     (fun (defs, methodDecls, diagnostics) (typeSid, baseTypeOpt, byFieldNameOpt, implDecl) ->
-                        match defs |> Map.tryFind implDecl.typeName with
+                        // `impl X for Y` のとき Y がターゲットデータ型。`impl T` のときは T 自身。
+                        let targetTypeName = implDecl.forTypeName |> Option.defaultValue implDecl.typeName
+                        match defs |> Map.tryFind targetTypeName with
                         | None ->
-                            defs, methodDecls, diagnostics @ [ Diagnostic.Error(sprintf "Undefined impl target type '%s'" implDecl.typeName, implDecl.span) ]
+                            defs, methodDecls, diagnostics @ [ Diagnostic.Error(sprintf "Undefined impl target type '%s'" targetTypeName, implDecl.span) ]
                         | Some dataTypeDef ->
                             let foldResult =
                                 implDecl.methods
@@ -258,13 +260,13 @@ module Analyze =
                                         // impl メソッドをシンボル表へ登録し、instance/static 種別をメタデータに保持する。
                                         let registerImplMethod (isStatic: bool) =
                                             if Map.containsKey methodDecl.name methodMap then
-                                                methodMap, declAcc, diagAcc @ [ Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodDecl.name implDecl.typeName, methodDecl.span) ]
+                                                methodMap, declAcc, diagAcc @ [ Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodDecl.name targetTypeName, methodDecl.span) ]
                                             else
                                                 let argTypes = methodDecl.args |> List.map bootstrapNameEnv.resolveArgType |> List.filter (fun t -> t <> TypeId.Unit)
                                                 let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
                                                 let methodType = TypeId.Fn(argTypes, retType)
                                                 let methodSid = symbolTable.NextId()
-                                                symbolTable.Add(methodSid, { name = $"{implDecl.typeName}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
+                                                symbolTable.Add(methodSid, { name = $"{targetTypeName}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
                                                 // 静的 impl メソッドをモジュールスコープへ登録する。
                                                 // これにより、同モジュール内から addButton のようなベアネームで参照できる。
                                                 if isStatic then
@@ -274,9 +276,18 @@ module Analyze =
                                         match methodDecl.args with
                                         | (:? Ast.FnArg.Named as thisArg) :: _ ->
                                             let thisType = bootstrapNameEnv.resolveTypeExpr thisArg.typeExpr
-                                            match thisArg.name, thisType with
-                                            | "this", TypeId.Name thisTypeSid when thisTypeSid.id = typeSid.id -> registerImplMethod false
-                                            | "this", _ ->
+                                            // `this` は対象データ型か、`impl X for Y` の役割型 X のどちらでも許可する。
+                                            let isValidThisType =
+                                                match thisType with
+                                                | TypeId.Name thisTypeSid ->
+                                                    thisTypeSid.id = typeSid.id
+                                                    || (match baseTypeOpt with
+                                                        | Some (TypeId.Name roleSid) -> thisTypeSid.id = roleSid.id
+                                                        | _ -> false)
+                                                | _ -> false
+                                            match thisArg.name with
+                                            | "this" when isValidThisType -> registerImplMethod false
+                                            | "this" ->
                                                 methodMap, declAcc, diagAcc @ [ Diagnostic.Error("impl instance method '(this: ...)' must target the impl type", methodDecl.span) ]
                                             | _ ->
                                                 registerImplMethod true
@@ -288,7 +299,7 @@ module Analyze =
                             let updatedDefs =
                                 defs
                                 |> Map.add
-                                    implDecl.typeName
+                                    targetTypeName
                                     { dataTypeDef with
                                         methods = methodMap
                                         baseType = baseTypeOpt

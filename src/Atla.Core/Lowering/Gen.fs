@@ -450,10 +450,16 @@ module Gen =
 
         // 本体命令を順に生成
         for ins in method.body do
-            genIns _env method.frame gen ilLabels ilOffsets ins
+            try
+                genIns _env method.frame gen ilLabels ilOffsets ins
+            with ex ->
+                failwithf "Error in method '%s' (sym=%A) at instruction %A: %s" method.name method.sym ins ex.Message
 
-    // 型メンバー（フィールド/コンストラクタ/メソッド）を生成し、mainメソッドがあれば返す
-    let private genType (env: Env) (typ: Mir.Type) : MethodInfo option =
+    /// 型のフィールド・コンストラクタ・クロージャー invoke メソッドを宣言し、
+    /// MethodBuilder を env.methodBuilders へ登録する。本体（IL）はまだ生成しない。
+    /// 全型の宣言が完了してからメソッド本体を生成することで、invoke メソッドが
+    /// モジュールレベル関数（module.methods）を CallSym/FnDelegate で参照できるようになる。
+    let private declareTypeMembers (env: Env) (typ: Mir.Type) : unit =
         let resolveMethodReturnType (tid: TypeId) : Type =
             match tid with
             | TypeId.Unit -> typeof<Void>
@@ -466,14 +472,14 @@ module Gen =
             // env-class フィールドを fieldBuilders へ登録する（GenIns での LoadEnvField/StoreEnvField 解決に使用）。
             env.fieldBuilders.[field.sym] <- field.builder
 
-        // コンストラクタ定義
+        // 明示コンストラクタ定義（MethodBuilder のみ、本体生成は genTypeBodies で行う）。
         for ctor in typ.ctors do
             let ctorArgTypes = ctor.args |> List.map (resolveType env) |> List.toArray
             ctor.builder <- typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorArgTypes)
-            genConstructor env ctor
 
-        // フィールド定義後、明示的コンストラクタが無い場合はデフォルトコンストラクタを自動生成する。
-        // これにより NewEnv 命令が new_env(typeSid) でインスタンスを生成できる。
+        // 明示コンストラクタが無い場合はデフォルトコンストラクタを宣言し、本体も即時生成する。
+        // デフォルトコンストラクタは単純（ldarg.0; call base..ctor; ret）で外部参照を持たないため、
+        // 宣言と同時に生成しても問題ない。
         if typ.ctors.IsEmpty then
             let defaultCtor = typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [||])
             let ctorIL = defaultCtor.GetILGenerator()
@@ -495,15 +501,27 @@ module Gen =
             ctorIL.Emit(OpCodes.Ret)
             env.typeCtors.[typ.sym] <- defaultCtor
 
-        // インスタンスメソッド定義（クロージャー invoke メソッド）。
-        // typ.methods に含まれるメソッドはすべてインスタンスメソッドとして生成する。
-        // args の先頭要素は 'this'（env インスタンス）なので CIL シグネチャからは除外する。
+        // インスタンスメソッド（クロージャー invoke メソッド）の MethodBuilder を宣言・登録する。
+        // layoutInvokeMethod がすでに 'this'（env インスタンス）を method.args から除去しているため、
+        // method.args をそのまま CIL シグネチャとして使用する。
+        // 本体生成（IL emit）は genTypeBodies で行う。
         for method in typ.methods do
-            let explicitArgTypes = method.args |> List.tail |> List.map (resolveType env) |> List.toArray
+            let explicitArgTypes = method.args |> List.map (resolveType env) |> List.toArray
             let methodRetType = resolveMethodReturnType method.ret
             method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public, methodRetType, explicitArgTypes)
-            // invoke メソッドの SymbolId を methodBuilders へ登録する（FnDelegate 値生成で使用）。
+            // invoke メソッドの SymbolId を methodBuilders へ登録する（FnDelegate・CallSym 解決に使用）。
             env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
+
+    /// 型の明示コンストラクタ本体と invoke メソッド本体を生成し、型を確定（CreateType）する。
+    /// declareTypeMembers で全 MethodBuilder が登録済みであることが前提。
+    /// main メソッドが型内に存在する場合はその MethodInfo を返す。
+    let private genTypeBodies (env: Env) (typ: Mir.Type) : MethodInfo option =
+        // 明示コンストラクタ本体を生成する。
+        for ctor in typ.ctors do
+            genConstructor env ctor
+
+        // invoke メソッド本体を生成する。
+        for method in typ.methods do
             genMethod env method
 
         // 型確定
@@ -528,7 +546,7 @@ module Gen =
               methodBuilders = Dictionary<SymbolId, MethodInfo>()
               symbolTable = symbolTable }
 
-        // 型を先に宣言してTypeId.Name解決を可能にする
+        // フェーズ 1: 全型の TypeBuilder を先行宣言してTypeId.Name解決を可能にする。
         for typ in modul.types do
             let resolvedBaseType =
                 match typ.baseType with
@@ -540,12 +558,15 @@ module Gen =
             typ.builder <- moduleBuilder.DefineType(typ.name, TypeAttributes.Public, resolvedBaseType)
             env.typeBuilders.Add(typ.sym, typ.builder)
 
-        // 型内main探索
-        let mainInTypes =
-            modul.types
-            |> List.tryPick (fun typ -> genType env typ)
+        // フェーズ 2: 全型のフィールド・コンストラクタ・invoke メソッドを宣言し、
+        // MethodBuilder を methodBuilders へ登録する（本体 IL はまだ生成しない）。
+        for typ in modul.types do
+            declareTypeMembers env typ
 
-        // モジュール直下メソッドは静的ヘルパー型へ生成する
+        // フェーズ 3: モジュール直下メソッド（静的グローバル）を宣言し、
+        // MethodBuilder を methodBuilders へ登録する（本体 IL はまだ生成しない）。
+        // 全 MethodBuilder を先行登録することで、invoke メソッド本体が
+        // モジュールレベル関数を CallSym/FnDelegate で参照できるようになる。
         let globalsTypeBuilder =
             moduleBuilder.DefineType(
                 $"{modul.name}.Globals",
@@ -557,6 +578,14 @@ module Gen =
             method.builder <- globalsTypeBuilder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
             env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
 
+        // フェーズ 4: 全型の本体 IL を生成して型を確定（CreateType）する。
+        // この時点で全 MethodBuilder（型 invoke + モジュールグローバル）が登録済みのため、
+        // 相互参照（クロージャー → グローバル関数 など）が正しく解決される。
+        let mainInTypes =
+            modul.types
+            |> List.tryPick (fun typ -> genTypeBodies env typ)
+
+        // フェーズ 5: モジュールレベルメソッドの本体 IL を生成する。
         for method in modul.methods do
             genMethod env method
 
