@@ -1,21 +1,27 @@
 namespace Atla.Core.Syntax
 
 open System.Collections.Generic
+open System.Runtime.CompilerServices
 open Atla.Core.Data
 open Atla.Core.Syntax.Data
 
 type PackratParser<'I, 'A when 'I :> HasSpan> = Input<'I> -> Position -> ParseResult<'A>
 
-// TODO: メモ化
 module Combinators =
+    /// パーサの結果を (入力オブジェクト同一性, 位置) のペアでキャッシュするメモ化コンビネータ。
+    /// 外側のキーには ConditionalWeakTable を使用し、入力オブジェクトが GC されたときに
+    /// 対応するキャッシュエントリが自動的に解放されるようにする。
+    /// これにより、BlockInput や LineInput など異なる可視範囲を持つ入力が同一位置に対して
+    /// 別々のキャッシュエントリを持ち、正確な結果を返すことが保証される。
     let Memo (p: PackratParser<'I, 'A>) : PackratParser<'I, 'A> =
-        let cache = Dictionary<Position, ParseResult<'A>>()
+        let outerCache = ConditionalWeakTable<obj, Dictionary<Position, ParseResult<'A>>>()
         fun input pos ->
-            if cache.ContainsKey(pos) then
-                cache.[pos]
-            else
+            let posCache = outerCache.GetOrCreateValue(input :> obj)
+            match posCache.TryGetValue(pos) with
+            | true, result -> result
+            | _ ->
                 let result = p input pos
-                cache.[pos] <- result
+                posCache.[pos] <- result
                 result
 
     let AcceptIf (predicate: 'I -> bool) : PackratParser<'I, 'I> =
