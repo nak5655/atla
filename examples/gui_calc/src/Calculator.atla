@@ -71,7 +71,7 @@ impl CalculatorWindow as Window
         (digit'ToString.) row column (digit this'onDigitButtonClick.) this'addButton.
 
     fn onDigitButtonClick (this: CalculatorWindow) (digit: Int): () -> () = do
-        fn: () = do
+        fn () -> do
             if  | this'_clearOnNextDigit -> 
                     this'_display'Text = "0"
                     this'_clearOnNextDigit = False
