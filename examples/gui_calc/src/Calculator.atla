@@ -60,7 +60,7 @@ impl CalculatorWindow as Window
         button'FontSize = 20.0
         button'Margin = 4.0 Thickness.
 
-        button'Click += fn _ __ -> onClick
+        button'Click += fn _ __ -> onClick.
 
         button row Grid'SetRow.
         button column Grid'SetColumn.
