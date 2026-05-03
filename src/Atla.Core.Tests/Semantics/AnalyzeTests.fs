@@ -394,6 +394,35 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Assert.True(false, $"Semantic analysis failed: {message}")
 
     [<Fact>]
+    let ``semantic analysis resolves static impl method as bare name within the same module`` () =
+        // Regression test: static impl methods must be callable as bare names (e.g. `addButton`)
+        // from other methods in the same module. Previously, only `Type'method` qualified syntax worked.
+        let span = Span.Empty
+        let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
+        let dataDecl =
+            Ast.Decl.Data(
+                "Line",
+                [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
+                span) :> Ast.Decl
+
+        let helperFn = Ast.Decl.Fn("helper", [], intType, Ast.Expr.Int(42, span) :> Ast.Expr, span)
+        let implDecl = Ast.Decl.Impl("Line", None, None, None, [ helperFn ], span) :> Ast.Decl
+
+        // main calls `helper` as a bare name — this was previously "Undefined variable 'helper'"
+        let bareNameCall = Ast.Expr.Apply(Ast.Expr.Id("helper", span) :> Ast.Expr, [], span) :> Ast.Expr
+        let mainDecl = Ast.Decl.Fn("main", [], intType, bareNameCall, span) :> Ast.Decl
+
+        let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true } ->
+            Assert.True(true)
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+
+    [<Fact>]
     let ``semantic analysis reports instance access to static impl method`` () =
         let span = Span.Empty
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
