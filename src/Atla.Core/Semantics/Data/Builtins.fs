@@ -11,3 +11,4 @@ module Builtins =
         | OpNe
         | OpAnd
         | OpOr
+        | OpNeg

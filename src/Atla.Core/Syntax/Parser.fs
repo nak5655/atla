@@ -212,7 +212,8 @@ module Parser =
 
     // 単項マイナスを解析し、AST の既存 Apply 形状へ正規化する。
     // - 負の数値リテラルは literal 値へ直接畳み込む。
-    // - それ以外の `-expr` は `0 - expr` 呼び出し形へ変換する。
+    // - それ以外の `-expr` は単項適用 `-(expr)` 形へ変換する。
+    //   （バイナリ `-` から独立した単項オーバーロードとして解決される。）
     and unaryTerm: PackratParser<Token, Ast.Expr> =
         Memo (fun input pos ->
             match (symbol "-") input pos with
@@ -225,11 +226,10 @@ module Parser =
                     | :? Ast.Expr.Float as floatExpr ->
                         Success (Ast.Expr.Float(-floatExpr.value, { left = minusToken.span.left; right = floatExpr.span.right }) :> Ast.Expr, nextPos)
                     | _ ->
-                        let zeroExpr = Ast.Expr.Int(0, minusToken.span) :> Ast.Expr
                         let negatedExpr =
                             Ast.Expr.Apply(
                                 Ast.Expr.Id("-", minusToken.span) :> Ast.Expr,
-                                [ zeroExpr; operandExpr ],
+                                [ operandExpr ],
                                 { left = minusToken.span.left; right = operandExpr.span.right }) :> Ast.Expr
                         Success (negatedExpr, nextPos)
                 | Failure (reason, span) -> Failure (reason, span)
