@@ -147,7 +147,8 @@ module ClosureConversion =
     /// lifted invoke method 本体内の捕捉変数参照（ClosedHir.Expr.Id）を EnvFieldLoad へ書き換える。
     /// さらに、捕捉された関数型変数が呼び出し位置（Call の func に Hir.Callable.Fn）に現れる場合も
     /// env フィールドからデリゲートをロードして Invoke する形へ変換する。
-    /// `ClosedHir.mapExpr` を用いて構造的再帰をインフラに委譲する。
+    /// `ClosedHir.mapExpr` はボトムアップ（子ノードを先に変換してから親ノードへ f を適用）で動作するため、
+    /// args/instance 内の捕捉変数参照は、外側の Call ノードが処理される時点で既に EnvFieldLoad へ変換済みである。
     let private rewriteCapturedRefs
         (envArgSid: SymbolId)
         (capturedSids: Set<int>)
@@ -158,19 +159,19 @@ module ClosureConversion =
             | ClosedHir.Expr.Id (sid, tid, span) when capturedSids.Contains sid.id ->
                 // 捕捉変数参照を env インスタンスのフィールドアクセスへ変換する。
                 ClosedHir.Expr.EnvFieldLoad(envArgSid, sid, tid, span)
-            | ClosedHir.Expr.Call (Hir.Callable.Fn sid, instance, args, tid, span) when capturedSids.Contains sid.id ->
+            | ClosedHir.Expr.Call (Hir.Callable.Fn sid, None, args, tid, span) when capturedSids.Contains sid.id ->
                 // 捕捉された関数型変数が呼び出し位置に現れる場合:
                 // env フィールドからデリゲートをロードし、その Invoke メソッドを呼び出す形へ変換する。
                 // これを行わないと、Layout フェーズが CallSym を生成し、Gen フェーズで
                 // "Unknown method symbol" エラーが発生する（sid はメソッドではなく変数値であるため）。
+                // Hir.Callable.Fn 呼び出しでは instance は常に None（関数値はレシーバーなし呼び出し）。
                 match capturedTypes |> Map.tryFind sid.id with
                 | Some fnType ->
                     match TypeId.tryToRuntimeSystemType fnType with
                     | Some delegateType ->
                         match delegateType.GetMethod("Invoke") |> Option.ofObj with
                         | Some invokeMethod ->
-                            // env フィールドからデリゲートを読み出し、instance として渡す。
-                            // 元の instance（Hir.Callable.Fn 呼び出しでは常に None）は破棄する。
+                            // env フィールドからデリゲートを読み出し、Invoke の instance として渡す。
                             let envFieldExpr = ClosedHir.Expr.EnvFieldLoad(envArgSid, sid, fnType, span)
                             ClosedHir.Expr.Call(Hir.Callable.NativeMethod invokeMethod, Some envFieldExpr, args, tid, span)
                         | None -> e
