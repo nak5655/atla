@@ -998,7 +998,7 @@ module ExprAnalyze =
                         | Some builtinType ->
                             match TypeId.tryToRuntimeSystemType builtinType with
                             | Some sysType -> resolveMemberFromSystemTypeResult sysType
-                            | None -> Result.Error (sprintf "Type '%s' does not support static member access" receiverId.name)
+                            | None -> Result.Error (sprintf "Builtin type '%s' cannot be mapped to a .NET runtime type for static member access" receiverId.name)
                         | None ->
                         let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                         let receiverType = typeEnv.resolveType receiver.typ
@@ -1175,7 +1175,7 @@ module ExprAnalyze =
                                 Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, None, tid, staticAccessExpr.span))
                             else
                                 Result.Error (sprintf "Ambiguous member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
-                    | None -> Result.Error (sprintf "Type '%s' does not support static member access" staticAccessExpr.typeName)
+                    | None -> Result.Error (sprintf "Builtin type '%s' cannot be mapped to a .NET runtime type for static member access" staticAccessExpr.typeName)
                 | None -> Result.Error (sprintf "Undefined type '%s'" staticAccessExpr.typeName)
 
             resultToExpr tid staticAccessExpr.span resolvedStaticResult
