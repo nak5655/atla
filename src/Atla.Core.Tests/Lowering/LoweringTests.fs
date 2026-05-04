@@ -937,3 +937,87 @@ fn main: () = do
         Assert.Equal(2, lines.Length)
         Assert.Equal("called!", lines.[0].Trim())
         Assert.Equal("called!", lines.[1].Trim())
+
+    [<Fact>]
+    let ``unary minus on Float variable compiles and produces correct value`` () =
+        // 回帰テスト: `-value` で value が Float 変数の場合に
+        // "No overload matched for '-'" が発生していたバグの修正を検証する。
+        // 修正前は parser が `0 - value` へ脱糖し、Int(0) と Float の型不一致でエラーになっていた。
+        let program = """
+import System'Console
+
+fn main: () = do
+    let value = 3.14
+    let invertedValue = -value
+    invertedValue'ToString. Console'WriteLine.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "UnaryMinusFloat"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "UnaryMinusFloat.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        let lines = stdout.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
+        Assert.Equal(1, lines.Length)
+        Assert.Equal("-3.14", lines.[0].Trim())
+
+    [<Fact>]
+    let ``unary minus on Int variable compiles and produces correct value`` () =
+        // 回帰テスト: `-value` で value が Int 変数の場合に正しく動作することを確認する。
+        let program = """
+import System'Console
+
+fn main: () = do
+    let n = 42
+    let neg = -n
+    neg'ToString. Console'WriteLine.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "UnaryMinusInt"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "UnaryMinusInt.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        let lines = stdout.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
+        Assert.Equal(1, lines.Length)
+        Assert.Equal("-42", lines.[0].Trim())

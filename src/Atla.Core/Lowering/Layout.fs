@@ -221,22 +221,35 @@ module Layout =
                                 Ok (state3, { ins = instanceIns @ argIns @ [ newIns ] @ storeIns; res = Some(Mir.Value.RegVal dst) })
                             | Hir.Callable.BuiltinOperator op ->
                                 let dst, state3 = declareTemp state2 tid
-                                match argValues |> List.tryItem 0, argValues |> List.tryItem 1 with
-                                | Some lhs, Some rhs ->
-                                    let opcode =
-                                        match op with
-                                        | Builtins.OpAdd -> Mir.OpCode.Add
-                                        | Builtins.OpSub -> Mir.OpCode.Sub
-                                        | Builtins.OpMul -> Mir.OpCode.Mul
-                                        | Builtins.OpDiv -> Mir.OpCode.Div
-                                        | Builtins.OpMod -> Mir.OpCode.Mod
-                                        | Builtins.OpEq -> Mir.OpCode.Eq
-                                        | Builtins.OpNe -> Mir.OpCode.Ne
-                                        | Builtins.OpAnd -> Mir.OpCode.And
-                                        | Builtins.OpOr -> Mir.OpCode.Or
-                                    Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) })
-                                | None, _ -> Result.Error (Diagnostic.Error("Missing lhs operand for builtin operator", callSpan))
-                                | _, None -> Result.Error (Diagnostic.Error("Missing rhs operand for builtin operator", callSpan))
+                                match op with
+                                | Builtins.OpNeg ->
+                                    // 単項マイナス: `0 - operand` を MIR TAC として生成する。
+                                    // 結果型（tid）に応じてゼロ即値を選択し、float/int の型整合を保つ。
+                                    match argValues |> List.tryItem 0 with
+                                    | Some operand ->
+                                        let zeroImm =
+                                            if tid = TypeId.Float then Mir.Value.ImmVal(Mir.Imm.Float 0.0)
+                                            else Mir.Value.ImmVal(Mir.Imm.Int 0)
+                                        Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.TAC(dst, zeroImm, Mir.OpCode.Sub, operand) ]; res = Some(Mir.Value.RegVal dst) })
+                                    | None -> Result.Error (Diagnostic.Error("Missing operand for unary negation", callSpan))
+                                | _ ->
+                                    match argValues |> List.tryItem 0, argValues |> List.tryItem 1 with
+                                    | Some lhs, Some rhs ->
+                                        let opcode =
+                                            match op with
+                                            | Builtins.OpAdd -> Mir.OpCode.Add
+                                            | Builtins.OpSub -> Mir.OpCode.Sub
+                                            | Builtins.OpMul -> Mir.OpCode.Mul
+                                            | Builtins.OpDiv -> Mir.OpCode.Div
+                                            | Builtins.OpMod -> Mir.OpCode.Mod
+                                            | Builtins.OpEq -> Mir.OpCode.Eq
+                                            | Builtins.OpNe -> Mir.OpCode.Ne
+                                            | Builtins.OpAnd -> Mir.OpCode.And
+                                            | Builtins.OpOr -> Mir.OpCode.Or
+                                            | Builtins.OpNeg -> failwith "OpNeg must be handled as unary before this match"
+                                        Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) })
+                                    | None, _ -> Result.Error (Diagnostic.Error("Missing lhs operand for builtin operator", callSpan))
+                                    | _, None -> Result.Error (Diagnostic.Error("Missing rhs operand for builtin operator", callSpan))
                             | Hir.Callable.Fn sid ->
                                 match Mir.Frame.get sid state2.frame with
                                 | Some delegateReg ->

@@ -51,6 +51,8 @@ type SymbolTable() =
           ("+", addBuiltinOperator "+" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpAdd)
           ("-", addBuiltinOperator "-" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpSub)
           ("-", addBuiltinOperator "-" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpSub)
+          ("-", addBuiltinOperator "-" (TypeId.Fn([ TypeId.Int ], TypeId.Int)) Builtins.Operators.OpNeg)
+          ("-", addBuiltinOperator "-" (TypeId.Fn([ TypeId.Float ], TypeId.Float)) Builtins.Operators.OpNeg)
           ("*", addBuiltinOperator "*" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpMul)
           ("*", addBuiltinOperator "*" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Float)) Builtins.Operators.OpMul)
           ("/", addBuiltinOperator "/" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Int)) Builtins.Operators.OpDiv)
