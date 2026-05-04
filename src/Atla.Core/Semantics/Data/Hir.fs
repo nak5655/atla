@@ -275,6 +275,9 @@ module Hir =
         | Unit _ | Bool _ | Int _ | Float _ | String _ | Null _ | Id _ | ExprError _ ->
             leaf ctx' expr
         | Call (_, instance, args, _, _) ->
+            // `leaf` を Call ノード自体にも適用し、Callable.Fn sid など
+            // サブ式ツリーに現れない参照を収集できるようにする。
+            let selfAcc = leaf ctx' expr
             let instAcc =
                 instance
                 |> Option.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
@@ -283,7 +286,7 @@ module Hir =
                 args
                 |> List.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
                 |> List.fold merge zero
-            merge instAcc argsAcc
+            merge selfAcc (merge instAcc argsAcc)
         | Lambda (_, _, body, _, _) ->
             // ctx' はこの Lambda ノードへ `descend` を適用した後の文脈（例: bound がリセット済み）
             foldExprWithCtx descend afterStmt leaf merge zero ctx' body
