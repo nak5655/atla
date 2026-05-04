@@ -2967,3 +2967,60 @@ fn test (domain: AppDomain): () = do
         | { diagnostics = diagnostics } ->
             let message = diagnostics |> List.map (fun err -> err.toDisplayText()) |> String.concat "; "
             Assert.True(false, $"semantic analysis failed: {message}")
+
+    /// 回帰テスト: `Float'Parse` — ビルトイン型を静的メンバーアクセスのレシーバとして使う場合に
+    /// "Undefined variable 'Float'" が誤報告されなかったことを検証する。
+    [<Fact>]
+    let ``Float'Parse resolves to System.Double.Parse without error`` () =
+        let program = """
+fn parse (s: String): Float = s Float'Parse.
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "HIR に ExprError/ErrorStmt が残っています。")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    /// 回帰テスト: `Int'Parse` — ビルトイン型 Int に対しても同様に静的メンバーアクセスが解決できることを検証する。
+    [<Fact>]
+    let ``Int'Parse resolves to System.Int32.Parse without error`` () =
+        let program = """
+fn parse (s: String): Int = s Int'Parse.
+"""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let hasError = hirModule.methods |> List.exists (fun m -> m.hasError)
+                    Assert.False(hasError, "HIR に ExprError/ErrorStmt が残っています。")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

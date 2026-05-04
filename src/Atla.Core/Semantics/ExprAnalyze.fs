@@ -992,7 +992,14 @@ module ExprAnalyze =
                         match nameEnv.scope.ResolveType(receiverId.name) with
                         | Some (TypeId.Name sid) ->
                             resolveMemberFromTypeName sid receiverId.name
-                        | _ ->
+                        // Float, Int, Bool, String などのビルトイン型を静的メンバーアクセスのレシーバとして使う場合、
+                        // 対応する .NET ランタイム型へ変換して静的メンバーを探索する。
+                        // 例: `Float'Parse` → `System.Double.Parse`
+                        | Some builtinType ->
+                            match TypeId.tryToRuntimeSystemType builtinType with
+                            | Some sysType -> resolveMemberFromSystemTypeResult sysType
+                            | None -> Result.Error (sprintf "Type '%s' does not support static member access" receiverId.name)
+                        | None ->
                         let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                         let receiverType = typeEnv.resolveType receiver.typ
                         match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverType with
@@ -1140,7 +1147,35 @@ module ExprAnalyze =
                                         Result.Error (sprintf "Ambiguous member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
                         | _ -> Result.Error (sprintf "Type '%s' is not a system type" staticAccessExpr.typeName)
                     | None -> Result.Error (sprintf "Undefined type symbol '%s'" staticAccessExpr.typeName)
-                | Some _ -> Result.Error (sprintf "Unsupported type id for '%s'" staticAccessExpr.typeName)
+                // ビルトイン型（Float, Int など）を StaticAccess レシーバとして使う場合、
+                // 対応する .NET ランタイム型へ変換して静的メンバーを探索する。
+                | Some builtinType ->
+                    match TypeId.tryToRuntimeSystemType builtinType with
+                    | Some sysType ->
+                        let memberInfos =
+                            sysType.GetMembers(BindingFlags.Public ||| BindingFlags.Static)
+                            |> Seq.filter (fun m -> m.Name = staticAccessExpr.memberName)
+                            |> Seq.toList
+                        match NativeInterop.resolveNativeMember typeEnv memberInfos tid with
+                        | [memberInfo, memberType] ->
+                            match memberInfo with
+                            | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, None, memberType, staticAccessExpr.span))
+                            | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, None, memberType, staticAccessExpr.span))
+                            | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, None, memberType, staticAccessExpr.span))
+                            | _ -> Result.Error (sprintf "Unsupported member type for '%s.%s'" staticAccessExpr.typeName staticAccessExpr.memberName)
+                        | [] -> Result.Error (sprintf "Undefined member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
+                        | members ->
+                            let methodInfos =
+                                members
+                                |> List.choose (fun (memberInfo, _) ->
+                                    match memberInfo with
+                                    | :? MethodInfo as methodInfo -> Some methodInfo
+                                    | _ -> None)
+                            if methodInfos.Length = members.Length then
+                                Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, None, tid, staticAccessExpr.span))
+                            else
+                                Result.Error (sprintf "Ambiguous member '%s' for type '%s'" staticAccessExpr.memberName staticAccessExpr.typeName)
+                    | None -> Result.Error (sprintf "Type '%s' does not support static member access" staticAccessExpr.typeName)
                 | None -> Result.Error (sprintf "Undefined type '%s'" staticAccessExpr.typeName)
 
             resultToExpr tid staticAccessExpr.span resolvedStaticResult
