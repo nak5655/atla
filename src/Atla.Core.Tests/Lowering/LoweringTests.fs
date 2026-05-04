@@ -886,3 +886,54 @@ fn main: () = do
         let lines = stdout.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
         Assert.Equal("True", lines.[0].Trim())
         Assert.Equal("False", lines.[1].Trim())
+
+    [<Fact>]
+    let ``captured function-typed variable in call position inside closure compiles and runs`` () =
+        // Regression test: クロージャー内で捕捉した関数型変数を呼び出す場合に
+        // "Unknown method symbol" エラーが発生していたバグの修正を検証する。
+        // 修正前は rewriteCapturedRefs が Call(Fn capturedSid, ...) を書き換えず、
+        // Layout フェーズが CallSym(capturedSid) を生成し、Gen フェーズで失敗していた。
+        let program = """
+import System'Console
+
+fn printMsg: () = do
+    "called!" Console'WriteLine.
+
+fn applyTwice (callback: () -> ()): () = do
+    let doIt = fn () -> callback.
+    doIt.
+    doIt.
+
+fn main: () = do
+    printMsg applyTwice.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "CapturedFnCall"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat System.Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "CapturedFnCall.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        let lines = stdout.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
+        Assert.Equal(2, lines.Length)
+        Assert.Equal("called!", lines.[0].Trim())
+        Assert.Equal("called!", lines.[1].Trim())

@@ -101,6 +101,12 @@ module ClosureConversion =
                 | Hir.Expr.Id (sid, _, _) ->
                     if ctx.bound.Contains sid.id || globalSymbols.Contains sid.id then Set.empty
                     else Set.singleton sid.id
+                // 呼び出し位置に現れる関数型変数（Callable.Fn sid）も自由変数として収集する。
+                // foldExprWithCtx は Call.func（Callable）をサブ式として走査しないため、
+                // leaf で明示的に処理して捕捉変数解析の漏れを防ぐ。
+                | Hir.Expr.Call (Hir.Callable.Fn sid, _, _, _, _) ->
+                    if ctx.bound.Contains sid.id || globalSymbols.Contains sid.id then Set.empty
+                    else Set.singleton sid.id
                 | _ -> Set.empty)
             Set.union
             Set.empty
@@ -139,13 +145,38 @@ module ClosureConversion =
             expr
 
     /// lifted invoke method 本体内の捕捉変数参照（ClosedHir.Expr.Id）を EnvFieldLoad へ書き換える。
-    /// `ClosedHir.mapExpr` を用いて構造的再帰をインフラに委譲する。
-    let private rewriteCapturedRefs (envArgSid: SymbolId) (capturedSids: Set<int>) (expr: ClosedHir.Expr) : ClosedHir.Expr =
+    /// さらに、捕捉された関数型変数が呼び出し位置（Call の func に Hir.Callable.Fn）に現れる場合も
+    /// env フィールドからデリゲートをロードして Invoke する形へ変換する。
+    /// `ClosedHir.mapExpr` はボトムアップ（子ノードを先に変換してから親ノードへ f を適用）で動作するため、
+    /// args/instance 内の捕捉変数参照は、外側の Call ノードが処理される時点で既に EnvFieldLoad へ変換済みである。
+    let private rewriteCapturedRefs
+        (envArgSid: SymbolId)
+        (capturedSids: Set<int>)
+        (capturedTypes: Map<int, TypeId>)
+        (expr: ClosedHir.Expr) : ClosedHir.Expr =
         ClosedHir.mapExpr (fun e ->
             match e with
             | ClosedHir.Expr.Id (sid, tid, span) when capturedSids.Contains sid.id ->
                 // 捕捉変数参照を env インスタンスのフィールドアクセスへ変換する。
                 ClosedHir.Expr.EnvFieldLoad(envArgSid, sid, tid, span)
+            | ClosedHir.Expr.Call (Hir.Callable.Fn sid, None, args, tid, span) when capturedSids.Contains sid.id ->
+                // 捕捉された関数型変数が呼び出し位置に現れる場合:
+                // env フィールドからデリゲートをロードし、その Invoke メソッドを呼び出す形へ変換する。
+                // これを行わないと、Layout フェーズが CallSym を生成し、Gen フェーズで
+                // "Unknown method symbol" エラーが発生する（sid はメソッドではなく変数値であるため）。
+                // Hir.Callable.Fn 呼び出しでは instance は常に None（関数値はレシーバーなし呼び出し）。
+                match capturedTypes |> Map.tryFind sid.id with
+                | Some fnType ->
+                    match TypeId.tryToRuntimeSystemType fnType with
+                    | Some delegateType ->
+                        match delegateType.GetMethod("Invoke") |> Option.ofObj with
+                        | Some invokeMethod ->
+                            // env フィールドからデリゲートを読み出し、Invoke の instance として渡す。
+                            let envFieldExpr = ClosedHir.Expr.EnvFieldLoad(envArgSid, sid, fnType, span)
+                            ClosedHir.Expr.Call(Hir.Callable.NativeMethod invokeMethod, Some envFieldExpr, args, tid, span)
+                        | None -> e
+                    | None -> e
+                | None -> e
             | _ -> e) expr
 
     /// 捕捉変数参照の書き換えを文に適用する。
@@ -358,8 +389,10 @@ module ClosureConversion =
                             ClosedHir.Field(SymbolId cm.sid, cm.typ, ClosedHir.Expr.Unit span, span))
 
                     // ラムダ本体内の捕捉変数参照を EnvFieldLoad へ書き換える。
+                    // 捕捉された関数型変数が呼び出し位置に現れる場合も Invoke 呼び出しへ変換する。
                     let capturedSidSet = capturedMetadata |> List.map (fun cm -> cm.sid) |> Set.ofList
-                    let rewrittenBodyWithEnv = rewriteCapturedRefs envArgSid capturedSidSet rewrittenBody
+                    let capturedTypeMap = capturedMetadata |> List.map (fun cm -> cm.sid, cm.typ) |> Map.ofList
+                    let rewrittenBodyWithEnv = rewriteCapturedRefs envArgSid capturedSidSet capturedTypeMap rewrittenBody
 
                     let liftedMethod = ClosedHir.Method(liftedMethodSid, methodArgs, rewrittenBodyWithEnv, liftedMethodType, span)
 
