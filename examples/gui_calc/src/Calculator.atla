@@ -154,10 +154,12 @@ impl CalculatorWindow as Window
             if  | this'_clearOnNextDigit => ()
                 | else => do
                     let text = this'_display'Text
-                    if  | text'Length <= 1 => do
-                            this'_display'Text = "0"
-                        | else => do
-                            this'_display'Text = 0 (text'Length - 1) text'Substring.
+                    if  | text'Length == 1 =>
+                            do
+                                this'_display'Text = "0"
+                        | else =>
+                            do
+                                this'_display'Text = 0 (text'Length - 1) text'Substring.
 
     fn onToggleSign (this: CalculatorWindow): () -> () = do
         fn () -> do

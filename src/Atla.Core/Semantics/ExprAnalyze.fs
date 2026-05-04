@@ -1110,7 +1110,12 @@ module ExprAnalyze =
                             | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                             | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
 
-            resultToExpr tid memberAccessExpr.span resolvedMemberResult
+            // メンバーアクセスの解決結果を HIR 式に変換し、期待型 tid と解決後の型を単一化する。
+            // これにより `let x = receiver'member` のような束縛で x の型が具体型に確定する。
+            let memberExpr = resultToExpr tid memberAccessExpr.span resolvedMemberResult
+            match unifyOrError nameEnv typeEnv tid memberExpr.typ memberAccessExpr.span with
+            | Result.Ok _ -> memberExpr
+            | Result.Error errExpr -> errExpr
         | :? Ast.Expr.StaticAccess as staticAccessExpr ->
             let resolvedStaticResult =
                 match nameEnv.scope.ResolveType(staticAccessExpr.typeName) with
@@ -1178,7 +1183,11 @@ module ExprAnalyze =
                     | None -> Result.Error (sprintf "Builtin type '%s' cannot be mapped to a .NET runtime type for static member access" staticAccessExpr.typeName)
                 | None -> Result.Error (sprintf "Undefined type '%s'" staticAccessExpr.typeName)
 
-            resultToExpr tid staticAccessExpr.span resolvedStaticResult
+            // 静的アクセスの解決結果を HIR 式に変換し、期待型 tid と解決後の型を単一化する。
+            let staticExpr = resultToExpr tid staticAccessExpr.span resolvedStaticResult
+            match unifyOrError nameEnv typeEnv tid staticExpr.typ staticAccessExpr.span with
+            | Result.Ok _ -> staticExpr
+            | Result.Error errExpr -> errExpr
         | :? Ast.Expr.If as ifExpr ->
             let rec analyzeIfBranches (branches: Ast.IfBranch list) : Hir.Expr =
                 match List.head branches with
