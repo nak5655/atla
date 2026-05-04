@@ -127,6 +127,13 @@ module ExprAnalyze =
             | Result.Ok _ -> Result.Ok ()
             | Result.Error err -> Result.Error(errorExpr expected span (formatUnifyError nameEnv typeEnv err))
 
+    /// 式を返しつつ期待型 tid と式の型を単一化する。
+    /// member/static アクセス解決後に呼び出し、let 束縛などで型変数を具体型に確定させる。
+    let private unifyAndReturn (nameEnv: NameEnv) (typeEnv: TypeEnv) (tid: TypeId) (span: Atla.Core.Data.Span) (expr: Hir.Expr) : Hir.Expr =
+        match unifyOrError nameEnv typeEnv tid expr.typ span with
+        | Result.Ok _ -> expr
+        | Result.Error errExpr -> errExpr
+
     /// data 型インスタンスの継承チェーンを辿ってメンバー（field/instance method）を探索する。
     /// 直接見つからない場合は `impl ... by <field>` の委譲先フィールドも探索する。
     let private tryResolveDataInstanceMember
@@ -1112,10 +1119,8 @@ module ExprAnalyze =
 
             // メンバーアクセスの解決結果を HIR 式に変換し、期待型 tid と解決後の型を単一化する。
             // これにより `let x = receiver'member` のような束縛で x の型が具体型に確定する。
-            let memberExpr = resultToExpr tid memberAccessExpr.span resolvedMemberResult
-            match unifyOrError nameEnv typeEnv tid memberExpr.typ memberAccessExpr.span with
-            | Result.Ok _ -> memberExpr
-            | Result.Error errExpr -> errExpr
+            resultToExpr tid memberAccessExpr.span resolvedMemberResult
+            |> unifyAndReturn nameEnv typeEnv tid memberAccessExpr.span
         | :? Ast.Expr.StaticAccess as staticAccessExpr ->
             let resolvedStaticResult =
                 match nameEnv.scope.ResolveType(staticAccessExpr.typeName) with
@@ -1184,10 +1189,8 @@ module ExprAnalyze =
                 | None -> Result.Error (sprintf "Undefined type '%s'" staticAccessExpr.typeName)
 
             // 静的アクセスの解決結果を HIR 式に変換し、期待型 tid と解決後の型を単一化する。
-            let staticExpr = resultToExpr tid staticAccessExpr.span resolvedStaticResult
-            match unifyOrError nameEnv typeEnv tid staticExpr.typ staticAccessExpr.span with
-            | Result.Ok _ -> staticExpr
-            | Result.Error errExpr -> errExpr
+            resultToExpr tid staticAccessExpr.span resolvedStaticResult
+            |> unifyAndReturn nameEnv typeEnv tid staticAccessExpr.span
         | :? Ast.Expr.If as ifExpr ->
             let rec analyzeIfBranches (branches: Ast.IfBranch list) : Hir.Expr =
                 match List.head branches with
