@@ -48,23 +48,28 @@ impl CalculatorWindow as Window
             , _clearOnNextDigit = False
             }
         
-        7 0 0 window'addDigitButton.
-        8 0 1 window'addDigitButton.
-        9 0 2 window'addDigitButton.
-        "*" 0 3 window'addOperatorButton.
+        "C" 0 0 (window'onClear.) window'addButton.
+        "BS" 0 1 (window'onBackspace.) window'addButton.
+        "+-" 0 2 (window'onToggleSign.) window'addButton.
+        "/" 0 3 window'addOperatorButton.
 
-        4 1 0 window'addDigitButton.
-        5 1 1 window'addDigitButton.
-        6 1 2 window'addDigitButton.
-        "-" 1 3 window'addOperatorButton.
+        7 1 0 window'addDigitButton.
+        8 1 1 window'addDigitButton.
+        9 1 2 window'addDigitButton.
+        "*" 1 3 window'addOperatorButton.
 
-        1 2 0 window'addDigitButton.
-        2 2 1 window'addDigitButton.
-        3 2 2 window'addDigitButton.
-        "+" 2 3 window'addOperatorButton.
+        4 2 0 window'addDigitButton.
+        5 2 1 window'addDigitButton.
+        6 2 2 window'addDigitButton.
+        "-" 2 3 window'addOperatorButton.
+
+        1 3 0 window'addDigitButton.
+        2 3 1 window'addDigitButton.
+        3 3 2 window'addDigitButton.
+        "+" 3 3 window'addOperatorButton.
         
-        0 3 0 window'addDigitButton.
-        "=" 3 3 (window'onEqualButtonClick.) window'addButton.
+        0 4 0 window'addDigitButton.
+        "=" 4 3 (window'onEquals.) window'addButton.
 
         window'Content = root
 
@@ -84,9 +89,9 @@ impl CalculatorWindow as Window
         button this'_grid'Children'Add.
 
     fn addDigitButton (this: CalculatorWindow) (digit: Int) (row: Int) (column: Int): () =
-        (digit'ToString.) row column (digit this'onDigitButtonClick.) this'addButton.
+        (digit'ToString.) row column (digit this'onDigit.) this'addButton.
 
-    fn onDigitButtonClick (this: CalculatorWindow) (digit: Int): () -> () = do
+    fn onDigit (this: CalculatorWindow) (digit: Int): () -> () = do
         fn () -> do
             if  | this'_clearOnNextDigit =>
                     do
@@ -126,7 +131,7 @@ impl CalculatorWindow as Window
             | operator == "/" => left / right
             | else => right
 
-    fn onEqualButtonClick (this: CalculatorWindow): () -> () = do
+    fn onEquals (this: CalculatorWindow): () -> () = do
         fn () -> do
             let value = this'_display'Text Float'Parse.
 
@@ -136,3 +141,27 @@ impl CalculatorWindow as Window
                     this'_display'Text = this'_currentValue'ToString.
                     this'_pendingOperator = ""
                     this'_clearOnNextDigit = True
+
+    fn onClear (this: CalculatorWindow): () -> () = do
+        fn () -> do
+            this'_currentValue = 0.0
+            this'_display'Text = "0"
+            this'_pendingOperator = ""
+            this'_clearOnNextDigit = False
+
+    fn onBackspace (this: CalculatorWindow): () -> () = do
+        fn () -> do
+            if  | this'_clearOnNextDigit => ()
+                | else => do
+                    let text = this'_display'Text
+                    if  | text'Length <= 1 => do
+                            this'_display'Text = "0"
+                        | else => do
+                            this'_display'Text = 0 (text'Length - 1) text'Substring.
+
+    fn onToggleSign (this: CalculatorWindow): () -> () = do
+        fn () -> do
+            let value = this'_display'Text Float'Parse.
+            let invertedValue = -value
+            
+            this'_display'Text = invertedValue'ToString.
