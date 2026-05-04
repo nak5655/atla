@@ -1204,7 +1204,14 @@ module ExprAnalyze =
                         |> List.map (fun arg -> Hir.Arg(arg.sid, arg.name, typeEnv.resolveType arg.typ, arg.span))
                     let resolvedRetType = typeEnv.resolveType expectedRetType
                     let resolvedLambdaType = typeEnv.resolveType lambdaType
-                    Hir.Expr.Lambda(resolvedArgs, resolvedRetType, analyzedBody, resolvedLambdaType, lambdaExpr.span)
+                    // 期待型が具体的な .NET デリゲート型（Native）の場合、Lambda の型をその型で確定する。
+                    // TypeId.Fn(...)のままにすると、Layout フェーズで Action<,> などの汎用デリゲートへ変換され、
+                    // EventHandler<T> を要求するイベントへの代入で InvalidCastException が発生する。
+                    let finalLambdaType =
+                        match typeEnv.resolveType tid with
+                        | TypeId.Native t when TypeId.isDelegateType t -> TypeId.Native t
+                        | _ -> resolvedLambdaType
+                    Hir.Expr.Lambda(resolvedArgs, resolvedRetType, analyzedBody, finalLambdaType, lambdaExpr.span)
                 | Result.Error exprErr -> exprErr
         | _ -> errorExpr tid expr.span "Unsupported expression type"
 

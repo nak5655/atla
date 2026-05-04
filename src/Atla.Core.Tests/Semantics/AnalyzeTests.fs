@@ -2881,6 +2881,69 @@ fn test (): ExceptionDispatchInfo = do
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``lambda analyzed as specific delegate type preserves that delegate type in HIR`` () =
+        // 回帰テスト: EventHandler<T> などの具体的なデリゲート型を期待する位置にラムダを渡した場合、
+        // Lambda の HIR 型は TypeId.Fn(...) ではなく TypeId.Native(EventHandler<T>) になることを検証する。
+        // これにより Layout フェーズが正確なデリゲート型で FnDelegate を生成し、
+        // InvalidCastException（Action<obj,T> vs EventHandler<T>）を防ぐ。
+        let input: Input<SourceChar> = StringInput """
+import System'AppDomain
+
+fn test (domain: AppDomain): () = do
+    domain'ProcessExit += fn _ __ -> ()
+"""
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "test", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    // test メソッドの本体を取得する。
+                    let testMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun m ->
+                            match symbolTable.Get(m.sym) with
+                            | Some info -> info.name = "test"
+                            | None -> false)
+                    match testMethod with
+                    | None -> Assert.True(false, "method 'test' not found in HIR module")
+                    | Some methodInfo ->
+                        // do ブロック内の ExprStmt (add_ProcessExit 呼び出し) を探す。
+                        let findLambdaArgType (stmts: Hir.Stmt list) =
+                            stmts
+                            |> List.tryPick (fun stmt ->
+                                match stmt with
+                                | Hir.Stmt.ExprStmt (Hir.Expr.Call (_, _, args, _, _), _) ->
+                                    // 引数の中から Lambda を探す。
+                                    args |> List.tryPick (fun arg ->
+                                        match arg with
+                                        | Hir.Expr.Lambda (_, _, _, lambdaTid, _) -> Some lambdaTid
+                                        | _ -> None)
+                                | _ -> None)
+                        let lambdaTypeOpt =
+                            match methodInfo.body with
+                            | Hir.Expr.Block (stmts, _, _, _) -> findLambdaArgType stmts
+                            | _ -> None
+                        match lambdaTypeOpt with
+                        | None -> Assert.True(false, "Lambda not found in HIR method body")
+                        | Some lambdaTid ->
+                            // Lambda の型が TypeId.Native(EventHandler) であることを確認する。
+                            // TypeId.Fn(...) のままだと Layout フェーズで Action<,> が使われ InvalidCastException になる。
+                            let expectedDelegateType = typeof<System.EventHandler>
+                            Assert.Equal(TypeId.Native expectedDelegateType, lambdaTid)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``compound add assignment lowers to builtin operator and assign`` () =
         let span = Span.Empty
         let body =
