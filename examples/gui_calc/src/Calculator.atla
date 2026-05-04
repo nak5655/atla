@@ -12,8 +12,8 @@ import Avalonia'Layout'HorizontalAlignment
 data CalculatorWindow = 
     { _grid: Grid
     , _display: TextBox
-    #, _currentValue: Float
-    #, _pendingOperator: String
+    , _currentValue: Float
+    , _pendingOperator: String
     , _clearOnNextDigit: Bool
     }
 
@@ -43,12 +43,28 @@ impl CalculatorWindow as Window
         let window = CalculatorWindow
             { _grid = grid
             , _display = display
+            , _currentValue = 0.0
+            , _pendingOperator = ""
             , _clearOnNextDigit = False
             }
         
         7 0 0 window'addDigitButton.
         8 0 1 window'addDigitButton.
         9 0 2 window'addDigitButton.
+        "*" 0 3 window'addOperatorButton.
+
+        4 1 0 window'addDigitButton.
+        5 1 1 window'addDigitButton.
+        6 1 2 window'addDigitButton.
+        "-" 1 3 window'addOperatorButton.
+
+        1 2 0 window'addDigitButton.
+        2 2 1 window'addDigitButton.
+        3 2 2 window'addDigitButton.
+        "+" 2 3 window'addOperatorButton.
+        
+        0 3 0 window'addDigitButton.
+        "=" 3 3 (window'onEqualButtonClick.) window'addButton.
 
         window'Content = root
 
@@ -84,3 +100,39 @@ impl CalculatorWindow as Window
                 | else =>
                     do
                         this'_display'Text += digit'ToString.
+
+    fn addOperatorButton (this: CalculatorWindow) (operator: String) (row: Int) (column: Int): () =
+        operator row column (operator this'onOperatorButtonClick.) this'addButton.
+
+    fn onOperatorButtonClick (this: CalculatorWindow) (operator: String): () -> () = do
+        fn () -> do
+            let value = this'_display'Text Float'Parse.
+
+            if  | this'_pendingOperator != "" =>
+                    do
+                        this'_currentValue = this'_currentValue value this'_pendingOperator this'applyOperator.
+                        this'_display'Text = this'_currentValue'ToString.
+                | else =>
+                    do
+                        this'_currentValue = value
+            
+            this'_pendingOperator = operator
+
+    fn applyOperator (this: CalculatorWindow) (left: Float) (right: Float) (operator: String): Float =
+        if
+            | operator == "+" => left + right
+            | operator == "-" => left - right
+            | operator == "*" => left * right
+            | operator == "/" => left / right
+            | else => right
+
+    fn onEqualButtonClick (this: CalculatorWindow): () -> () = do
+        fn () -> do
+            let value = this'_display'Text Float'Parse.
+
+            if  | this'_pendingOperator == "" => ()
+                | else => do
+                    this'_currentValue = this'_currentValue value this'_pendingOperator this'applyOperator.
+                    this'_display'Text = this'_currentValue'ToString.
+                    this'_pendingOperator = ""
+                    this'_clearOnNextDigit = True

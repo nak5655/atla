@@ -1,11 +1,14 @@
+import Avalonia'AppBuilder
 import Avalonia'Application
+import Avalonia'Controls'DesktopApplicationExtensions
 import Avalonia'Controls'Window
 import Avalonia'Controls'WindowStartupLocation
-import Avalonia'AppBuilder
-import Avalonia'Controls'DesktopApplicationExtensions
+import Avalonia'Themes'Fluent'FluentTheme
 import Calculator'CalculatorWindow
 
 fn appMain (app: Application) (args: Array String): () = do
+    FluentTheme. app'Styles'Add.
+
     let window = CalculatorWindow'new.
     window'Title = "Calc"
     window'Width = 320.0
