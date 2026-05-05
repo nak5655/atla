@@ -121,8 +121,7 @@ impl CalculatorWindow as Window
             this'_clearOnNextDigit = True
 
     fn applyOperator (this: CalculatorWindow) (left: Float) (right: Float) (operator: String): Float =
-        if
-            | operator == "+" => left + right
+        if  | operator == "+" => left + right
             | operator == "-" => left - right
             | operator == "*" => left * right
             | operator == "/" => left / right
