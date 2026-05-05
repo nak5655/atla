@@ -94,17 +94,14 @@ impl CalculatorWindow as Window
     fn onDigit (this: CalculatorWindow) (digit: Int): () -> () =
         fn () ->
             if  | this'_clearOnNextDigit =>
-                    do
-                        this'_display'Text = "0"
-                        this'_clearOnNextDigit = False
+                    this'_display'Text = "0"
+                    this'_clearOnNextDigit = False
                 | else => ()
 
             if  | this'_display'Text == "0" && digit'ToString. != "." =>
-                    do
-                        this'_display'Text = digit'ToString.
+                    this'_display'Text = digit'ToString.
                 | else =>
-                    do
-                        this'_display'Text += digit'ToString.
+                    this'_display'Text += digit'ToString.
 
     fn addOperatorButton (this: CalculatorWindow) (operator: String) (row: Int) (column: Int): () =
         operator row column (operator this'onOperatorButtonClick.) this'addButton.
@@ -114,12 +111,10 @@ impl CalculatorWindow as Window
             let value = this'_display'Text Float'Parse.
 
             if  | this'_pendingOperator != "" =>
-                    do
-                        this'_currentValue = this'_currentValue value this'_pendingOperator this'applyOperator.
-                        this'_display'Text = this'_currentValue'ToString.
+                    this'_currentValue = this'_currentValue value this'_pendingOperator this'applyOperator.
+                    this'_display'Text = this'_currentValue'ToString.
                 | else =>
-                    do
-                        this'_currentValue = value
+                    this'_currentValue = value
             
             this'_pendingOperator = operator
 
@@ -136,7 +131,7 @@ impl CalculatorWindow as Window
             let value = this'_display'Text Float'Parse.
 
             if  | this'_pendingOperator == "" => ()
-                | else => do
+                | else =>
                     this'_currentValue = this'_currentValue value this'_pendingOperator this'applyOperator.
                     this'_display'Text = this'_currentValue'ToString.
                     this'_pendingOperator = ""
@@ -150,16 +145,14 @@ impl CalculatorWindow as Window
             this'_clearOnNextDigit = False
 
     fn onBackspace (this: CalculatorWindow): () -> () =
-        fn () -> do
+        fn () ->
             if  | this'_clearOnNextDigit => ()
-                | else => do
+                | else =>
                     let text = this'_display'Text
                     if  | text'Length == 1 =>
-                            do
-                                this'_display'Text = "0"
+                            this'_display'Text = "0"
                         | else =>
-                            do
-                                this'_display'Text = 0 (text'Length - 1) text'Substring.
+                            this'_display'Text = 0 (text'Length - 1) text'Substring.
 
     fn onToggleSign (this: CalculatorWindow): () -> () =
         fn () ->

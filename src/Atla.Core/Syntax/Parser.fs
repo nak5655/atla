@@ -135,12 +135,12 @@ module Parser =
     // if式
     and ifThen: PackratParser<Token, Ast.IfBranch> =
         Memo (fun input pos ->
-            block (asToken (symbol "|")) (expr <& keyword "=>" <&> (Once expr (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (cond, body) -> Ast.IfBranch.Then(cond, body, { left = cond.span.left; right = body.span.right })) input pos
+            block (asToken (symbol "|")) (expr <& keyword "=>" <&> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (cond, body) -> Ast.IfBranch.Then(cond, body, { left = cond.span.left; right = body.span.right })) input pos
         )
 
     and ifElse: PackratParser<Token, Ast.IfBranch> =
         Memo (fun input pos ->
-            block (asToken (symbol "|")) (keyword "else" &> keyword "=>" &> (Once expr (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (body) -> Ast.IfBranch.Else(body, body.span)) input pos
+            block (asToken (symbol "|")) (keyword "else" &> keyword "=>" &> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (body) -> Ast.IfBranch.Else(body, body.span)) input pos
         )
 
     and ifExpr: PackratParser<Token, Ast.Expr> =
