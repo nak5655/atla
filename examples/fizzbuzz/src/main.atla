@@ -11,6 +11,6 @@ fn fizzbuzz (n: Int): () =
             | else => i'ToString.
         s Console'WriteLine.
 
-fn main: () = do
+fn main: () =
     let n = Console'ReadLine. Int32'Parse.
     n fizzbuzz.

@@ -18,7 +18,7 @@ data CalculatorWindow =
     }
 
 impl CalculatorWindow as Window
-    fn new: CalculatorWindow = do
+    fn new: CalculatorWindow =
         let root = StackPanel.
         root'Orientation = Orientation'Vertical
         root'Margin = 8.0 Thickness.
@@ -75,7 +75,7 @@ impl CalculatorWindow as Window
 
         window
 
-    fn addButton (this: CalculatorWindow) (label: String) (row: Int) (column: Int) (onClick: () -> ()): () = do
+    fn addButton (this: CalculatorWindow) (label: String) (row: Int) (column: Int) (onClick: () -> ()): () =
         let button = Button.
         button'Content = label
         button'FontSize = 20.0
@@ -91,7 +91,7 @@ impl CalculatorWindow as Window
     fn addDigitButton (this: CalculatorWindow) (digit: Int) (row: Int) (column: Int): () =
         (digit'ToString.) row column (digit this'onDigit.) this'addButton.
 
-    fn onDigit (this: CalculatorWindow) (digit: Int): () -> () = do
+    fn onDigit (this: CalculatorWindow) (digit: Int): () -> () =
         fn () -> do
             if  | this'_clearOnNextDigit =>
                     do
@@ -109,7 +109,7 @@ impl CalculatorWindow as Window
     fn addOperatorButton (this: CalculatorWindow) (operator: String) (row: Int) (column: Int): () =
         operator row column (operator this'onOperatorButtonClick.) this'addButton.
 
-    fn onOperatorButtonClick (this: CalculatorWindow) (operator: String): () -> () = do
+    fn onOperatorButtonClick (this: CalculatorWindow) (operator: String): () -> () =
         fn () -> do
             let value = this'_display'Text Float'Parse.
 
@@ -131,7 +131,7 @@ impl CalculatorWindow as Window
             | operator == "/" => left / right
             | else => right
 
-    fn onEquals (this: CalculatorWindow): () -> () = do
+    fn onEquals (this: CalculatorWindow): () -> () =
         fn () -> do
             let value = this'_display'Text Float'Parse.
 
@@ -142,14 +142,14 @@ impl CalculatorWindow as Window
                     this'_pendingOperator = ""
                     this'_clearOnNextDigit = True
 
-    fn onClear (this: CalculatorWindow): () -> () = do
+    fn onClear (this: CalculatorWindow): () -> () =
         fn () -> do
             this'_currentValue = 0.0
             this'_display'Text = "0"
             this'_pendingOperator = ""
             this'_clearOnNextDigit = False
 
-    fn onBackspace (this: CalculatorWindow): () -> () = do
+    fn onBackspace (this: CalculatorWindow): () -> () =
         fn () -> do
             if  | this'_clearOnNextDigit => ()
                 | else => do
@@ -161,7 +161,7 @@ impl CalculatorWindow as Window
                             do
                                 this'_display'Text = 0 (text'Length - 1) text'Substring.
 
-    fn onToggleSign (this: CalculatorWindow): () -> () = do
+    fn onToggleSign (this: CalculatorWindow): () -> () =
         fn () -> do
             let value = this'_display'Text Float'Parse.
             let invertedValue = -value

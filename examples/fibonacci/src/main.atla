@@ -6,6 +6,6 @@ fn fibonacci (n: Int): Int = if
     | n == 2 => 1
     | else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
-fn main: () = do
+fn main: () =
     let n = Console'ReadLine. Int32'Parse.
     n fibonacci. Console'WriteLine.

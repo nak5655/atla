@@ -3,6 +3,6 @@ import System'Console
 data Person = { name: String, age: Int }
 
 impl Person
-    fn sayHello (this: Person): () = do
+    fn sayHello (this: Person): () =
         "hello, " Console'Write.
         this'name Console'WriteLine.
