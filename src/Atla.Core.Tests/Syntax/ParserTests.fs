@@ -16,6 +16,15 @@ module ParserTests =
         | Failure (reason, span) ->
             Failure ($"Lexing failed: {reason}", span)
 
+    /// 関数本体の終端式を取得する。関数本体が Block の場合は末尾の ExprStmt を返す。
+    let private terminalBodyExpr (bodyExpr: Ast.Expr) : Ast.Expr =
+        match bodyExpr with
+        | :? Ast.Expr.Block as blockExpr ->
+            match blockExpr.stmts |> List.tryLast with
+            | Some (:? Ast.Stmt.ExprStmt as exprStmt) -> exprStmt.expr
+            | _ -> bodyExpr
+        | _ -> bodyExpr
+
     [<Fact>]
     let ``fileModule parses function declaration`` () =
         let program = "fn main (): Int = 1"
@@ -56,7 +65,7 @@ fn main: () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Block as blockExpr ->
                     let forStmt =
                         blockExpr.stmts
@@ -272,7 +281,7 @@ fn main (): Person = Person { name = "Alice", age = 20 }
 
             match mainDecl with
             | Some fnDecl ->
-                match fnDecl.body with
+                match terminalBodyExpr fnDecl.body with
                 | :? Ast.Expr.DataInit as initExpr ->
                     Assert.Equal("Person", initExpr.typeName)
                     Assert.Equal(2, initExpr.fields.Length)
@@ -314,7 +323,7 @@ fn main (): Line = Line { slope = 2.0, intercept = -1.0 }
 
             match mainDecl with
             | Some fnDecl ->
-                match fnDecl.body with
+                match terminalBodyExpr fnDecl.body with
                 | :? Ast.Expr.DataInit as initExpr ->
                     match initExpr.fields |> List.tryFind (fun field -> match field with | :? Ast.DataInitField.Field as f -> f.name = "intercept" | _ -> false) with
                     | Some (:? Ast.DataInitField.Field as interceptField) ->
@@ -439,7 +448,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Apply as applyExpr ->
                     match applyExpr.func with
                     | :? Ast.Expr.Lambda as lambdaExpr ->
@@ -468,7 +477,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Apply as outerApply ->
                     match outerApply.func with
                     | :? Ast.Expr.Lambda as lambdaExpr ->
@@ -497,7 +506,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Error as errExpr ->
                     Assert.Contains("Duplicate lambda parameter", errExpr.message)
                 | _ ->
@@ -522,7 +531,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Error as errExpr ->
                     Assert.Contains("Lambda parameter list is empty", errExpr.message)
                 | _ ->
@@ -547,7 +556,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Apply as applyExpr ->
                     match applyExpr.func with
                     | :? Ast.Expr.MemberAccess as memberAccess ->
@@ -576,7 +585,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Apply as applyExpr ->
                     Assert.Empty(applyExpr.args)
                 | _ ->
@@ -601,7 +610,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Error as errorExpr ->
                     Assert.Contains("Expected member identifier after apostrophe", errorExpr.message)
                 | _ ->
@@ -625,7 +634,7 @@ fn main (): () =
                     | _ -> None)
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Error as errorExpr ->
                     Assert.Contains("Expected '.' after callee in call expression.", errorExpr.message)
                 | _ ->
@@ -650,7 +659,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Apply as applyExpr ->
                     match applyExpr.func with
                     | :? Ast.Expr.MemberAccess as memberAccess ->
@@ -687,7 +696,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Block as blockExpr ->
                     match blockExpr.stmts |> List.tryHead with
                     | Some (:? Ast.Stmt.Assign as assignStmt) ->
@@ -725,7 +734,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Apply as outerApply ->
                     match outerApply.func, outerApply.args with
                     | (:? Ast.Expr.Id as outerFunc), [ (:? Ast.Expr.Apply as innerApply) ] ->
@@ -760,7 +769,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Apply as applyExpr ->
                     match applyExpr.func, applyExpr.args with
                     | (:? Ast.Expr.Id as funcId), [ (:? Ast.Expr.Id as arg0); (:? Ast.Expr.Id as arg1); (:? Ast.Expr.Id as arg2) ] ->
@@ -792,7 +801,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Error as errorExpr ->
                     Assert.Contains("Expected '.' after callee in call expression.", errorExpr.message)
                 | _ ->
@@ -817,7 +826,7 @@ fn main (): () =
 
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Apply as applyExpr ->
                     match applyExpr.func with
                     | :? Ast.Expr.Id as targetId ->
@@ -1000,7 +1009,7 @@ impl Widget as Control
                     | _ -> None)
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Bool as boolExpr ->
                     Assert.True(boolExpr.value, "expected true literal")
                 | other ->
@@ -1024,7 +1033,7 @@ impl Widget as Control
                     | _ -> None)
             match fnDecl with
             | Some fn ->
-                match fn.body with
+                match terminalBodyExpr fn.body with
                 | :? Ast.Expr.Bool as boolExpr ->
                     Assert.False(boolExpr.value, "expected false literal")
                 | other ->
