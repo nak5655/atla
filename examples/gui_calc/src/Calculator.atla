@@ -80,6 +80,7 @@ impl CalculatorWindow as Window
         button'Content = label
         button'FontSize = 20.0
         button'Margin = 4.0 Thickness.
+        button'HorizontalAlignment = HorizontalAlignment'Stretch
 
         button'Click += fn _ __ -> onClick.
 
@@ -104,9 +105,9 @@ impl CalculatorWindow as Window
                     this'_display'Text += digit'ToString.
 
     fn addOperatorButton (this: CalculatorWindow) (operator: String) (row: Int) (column: Int): () =
-        operator row column (operator this'onOperatorButtonClick.) this'addButton.
+        operator row column (operator this'onOperator.) this'addButton.
 
-    fn onOperatorButtonClick (this: CalculatorWindow) (operator: String): () -> () =
+    fn onOperator (this: CalculatorWindow) (operator: String): () -> () =
         fn () ->
             let value = this'_display'Text Float'Parse.
 
@@ -117,6 +118,7 @@ impl CalculatorWindow as Window
                     this'_currentValue = value
             
             this'_pendingOperator = operator
+            this'_clearOnNextDigit = True
 
     fn applyOperator (this: CalculatorWindow) (left: Float) (right: Float) (operator: String): Float =
         if
