@@ -256,7 +256,7 @@ fn main (): () = "hello" Console'WriteLine.
                     match mainMethod with
                     | Some methodInfo ->
                         match methodInfo.body with
-                        | Hir.Expr.Call (Hir.Callable.NativeMethod _, _, [ Hir.Expr.String ("hello", _) ], _, _) ->
+                        | Hir.Expr.Block ([], Hir.Expr.Call (Hir.Callable.NativeMethod _, _, [ Hir.Expr.String ("hello", _) ], _, _), _, _) ->
                             Assert.True(true)
                         | other ->
                             Assert.True(false, $"expected native Hir.Expr.Call for dot-only member call but got {other}")
@@ -806,7 +806,7 @@ fn main (): Int = 1 2 3 add3.
                     match mainMethod with
                     | Some methodInfo ->
                         match methodInfo.body with
-                        | Hir.Expr.Call (Hir.Callable.Fn _, _, [ Hir.Expr.Int (1, _); Hir.Expr.Int (2, _); Hir.Expr.Int (3, _) ], _, _) ->
+                        | Hir.Expr.Block ([], Hir.Expr.Call (Hir.Callable.Fn _, _, [ Hir.Expr.Int (1, _); Hir.Expr.Int (2, _); Hir.Expr.Int (3, _) ], _, _), _, _) ->
                             Assert.True(true)
                         | other ->
                             Assert.True(false, $"expected multi-argument Hir.Expr.Call for dot-only syntax but got {other}")
@@ -849,7 +849,7 @@ fn main (): Int = ping.
                     match mainMethod with
                     | Some methodInfo ->
                         match methodInfo.body with
-                        | Hir.Expr.Call (Hir.Callable.Fn _, _, [], _, _) ->
+                        | Hir.Expr.Block ([], Hir.Expr.Call (Hir.Callable.Fn _, _, [], _, _), _, _) ->
                             Assert.True(true)
                         | other ->
                             Assert.True(false, $"expected zero-arg Hir.Expr.Call for ping. but got {other}")
