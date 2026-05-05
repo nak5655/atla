@@ -39,7 +39,7 @@ module ParserTests =
     [<Fact>]
     let ``fileModule parses for statement in do block`` () =
         let program = """
-fn main: () = do
+fn main: () =
     for i in values
         i
 """
@@ -90,7 +90,7 @@ fn fizzbuzz (n: Int): () =
             | i % 3 == 0 => "Fizz"
             | else => i
 
-fn main: () = do
+fn main: () =
     let n = 10
     n fizzbuzz.
 """
@@ -135,7 +135,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: () =
     let line = Console'ReadLine.
     let a = " " line'Split.
     a !! 0 Console'WriteLine.
@@ -190,7 +190,7 @@ fn main: () = do
 import Avalonia'Controls'AppBuilder
 import Avalonia'Application
 
-fn main: () = do
+fn main: () =
     let config = AppBuilder'Configure[Application].
     config
 """
@@ -338,7 +338,7 @@ fn main (): Line = Line { slope = 2.0, intercept = -1.0 }
         let program = """
 import System'Console
 
-fn main (): () = do
+fn main (): () =
     "hello" Console'WriteLine.
     "world" Console'WriteLine.
 """
@@ -672,7 +672,7 @@ fn main (): () = do
     [<Fact>]
     let ``fileModule parses member access assignment target`` () =
         let program = """
-fn main (): () = do
+fn main (): () =
     window'Width = 320
 """
 
@@ -1037,7 +1037,7 @@ impl Widget as Control
     [<Fact>]
     let ``fileModule parses compound add assignment`` () =
         let program = """
-fn main (): Unit = do
+fn main (): Unit =
     var x = 1
     x += 2
 """
@@ -1063,7 +1063,7 @@ fn main (): Unit = do
     [<Fact>]
     let ``fileModule parses compound subtract assignment`` () =
         let program = """
-fn main (): Unit = do
+fn main (): Unit =
     var x = 3
     x -= 1
 """

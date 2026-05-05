@@ -168,7 +168,7 @@ fn keep (xs: Array String): Array String = xs
         let program = """
 import System'IO'StringWriter
 
-fn main: () = do
+fn main: () =
     let writer = StringWriter.
     "hello" writer'WriteLine.
 """

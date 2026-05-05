@@ -972,10 +972,9 @@ fn main (): Int = ping.
     let ``analyzeExpr should preserve mutable variable capture in lambda body`` () =
         let program = """
 fn main: () =
-    do
-        var x = 1
-        let f = fn _ -> x
-        ()
+    var x = 1
+    let f = fn _ -> x
+    ()
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -1016,11 +1015,10 @@ fn main: () =
 import System'Linq'Enumerable
 
 fn main: () =
-    do
-        for i in 0 1 Enumerable'Range.
-            let f = fn _ -> i
-            ()
+    for i in 0 1 Enumerable'Range.
+        let f = fn _ -> i
         ()
+    ()
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -2889,7 +2887,7 @@ fn test (): ExceptionDispatchInfo = do
         let input: Input<SourceChar> = StringInput """
 import System'AppDomain
 
-fn test (domain: AppDomain): () = do
+fn test (domain: AppDomain): () =
     domain'ProcessExit += fn _ __ -> ()
 """
         match Lexer.tokenize input Position.Zero with

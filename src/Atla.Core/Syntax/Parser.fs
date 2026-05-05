@@ -547,8 +547,7 @@ module Parser =
 
     and fnBodyExpr: PackratParser<Token, Ast.Expr> =
         Memo (fun input pos ->
-            (expr
-            <|> (stmt |>> fun singleStmt -> Ast.Expr.Block([singleStmt], { left = singleStmt.span.left; right = singleStmt.span.right }) :> Ast.Expr)) input pos
+            (Many1 stmt |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) input pos
         )
 
     and fnDecl: PackratParser<Token, Ast.Decl> =

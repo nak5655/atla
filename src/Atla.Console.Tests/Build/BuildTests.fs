@@ -70,7 +70,7 @@ package:
             """
 import System'Console
 
-fn main: () = do
+fn main: () =
     "Hello, World!" Console'WriteLine.
 """.Trim())
 
