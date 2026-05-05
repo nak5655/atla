@@ -194,5 +194,5 @@ module Combinators =
     // f() は初回呼び出し時に一度だけ評価され、その結果がキャッシュされる。
     // 結果のパーサは Memo でメモ化される。
     let Delay (f: unit -> PackratParser<'I,'A>) : PackratParser<'I,'A> =
-        let lazy' = System.Lazy<PackratParser<'I,'A>>(System.Func<PackratParser<'I,'A>>(f))
-        Memo (fun input pos -> lazy'.Value input pos)
+        let lazyParser = System.Lazy<PackratParser<'I,'A>>(System.Func<PackratParser<'I,'A>>(f))
+        Memo (fun input pos -> lazyParser.Value input pos)
