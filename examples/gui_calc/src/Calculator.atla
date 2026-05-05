@@ -92,7 +92,7 @@ impl CalculatorWindow as Window
         (digit'ToString.) row column (digit this'onDigit.) this'addButton.
 
     fn onDigit (this: CalculatorWindow) (digit: Int): () -> () =
-        fn () -> do
+        fn () ->
             if  | this'_clearOnNextDigit =>
                     do
                         this'_display'Text = "0"
@@ -110,7 +110,7 @@ impl CalculatorWindow as Window
         operator row column (operator this'onOperatorButtonClick.) this'addButton.
 
     fn onOperatorButtonClick (this: CalculatorWindow) (operator: String): () -> () =
-        fn () -> do
+        fn () ->
             let value = this'_display'Text Float'Parse.
 
             if  | this'_pendingOperator != "" =>
@@ -132,7 +132,7 @@ impl CalculatorWindow as Window
             | else => right
 
     fn onEquals (this: CalculatorWindow): () -> () =
-        fn () -> do
+        fn () ->
             let value = this'_display'Text Float'Parse.
 
             if  | this'_pendingOperator == "" => ()
@@ -143,7 +143,7 @@ impl CalculatorWindow as Window
                     this'_clearOnNextDigit = True
 
     fn onClear (this: CalculatorWindow): () -> () =
-        fn () -> do
+        fn () ->
             this'_currentValue = 0.0
             this'_display'Text = "0"
             this'_pendingOperator = ""
@@ -162,7 +162,7 @@ impl CalculatorWindow as Window
                                 this'_display'Text = 0 (text'Length - 1) text'Substring.
 
     fn onToggleSign (this: CalculatorWindow): () -> () =
-        fn () -> do
+        fn () ->
             let value = this'_display'Text Float'Parse.
             let invertedValue = -value
             

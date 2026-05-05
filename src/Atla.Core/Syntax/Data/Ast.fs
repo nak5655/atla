@@ -163,7 +163,7 @@ module Ast =
                 member this.span = span
 
         // 無名関数式（例: fn x y -> x + y）を表す。
-        type Lambda(args: string list, body: Expr, span: Span) =
+        type Lambda(args: FnArg list, body: Expr, span: Span) =
             member this.args = args
             member this.body = body
             member this.span = span
@@ -336,6 +336,14 @@ module Ast =
         type Named(name: string, typeExpr: TypeExpr, span: Span) =
             member this.name = name
             member this.typeExpr = typeExpr
+            member this.span = span
+            interface FnArg with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        type Inferred(name: string, span: Span) =
+            member this.name = name
             member this.span = span
             interface FnArg with
                 member this.span = span

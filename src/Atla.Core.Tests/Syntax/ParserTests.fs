@@ -452,7 +452,12 @@ fn main (): () =
                 | :? Ast.Expr.Apply as applyExpr ->
                     match applyExpr.func with
                     | :? Ast.Expr.Lambda as lambdaExpr ->
-                        Assert.Equal<string list>(["x"], lambdaExpr.args)
+                        Assert.Equal(1, lambdaExpr.args.Length)
+                        match lambdaExpr.args.[0] with
+                        | :? Ast.FnArg.Inferred as inferredArg ->
+                            Assert.Equal("x", inferredArg.name)
+                        | _ ->
+                            Assert.True(false, "lambda arg was not parsed as Ast.FnArg.Inferred")
                     | _ ->
                         Assert.True(false, "apply target was not parsed as Ast.Expr.Lambda")
                 | _ ->

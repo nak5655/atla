@@ -84,6 +84,7 @@ module AnalyzeEnv =
             match arg with
             | :? Ast.FnArg.Named as namedArg -> this.resolveTypeExpr namedArg.typeExpr
             | :? Ast.FnArg.Unit -> TypeId.Unit
+            | :? Ast.FnArg.Inferred -> TypeId.Error "Type inference required"
             | _ -> TypeId.Error "Unsupported function argument type"
 
         member this.declareLocal (name: string) (tid: TypeId) : SymbolId =

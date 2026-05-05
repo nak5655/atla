@@ -324,7 +324,14 @@ module Parser =
         )
 
     // lambda 引数名の重複を検証し、最初に見つかった重複名を返す。
-    and private tryFindDuplicateArgName (argNames: string list) : string option =
+    and private tryFindDuplicateArgName (args: Ast.FnArg list) : string option =
+        let argNames =
+            args
+            |> List.choose (fun arg ->
+                match arg with
+                | :? Ast.FnArg.Named as namedArg -> Some namedArg.name
+                | :? Ast.FnArg.Inferred as inferredArg -> Some inferredArg.name
+                | _ -> None)
         let folder (seen, duplicated) argName =
             match duplicated with
             | Some _ -> seen, duplicated
@@ -338,43 +345,36 @@ module Parser =
     // - 引数は Id の並び、または明示ユニット引数 `()` のみを許可する。
     // - `fn -> expr` は空引数エラーとして Ast.Expr.Error を返す。
     // - 引数重複は Ast.Expr.Error を返す。
+    and lambdaArg: PackratParser<Token, Ast.FnArg> =
+        Memo (fun input pos ->
+            (fnArgUnit <|> fnArgNamed <|> (valueIdent |>> fun (name, span) -> Ast.FnArg.Inferred(name, span) :> Ast.FnArg)) input pos
+        )
+
     and lambdaExpr: PackratParser<Token, Ast.Expr> =
         Memo (fun input pos ->
-            match (keyword "fn") input pos with
-            | Failure (reason, span) -> Failure (reason, span)
-            | Success (fnKw, afterFnPos) ->
-                let lambdaInput = BlockInput(input, fnKw.span.left) :> Input<Token>
-                let unitArgParse = (delim '(' <&> delim ')') lambdaInput afterFnPos
+            block (asToken (keyword "fn")) (Once (Many lambdaArg <& keyword "->" <&> fnBodyExpr |>> fun (args, body) -> 
+                // Unit引数を除外（0引数関数として扱う）
+                let nonUnitArgs = 
+                    args |> List.filter (fun arg -> 
+                        match arg with
+                        | :? Ast.FnArg.Unit -> false
+                        | _ -> true)
 
-                // 引数列を（Id* もしくは `()`）として読み取る。
-                let (argNames, afterArgsPos, usedUnitSyntax) =
-                    match unitArgParse with
-                    | Success (_, afterUnitPos) -> [], afterUnitPos, true
-                    | Failure _ ->
-                        let rec collectArgNames (currentPos: Position) (acc: string list) =
-                            match tid lambdaInput currentPos with
-                            | Success (id, nextPos) -> collectArgNames nextPos (id.str :: acc)
-                            | Failure _ -> List.rev acc, currentPos
-                        let names, endPos = collectArgNames afterFnPos []
-                        names, endPos, false
-
-                match (keyword "->") lambdaInput afterArgsPos with
-                | Failure (reason, span) -> Failure (reason, span)
-                | Success (_, afterArrowPos) ->
-                    match expr lambdaInput afterArrowPos with
-                    | Failure (msg, span) ->
-                        Success (Ast.Expr.Error(msg, span) :> Ast.Expr, afterArrowPos)
-                    | Success (bodyExpr, nextPos) ->
-                        let lambdaSpan = { left = fnKw.span.left; right = bodyExpr.span.right }
-                        match usedUnitSyntax, argNames with
-                        | false, [] ->
-                            Success (Ast.Expr.Error("Lambda parameter list is empty. Use at least one identifier or explicit unit argument list '()'.", lambdaSpan) :> Ast.Expr, nextPos)
-                        | _ ->
-                            match tryFindDuplicateArgName argNames with
-                            | Some duplicatedName ->
-                                Success (Ast.Expr.Error(sprintf "Duplicate lambda parameter '%s'" duplicatedName, lambdaSpan) :> Ast.Expr, nextPos)
-                            | None ->
-                                Success (Ast.Expr.Lambda(argNames, bodyExpr, lambdaSpan) :> Ast.Expr, nextPos)
+                // 空引数チェック（元の引数リストが明示的なUnitのみの場合は許可）
+                let hasOnlyUnit = args.Length = 1 && (args.[0] :? Ast.FnArg.Unit)
+                if nonUnitArgs.IsEmpty && not hasOnlyUnit then
+                    Ast.Expr.Error("Lambda parameter list is empty", body.span) :> Ast.Expr
+                else
+                    // 重複チェック
+                    match tryFindDuplicateArgName nonUnitArgs with
+                    | Some dupName ->
+                        Ast.Expr.Error(sprintf "Duplicate lambda parameter '%s'" dupName, body.span) :> Ast.Expr
+                    | None ->
+                        let leftSpan = 
+                            match nonUnitArgs with
+                            | [] -> body.span.left
+                            | head :: _ -> head.span.left
+                        Ast.Expr.Lambda (nonUnitArgs, body, { left = leftSpan; right = body.span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)) input pos
         )
 
     and expr: PackratParser<Token, Ast.Expr> =

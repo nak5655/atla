@@ -894,7 +894,8 @@ fn main (): Int = ping.
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let retType = Ast.TypeExpr.Arrow(intType, intType, span) :> Ast.TypeExpr
         let lambdaBody = Ast.Expr.Id("x", span) :> Ast.Expr
-        let lambdaExpr = Ast.Expr.Lambda([ "x" ], lambdaBody, span) :> Ast.Expr
+        let xArg = Ast.FnArg.Named("x", intType, span) :> Ast.FnArg
+        let lambdaExpr = Ast.Expr.Lambda([ xArg ], lambdaBody, span) :> Ast.Expr
         let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
@@ -926,7 +927,9 @@ fn main (): Int = ping.
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let retType = Ast.TypeExpr.Arrow(intType, intType, span) :> Ast.TypeExpr
         let lambdaBody = Ast.Expr.Id("x", span) :> Ast.Expr
-        let lambdaExpr = Ast.Expr.Lambda([ "x"; "x" ], lambdaBody, span) :> Ast.Expr
+        let xArg1 = Ast.FnArg.Named("x", intType, span) :> Ast.FnArg
+        let xArg2 = Ast.FnArg.Named("x", intType, span) :> Ast.FnArg
+        let lambdaExpr = Ast.Expr.Lambda([ xArg1; xArg2 ], lambdaBody, span) :> Ast.Expr
         let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 

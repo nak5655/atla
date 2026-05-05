@@ -1219,14 +1219,23 @@ module ExprAnalyze =
             // 引数名重複は明示的に診断として返す（AST 直構築ケースも考慮）。
             let duplicateArgName =
                 lambdaExpr.args
-                |> List.fold (fun (seen: Set<string>, dup: string option) name ->
+                |> List.fold (fun (seen: Set<string>, dup: string option) arg ->
                     match dup with
                     | Some _ -> seen, dup
                     | None ->
-                        if seen.Contains name then
-                            seen, Some name
-                        else
-                            seen.Add name, None) (Set.empty, None)
+                        match arg with
+                        | :? Ast.FnArg.Named as namedArg ->
+                            if seen.Contains namedArg.name then
+                                seen, Some namedArg.name
+                            else
+                                seen.Add namedArg.name, None
+                        | :? Ast.FnArg.Inferred as inferredArg ->
+                            if seen.Contains inferredArg.name then
+                                seen, Some inferredArg.name
+                            else
+                                seen.Add inferredArg.name, None
+                        | :? Ast.FnArg.Unit -> seen, None
+                        | _ -> seen, None) (Set.empty, None)
                 |> snd
 
             match duplicateArgName with
@@ -1236,10 +1245,29 @@ module ExprAnalyze =
                 // 引数を宣言順に Arg シンボルとして登録し、HIR 引数ノードを構築する。
                 let hirArgs =
                     lambdaExpr.args
-                    |> List.mapi (fun index argName ->
-                        let argType = expectedArgTypes.[index]
-                        let argSid = lambdaNameEnv.declareArg argName argType
-                        Hir.Arg(argSid, argName, argType, lambdaExpr.span))
+                    |> List.mapi (fun index arg ->
+                        match arg with
+                        | :? Ast.FnArg.Named as namedArg ->
+                            let argType = expectedArgTypes.[index]
+                            let resolvedArgType = lambdaNameEnv.resolveTypeExpr namedArg.typeExpr
+                            match typeEnv.unifyTypes argType resolvedArgType with
+                            | Result.Ok _ ->
+                                let argSid = lambdaNameEnv.declareArg namedArg.name argType
+                                Hir.Arg(argSid, namedArg.name, argType, arg.span)
+                            | Result.Error _ ->
+                                let argSid = lambdaNameEnv.declareArg namedArg.name (TypeId.Error "Type mismatch")
+                                Hir.Arg(argSid, namedArg.name, TypeId.Error "Type mismatch", arg.span)
+                        | :? Ast.FnArg.Inferred as inferredArg ->
+                            let argType = expectedArgTypes.[index]
+                            let argSid = lambdaNameEnv.declareArg inferredArg.name argType
+                            Hir.Arg(argSid, inferredArg.name, argType, arg.span)
+                        | :? Ast.FnArg.Unit ->
+                            // Unit引数の場合はスキップ（0引数関数として扱う）
+                            let dummySid = lambdaNameEnv.symbolTable.NextId()
+                            Hir.Arg(dummySid, "()", TypeId.Unit, arg.span)
+                        | _ ->
+                            let dummySid = lambdaNameEnv.symbolTable.NextId()
+                            Hir.Arg(dummySid, "?", TypeId.Error "Unknown arg type", arg.span))
 
                 // 本体は期待戻り型で解析し、関数型全体を期待型へ単一化する。
                 let analyzedBody = analyzeExpr lambdaNameEnv typeEnv lambdaExpr.body expectedRetType
