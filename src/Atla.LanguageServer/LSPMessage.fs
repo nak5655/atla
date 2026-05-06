@@ -21,16 +21,22 @@ type LSPMessage =
 // Sending helpers
 // ---------------------------------------------------------------------------
 
+/// Serialise access to stdout so that background threads (e.g. async compile
+/// tasks that call publishDiagnostics) never interleave their output with the
+/// main message-loop thread.
+let private stdoutLock = obj()
+
 /// Low-level writer: adds the ``jsonrpc`` field, computes Content-Length, and
 /// writes headers + body to stdout.
 let private sendRaw (content: JObject) =
     content.["jsonrpc"] <- JValue "2.0"
     let body = content.ToString(Formatting.None)
     let bodyBytes = Encoding.UTF8.GetBytes body
-    Console.WriteLine(sprintf "Content-Length: %d" bodyBytes.Length)
-    Console.WriteLine()
-    Console.Write body
-    Console.Out.Flush()
+    lock stdoutLock (fun () ->
+        Console.WriteLine(sprintf "Content-Length: %d" bodyBytes.Length)
+        Console.WriteLine()
+        Console.Write body
+        Console.Out.Flush())
 
 /// Send an LSP response (has an ``id`` and a ``result`` field).
 let sendResponse (id: int) (result: obj) =

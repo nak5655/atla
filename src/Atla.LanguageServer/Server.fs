@@ -2,10 +2,13 @@
 module Atla.LanguageServer.Server
 
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
 open System.Reflection
+open System.Threading
+open System.Threading.Tasks
 open Newtonsoft.Json.Linq
 open Atla.Compiler
 open Atla.Build
@@ -231,7 +234,8 @@ type Server
         ?publishDiagnosticsFn: (string -> Atla.LanguageServer.LSPTypes.Diagnostic list -> unit),
         ?assemblyLocationResolver: unit -> string,
         ?buildProjectFn: BuildRequest -> BuildResult,
-        ?compileFn: Compiler.CompileModulesRequest -> Compiler.CompileResult
+        ?compileFn: Compiler.CompileModulesRequest -> Compiler.CompileResult,
+        ?debounceDelayMs: int
     ) =
 
     // ---- persistent state --------------------------------------------------
@@ -244,11 +248,18 @@ type Server
     /// キャッシュ: 正規化 URI → (PositionIndex, SymbolTable)。
     /// コンパイルが意味解析フェーズを通過した場合に格納され、IntelliSense クエリに使用する。
     let hirCache = Dictionary<string, PositionIndex.PositionIndex * SymbolTable>()
+    /// hirCache のスレッドセーフなアクセス用ロック。
+    let hirCacheLock = obj()
+    /// ドキュメントごとの保留中キャンセレーショントークン。
+    let pendingCancellations = Dictionary<string, CancellationTokenSource>()
+    /// ドキュメントごとの保留中コンパイルタスク。
+    let activeTasks = ConcurrentDictionary<string, Task>()
     let publish = defaultArg publishDiagnosticsFn publishDiagnostics
     let getAssemblyLocation =
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
     let buildProject = defaultArg buildProjectFn BuildSystem.buildProject
     let compile = defaultArg compileFn Compiler.compileModules
+    let debounceMs = defaultArg debounceDelayMs 300
 
     let collectModuleSourcesForProject (projectRoot: string) (normalizedUri: string) (text: string) : Compiler.ModuleSource list =
         let srcRoot = Path.Join(projectRoot, "src")
@@ -385,9 +396,9 @@ type Server
                     match compileResult.hir, compileResult.symbolTable with
                     | Some hirAsm, Some symTable ->
                         let index = PositionIndex.build hirAsm
-                        hirCache[normalizedUri] <- (index, symTable)
+                        lock hirCacheLock (fun () -> hirCache[normalizedUri] <- (index, symTable))
                     | _ ->
-                        hirCache.Remove normalizedUri |> ignore
+                        lock hirCacheLock (fun () -> hirCache.Remove normalizedUri |> ignore)
 
                     compileResult.diagnostics |> toLspDiagnostics "atla-compiler" |> publish displayUri
             with ex ->
@@ -398,6 +409,40 @@ type Server
                 publish displayUri fallback
         elif isAvailablePublishDiagnostics then
             publish displayUri []
+
+    /// 指定 key のドキュメントに関連するペンディング CTS をキャンセル・破棄する。
+    /// この関数はメインスレッドからのみ呼ばれるため、pendingCancellations への追加のロックは不要。
+    let cancelAndCleanup (key: string) =
+        match pendingCancellations.TryGetValue key with
+        | true, cts ->
+            cts.Cancel()
+            cts.Dispose()
+            pendingCancellations.Remove(key) |> ignore
+        | false, _ -> ()
+
+    /// デバウンス付き非同期コンパイルをスケジュールする。
+    /// 前回の保留タスクをキャンセルし、``debounceMs`` 後に ``compileAndPublish`` を実行する
+    /// 新しいタスクを起動する。スレッドプールスレッドをブロックしないように task { } CE を使用する。
+    let scheduleCompile (key: string) (displayUri: string) (text: string) =
+        cancelAndCleanup key
+        let cts = new CancellationTokenSource()
+        pendingCancellations.[key] <- cts
+        let token = cts.Token
+        let t =
+            (task {
+                try
+                    do! Task.Delay(debounceMs, token)
+                    if not token.IsCancellationRequested then
+                        compileAndPublish key displayUri text
+                with :? OperationCanceledException -> ()
+                    // TaskCanceledException は OperationCanceledException のサブクラスなので上のケースで補足される。
+            } : Task<unit>) :> Task
+        activeTasks.[key] <- t
+        // タスク完了時に activeTasks から自身を除去して辞書の肥大化を防ぐ。
+        t.ContinueWith(
+            (fun (_: Task) -> activeTasks.TryRemove(key) |> ignore),
+            TaskContinuationOptions.ExecuteSynchronously)
+        |> ignore
 
     // ---- public surface used by tests --------------------------------------
     member _.IsAvailablePublishDiagnostics
@@ -530,6 +575,7 @@ type Server
         | Some key ->
             buffers.[key] <- text
             displayUris.[key] <- uri
+            // ドキュメントを初めて開く場合はデバウンスなしで即時コンパイルする。
             compileAndPublish key uri text
 
     member _.ChangeDocument(uri: string, text: string) =
@@ -538,22 +584,43 @@ type Server
         | Some key ->
             buffers.[key] <- text
             displayUris.[key] <- uri
-            compileAndPublish key uri text
+            // デバウンス付き非同期コンパイルをスケジュールする。
+            scheduleCompile key uri text
 
     member _.CloseDocument(uri: string) =
         match tryNormalizeUri uri with
         | None -> ()
         | Some key ->
+            // 保留中のコンパイルをキャンセルする。
+            cancelAndCleanup key
+            activeTasks.TryRemove(key) |> ignore
+
             if isAvailablePublishDiagnostics then
                 publish uri []
 
             buffers.Remove(key) |> ignore
             displayUris.Remove(key) |> ignore
-            hirCache.Remove(key) |> ignore
+            lock hirCacheLock (fun () -> hirCache.Remove(key) |> ignore)
 
     /// Backward-compatible entrypoint for existing callers.
     member this.Compile(uri: string, text: string) =
         this.ChangeDocument(uri, text)
+
+    /// すべての保留中コンパイルタスクが完了するまで待機する（テスト用）。
+    /// キャンセルされたタスク以外の例外は再スローする。
+    member _.WaitForPendingCompilations() =
+        let tasks = activeTasks.Values |> Seq.toArray
+        if tasks.Length > 0 then
+            try Task.WaitAll(tasks)
+            with :? AggregateException as ae ->
+                // キャンセルされたタスク（OperationCanceledException / TaskCanceledException）は無視する。
+                // TaskCanceledException は OperationCanceledException のサブクラスなので一致のチェックは一つで十分。
+                let nonCancelled =
+                    ae.InnerExceptions
+                    |> Seq.filter (fun e -> not (e :? OperationCanceledException))
+                    |> Seq.toList
+                if not nonCancelled.IsEmpty then
+                    reraise()
 
     // ---- IntelliSense ------------------------------------------------------
 
@@ -562,9 +629,10 @@ type Server
         match tryNormalizeUri uri with
         | None -> None
         | Some key ->
-            match hirCache.TryGetValue key with
-            | true, entry -> Some entry
-            | false, _ -> None
+            lock hirCacheLock (fun () ->
+                match hirCache.TryGetValue key with
+                | true, entry -> Some entry
+                | false, _ -> None)
 
     /// 補完候補リストを返す。
     /// `'` コンテキストでは受け手型メンバーのみ、それ以外では可視変数 + 可視型を返す。
