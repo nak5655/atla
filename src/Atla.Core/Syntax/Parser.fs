@@ -87,8 +87,8 @@ module Parser =
         )
 
     // opener トークン自身の列をオフサイド基準にするブロックコンビネーター。
-    // `block` が「同行の最左トークン」の列を使うのとは異なり、opener 自身の列を使う。
-    // ifThen/ifElse の `|` 専用: `if  | a => 1 | b => 2` のようなインライン形式で
+    // `block` が「同行の最左トークン」の列を使うのとは異なり、opener 自身の列を使う汎用の変形。
+    // 現在は ifThen/ifElse で使用: `if  | a => 1 | b => 2` のようなインライン形式で
     // `|` が `if` と同一行にある場合、opener(`|`)の列をオフサイドとすることで
     // 後続行の同列 `|` ブランチ区切りがボディスコープから不可視になる。
     let blockAtOpener<'A> (opener: PackratParser<Token, Token>) (body: PackratParser<Token, 'A>): PackratParser<Token, 'A> =
