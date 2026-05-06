@@ -164,8 +164,9 @@ module ServerLifecycleTests =
     let ``did open, change, close lifecycle publishes diagnostics and clears buffer`` () =
         let published = ResizeArray<string * int>()
         let server =
-            Server(fun uri diagnostics ->
-                published.Add(uri, diagnostics.Length))
+            Server(
+                (fun uri diagnostics -> published.Add(uri, diagnostics.Length)),
+                debounceDelayMs = 0)
 
         server.IsAvailablePublishDiagnostics <- true
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
@@ -173,6 +174,7 @@ module ServerLifecycleTests =
         let uri = "file:///tmp/lifecycle.atla"
         server.OpenDocument(uri, "fn main: Int = 0")
         server.ChangeDocument(uri, "fn main: Int = 0")
+        server.WaitForPendingCompilations()
 
         let tokensBeforeClose = server.Tokenize(uri)
         Assert.NotEmpty(tokensBeforeClose)
