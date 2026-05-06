@@ -411,8 +411,7 @@ type Server
             publish displayUri []
 
     /// 指定 key のドキュメントに関連するペンディング CTS をキャンセル・破棄する。
-    /// pendingCancellations は常にメインスレッド（またはサーバーのロックを保持するスレッド）から
-    /// 操作されるため、ここでは追加のロックを設けない。
+    /// この関数はメインスレッドからのみ呼ばれるため、pendingCancellations への追加のロックは不要。
     let cancelAndCleanup (key: string) =
         match pendingCancellations.TryGetValue key with
         | true, cts ->
@@ -423,24 +422,22 @@ type Server
 
     /// デバウンス付き非同期コンパイルをスケジュールする。
     /// 前回の保留タスクをキャンセルし、``debounceMs`` 後に ``compileAndPublish`` を実行する
-    /// 新しいタスクを起動する。
+    /// 新しいタスクを起動する。スレッドプールスレッドをブロックしないように task { } CE を使用する。
     let scheduleCompile (key: string) (displayUri: string) (text: string) =
         cancelAndCleanup key
         let cts = new CancellationTokenSource()
         pendingCancellations.[key] <- cts
         let token = cts.Token
-        let task =
-            Task.Run(
-                (fun () ->
-                    try
-                        Task.Delay(debounceMs, token).Wait()
-                        if not token.IsCancellationRequested then
-                            compileAndPublish key displayUri text
-                    with
-                    | :? OperationCanceledException -> ()
-                    | :? AggregateException as ae when ae.InnerExceptions |> Seq.forall (fun e -> e :? OperationCanceledException) -> ()),
-                token)
-        activeTasks.[key] <- task
+        let t =
+            (task {
+                try
+                    do! Task.Delay(debounceMs, token)
+                    if not token.IsCancellationRequested then
+                        compileAndPublish key displayUri text
+                with :? OperationCanceledException -> ()
+                    // TaskCanceledException は OperationCanceledException のサブクラスなので上のケースで補足される。
+            } : Task<unit>) :> Task
+        activeTasks.[key] <- t
 
     // ---- public surface used by tests --------------------------------------
     member _.IsAvailablePublishDiagnostics
@@ -605,11 +602,20 @@ type Server
         this.ChangeDocument(uri, text)
 
     /// すべての保留中コンパイルタスクが完了するまで待機する（テスト用）。
+    /// キャンセルされたタスク以外の例外は再スローする。
     member _.WaitForPendingCompilations() =
         let tasks = activeTasks.Values |> Seq.toArray
         if tasks.Length > 0 then
             try Task.WaitAll(tasks)
-            with :? AggregateException -> ()
+            with :? AggregateException as ae ->
+                // キャンセルされたタスク（OperationCanceledException / TaskCanceledException）は無視する。
+                // TaskCanceledException は OperationCanceledException のサブクラスなので一致のチェックは一つで十分。
+                let nonCancelled =
+                    ae.InnerExceptions
+                    |> Seq.filter (fun e -> not (e :? OperationCanceledException))
+                    |> Seq.toList
+                if not nonCancelled.IsEmpty then
+                    reraise()
 
     // ---- IntelliSense ------------------------------------------------------
 
