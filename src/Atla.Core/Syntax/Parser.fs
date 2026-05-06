@@ -84,11 +84,11 @@ module Parser =
                 | Failure (reason, span) -> Failure (reason, span)
         )
 
-    // 通常の二項演算子を受理する（index専用演算子 "!!" は除外する）。
+    // 通常の二項演算子を受理する（index専用演算子 "!!" と if ブランチ区切り "|" は除外する）。
     let infixOp prec : PackratParser<Token, Token.Symbol> =
         AcceptMatch (fun t ->
             match t with
-            | :? Token.Symbol as sym when sym.precedence = prec && sym.str <> "!!" -> Some(sym)
+            | :? Token.Symbol as sym when sym.precedence = prec && sym.str <> "!!" && sym.str <> "|" -> Some(sym)
             | _ -> None)
 
     let tid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id -> Some(id) | _ -> None)

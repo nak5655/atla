@@ -46,6 +46,69 @@ module ParserTests =
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses inline multi-branch if without error nodes`` () =
+        // 各ブランチのボディが同行にある場合（インライン形式）で、ブランチが 3 つ以上あるとき
+        // "unexpected input" エラーが発生しないことを確認するリグレッションテスト。
+        // 原因: `|` が二項演算子（precedence=2）として扱われ、次ブランチの内容を消費していた。
+        let program = """
+fn applyOp (op: String): Int =
+    if  | op == "+" => 1
+        | op == "-" => 2
+        | op == "*" => 3
+        | else => 0
+"""
+
+        let rec hasErrorNode (expr: Ast.Expr) =
+            match expr with
+            | :? Ast.Expr.Error -> true
+            | :? Ast.Expr.Block as b ->
+                b.stmts |> List.exists (fun stmt ->
+                    match stmt with
+                    | :? Ast.Stmt.ExprStmt as es -> hasErrorNode es.expr
+                    | :? Ast.Stmt.Error -> true
+                    | _ -> false)
+            | :? Ast.Expr.If as ifExpr ->
+                ifExpr.branches |> List.exists (fun branch ->
+                    match branch with
+                    | :? Ast.IfBranch.Then as tb -> hasErrorNode tb.cond || hasErrorNode tb.body
+                    | :? Ast.IfBranch.Else as eb -> hasErrorNode eb.body
+                    | _ -> false)
+            | _ -> false
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fn =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+
+            match fn with
+            | Some fn ->
+                Assert.False(hasErrorNode fn.body, "if expression should parse without error nodes")
+                let ifExpr =
+                    match fn.body with
+                    | :? Ast.Expr.Block as b ->
+                        b.stmts |> List.tryPick (fun s ->
+                            match s with
+                            | :? Ast.Stmt.ExprStmt as es ->
+                                match es.expr with
+                                | :? Ast.Expr.If as ifExpr -> Some ifExpr
+                                | _ -> None
+                            | _ -> None)
+                    | :? Ast.Expr.If as ifExpr -> Some ifExpr
+                    | _ -> None
+
+                match ifExpr with
+                | Some ifExpr -> Assert.Equal(4, ifExpr.branches.Length)
+                | None -> Assert.True(false, "if expression was not found in function body")
+            | None ->
+                Assert.True(false, "function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses for statement in do block`` () =
         let program = """
 fn main: () =
