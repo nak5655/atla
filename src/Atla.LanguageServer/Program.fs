@@ -129,10 +129,8 @@ let main _ =
                 match messageParams content with
                 | Some p when p.["textDocument"] <> null && p.["textDocument"].["uri"] <> null && p.["contentChanges"] <> null ->
                     let uri = p.["textDocument"].["uri"].ToString()
-                    let changes = p.["contentChanges"] :?> JArray |> Seq.toArray
-                    if changes.Length > 0 && changes.[changes.Length - 1].["text"] <> null then
-                        let text = changes.[changes.Length - 1].["text"].ToString()
-                        server.ChangeDocument(uri, text)
+                    let changes = p.["contentChanges"] :?> JArray |> Seq.cast<JToken>
+                    server.ApplyIncrementalChanges(uri, changes)
                     windowLogMessage (sprintf "textDocument/didChange %s" uri) MessageType.Info
                 | _ ->
                     windowLogMessage "textDocument/didChange has invalid params" MessageType.Warning
