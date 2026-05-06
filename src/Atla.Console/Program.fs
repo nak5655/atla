@@ -13,24 +13,26 @@ module Console =
 
     let private usage () =
         String.concat Environment.NewLine [
-            "Usage: atla build <projectRoot> [-o <outDir>] [--name <assemblyName>]"
+            "Usage: atla build [projectRoot] [-o <outDir>] [--name <assemblyName>]"
             ""
             "Commands:"
-            "  build    Build an Atla project rooted at <projectRoot>"
+            "  build    Build an Atla project rooted at [projectRoot] (defaults to current directory)"
         ]
 
     let private parseBuildArgs (args: string list) : Result<BuildOptions, string> =
         let rec loop (rest: string list) (projectRoot: string option) (outDir: string option) (asmName: string option) =
             match rest with
             | [] ->
-                match projectRoot with
-                | None -> Error "build command requires <projectRoot>"
-                | Some root ->
-                    Ok {
-                        projectRoot = root
-                        outDir = outDir
-                        asmName = asmName
-                    }
+                let resolvedProjectRoot =
+                    match projectRoot with
+                    | Some root -> root
+                    | None -> Directory.GetCurrentDirectory()
+
+                Ok {
+                    projectRoot = resolvedProjectRoot
+                    outDir = outDir
+                    asmName = asmName
+                }
             | "-o" :: value :: tail -> loop tail projectRoot (Some value) asmName
             | "--name" :: value :: tail -> loop tail projectRoot outDir (Some value)
             | flag :: [] when flag = "-o" || flag = "--name" ->
