@@ -60,7 +60,9 @@ type PositionIndex =
       /// ローカル束縛の可視範囲情報（位置ベース補完フィルタに使用）。
       bindingSites: BindingSite list
       /// モジュールのトップレベルスコープ（補完候補の列挙に使用）。
-      moduleScope: Scope }
+      moduleScope: Scope
+      /// 全式ノードの (span, TypeId) ペア（apostrophe 補完の型解決に使用）。
+      exprTypes: (Span * TypeId) list }
 
 /// ローカル束縛（引数/let/for）の可視範囲情報。
 and BindingSite =
@@ -91,15 +93,18 @@ let private spanContains (line: int) (col: int) (span: Span) : bool =
 /// `build` 関数が使用する不変アキュムレータ。
 /// F# のコーディング規約（AGENTS.md §6）に従い可変バインディングは使用しない。
 type private BuildState =
-    { useSites:  UseSite list
-      declSites: Map<int, Span>
-      bindingSites: BindingSite list }
+    { useSites:   UseSite list
+      declSites:  Map<int, Span>
+      bindingSites: BindingSite list
+      /// 全式ノードの (span, TypeId) ペア（position-based 型解決に使用）。
+      exprTypes:  (Span * TypeId) list }
 
 /// 空のアキュムレータ。
 let private emptyState : BuildState =
-    { useSites  = []
-      declSites = Map.empty
-      bindingSites = [] }
+    { useSites    = []
+      declSites   = Map.empty
+      bindingSites = []
+      exprTypes   = [] }
 
 /// 宣言スパンをアキュムレータに追加する（同一 SymbolId の場合は最初の登録のみ保持）。
 let private addDecl (sid: SymbolId) (span: Span) (state: BuildState) : BuildState =
@@ -121,6 +126,11 @@ let private addBindingSite (sid: SymbolId) (declSpan: Span) (scopeSpan: Span) (s
 
 /// 式ノードを再帰的に走査してアキュムレータを更新する。
 let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) : BuildState =
+    // エラーノードを除く全式の (span, TypeId) を収集する（position-based 型解決用）。
+    let state =
+        match expr with
+        | Hir.Expr.ExprError _ -> state
+        | _ -> { state with exprTypes = (expr.span, expr.typ) :: state.exprTypes }
     match expr with
     | Hir.Expr.Id(sid, _, span) ->
         addUse sid span state
@@ -226,7 +236,8 @@ let build (assembly: Hir.Assembly) : PositionIndex =
     { useSites    = finalState.useSites
       declSites   = finalState.declSites
       bindingSites = finalState.bindingSites
-      moduleScope = topScope }
+      moduleScope = topScope
+      exprTypes   = finalState.exprTypes }
 
 // ---------------------------------------------------------------------------
 // クエリ関数
@@ -252,3 +263,41 @@ let visibleSymbolIdsAt (index: PositionIndex) (line: int) (col: int) : SymbolId 
         && (binding.declSpan.left.Line < line
             || (binding.declSpan.left.Line = line && binding.declSpan.left.Column <= col)))
     |> List.map (fun binding -> binding.symbolId)
+
+/// ソースの行・列を整数オフセットに変換するためのスケーリング係数。
+/// 1 行あたりの最大列数は 1_000_000 未満とみなす（現実的なソースファイルはこの上限内に収まる）。
+[<Literal>]
+let private ColumnMultiplier = 1_000_000
+
+/// 指定した (line, col) 位置を包含する最小スパンの式の TypeId を返す。
+/// position-based 型解決（ホバー等）に使用する。
+/// 最小スパン（最内側の式）を優先するため、スパン幅の昇順で先頭を返す。
+let tryFindTypeAt (index: PositionIndex) (line: int) (col: int) : TypeId option =
+    index.exprTypes
+    |> List.filter (fun (span, _) -> spanContains line col span)
+    |> List.sortBy (fun (span, _) ->
+        // 最小スパン（最内側）を優先：行をまたぐ式も正しく比較できるよう絶対オフセット差で近似する。
+        let startOff = span.left.Line  * ColumnMultiplier + span.left.Column
+        let endOff   = span.right.Line * ColumnMultiplier + span.right.Column
+        endOff - startOff)
+    |> List.tryHead
+    |> Option.map snd
+
+/// apostrophe 補完専用: 指定行で `apostropheCol` の位置以前に終わる式の中で
+/// 最も後方（右端が apostropheCol に最も近い）の式の TypeId を返す。
+/// receiver が `(expr)'` のように括弧でグループされている場合でも
+/// パーサがパーレンをスパンに含めないため、内側の式の右端で検索する。
+/// 同じ右端なら左端が最も小さい（最も外側の）式を優先する。
+let tryFindReceiverTypeAt (index: PositionIndex) (line: int) (apostropheCol: int) : TypeId option =
+    index.exprTypes
+    |> List.filter (fun (span, _) ->
+        // 同一行で apostrophe 以前に終わる式のみを対象とする。
+        span.right.Line = line &&
+        span.right.Column <= apostropheCol)
+    |> List.sortBy (fun (span, _) ->
+        // 右端が最も後方（apostropheCol に最も近い）ものを優先。
+        // 同じ右端なら最も広い（外側の）式を優先（左端が最も小さいもの）。
+        -(span.right.Line * ColumnMultiplier + span.right.Column),
+        span.left.Line * ColumnMultiplier + span.left.Column)
+    |> List.tryHead
+    |> Option.map snd

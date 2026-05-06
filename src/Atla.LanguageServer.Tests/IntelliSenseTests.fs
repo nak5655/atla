@@ -63,7 +63,53 @@ module IntelliSenseTests =
         Assert.DoesNotContain("main", names)
 
     [<Fact>]
-    let ``GetCompletions narrows by lexical position and excludes future let bindings`` () =
+    let ``GetCompletions on apostrophe with parenthesized receiver returns type members`` () =
+        // receiver が (out) のように括弧でグループされた場合、パーサは括弧をスパンに含めないため
+        // 名前ベースの fallback（単純識別子ウォークバック）では解決できない。
+        // HIR position-based 型解決により、括弧内の out の型 TextWriter が取得され
+        // TextWriter メンバーが補完候補として返されることを検証する。
+        //
+        // Line 3: "  let _ = (out)'NewLine"
+        //   apostropheCol = 15, cursor just after apostrophe (character = 16, memberPrefix = "").
+        //   Id("out") span right = 14 ≤ 15 → 型 TextWriter が解決される。
+        let source =
+            "import System'Console\n" +
+            "fn main (): () = do\n" +
+            "  let out = Console'Out\n" +
+            "  let _ = (out)'NewLine\n" +
+            "  ()"
+        let server = makeServerWithSource "file:///tmp/completion-paren-receiver.atla" source
+        // カーソルは行3・列16（"(out)'" の直後、memberPrefix は空）。
+        let result = server.GetCompletions("file:///tmp/completion-paren-receiver.atla", 3, 16)
+        let names = result.items |> List.map (fun i -> i.label)
+        // TextWriter のインスタンスメンバーが含まれ、モジュールメンバー（main）が除外される。
+        Assert.NotEmpty(names)
+        Assert.Contains("NewLine", names)
+        Assert.DoesNotContain("main", names)
+
+    [<Fact>]
+    let ``GetCompletions on apostrophe with chained member access receiver returns type members`` () =
+        // receiver が `(Console'Out)` のようなメンバーアクセス式の場合、
+        // テキストベースの単純識別子ウォークバックでは )の直前が識別子でないため解決できない。
+        // HIR position-based 型解決により Console'Out MemberAccess ノードの
+        // 型 TextWriter が取得され TextWriter メンバーが補完候補として返されることを検証する。
+        //
+        // Line 2: "  let _ = (Console'Out)'NewLine"
+        //   apostropheCol = 23, cursor just after apostrophe (character = 24, memberPrefix = "").
+        //   Console'Out span right = 22 ≤ 23 → 型 TextWriter が解決される。
+        let source =
+            "import System'Console\n" +
+            "fn main (): () = do\n" +
+            "  let _ = (Console'Out)'NewLine\n" +
+            "  ()"
+        let server = makeServerWithSource "file:///tmp/completion-chained-receiver.atla" source
+        // カーソルは行2・列24（"(Console'Out)'" の直後、memberPrefix は空）。
+        let result = server.GetCompletions("file:///tmp/completion-chained-receiver.atla", 2, 24)
+        let names = result.items |> List.map (fun i -> i.label)
+        // TextWriter のインスタンスメンバーが含まれ、モジュールメンバー（main）が除外される。
+        Assert.NotEmpty(names)
+        Assert.Contains("NewLine", names)
+        Assert.DoesNotContain("main", names)
         let source = "fn main: Int = do\n  let first = 1\n  fir\n  let second = 2\n  first"
         let server = makeServerWithSource "file:///tmp/completion-scope.atla" source
         // 行2・列4 (`fir` 位置) は `second` の宣言より前。
@@ -164,6 +210,33 @@ module IntelliSenseTests =
         let index = Atla.Core.Semantics.PositionIndex.build assembly
         Assert.Empty(index.useSites)
         Assert.Empty(index.declSites)
+        // exprTypes も空であること。
+        Assert.Empty(index.exprTypes)
+
+    [<Fact>]
+    let ``tryFindReceiverTypeAt returns type of innermost expression ending before apostrophe`` () =
+        // 構築した HIR に Int リテラル式を1つ含め、その右端を apostropheCol に合わせて
+        // tryFindReceiverTypeAt が正しい TypeId を返すことを検証する。
+        let span = { Atla.Core.Data.Span.left = { Atla.Core.Data.Position.Line = 0; Atla.Core.Data.Position.Column = 0 }
+                     Atla.Core.Data.Span.right = { Atla.Core.Data.Position.Line = 0; Atla.Core.Data.Position.Column = 3 } }
+        let intExpr = Atla.Core.Semantics.Data.Hir.Expr.Int(42, span)
+        let scopeSpan = { Atla.Core.Data.Span.left = { Atla.Core.Data.Position.Line = 0; Atla.Core.Data.Position.Column = 0 }
+                          Atla.Core.Data.Span.right = { Atla.Core.Data.Position.Line = 0; Atla.Core.Data.Position.Column = 10 } }
+        let field = Atla.Core.Semantics.Data.Hir.Field(
+                        Atla.Core.Semantics.Data.SymbolId 1,
+                        Atla.Core.Semantics.Data.TypeId.Int,
+                        intExpr, scopeSpan)
+        let modul = Atla.Core.Semantics.Data.Hir.Module(
+                        "test", [], [field], [],
+                        Atla.Core.Semantics.Data.Scope(None))
+        let assembly = Atla.Core.Semantics.Data.Hir.Assembly("test", [modul])
+        let index = Atla.Core.Semantics.PositionIndex.build assembly
+        // apostropheCol = 3 → span.right.Column = 3 ≤ 3 ✓ → TypeId.Int が返る。
+        let result = Atla.Core.Semantics.PositionIndex.tryFindReceiverTypeAt index 0 3
+        Assert.Equal(Some Atla.Core.Semantics.Data.TypeId.Int, result)
+        // apostropheCol = 2 → span.right.Column = 3 > 2 → フィルタされ None が返る。
+        let result2 = Atla.Core.Semantics.PositionIndex.tryFindReceiverTypeAt index 0 2
+        Assert.Equal(None, result2)
 
     [<Fact>]
     let ``formatTypeWithTable formats primitive types correctly`` () =

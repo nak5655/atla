@@ -170,8 +170,9 @@ let private tryGetLinePrefix (text: string) (line: int) (character: int) : strin
         let clamped = min (max 0 character) lineText.Length
         Some(lineText.Substring(0, clamped))
 
-/// カーソル位置が `receiver'memberPrefix` 形式なら `(receiver, memberPrefix)` を返す。
-let private tryParseApostropheContext (linePrefix: string) : (string * string) option =
+/// カーソル位置が `expr'memberPrefix` 形式なら `(apostropheCol, memberPrefix)` を返す。
+/// receiver は任意の式でよい。テキスト解析では apostrophe の列位置とメンバープレフィックスのみを返す。
+let private tryParseApostropheContext (linePrefix: string) : (int * string) option =
     if String.IsNullOrEmpty(linePrefix) then None
     else
         let mutable i = linePrefix.Length - 1
@@ -180,12 +181,10 @@ let private tryParseApostropheContext (linePrefix: string) : (string * string) o
         let memberPrefix = linePrefix.Substring(i + 1)
         if i < 0 || linePrefix.[i] <> '\'' then None
         else
-            let mutable j = i - 1
-            while j >= 0 && isIdentifierChar linePrefix.[j] do
-                j <- j - 1
-            let receiver = linePrefix.Substring(j + 1, i - (j + 1))
-            if String.IsNullOrWhiteSpace(receiver) then None
-            else Some(receiver, memberPrefix)
+            // apostrophe の左側に空白でない文字列（receiver 式）があれば有効とみなす。
+            let leftOfApostrophe = linePrefix.Substring(0, i).TrimEnd()
+            if leftOfApostrophe.Length = 0 then None
+            else Some(i, memberPrefix)
 
 /// TypeId から .NET System.Type を解決する（主に `External(SystemTypeRef)` を対象）。
 let private tryResolveSystemTypeFromTypeId (symbolTable: SymbolTable) (tid: TypeId) : Type option =
@@ -813,11 +812,34 @@ type Server
                         | Some linePrefix ->
                             match tryParseApostropheContext linePrefix with
                             | None -> None
-                            | Some(receiverName, memberPrefix) ->
-                                match resolveReceiverType receiverName with
-                                | None -> Some []
-                                | Some(receiverType, isStaticReceiver) ->
-                                    Some(buildMemberItems receiverType isStaticReceiver memberPrefix)
+                            | Some(apostropheCol, memberPrefix) ->
+                                // 1. HIR の position-based 型解決を試みる。
+                                //    apostrophe 直前の列に対応する式の型を PositionIndex から取得する。
+                                //    HIR のスパンは LF 正規化テキストの (line, col) に対応する。
+                                let typeFromHir =
+                                    if apostropheCol > 0 then
+                                        PositionIndex.tryFindReceiverTypeAt index line apostropheCol
+                                        |> Option.bind (tryResolveSystemTypeFromTypeId symbolTable)
+                                    else None
+
+                                match typeFromHir with
+                                | Some receiverType ->
+                                    // HIR から型が解決できた場合はインスタンスメンバーを返す。
+                                    Some(buildMemberItems receiverType false memberPrefix)
+                                | None ->
+                                    // 2. フォールバック：apostrophe 直前のテキストから識別子名を取り出して
+                                    //    シンボルテーブルで解決する（静的アクセスや HIR キャッシュ未作成時に対応）。
+                                    let leftText = linePrefix.Substring(0, apostropheCol)
+                                    let mutable j = leftText.Length - 1
+                                    while j >= 0 && isIdentifierChar leftText.[j] do
+                                        j <- j - 1
+                                    let candidateName = leftText.Substring(j + 1)
+                                    if String.IsNullOrWhiteSpace candidateName then Some []
+                                    else
+                                        match resolveReceiverType candidateName with
+                                        | None -> Some []
+                                        | Some(receiverType, isStaticReceiver) ->
+                                            Some(buildMemberItems receiverType isStaticReceiver memberPrefix)
 
             match apostropheItems with
             | Some memberItems ->
