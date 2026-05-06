@@ -438,6 +438,11 @@ type Server
                     // TaskCanceledException は OperationCanceledException のサブクラスなので上のケースで補足される。
             } : Task<unit>) :> Task
         activeTasks.[key] <- t
+        // タスク完了時に activeTasks から自身を除去して辞書の肥大化を防ぐ。
+        t.ContinueWith(
+            (fun (_: Task) -> activeTasks.TryRemove(key) |> ignore),
+            TaskContinuationOptions.ExecuteSynchronously)
+        |> ignore
 
     // ---- public surface used by tests --------------------------------------
     member _.IsAvailablePublishDiagnostics
