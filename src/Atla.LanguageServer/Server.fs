@@ -37,6 +37,33 @@ let private sanitizeAssemblyName (value: string) : string =
 
 let private canonicalTokenTypes = [| "keyword"; "type"; "variable"; "number"; "string" |]
 
+/// LF 正規化済みテキストを行配列で表したときの (line, char) → 絶対文字オフセット変換。
+/// line・char が範囲外の場合はクランプする。
+let private toOffset (lines: string[]) (line: int) (ch: int) : int =
+    let safeLine = max 0 (min line (lines.Length - 1))
+    let mutable lineStart = 0
+    for i in 0 .. safeLine - 1 do
+        lineStart <- lineStart + lines.[i].Length + 1  // +1 for the '\n' separator
+    let lineLen = lines.[safeLine].Length
+    lineStart + min (max 0 ch) lineLen
+
+/// 単一のインクリメンタル変更を LF 正規化済みテキストに適用する。
+/// changeRange が None の場合は全文置換する。
+let private applyIncrementalChange
+    (text: string)
+    (changeRange: (int * int * int * int) option)
+    (newText: string)
+    : string =
+    match changeRange with
+    | None -> newText
+    | Some(startLine, startChar, endLine, endChar) ->
+        let lines = text.Split('\n')
+        let startOff = toOffset lines startLine startChar
+        let endOff   = toOffset lines endLine endChar
+        let safeStart = max 0 (min startOff text.Length)
+        let safeEnd   = max safeStart (min endOff text.Length)
+        text.Substring(0, safeStart) + newText + text.Substring(safeEnd)
+
 let private normalizeSemanticInput (text: string) : string =
     let raw = if isNull text then "" else text
     let withoutBom =
@@ -507,7 +534,7 @@ type Server
         let capabilities =
             ServerCapabilities(
                 false,
-                TextDocumentSyncOptions(true, TextDocumentSyncKind.Full),
+                TextDocumentSyncOptions(true, TextDocumentSyncKind.Incremental),
                 SemanticTokensOptions(
                     SemanticTokensLegend(tokenTypes |> Array.toList, []),
                     false,
@@ -624,9 +651,50 @@ type Server
             documentRevisions.Remove(key) |> ignore
             lock hirCacheLock (fun () -> hirCache.Remove(key) |> ignore)
 
-    /// Backward-compatible entrypoint for existing callers.
-    member this.Compile(uri: string, text: string) =
-        this.ChangeDocument(uri, text)
+    /// textDocument/didChange（Incremental モード）の contentChanges をバッファに逐次適用し、
+    /// デバウンス付き非同期コンパイルをスケジュールする。
+    /// 各変更は直前の変更が適用された後の文書状態を基準とする。
+    /// range を持たない変更エントリは全文置換として扱う。
+    member _.ApplyIncrementalChanges(uri: string, changes: JToken seq) =
+        match tryNormalizeUri uri with
+        | None -> ()
+        | Some key ->
+            let currentText =
+                let raw =
+                    match buffers.TryGetValue key with
+                    | true, t -> t
+                    | false, _ -> ""
+                normalizeSemanticInput raw
+
+            let finalText =
+                changes
+                |> Seq.fold (fun text (changeToken: JToken) ->
+                    let newText =
+                        match changeToken.["text"] with
+                        | null -> ""
+                        | t -> t.ToString()
+                    let changeRange =
+                        match changeToken.["range"] with
+                        | null -> None
+                        | r ->
+                            try
+                                let startLine = r.["start"].["line"].Value<int>()
+                                let startChar = r.["start"].["character"].Value<int>()
+                                let endLine   = r.["end"].["line"].Value<int>()
+                                let endChar   = r.["end"].["character"].Value<int>()
+                                Some(startLine, startChar, endLine, endChar)
+                            with _ -> None
+                    applyIncrementalChange text changeRange newText
+                ) currentText
+
+            buffers.[key] <- finalText
+            displayUris.[key] <- uri
+            let revision =
+                match documentRevisions.TryGetValue key with
+                | true, current -> current + 1L
+                | false, _ -> 1L
+            documentRevisions.[key] <- revision
+            scheduleCompile key uri finalText revision
 
     /// すべての保留中コンパイルタスクが完了するまで待機する（テスト用）。
     /// キャンセルされたタスク以外の例外は再スローする。
