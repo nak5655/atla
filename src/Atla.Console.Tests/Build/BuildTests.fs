@@ -60,7 +60,6 @@ package:
         let code = Console.run [| "build"; projectRoot |]
         Assert.Equal(1, code)
 
-
     [<Fact>]
     let ``build should emit dll for valid project root`` () =
         let projectRoot = createTempProjectDir ()
