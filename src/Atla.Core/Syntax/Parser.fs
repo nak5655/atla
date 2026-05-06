@@ -78,13 +78,31 @@ module Parser =
         Delay (fun () -> fun input pos ->
             match opener input pos with
                 | Success (token, nextPos) -> 
-                    // 先頭のトークンを探す
+                    // opener と同行にある最左トークンの列をオフサイド基準とする。
+                    // opener が行の途中（例: `fn foo = do ...` の `do`）にある場合でも、
+                    // ボディが正しく可視となるよう行頭から探索する。
                     let offsideLine = [| 0 .. token.span.left.Column |] |> Array.find (fun i -> (input.get { Line = token.span.left.Line; Column = i }).IsSome)
                     body (BlockInput (input, { Line = token.span.left.Line; Column = offsideLine })) nextPos
                 | Failure (reason, span) -> Failure (reason, span)
         )
 
-    // 通常の二項演算子を受理する（index専用演算子 "!!" と if ブランチ区切り "|" は除外する）。
+    // opener トークン自身の列をオフサイド基準にするブロックコンビネーター。
+    // `block` が「同行の最左トークン」の列を使うのとは異なり、opener 自身の列を使う。
+    // ifThen/ifElse の `|` 専用: `if  | a => 1 | b => 2` のようなインライン形式で
+    // `|` が `if` と同一行にある場合、opener(`|`)の列をオフサイドとすることで
+    // 後続行の同列 `|` ブランチ区切りがボディスコープから不可視になる。
+    let blockAtOpener<'A> (opener: PackratParser<Token, Token>) (body: PackratParser<Token, 'A>): PackratParser<Token, 'A> =
+        Delay (fun () -> fun input pos ->
+            match opener input pos with
+                | Success (token, nextPos) ->
+                    body (BlockInput (input, { Line = token.span.left.Line; Column = token.span.left.Column })) nextPos
+                | Failure (reason, span) -> Failure (reason, span)
+        )
+
+    // `|` は if ブランチ区切り専用で二項中置演算子ではない。`!!` はインデックスアクセス専用。
+    // どちらも infixOp から除外する。
+    // なお、インライン形式（`if | a => 1 | b => 2`）で全ブランチが同一行に並ぶ場合は
+    // BlockInput が同行トークンを隠せないため、この除外が安全網として機能する。
     let infixOp prec : PackratParser<Token, Token.Symbol> =
         AcceptMatch (fun t ->
             match t with
@@ -132,11 +150,11 @@ module Parser =
     // if式
     and ifThen: PackratParser<Token, Ast.IfBranch> =
         Delay (fun () ->
-            block (asToken (symbol "|")) (expr <& keyword "=>" <&> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (cond, body) -> Ast.IfBranch.Then(cond, body, { left = cond.span.left; right = body.span.right })))
+            blockAtOpener (asToken (symbol "|")) (expr <& keyword "=>" <&> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (cond, body) -> Ast.IfBranch.Then(cond, body, { left = cond.span.left; right = body.span.right })))
 
     and ifElse: PackratParser<Token, Ast.IfBranch> =
         Delay (fun () ->
-            block (asToken (symbol "|")) (keyword "else" &> keyword "=>" &> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (body) -> Ast.IfBranch.Else(body, body.span)))
+            blockAtOpener (asToken (symbol "|")) (keyword "else" &> keyword "=>" &> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (body) -> Ast.IfBranch.Else(body, body.span)))
 
     and ifExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->

@@ -47,9 +47,17 @@ module ParserTests =
 
     [<Fact>]
     let ``fileModule parses inline multi-branch if without error nodes`` () =
-        // 各ブランチのボディが同行にある場合（インライン形式）で、ブランチが 3 つ以上あるとき
-        // "unexpected input" エラーが発生しないことを確認するリグレッションテスト。
-        // 原因: `|` が二項演算子（precedence=2）として扱われ、次ブランチの内容を消費していた。
+        // インライン形式（`if  | cond => body` が同一行に `if` と `|` を含む）で
+        // ブランチが 3 つ以上あるとき "unexpected input" エラーが発生しないリグレッションテスト。
+        //
+        // 構造的原因: block コンビネーターが「行の最左トークン（`if`）」の列をオフサイド基準に
+        // していたため、ifThen/ifElse のボディスコープが `|` の列まで及ばず、後続ブランチの
+        // `|` が BlockInput から不可視にならなかった。
+        // 修正: block は opener トークン自身の列をオフサイド基準とする。これにより
+        // ifThen ボディ内で後続行の同列 `|` が隠れ、infixOp が届かなくなる。
+        //
+        // 安全網: `|` は二項演算子ではないため infixOp からも除外している
+        // （全ブランチが同一行に並ぶ場合は BlockInput が同行を隠せないため必要）。
         let program = """
 fn applyOp (op: String): Int =
     if  | op == "+" => 1
