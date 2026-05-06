@@ -191,6 +191,47 @@ module ServerLifecycleTests =
         Assert.Equal((uri, 0), publishedList.[2])
 
     [<Fact>]
+    let ``outdated async compile result never overwrites latest diagnostics`` () =
+        let published = ResizeArray<string * string list>()
+        let compileCalls = System.Collections.Concurrent.ConcurrentDictionary<string, int>()
+        let compile (request: Compiler.CompileModulesRequest) : Compiler.CompileResult =
+            let source = request.modules.Head.source
+            let callNumber = compileCalls.AddOrUpdate(source, 1, (fun _ current -> current + 1))
+            if source = "old" && callNumber = 1 then
+                System.Threading.Thread.Sleep(80)
+
+            let diagnostics =
+                if source = "latest" then
+                    [ Atla.Core.Semantics.Data.Diagnostic.Error("latest-diagnostic", Span.Empty) ]
+                else
+                    [ Atla.Core.Semantics.Data.Diagnostic.Error("stale-diagnostic", Span.Empty) ]
+
+            { succeeded = false
+              diagnostics = diagnostics
+              hir = None
+              symbolTable = None }
+
+        let server =
+            Server(
+                (fun uri diagnostics ->
+                    let messages = diagnostics |> List.map (fun diagnostic -> diagnostic.message)
+                    published.Add(uri, messages)),
+                compileFn = compile,
+                debounceDelayMs = 0)
+
+        server.IsAvailablePublishDiagnostics <- true
+        let uri = "file:///tmp/race.atla"
+
+        server.OpenDocument(uri, "old")
+        server.ChangeDocument(uri, "old")
+        server.ChangeDocument(uri, "latest")
+        server.WaitForPendingCompilations()
+
+        let latestPublished = published |> Seq.last
+        Assert.Equal(uri, fst latestPublished)
+        Assert.Equal<string list>(["latest-diagnostic"], snd latestPublished)
+
+    [<Fact>]
     let ``workspace roots gate compilation targets deterministically`` () =
         let published = ResizeArray<string * int>()
         let server =

@@ -254,6 +254,8 @@ type Server
     let pendingCancellations = Dictionary<string, CancellationTokenSource>()
     /// ドキュメントごとの保留中コンパイルタスク。
     let activeTasks = ConcurrentDictionary<string, Task>()
+    /// ドキュメントごとの最新変更リビジョン。古いコンパイル結果の誤配信を防ぐために使用する。
+    let documentRevisions = Dictionary<string, int64>()
     let publish = defaultArg publishDiagnosticsFn publishDiagnostics
     let getAssemblyLocation =
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
@@ -347,7 +349,12 @@ type Server
                 else
                     Result.Error buildResult.diagnostics
 
-    let compileAndPublish (normalizedUri: string) (displayUri: string) (text: string) =
+    let compileAndPublish (normalizedUri: string) (displayUri: string) (text: string) (revision: int64) =
+        let isLatestRevision () =
+            match documentRevisions.TryGetValue normalizedUri with
+            | true, currentRevision -> currentRevision = revision
+            | false, _ -> false
+
         if isAvailablePublishDiagnostics && canCompileUri normalizedUri then
             let outputDir = Path.Combine(Path.GetTempPath(), "atla-lsp")
             Directory.CreateDirectory(outputDir) |> ignore
@@ -359,7 +366,8 @@ type Server
             try
                 match resolveDependenciesForDocument normalizedUri with
                 | Result.Error buildDiagnostics ->
-                    buildDiagnostics |> toLspDiagnostics "atla-build" |> publish displayUri
+                    if isLatestRevision () then
+                        buildDiagnostics |> toLspDiagnostics "atla-build" |> publish displayUri
                 | Ok dependencies ->
                     let compileResult =
                         match tryUriToNormalizedPath normalizedUri with
@@ -393,22 +401,25 @@ type Server
                             }
 
                     // 意味解析が成功した場合は HIR からインデックスを構築してキャッシュする。
-                    match compileResult.hir, compileResult.symbolTable with
-                    | Some hirAsm, Some symTable ->
-                        let index = PositionIndex.build hirAsm
-                        lock hirCacheLock (fun () -> hirCache[normalizedUri] <- (index, symTable))
-                    | _ ->
-                        lock hirCacheLock (fun () -> hirCache.Remove normalizedUri |> ignore)
+                    if isLatestRevision () then
+                        match compileResult.hir, compileResult.symbolTable with
+                        | Some hirAsm, Some symTable ->
+                            let index = PositionIndex.build hirAsm
+                            lock hirCacheLock (fun () -> hirCache[normalizedUri] <- (index, symTable))
+                        | _ ->
+                            lock hirCacheLock (fun () -> hirCache.Remove normalizedUri |> ignore)
 
-                    compileResult.diagnostics |> toLspDiagnostics "atla-compiler" |> publish displayUri
+                        compileResult.diagnostics |> toLspDiagnostics "atla-compiler" |> publish displayUri
             with ex ->
-                let fallback =
-                    [ Atla.Core.Semantics.Data.Diagnostic.Error(sprintf "Compiler internal error: %s" ex.Message, Span.Empty) ]
-                    |> toLspDiagnostics "atla-lsp"
+                if isLatestRevision () then
+                    let fallback =
+                        [ Atla.Core.Semantics.Data.Diagnostic.Error(sprintf "Compiler internal error: %s" ex.Message, Span.Empty) ]
+                        |> toLspDiagnostics "atla-lsp"
 
-                publish displayUri fallback
+                    publish displayUri fallback
         elif isAvailablePublishDiagnostics then
-            publish displayUri []
+            if isLatestRevision () then
+                publish displayUri []
 
     /// 指定 key のドキュメントに関連するペンディング CTS をキャンセル・破棄する。
     /// この関数はメインスレッドからのみ呼ばれるため、pendingCancellations への追加のロックは不要。
@@ -423,7 +434,7 @@ type Server
     /// デバウンス付き非同期コンパイルをスケジュールする。
     /// 前回の保留タスクをキャンセルし、``debounceMs`` 後に ``compileAndPublish`` を実行する
     /// 新しいタスクを起動する。スレッドプールスレッドをブロックしないように task { } CE を使用する。
-    let scheduleCompile (key: string) (displayUri: string) (text: string) =
+    let scheduleCompile (key: string) (displayUri: string) (text: string) (revision: int64) =
         cancelAndCleanup key
         let cts = new CancellationTokenSource()
         pendingCancellations.[key] <- cts
@@ -433,7 +444,7 @@ type Server
                 try
                     do! Task.Delay(debounceMs, token)
                     if not token.IsCancellationRequested then
-                        compileAndPublish key displayUri text
+                        compileAndPublish key displayUri text revision
                 with :? OperationCanceledException -> ()
                     // TaskCanceledException は OperationCanceledException のサブクラスなので上のケースで補足される。
             } : Task<unit>) :> Task
@@ -575,8 +586,13 @@ type Server
         | Some key ->
             buffers.[key] <- text
             displayUris.[key] <- uri
+            let revision =
+                match documentRevisions.TryGetValue key with
+                | true, current -> current + 1L
+                | false, _ -> 1L
+            documentRevisions.[key] <- revision
             // ドキュメントを初めて開く場合はデバウンスなしで即時コンパイルする。
-            compileAndPublish key uri text
+            compileAndPublish key uri text revision
 
     member _.ChangeDocument(uri: string, text: string) =
         match tryNormalizeUri uri with
@@ -584,8 +600,13 @@ type Server
         | Some key ->
             buffers.[key] <- text
             displayUris.[key] <- uri
+            let revision =
+                match documentRevisions.TryGetValue key with
+                | true, current -> current + 1L
+                | false, _ -> 1L
+            documentRevisions.[key] <- revision
             // デバウンス付き非同期コンパイルをスケジュールする。
-            scheduleCompile key uri text
+            scheduleCompile key uri text revision
 
     member _.CloseDocument(uri: string) =
         match tryNormalizeUri uri with
@@ -600,6 +621,7 @@ type Server
 
             buffers.Remove(key) |> ignore
             displayUris.Remove(key) |> ignore
+            documentRevisions.Remove(key) |> ignore
             lock hirCacheLock (fun () -> hirCache.Remove(key) |> ignore)
 
     /// Backward-compatible entrypoint for existing callers.
