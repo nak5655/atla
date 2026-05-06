@@ -264,6 +264,11 @@ let visibleSymbolIdsAt (index: PositionIndex) (line: int) (col: int) : SymbolId 
             || (binding.declSpan.left.Line = line && binding.declSpan.left.Column <= col)))
     |> List.map (fun binding -> binding.symbolId)
 
+/// ソースの行・列を整数オフセットに変換するためのスケーリング係数。
+/// 1 行あたりの最大列数は 1_000_000 未満とみなす（現実的なソースファイルはこの上限内に収まる）。
+[<Literal>]
+let private ColumnMultiplier = 1_000_000
+
 /// 指定した (line, col) 位置を包含する最小スパンの式の TypeId を返す。
 /// position-based 型解決（ホバー等）に使用する。
 /// 最小スパン（最内側の式）を優先するため、スパン幅の昇順で先頭を返す。
@@ -272,8 +277,8 @@ let tryFindTypeAt (index: PositionIndex) (line: int) (col: int) : TypeId option 
     |> List.filter (fun (span, _) -> spanContains line col span)
     |> List.sortBy (fun (span, _) ->
         // 最小スパン（最内側）を優先：行をまたぐ式も正しく比較できるよう絶対オフセット差で近似する。
-        let startOff = span.left.Line  * 1_000_000 + span.left.Column
-        let endOff   = span.right.Line * 1_000_000 + span.right.Column
+        let startOff = span.left.Line  * ColumnMultiplier + span.left.Column
+        let endOff   = span.right.Line * ColumnMultiplier + span.right.Column
         endOff - startOff)
     |> List.tryHead
     |> Option.map snd
@@ -292,7 +297,7 @@ let tryFindReceiverTypeAt (index: PositionIndex) (line: int) (apostropheCol: int
     |> List.sortBy (fun (span, _) ->
         // 右端が最も後方（apostropheCol に最も近い）ものを優先。
         // 同じ右端なら最も広い（外側の）式を優先（左端が最も小さいもの）。
-        -(span.right.Line * 1_000_000 + span.right.Column),
-        span.left.Line * 1_000_000 + span.left.Column)
+        -(span.right.Line * ColumnMultiplier + span.right.Column),
+        span.left.Line * ColumnMultiplier + span.left.Column)
     |> List.tryHead
     |> Option.map snd
