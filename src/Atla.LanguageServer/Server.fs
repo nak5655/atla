@@ -8,6 +8,7 @@ open System.Diagnostics
 open System.IO
 open System.Reflection
 open System.Runtime.Loader
+open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
 open Newtonsoft.Json.Linq
@@ -315,6 +316,11 @@ let private tryResolveSystemTypeFromTypeId (symbolTable: SymbolTable) (tid: Type
         | _ -> None
     | _ -> None
 
+let private letStaticAccessPattern =
+    Regex(
+        @"^\s*let\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*[^=]+)?\s*=\s*(?<typeName>[A-Za-z_][A-Za-z0-9_]*)'(?<memberName>[A-Za-z_][A-Za-z0-9_]*)\s*$",
+        RegexOptions.Compiled ||| RegexOptions.CultureInvariant)
+
 let private collectWorkspaceRoots (content: JObject) : string list =
     let rootsFromFolders =
         match content.SelectToken("$.params.workspaceFolders") with
@@ -546,12 +552,20 @@ type Server
 
                     // 意味解析が成功した場合は HIR からインデックスを構築してキャッシュする。
                     if isLatestRevision () then
+                        let hasErrors =
+                            compileResult.diagnostics
+                            |> List.exists (fun diagnostic -> diagnostic.isError)
+
                         match compileResult.hir, compileResult.symbolTable with
                         | Some hirAsm, Some symTable ->
                             let index = PositionIndex.build hirAsm
-                            lock hirCacheLock (fun () -> hirCache[normalizedUri] <- (index, symTable))
+                            lock hirCacheLock (fun () ->
+                                let hasExisting = hirCache.ContainsKey normalizedUri
+                                if (not hasErrors) || (not hasExisting) then
+                                    hirCache[normalizedUri] <- (index, symTable))
                         | _ ->
-                            lock hirCacheLock (fun () -> hirCache.Remove normalizedUri |> ignore)
+                            if not hasErrors then
+                                lock hirCacheLock (fun () -> hirCache.Remove normalizedUri |> ignore)
 
                         compileResult.diagnostics |> toLspDiagnostics "atla-compiler" |> publish displayUri
             with ex ->
@@ -896,6 +910,56 @@ type Server
                         |> Option.bind (fun (_, tid) -> tryResolveSystemTypeFromTypeId symbolTable tid)
                         |> Option.map (fun t -> t, true)
 
+                // `let x = Type'StaticMember` の形から x の受け手型を推論するフォールバック。
+                let tryInferReceiverTypeFromStaticLetBinding (sourceText: string) (cursorLine: int) (receiverName: string) : Type option =
+                    let tryResolveTypeName (typeName: string) : Type option =
+                        visibleTypes
+                        |> List.tryFind (fun (name, _) -> name = typeName)
+                        |> Option.bind (fun (_, tid) -> tryResolveSystemTypeFromTypeId symbolTable tid)
+                        |> Option.orElseWith (fun () ->
+                            getCachedImportTypes ()
+                            |> List.tryFind (fun t -> String.Equals(trimGenericAritySuffix t.Name, typeName, StringComparison.Ordinal))
+                            |> Option.map id)
+
+                    let tryResolveStaticMemberReturnType (receiverType: Type) (memberName: string) : Type option =
+                        let flags = BindingFlags.Public ||| BindingFlags.Static
+                        let propertyReturns =
+                            receiverType.GetProperties(flags)
+                            |> Seq.filter (fun p -> p.Name = memberName)
+                            |> Seq.map (fun p -> p.PropertyType)
+                        let fieldReturns =
+                            receiverType.GetFields(flags)
+                            |> Seq.filter (fun f -> f.Name = memberName)
+                            |> Seq.map (fun f -> f.FieldType)
+                        let methodReturns =
+                            receiverType.GetMethods(flags)
+                            |> Seq.filter (fun m -> m.Name = memberName)
+                            |> Seq.map (fun m -> m.ReturnType)
+
+                        seq {
+                            yield! propertyReturns
+                            yield! fieldReturns
+                            yield! methodReturns
+                        }
+                        |> Seq.tryHead
+
+                    let lines = normalizeSemanticInput sourceText |> fun t -> t.Split('\n')
+                    let upperLine = min cursorLine (lines.Length - 1)
+                    if upperLine < 0 then None
+                    else
+                        [ upperLine .. -1 .. 0 ]
+                        |> List.tryPick (fun currentLine ->
+                            let m = letStaticAccessPattern.Match(lines.[currentLine])
+                            if not m.Success then None
+                            else
+                                let boundName = m.Groups.["name"].Value
+                                if not (String.Equals(boundName, receiverName, StringComparison.Ordinal)) then None
+                                else
+                                    let typeName = m.Groups.["typeName"].Value
+                                    let memberName = m.Groups.["memberName"].Value
+                                    tryResolveTypeName typeName
+                                    |> Option.bind (fun receiverType -> tryResolveStaticMemberReturnType receiverType memberName))
+
                 // 受け手型のメンバー候補を CompletionItem へ変換する。
                 let buildMemberItems (receiverType: Type) (isStaticReceiver: bool) (memberPrefix: string) : CompletionItem list =
                     let flags =
@@ -975,7 +1039,10 @@ type Server
                                         if String.IsNullOrWhiteSpace candidateName then Some []
                                         else
                                             match resolveReceiverType candidateName with
-                                            | None -> Some []
+                                            | None ->
+                                                match tryInferReceiverTypeFromStaticLetBinding text line candidateName with
+                                                | Some inferredType -> Some(buildMemberItems inferredType false memberPrefix)
+                                                | None -> Some []
                                             | Some(receiverType, isStaticReceiver) ->
                                                 Some(buildMemberItems receiverType isStaticReceiver memberPrefix)
 
