@@ -212,7 +212,7 @@ let private tryParseImportApostrophePath (linePrefix: string) (apostropheCol: in
 /// .NET 型名のジェネリック個数サフィックス（例: `List`1`）を除去する。
 let private trimGenericAritySuffix (name: string) : string =
     let tick = name.IndexOf('`')
-    if tick <= 0 then name else name.Substring(0, tick)
+    if tick < 0 then name else name.Substring(0, tick)
 
 /// AppDomain + AssemblyLoadContext からロード済みアセンブリを重複なく列挙する。
 let private getLoadedAssemblies () : Assembly list =
@@ -234,7 +234,11 @@ let private getAssemblyTypes (asm: Assembly) : Type list =
         rtl.Types
         |> Array.toList
         |> List.filter (fun t -> not (isNull t))
-    | _ ->
+    | :? TypeLoadException
+    | :? FileNotFoundException
+    | :? FileLoadException
+    | :? BadImageFormatException
+    | :? NotSupportedException ->
         []
 
 let private importCompletionCacheLock = obj()
@@ -295,9 +299,15 @@ let private buildImportApostropheItems (pathSegments: string list) (memberPrefix
     |> List.filter (fun (name, _) ->
         String.IsNullOrEmpty(memberPrefix)
         || name.StartsWith(memberPrefix, StringComparison.OrdinalIgnoreCase))
-    |> List.distinctBy fst
-    |> List.sortBy fst
-    |> List.map snd
+    |> List.sortBy (fun (name, _) -> name.ToLowerInvariant(), name)
+    |> List.fold (fun (seen: Set<string>, acc: CompletionItem list) (name, item) ->
+        let key = name.ToLowerInvariant()
+        if seen.Contains key then
+            seen, acc
+        else
+            seen.Add key, item :: acc) (Set.empty, [])
+    |> snd
+    |> List.rev
 
 /// TypeId から .NET System.Type を解決する（主に `External(SystemTypeRef)` を対象）。
 let private tryResolveSystemTypeFromTypeId (symbolTable: SymbolTable) (tid: TypeId) : Type option =
