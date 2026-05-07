@@ -561,6 +561,8 @@ type Server
                             let index = PositionIndex.build hirAsm
                             lock hirCacheLock (fun () ->
                                 let hasExisting = hirCache.ContainsKey normalizedUri
+                                // エラー診断がある場合は既存キャッシュを優先し、
+                                // まだキャッシュが無い初回のみ部分 HIR で補完を有効化する。
                                 if (not hasErrors) || (not hasExisting) then
                                     hirCache[normalizedUri] <- (index, symTable))
                         | _ ->
@@ -912,15 +914,16 @@ type Server
 
                 // `let x = Type'StaticMember` の形から x の受け手型を推論するフォールバック。
                 let tryInferReceiverTypeFromStaticLetBinding (sourceText: string) (cursorLine: int) (receiverName: string) : Type option =
+                    // 可視型またはロード済み型一覧から型名を .NET 型へ解決する。
                     let tryResolveTypeName (typeName: string) : Type option =
                         visibleTypes
                         |> List.tryFind (fun (name, _) -> name = typeName)
                         |> Option.bind (fun (_, tid) -> tryResolveSystemTypeFromTypeId symbolTable tid)
                         |> Option.orElseWith (fun () ->
                             getCachedImportTypes ()
-                            |> List.tryFind (fun t -> String.Equals(trimGenericAritySuffix t.Name, typeName, StringComparison.Ordinal))
-                            |> Option.map id)
+                            |> List.tryFind (fun t -> String.Equals(trimGenericAritySuffix t.Name, typeName, StringComparison.Ordinal)))
 
+                    // 静的メンバー候補（Property/Field/Method）から戻り値型を推定する。
                     let tryResolveStaticMemberReturnType (receiverType: Type) (memberName: string) : Type option =
                         let flags = BindingFlags.Public ||| BindingFlags.Static
                         let propertyReturns =
@@ -943,11 +946,14 @@ type Server
                         }
                         |> Seq.tryHead
 
-                    let lines = normalizeSemanticInput sourceText |> fun t -> t.Split('\n')
-                    let upperLine = min cursorLine (lines.Length - 1)
-                    if upperLine < 0 then None
+                    // カーソル行より上にある束縛を逆順で探索する。
+                    let normalized = normalizeSemanticInput sourceText
+                    let lines = normalized.Split('\n')
+                    let clampedCursorLine = min cursorLine (lines.Length - 1)
+                    if clampedCursorLine < 0 then None
                     else
-                        [ upperLine .. -1 .. 0 ]
+                        // カーソル行から上方向へ走査し、最も近い `let x = Type'StaticMember` を優先する。
+                        [ clampedCursorLine .. -1 .. 0 ]
                         |> List.tryPick (fun currentLine ->
                             let m = letStaticAccessPattern.Match(lines.[currentLine])
                             if not m.Success then None

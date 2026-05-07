@@ -112,7 +112,7 @@ module IntelliSenseTests =
         Assert.DoesNotContain("main", names)
 
     [<Fact>]
-    let ``GetCompletions on apostrophe for variable bound from static member returns instance members`` () =
+    let ``Completions for variable bound to static member suggest instance members`` () =
         let initialSource =
             "import System'DateTime\n" +
             "fn main (): () = do\n" +
@@ -133,6 +133,7 @@ module IntelliSenseTests =
         let names = result.items |> List.map (fun i -> i.label)
         Assert.NotEmpty(names)
         Assert.Contains("Year", names)
+        Assert.DoesNotContain("Now", names)
         Assert.DoesNotContain("main", names)
 
         let source = "fn main: Int = do\n  let first = 1\n  fir\n  let second = 2\n  first"
