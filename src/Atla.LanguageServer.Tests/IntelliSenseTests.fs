@@ -110,6 +110,32 @@ module IntelliSenseTests =
         Assert.NotEmpty(names)
         Assert.Contains("NewLine", names)
         Assert.DoesNotContain("main", names)
+
+    [<Fact>]
+    let ``Completions for variable bound to static member suggest instance members`` () =
+        let initialSource =
+            "import System'DateTime\n" +
+            "fn main (): () = do\n" +
+            "  let a = DateTime'Now\n" +
+            "  a'Year\n" +
+            "  ()"
+        let changedSource =
+            "import System'DateTime\n" +
+            "fn main (): () = do\n" +
+            "  let a = DateTime'Now\n" +
+            "  a'\n" +
+            "  ()"
+        let uri = "file:///tmp/completion-datetime-now.atla"
+        let server = makeServerWithSource uri initialSource
+        server.ChangeDocument(uri, changedSource)
+        server.WaitForPendingCompilations()
+        let result = server.GetCompletions("file:///tmp/completion-datetime-now.atla", 3, 4)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.NotEmpty(names)
+        Assert.Contains("Year", names)
+        Assert.DoesNotContain("Now", names)
+        Assert.DoesNotContain("main", names)
+
         let source = "fn main: Int = do\n  let first = 1\n  fir\n  let second = 2\n  first"
         let server = makeServerWithSource "file:///tmp/completion-scope.atla" source
         // 行2・列4 (`fir` 位置) は `second` の宣言より前。
