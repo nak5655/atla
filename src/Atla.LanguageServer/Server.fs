@@ -194,7 +194,8 @@ let private tryParseImportApostrophePath (linePrefix: string) (apostropheCol: in
         None
     else
         let leftText = linePrefix.Substring(0, apostropheCol).TrimEnd()
-        if not (leftText.StartsWith("import", StringComparison.Ordinal)) then
+        if not (leftText.StartsWith("import", StringComparison.Ordinal))
+           || (leftText.Length > "import".Length && not (Char.IsWhiteSpace(leftText.["import".Length]))) then
             None
         else
             let afterImport = leftText.Substring("import".Length).TrimStart()
@@ -300,14 +301,8 @@ let private buildImportApostropheItems (pathSegments: string list) (memberPrefix
         String.IsNullOrEmpty(memberPrefix)
         || name.StartsWith(memberPrefix, StringComparison.OrdinalIgnoreCase))
     |> List.sortBy (fun (name, _) -> name.ToLowerInvariant(), name)
-    |> List.fold (fun (seen: Set<string>, acc: CompletionItem list) (name, item) ->
-        let key = name.ToLowerInvariant()
-        if seen.Contains key then
-            seen, acc
-        else
-            seen.Add key, item :: acc) (Set.empty, [])
-    |> snd
-    |> List.rev
+    |> List.distinctBy (fun (name, _) -> name.ToLowerInvariant())
+    |> List.map snd
 
 /// TypeId から .NET System.Type を解決する（主に `External(SystemTypeRef)` を対象）。
 let private tryResolveSystemTypeFromTypeId (symbolTable: SymbolTable) (tid: TypeId) : Type option =

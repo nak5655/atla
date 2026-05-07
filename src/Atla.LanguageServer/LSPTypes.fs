@@ -180,7 +180,7 @@ type PublishDiagnosticsParams(uri: string, diagnostics: Diagnostic list) =
 // IntelliSense payload types
 // ---------------------------------------------------------------------------
 
-/// LSP CompletionItemKind の一部。
+/// LSP CompletionItemKind の一部（数値は LSP 仕様の列挙値に合わせる）。
 type CompletionItemKind =
     | Text = 1
     | Method = 2
