@@ -188,6 +188,7 @@ type CompletionItemKind =
     | Field = 5
     | Variable = 6
     | Class = 7
+    | Module = 9
     | Keyword = 14
 
 /// LSP CompletionItem。
@@ -231,4 +232,3 @@ type Location(uri: string, range: Range) =
     member _.uri = uri
     [<JsonProperty>]
     member _.range = range
-

@@ -233,19 +233,41 @@ let private getAssemblyTypes (asm: Assembly) : Type list =
     | :? ReflectionTypeLoadException as rtl ->
         rtl.Types
         |> Array.toList
+        |> List.filter (fun t -> not (isNull t))
     | _ ->
         []
+
+let private importCompletionCacheLock = obj()
+let mutable private cachedImportTypeAssemblySignature: string list = []
+let mutable private cachedImportTypes: Type list = []
+
+/// import 補完用の型一覧をキャッシュ付きで取得する。
+/// ロード済みアセンブリ構成（FullName 集合）が変化した場合のみ再構築する。
+let private getCachedImportTypes () : Type list =
+    let assemblies = getLoadedAssemblies ()
+    let signature =
+        assemblies
+        |> List.choose (fun asm ->
+            if String.IsNullOrWhiteSpace(asm.FullName) then None else Some asm.FullName)
+        |> List.sort
+    lock importCompletionCacheLock (fun () ->
+        if signature = cachedImportTypeAssemblySignature then
+            cachedImportTypes
+        else
+            let rebuilt =
+                assemblies
+                |> List.collect getAssemblyTypes
+                |> List.filter (fun t -> not (isNull t.FullName) && (t.IsPublic || t.IsNestedPublic))
+            cachedImportTypeAssemblySignature <- signature
+            cachedImportTypes <- rebuilt
+            rebuilt)
 
 /// `import Namespace'` の補完候補（直下 namespace / type 名）を生成する。
 let private buildImportApostropheItems (pathSegments: string list) (memberPrefix: string) : CompletionItem list =
     let namespacePath = String.concat "." pathSegments
     let namespacePrefix = namespacePath + "."
 
-    let loadedTypes =
-        getLoadedAssemblies ()
-        |> List.collect getAssemblyTypes
-        // ReflectionTypeLoadException.Types には null 要素が含まれうる。
-        |> List.filter (fun t -> not (isNull t) && not (isNull t.FullName) && (t.IsPublic || t.IsNestedPublic))
+    let loadedTypes = getCachedImportTypes ()
 
     let typeCandidates =
         loadedTypes
@@ -267,7 +289,7 @@ let private buildImportApostropheItems (pathSegments: string list) (memberPrefix
                 let dot = suffix.IndexOf('.')
                 let child = if dot < 0 then suffix else suffix.Substring(0, dot)
                 if String.IsNullOrWhiteSpace(child) then None
-                else Some(child, CompletionItem(child, kind = CompletionItemKind.Text, detail = "namespace")))
+                else Some(child, CompletionItem(child, kind = CompletionItemKind.Module, detail = "namespace")))
 
     (namespaceCandidates @ typeCandidates)
     |> List.filter (fun (name, _) ->
