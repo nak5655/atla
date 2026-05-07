@@ -560,11 +560,9 @@ type Server
                         | Some hirAsm, Some symTable ->
                             let index = PositionIndex.build hirAsm symTable
                             lock hirCacheLock (fun () ->
-                                let hasExisting = hirCache.ContainsKey normalizedUri
-                                // エラー診断がある場合は既存キャッシュを優先し、
-                                // まだキャッシュが無い初回のみ部分 HIR で補完を有効化する。
-                                if (not hasErrors) || (not hasExisting) then
-                                    hirCache[normalizedUri] <- (index, symTable))
+                                // エラーがある場合でも、取得できた最新の部分 HIR を優先して
+                                // ほかの箇所の補完精度を維持する。
+                                hirCache[normalizedUri] <- (index, symTable))
                         | _ ->
                             if not hasErrors then
                                 lock hirCacheLock (fun () -> hirCache.Remove normalizedUri |> ignore)
