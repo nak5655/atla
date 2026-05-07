@@ -140,11 +140,13 @@ module IntelliSenseTests =
     let ``GetCompletions uses latest partial HIR cache even when diagnostics contain errors`` () =
         let uri = "file:///tmp/completion-partial-hir-cache.atla"
         let initialSource =
+            "import System'DateTime\n" +
             "fn main (): () = do\n" +
-            "  let value = \"hello\"\n" +
+            "  let value = DateTime'Now\n" +
             "  value'\n" +
             "  ()"
         let changedSource =
+            "import System'DateTime\n" +
             "fn main (): () = do\n" +
             "  let value = 1\n" +
             "  unknownValue\n" +
@@ -152,16 +154,16 @@ module IntelliSenseTests =
             "  ()"
 
         let server = makeServerWithSource uri initialSource
-        let beforeChange = server.GetCompletions(uri, 2, 8)
+        let beforeChange = server.GetCompletions(uri, 3, 8)
         let beforeNames = beforeChange.items |> List.map (fun i -> i.label)
-        Assert.Contains("Length", beforeNames)
+        Assert.Contains("Year", beforeNames)
 
         server.ChangeDocument(uri, changedSource)
         server.WaitForPendingCompilations()
 
-        let afterChange = server.GetCompletions(uri, 3, 8)
+        let afterChange = server.GetCompletions(uri, 4, 8)
         let afterNames = afterChange.items |> List.map (fun i -> i.label)
-        Assert.DoesNotContain("Length", afterNames)
+        Assert.DoesNotContain("Year", afterNames)
 
         let source = "fn main: Int = do\n  let first = 1\n  fir\n  let second = 2\n  first"
         let server = makeServerWithSource "file:///tmp/completion-scope.atla" source
