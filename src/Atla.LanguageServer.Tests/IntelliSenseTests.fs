@@ -119,6 +119,16 @@ module IntelliSenseTests =
         Assert.DoesNotContain("second", names)
 
     [<Fact>]
+    let ``GetCompletions on import apostrophe suggests namespace types`` () =
+        let source = "import System'\nfn main (): Int = 0"
+        let server = makeServerWithSource "file:///tmp/completion-import-system.atla" source
+        // 行0・列14は `import System'` の apostrophe 直後。
+        let result = server.GetCompletions("file:///tmp/completion-import-system.atla", 0, 14)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.NotEmpty(names)
+        Assert.Contains("DateTime", names)
+
+    [<Fact>]
     let ``GetCompletions without apostrophe includes visible vars and visible types`` () =
         let source = "import System'Console\nfn main (): Int = do\n  let value = 1\n  value"
         let server = makeServerWithSource "file:///tmp/completion-vars-types.atla" source
