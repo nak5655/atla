@@ -558,7 +558,7 @@ type Server
 
                         match compileResult.hir, compileResult.symbolTable with
                         | Some hirAsm, Some symTable ->
-                            let index = PositionIndex.build hirAsm
+                            let index = PositionIndex.build hirAsm symTable
                             lock hirCacheLock (fun () ->
                                 let hasExisting = hirCache.ContainsKey normalizedUri
                                 // エラー診断がある場合は既存キャッシュを優先し、
@@ -966,6 +966,22 @@ type Server
                                     tryResolveTypeName typeName
                                     |> Option.bind (fun receiverType -> tryResolveStaticMemberReturnType receiverType memberName))
 
+                // Atla データ型フィールドの補完候補を CompletionItem に変換する。
+                // `typSid` が `index.dataTypeFields` に登録されている場合のみ Some を返す。
+                let tryBuildAtlaDataFieldItems (typSid: SymbolId) (memberPrefix: string) : CompletionItem list option =
+                    let (SymbolId typId) = typSid
+                    index.dataTypeFields
+                    |> Map.tryFind typId
+                    |> Option.map (fun fields ->
+                        fields
+                        |> List.choose (fun (name, typ) ->
+                            if String.IsNullOrEmpty(memberPrefix)
+                               || name.StartsWith(memberPrefix, StringComparison.OrdinalIgnoreCase)
+                            then
+                                let detail = PositionIndex.formatTypeWithTable symbolTable typ
+                                Some(CompletionItem(name, kind = CompletionItemKind.Field, detail = detail))
+                            else None))
+
                 // 受け手型のメンバー候補を CompletionItem へ変換する。
                 let buildMemberItems (receiverType: Type) (isStaticReceiver: bool) (memberPrefix: string) : CompletionItem list =
                     let flags =
@@ -1022,35 +1038,88 @@ type Server
                                 | None -> None
                                 | Some(apostropheCol, memberPrefix) ->
                                     // 1. HIR の position-based 型解決を試みる。
-                                    //    apostrophe 直前の列に対応する式の型を PositionIndex から取得する。
+                                    //    apostrophe 直前の列に対応する式の TypeId を PositionIndex から取得する。
                                     //    HIR のスパンは LF 正規化テキストの (line, col) に対応する。
-                                    let typeFromHir =
+                                    let rawTypeFromHir =
                                         if apostropheCol > 0 then
                                             PositionIndex.tryFindReceiverTypeAt index line apostropheCol
-                                            |> Option.bind (tryResolveSystemTypeFromTypeId symbolTable)
                                         else None
 
-                                    match typeFromHir with
-                                    | Some receiverType ->
-                                        // HIR から型が解決できた場合はインスタンスメンバーを返す。
-                                        Some(buildMemberItems receiverType false memberPrefix)
+                                    // 1a. .NET 型として解決できる場合はインスタンスメンバーを返す。
+                                    let systemTypeResult =
+                                        rawTypeFromHir
+                                        |> Option.bind (tryResolveSystemTypeFromTypeId symbolTable)
+                                        |> Option.map (fun receiverType ->
+                                            buildMemberItems receiverType false memberPrefix)
+
+                                    match systemTypeResult with
+                                    | Some memberItems ->
+                                        // HIR から .NET 型が解決できた場合はインスタンスメンバーを返す。
+                                        Some memberItems
                                     | None ->
-                                        // 2. フォールバック：apostrophe 直前のテキストから識別子名を取り出して
-                                        //    シンボルテーブルで解決する（静的アクセスや HIR キャッシュ未作成時に対応）。
-                                        let leftText = linePrefix.Substring(0, apostropheCol)
-                                        let mutable j = leftText.Length - 1
-                                        while j >= 0 && isIdentifierChar leftText.[j] do
-                                            j <- j - 1
-                                        let candidateName = leftText.Substring(j + 1)
-                                        if String.IsNullOrWhiteSpace candidateName then Some []
-                                        else
-                                            match resolveReceiverType candidateName with
-                                            | None ->
-                                                match tryInferReceiverTypeFromStaticLetBinding text line candidateName with
-                                                | Some inferredType -> Some(buildMemberItems inferredType false memberPrefix)
-                                                | None -> Some []
-                                            | Some(receiverType, isStaticReceiver) ->
-                                                Some(buildMemberItems receiverType isStaticReceiver memberPrefix)
+                                        // 1b. HIR から Atla データ型フィールドとして解決できる場合はフィールドを返す。
+                                        //     TypeId.Name typeSid → tryBuildAtlaDataFieldItems でフィールド候補を取得する。
+                                        let atlaFieldFromHir =
+                                            rawTypeFromHir
+                                            |> Option.bind (fun tid ->
+                                                match tid with
+                                                | TypeId.Name typSid -> tryBuildAtlaDataFieldItems typSid memberPrefix
+                                                | _ -> None)
+
+                                        match atlaFieldFromHir with
+                                        | Some fieldItems ->
+                                            // HIR から Atla データ型フィールドが解決できた場合はフィールド候補を返す。
+                                            Some fieldItems
+                                        | None ->
+                                            // 2. フォールバック：apostrophe 直前のテキストから識別子名を取り出して
+                                            //    シンボルテーブルで解決する（静的アクセスや HIR キャッシュ未作成時に対応）。
+                                            //    dangling apostrophe（`person'` のような不完全な入力）では
+                                            //    receiver が ExprError に吸収されて rawTypeFromHir が None になるため
+                                            //    このフォールバックが主に使われる。
+                                            let leftText = linePrefix.Substring(0, apostropheCol)
+                                            let mutable j = leftText.Length - 1
+                                            while j >= 0 && isIdentifierChar leftText.[j] do
+                                                j <- j - 1
+                                            let candidateName = leftText.Substring(j + 1)
+                                            if String.IsNullOrWhiteSpace candidateName then Some []
+                                            else
+                                                match resolveReceiverType candidateName with
+                                                | Some(receiverType, isStaticReceiver) ->
+                                                    // 2a. .NET 型として解決できた場合はメンバーを返す。
+                                                    Some(buildMemberItems receiverType isStaticReceiver memberPrefix)
+                                                | None ->
+                                                    // 2b. 変数のシンボル型が Atla データ型の場合はフィールドを返す。
+                                                    //     dangling apostrophe での主要な補完パス。
+                                                    //     symbol table の変数型は未解決 meta の場合があるため
+                                                    //     index.varTypes（HIR 式の .typ から取得した具体型）を優先する。
+                                                    let atlaFieldFromVar =
+                                                        visibleVarMap
+                                                        |> Map.tryFind candidateName
+                                                        |> Option.bind (fun sid ->
+                                                            let (SymbolId sidId) = sid
+                                                            // index.varTypes に具体型があればそれを使う。
+                                                            // なければ symbol table にフォールバックする。
+                                                            let resolvedTypeOpt =
+                                                                index.varTypes
+                                                                |> Map.tryFind sidId
+                                                                |> Option.orElseWith (fun () ->
+                                                                    symbolTable.Get sid
+                                                                    |> Option.map (fun info -> info.typ))
+                                                            resolvedTypeOpt
+                                                            |> Option.bind (fun tid ->
+                                                                match tid with
+                                                                | TypeId.Name typSid ->
+                                                                    tryBuildAtlaDataFieldItems typSid memberPrefix
+                                                                | _ -> None))
+                                                    match atlaFieldFromVar with
+                                                    | Some fieldItems ->
+                                                        // Atla データ型フィールドが見つかった場合はフィールド候補を返す。
+                                                        Some fieldItems
+                                                    | None ->
+                                                        // 2c. 静的メンバーアクセスで束縛された変数から型を推定する。
+                                                        match tryInferReceiverTypeFromStaticLetBinding text line candidateName with
+                                                        | Some inferredType -> Some(buildMemberItems inferredType false memberPrefix)
+                                                        | None -> Some []
 
                 match apostropheItems with
                 | Some memberItems ->

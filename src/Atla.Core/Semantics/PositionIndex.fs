@@ -62,7 +62,15 @@ type PositionIndex =
       /// モジュールのトップレベルスコープ（補完候補の列挙に使用）。
       moduleScope: Scope
       /// 全式ノードの (span, TypeId) ペア（apostrophe 補完の型解決に使用）。
-      exprTypes: (Span * TypeId) list }
+      exprTypes: (Span * TypeId) list
+      /// Atla データ型のフィールド情報: SymbolId.id → (フィールド名, TypeId) のリスト。
+      /// `TypeId.Name typeSid` を受け手型とする apostrophe 補完でフィールド候補を返すために使用する。
+      dataTypeFields: Map<int, (string * TypeId) list>
+      /// ローカル変数の解決済み TypeId: SymbolId.id → TypeId。
+      /// symbol table の meta 変数は型推論後に解決されないため、HIR 式の型を直接格納する。
+      /// let/for/lambda 引数の bundle 型が TypeId.Meta のままでも、
+      /// RHS 式の .typ から具体型（例: TypeId.Name personSid）が得られる。
+      varTypes: Map<int, TypeId> }
 
 /// ローカル束縛（引数/let/for）の可視範囲情報。
 and BindingSite =
@@ -97,14 +105,17 @@ type private BuildState =
       declSites:  Map<int, Span>
       bindingSites: BindingSite list
       /// 全式ノードの (span, TypeId) ペア（position-based 型解決に使用）。
-      exprTypes:  (Span * TypeId) list }
+      exprTypes:  (Span * TypeId) list
+      /// ローカル変数の解決済み TypeId: SymbolId.id → TypeId（HIR 式の .typ から取得）。
+      varTypes:   Map<int, TypeId> }
 
 /// 空のアキュムレータ。
 let private emptyState : BuildState =
     { useSites    = []
       declSites   = Map.empty
       bindingSites = []
-      exprTypes   = [] }
+      exprTypes   = []
+      varTypes    = Map.empty }
 
 /// 宣言スパンをアキュムレータに追加する（同一 SymbolId の場合は最初の登録のみ保持）。
 let private addDecl (sid: SymbolId) (span: Span) (state: BuildState) : BuildState =
@@ -123,6 +134,12 @@ let private addBindingSite (sid: SymbolId) (declSpan: Span) (scopeSpan: Span) (s
             { symbolId = sid
               declSpan = declSpan
               scopeSpan = scopeSpan } :: state.bindingSites }
+
+/// ローカル変数の解決済み型を varTypes マップに登録する。
+/// HIR 式の `.typ` を直接格納することで、symbol table の未解決 meta を回避する。
+let private addVarType (sid: SymbolId) (tid: TypeId) (state: BuildState) : BuildState =
+    let (SymbolId id) = sid
+    { state with varTypes = state.varTypes |> Map.add id tid }
 
 /// 式ノードを再帰的に走査してアキュムレータを更新する。
 let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) : BuildState =
@@ -145,7 +162,9 @@ let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) 
                 (fun s (arg: Hir.Arg) ->
                     s
                     |> addDecl arg.sid arg.span
-                    |> addBindingSite arg.sid arg.span lambdaScope)
+                    |> addBindingSite arg.sid arg.span lambdaScope
+                    // Lambda 引数の型は arg.typ から直接取得する（symbol table の meta を回避）。
+                    |> addVarType arg.sid arg.typ)
                 state
         walkExpr lambdaScope body state1
     | Hir.Expr.MemberAccess(_, instance, _, _) ->
@@ -171,6 +190,9 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
         state
         |> addDecl sid span
         |> addBindingSite sid span scopeSpan
+        // value.typ は DataInit などで直接 TypeId.Name に解決されているため、
+        // symbol table の meta 変数を介さず型を記録する。
+        |> addVarType sid value.typ
         |> walkExpr scopeSpan value
     | Hir.Stmt.Assign(_, value, _) ->
         walkExpr scopeSpan value state
@@ -195,6 +217,7 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
             state
             |> addDecl sid span
             |> addBindingSite sid span forScope
+            |> addVarType sid iterable.typ
             |> walkExpr scopeSpan iterable
         body |> List.fold (fun s stmt -> walkStmt forScope stmt s) state1
     | Hir.Stmt.ErrorStmt _ -> state
@@ -221,7 +244,8 @@ let private walkModule (modul: Hir.Module) (state: BuildState) : BuildState =
 // ---------------------------------------------------------------------------
 
 /// HIR アセンブリを走査して PositionIndex を構築する。
-let build (assembly: Hir.Assembly) : PositionIndex =
+/// `symbolTable` はデータ型フィールドの名前解決に使用する。
+let build (assembly: Hir.Assembly) (symbolTable: SymbolTable) : PositionIndex =
     // 全モジュールをフォールドで処理し、不変アキュムレータを更新する。
     let finalState =
         assembly.modules |> List.fold (fun s modul -> walkModule modul s) emptyState
@@ -233,11 +257,37 @@ let build (assembly: Hir.Assembly) : PositionIndex =
         |> Option.map (fun m -> m.scope)
         |> Option.defaultWith (fun () -> Scope(None))
 
-    { useSites    = finalState.useSites
-      declSites   = finalState.declSites
-      bindingSites = finalState.bindingSites
-      moduleScope = topScope
-      exprTypes   = finalState.exprTypes }
+    // データ型のフィールド情報を構築する: SymbolId.id → (フィールド名, TypeId) リスト。
+    // SymbolTable からフィールドの名前を引き、フィールドを持つ型のみを登録する。
+    // シンボルテーブル上のフィールド名は "TypeName.fieldName" の形式で格納されているため、
+    // 最後の '.' 以降の部分（非修飾名）のみを補完候補ラベルとして使用する。
+    let getUnqualifiedFieldName (qualifiedName: string) : string =
+        let lastDot = qualifiedName.LastIndexOf('.')
+        if lastDot >= 0 then qualifiedName.Substring(lastDot + 1) else qualifiedName
+
+    let dataTypeFields =
+        assembly.modules
+        |> List.collect (fun modul -> modul.types)
+        |> List.choose (fun hirType ->
+            let (SymbolId typId) = hirType.sym
+            let fields =
+                hirType.fields
+                |> List.choose (fun field ->
+                    symbolTable.Get field.sym
+                    |> Option.map (fun fieldInfo ->
+                        // "Person.name" → "name" に正規化する。
+                        getUnqualifiedFieldName fieldInfo.name, field.typ))
+            if fields.IsEmpty then None
+            else Some(typId, fields))
+        |> Map.ofList
+
+    { useSites       = finalState.useSites
+      declSites      = finalState.declSites
+      bindingSites   = finalState.bindingSites
+      moduleScope    = topScope
+      exprTypes      = finalState.exprTypes
+      dataTypeFields = dataTypeFields
+      varTypes       = finalState.varTypes }
 
 // ---------------------------------------------------------------------------
 // クエリ関数

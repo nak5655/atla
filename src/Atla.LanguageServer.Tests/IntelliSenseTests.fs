@@ -163,6 +163,31 @@ module IntelliSenseTests =
         Assert.Contains("value", names)
         Assert.Contains("Console", names)
 
+    [<Fact>]
+    let ``GetCompletions on apostrophe after Atla data type variable returns field names`` () =
+        // `data Person = { name: String, age: Int }` があるとき、
+        // `person'` とすると `name` と `age` が補完候補として返されることを検証する。
+        //
+        // Line 3: "  person'"
+        //   apostropheCol = 8, cursor just after apostrophe (character = 9, memberPrefix = "").
+        //   Id("person") は dangling apostrophe で ExprError になるため rawTypeFromHir = None。
+        //   fallback path 2b: visibleVarMap["person"].typ = TypeId.Name personTypeSid →
+        //   dataTypeFields からフィールド候補 ["name", "age"] が返される。
+        let source =
+            "data Person = { name: String, age: Int }\n" +
+            "fn main (): () = do\n" +
+            "  let person = Person { name = \"Alice\", age = 30 }\n" +
+            "  person'\n" +
+            "  ()"
+        let server = makeServerWithSource "file:///tmp/completion-data-fields.atla" source
+        // カーソルは行3・列9（"  person'" の apostrophe 直後、memberPrefix は空）。
+        let result = server.GetCompletions("file:///tmp/completion-data-fields.atla", 3, 9)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.NotEmpty(names)
+        Assert.Contains("name", names)
+        Assert.Contains("age", names)
+        Assert.DoesNotContain("main", names)
+
     // -----------------------------------------------------------------------
     // GetHover
     // -----------------------------------------------------------------------
@@ -243,7 +268,7 @@ module IntelliSenseTests =
     [<Fact>]
     let ``PositionIndex build returns empty index for empty assembly`` () =
         let assembly = Atla.Core.Semantics.Data.Hir.Assembly("test", [])
-        let index = Atla.Core.Semantics.PositionIndex.build assembly
+        let index = Atla.Core.Semantics.PositionIndex.build assembly (Atla.Core.Semantics.Data.SymbolTable())
         Assert.Empty(index.useSites)
         Assert.Empty(index.declSites)
         // exprTypes も空であること。
@@ -266,7 +291,7 @@ module IntelliSenseTests =
                         "test", [], [field], [],
                         Atla.Core.Semantics.Data.Scope(None))
         let assembly = Atla.Core.Semantics.Data.Hir.Assembly("test", [modul])
-        let index = Atla.Core.Semantics.PositionIndex.build assembly
+        let index = Atla.Core.Semantics.PositionIndex.build assembly (Atla.Core.Semantics.Data.SymbolTable())
         // apostropheCol = 3 → span.right.Column = 3 ≤ 3 ✓ → TypeId.Int が返る。
         let result = Atla.Core.Semantics.PositionIndex.tryFindReceiverTypeAt index 0 3
         Assert.Equal(Some Atla.Core.Semantics.Data.TypeId.Int, result)
@@ -296,6 +321,78 @@ module IntelliSenseTests =
                     Atla.Core.Semantics.Data.TypeId.Bool)
         let result = Atla.Core.Semantics.PositionIndex.formatTypeWithTable symbolTable tid
         Assert.Equal("(Int, String) -> Bool", result)
+
+    [<Fact>]
+    let ``PositionIndex dataTypeFields is populated for data type declarations`` () =
+        // data Person = { name: String, age: Int } を含むソースをコンパイルし、
+        // PositionIndex.dataTypeFields に Person のフィールドが登録されていることを検証する。
+        let source =
+            "data Person = { name: String, age: Int }\n" +
+            "fn main (): () = ()"
+        let compileResult = Atla.Compiler.Compiler.compileModules {
+            asmName = "diag"
+            modules = [ { moduleName = "main"; source = source } ]
+            entryModuleName = "main"
+            outDir = System.IO.Path.GetTempPath()
+            dependencies = []
+        }
+        Assert.True(compileResult.hir.IsSome, "HIR should be produced")
+        Assert.True(compileResult.symbolTable.IsSome, "SymbolTable should be produced")
+        match compileResult.hir, compileResult.symbolTable with
+        | Some hirAsm, Some symTable ->
+            let index = Atla.Core.Semantics.PositionIndex.build hirAsm symTable
+            // このソースには Person だけなので、エントリは 1 つでなければならない。
+            Assert.Equal(1, index.dataTypeFields |> Map.count)
+            // Person のフィールドに "name" と "age" が含まれること（ソースは 2 フィールドのみ）。
+            let (_, personFields) = index.dataTypeFields |> Map.toList |> List.head
+            let fieldNames = personFields |> List.map fst
+            Assert.Equal(2, fieldNames.Length)
+            Assert.Contains("name", fieldNames)
+            Assert.Contains("age", fieldNames)
+        | _ -> failwith "Unreachable"
+
+    [<Fact>]
+    let ``PositionIndex bindingSites includes person variable from do block with dangling apostrophe`` () =
+        // dangling apostrophe があっても do ブロック内の person let 束縛が
+        // PositionIndex.bindingSites に記録されることを検証する。
+        let source =
+            "data Person = { name: String, age: Int }\n" +
+            "fn main (): () = do\n" +
+            "  let person = Person { name = \"Alice\", age = 30 }\n" +
+            "  person'\n" +
+            "  ()"
+        let compileResult = Atla.Compiler.Compiler.compileModules {
+            asmName = "diag3"
+            modules = [ { moduleName = "main"; source = source } ]
+            entryModuleName = "main"
+            outDir = System.IO.Path.GetTempPath()
+            dependencies = []
+        }
+        match compileResult.hir, compileResult.symbolTable with
+        | Some hirAsm, Some symTable ->
+            let index = Atla.Core.Semantics.PositionIndex.build hirAsm symTable
+            let visibleAtCursor = Atla.Core.Semantics.PositionIndex.visibleSymbolIdsAt index 3 9
+            let names =
+                visibleAtCursor
+                |> List.choose (fun sid -> symTable.Get sid |> Option.map (fun info -> info.name))
+            // person は cursor (3,9) で可視でなければならない。
+            Assert.Contains("person", names)
+        | _ -> failwith "HIR or symbolTable not produced"
+
+    [<Fact>]
+    let ``GetCompletions without apostrophe includes person variable in do block`` () =
+        // データ型変数 person が do ブロック内の let 束縛として visibleVarMap に含まれることを検証する。
+        let source =
+            "data Person = { name: String, age: Int }\n" +
+            "fn main (): () = do\n" +
+            "  let person = Person { name = \"Alice\", age = 30 }\n" +
+            "  per\n" +
+            "  ()"
+        let server = makeServerWithSource "file:///tmp/completion-person-var.atla" source
+        // line 3, col 4 → "  per" 位置で通常補完。person が候補に含まれること。
+        let result = server.GetCompletions("file:///tmp/completion-person-var.atla", 3, 4)
+        let names = result.items |> List.map (fun i -> i.label)
+        Assert.Contains("person", names)
 
     [<Fact>]
     let ``GetCompletions after close returns empty list`` () =
