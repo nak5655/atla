@@ -224,6 +224,18 @@ let private getLoadedAssemblies () : Assembly list =
     |> Seq.distinctBy (fun asm -> asm.FullName)
     |> Seq.toList
 
+/// アセンブリから型定義を安全に列挙する。
+/// ReflectionTypeLoadException の場合は読み込めた型のみ継続利用する。
+let private getAssemblyTypes (asm: Assembly) : Type list =
+    try
+        asm.GetTypes() |> Array.toList
+    with
+    | :? ReflectionTypeLoadException as rtl ->
+        rtl.Types
+        |> Array.toList
+    | _ ->
+        []
+
 /// `import Namespace'` の補完候補（直下 namespace / type 名）を生成する。
 let private buildImportApostropheItems (pathSegments: string list) (memberPrefix: string) : CompletionItem list =
     let namespacePath = String.concat "." pathSegments
@@ -231,9 +243,8 @@ let private buildImportApostropheItems (pathSegments: string list) (memberPrefix
 
     let loadedTypes =
         getLoadedAssemblies ()
-        |> List.collect (fun asm ->
-            try asm.GetTypes() |> Array.toList
-            with _ -> [])
+        |> List.collect getAssemblyTypes
+        // ReflectionTypeLoadException.Types には null 要素が含まれうる。
         |> List.filter (fun t -> not (isNull t) && not (isNull t.FullName) && (t.IsPublic || t.IsNestedPublic))
 
     let typeCandidates =
@@ -256,7 +267,7 @@ let private buildImportApostropheItems (pathSegments: string list) (memberPrefix
                 let dot = suffix.IndexOf('.')
                 let child = if dot < 0 then suffix else suffix.Substring(0, dot)
                 if String.IsNullOrWhiteSpace(child) then None
-                else Some(child, CompletionItem(child, kind = CompletionItemKind.Keyword, detail = "namespace")))
+                else Some(child, CompletionItem(child, kind = CompletionItemKind.Text, detail = "namespace")))
 
     (namespaceCandidates @ typeCandidates)
     |> List.filter (fun (name, _) ->
