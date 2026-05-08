@@ -19,6 +19,19 @@ module ResolverTests =
         Directory.CreateDirectory(tfmDir) |> ignore
         File.WriteAllText(Path.Join(tfmDir, assemblyFileName), "")
 
+    /// プロジェクト直下の atla.lock を文字列として読み込む。
+    let private readLockFile (projectRoot: string) =
+        File.ReadAllText(Path.Join(projectRoot, "atla.lock"))
+
+    /// 改行差分（CRLF/LF）を吸収して比較しやすい文字列へ正規化する。
+    let private normalizeNewLines (text: string) =
+        text.Replace("\r\n", "\n")
+
+    /// atla.lock の内容が期待値と一致することを検証する。
+    let private assertLockFileEquals (projectRoot: string) (expected: string) =
+        let actual = readLockFile projectRoot |> normalizeNewLines
+        Assert.Equal(expected |> normalizeNewLines, actual)
+
     /// YAML の basic string で解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
     let private toYamlPath (path: string) =
         path.Replace("\\", "/")
@@ -73,6 +86,7 @@ dependencies:
                 Assert.Equal(Path.GetFullPath(expectedPackagePath), dependency.source)
                 Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.compileReferencePaths)
                 Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.runtimeLoadPaths)
+                assertLockFileEquals rootProject "nuget:\n  Newtonsoft.Json: \"13.0.3\"\n"
             | None ->
                 Assert.Fail("expected build plan")
         )
@@ -129,6 +143,7 @@ dependencies:
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(pathLibDir, "dep-lib-runtime.dll")) ], localDependency.runtimeLoadPaths)
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetRefDir, "Newtonsoft.Json.dll")) ], nugetDependency.compileReferencePaths)
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetLibDir, "Newtonsoft.Json.dll")) ], nugetDependency.runtimeLoadPaths)
+                assertLockFileEquals rootProject "nuget:\n  Newtonsoft.Json: \"13.0.3\"\n"
             | None ->
                 Assert.Fail("expected build plan")
         )
@@ -156,6 +171,33 @@ dependencies:
             Assert.True(result.plan.IsNone)
             Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("has no supported compile reference assemblies")))
         )
+
+    [<Fact>]
+    let ``buildProject should create empty nuget lock when only path dependencies exist`` () =
+        let rootProject = createTempProjectDir ()
+        let depProject = createTempProjectDir ()
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toYamlPath
+
+        writeManifest depProject """
+package:
+  name: "dep"
+  version: "1.0.0"
+"""
+        writeReferenceDll depProject "dep.dll"
+
+        writeManifest rootProject $"""
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  dep:
+    path: "{relativePath}"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+        Assert.True(result.succeeded)
+        assertLockFileEquals rootProject "nuget:\n"
 
     [<Fact>]
     let ``buildProject should prefer highest tfm within ref for compile and within lib for runtime`` () =
@@ -609,6 +651,7 @@ dependencies:
             | Some plan ->
                 let names = plan.dependencies |> List.map (fun dep -> dep.name) |> List.sort
                 Assert.Equal<string list>([ "Primary"; "TransitivePkg" ], names)
+                assertLockFileEquals rootProject "nuget:\n  Primary: \"1.0.0\"\n  TransitivePkg: \"2.0.0\"\n"
             | None ->
                 Assert.Fail("expected build plan")
         )
