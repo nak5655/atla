@@ -204,6 +204,7 @@ dependencies:
         Directory.CreateDirectory(tfmRoot) |> ignore
         File.WriteAllText(Path.Join(tfmRoot, "Newtonsoft.Json.dll"), "")
         File.WriteAllText(Path.Join(tfmRoot, "newtonsoft.json.dll"), "")
+        let topLevelDllCount = Directory.GetFiles(tfmRoot, "*.dll", SearchOption.TopDirectoryOnly).Length
 
         writeManifest rootProject """
 package:
@@ -217,9 +218,14 @@ dependencies:
         withNuGetPackagesRoot packagesRoot (fun () ->
             let result = BuildSystem.buildProject { projectRoot = rootProject }
 
-            Assert.False(result.succeeded)
-            Assert.True(result.plan.IsNone)
-            Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("ambiguous reference assemblies")))
+            // case-sensitive FS では 2 ファイル共存し ambiguous になる。
+            // case-insensitive FS では同一ファイル扱いになり 1 ファイルのみで成功する。
+            if topLevelDllCount = 2 then
+                Assert.False(result.succeeded)
+                Assert.True(result.plan.IsNone)
+                Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("ambiguous reference assemblies")))
+            else
+                Assert.True(result.succeeded)
         )
 
     [<Fact>]
