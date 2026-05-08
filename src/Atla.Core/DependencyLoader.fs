@@ -141,7 +141,7 @@ module DependencyLoader =
                     (loadedPaths, diagnostics @ [ toLoadDiagnostic dependencyName assemblyPath ex ])
 
             let _, diagnostics = normalizedRuntimeLoads |> List.fold folder ([], [])
-            let hasErrors = diagnostics |> List.exists (fun diagnostic -> diagnostic.isError)
+            let hasErrors = diagnostics |> List.exists (fun diag -> diag.isError)
 
             if hasErrors then
                 context.Unload()

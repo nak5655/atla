@@ -451,6 +451,8 @@ dependencies:
         Assert.False(result.succeeded)
         Assert.Equal(2, result.diagnostics |> List.length)
         Assert.All(result.diagnostics, fun d -> Assert.Equal(DiagnosticSeverity.Error, d.severity))
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains(bad1))
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains(bad2))
 
     [<Fact>]
     let ``dependency loader should fail for bad image format`` () =
