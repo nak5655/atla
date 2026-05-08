@@ -42,14 +42,16 @@ module BuildSystem =
 
     /// パス区切りを考慮して、candidate が root 配下（または同一）かを判定する。
     let private isUnderPath (root: string) (candidate: string) : bool =
-        let normalizedRoot = normalizePath root
-        let normalizedCandidate = normalizePath candidate
+        let normalizedRoot =
+            (normalizePath root).Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
+        let normalizedCandidate =
+            (normalizePath candidate).Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
         let comparison =
             if OperatingSystem.IsWindows() then
                 StringComparison.OrdinalIgnoreCase
             else
                 StringComparison.Ordinal
-        let rootWithSeparator = normalizedRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + string Path.DirectorySeparatorChar
+        let rootWithSeparator = normalizedRoot.TrimEnd(Path.DirectorySeparatorChar) + string Path.DirectorySeparatorChar
         normalizedCandidate.Equals(normalizedRoot, comparison) || normalizedCandidate.StartsWith(rootWithSeparator, comparison)
 
     /// 依存解決結果から NuGet 依存のみ抽出し、atla.lock の YAML テキストを生成する。
@@ -58,7 +60,7 @@ module BuildSystem =
         let nugetDependencies =
             dependencies
             |> List.filter (fun dep -> isUnderPath nugetPackagesRoot dep.source)
-            |> List.sortWith (fun left right -> StringComparer.OrdinalIgnoreCase.Compare(left.name, right.name))
+            |> List.sortBy (fun dep -> dep.name.ToLowerInvariant())
 
         if List.isEmpty nugetDependencies then
             "nuget:" + Environment.NewLine
@@ -77,7 +79,7 @@ module BuildSystem =
             File.WriteAllText(lockPath, content)
             Ok ()
         with ex ->
-            Result.Error [ Diagnostic.Error($"failed to write `{lockFileName}`: {ex.Message}", Span.Empty) ]
+            Result.Error [ Diagnostic.Error($"Failed to write `{lockFileName}`: {ex.Message}", Span.Empty) ]
 
     /// エラーメッセージを Diagnostic.Error へ変換する。
     let private error (message: string) : Diagnostic =

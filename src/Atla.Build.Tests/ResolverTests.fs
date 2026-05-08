@@ -173,6 +173,33 @@ dependencies:
         )
 
     [<Fact>]
+    let ``buildProject should create empty nuget lock when only path dependencies exist`` () =
+        let rootProject = createTempProjectDir ()
+        let depProject = createTempProjectDir ()
+        let relativePath = Path.GetRelativePath(rootProject, depProject) |> toYamlPath
+
+        writeManifest depProject """
+package:
+  name: "dep"
+  version: "1.0.0"
+"""
+        writeReferenceDll depProject "dep.dll"
+
+        writeManifest rootProject $"""
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  dep:
+    path: "{relativePath}"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+        Assert.True(result.succeeded)
+        assertLockFileEquals rootProject "nuget:\n"
+
+    [<Fact>]
     let ``buildProject should prefer highest tfm within ref for compile and within lib for runtime`` () =
         let rootProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
