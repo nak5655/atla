@@ -77,7 +77,7 @@ module BuildSystem =
             File.WriteAllText(lockPath, content)
             Ok ()
         with ex ->
-            Result.Error [ error $"failed to write `{lockFileName}`: {ex.Message}" ]
+            Result.Error [ Diagnostic.Error($"failed to write `{lockFileName}`: {ex.Message}", Span.Empty) ]
 
     /// エラーメッセージを Diagnostic.Error へ変換する。
     let private error (message: string) : Diagnostic =
