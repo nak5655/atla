@@ -183,7 +183,7 @@ module internal Resolver =
     (* TFM ディレクトリ配下の DLL を simple name 単位に検証し、決定的順序で返す。 *)
     let private tryCollectDllsFromDirectory (dependencyName: string) (probeRoot: string) (tfmDir: string) : Result<string list, Diagnostic list> =
         let dlls =
-            Directory.GetFiles(tfmDir, "*.dll", SearchOption.AllDirectories)
+            Directory.GetFiles(tfmDir, "*.dll", SearchOption.TopDirectoryOnly)
             |> Array.map normalizePath
             |> Array.sort
             |> Array.toList

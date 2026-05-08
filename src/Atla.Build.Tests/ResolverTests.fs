@@ -201,10 +201,9 @@ dependencies:
         let packagesRoot = createTempProjectDir ()
         let packageRoot = Path.Join(packagesRoot, "newtonsoft.json", "13.0.3")
         let tfmRoot = Path.Join(packageRoot, "ref", "net8.0")
-        let duplicateDir = Path.Join(tfmRoot, "alt")
-        Directory.CreateDirectory(duplicateDir) |> ignore
+        Directory.CreateDirectory(tfmRoot) |> ignore
         File.WriteAllText(Path.Join(tfmRoot, "Newtonsoft.Json.dll"), "")
-        File.WriteAllText(Path.Join(duplicateDir, "Newtonsoft.Json.dll"), "")
+        File.WriteAllText(Path.Join(tfmRoot, "newtonsoft.json.dll"), "")
 
         writeManifest rootProject """
 package:
