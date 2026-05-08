@@ -3,5 +3,7 @@ package:
   version: "0.1.0"
   
 dependencies:
-  Stride:
+  Stride.Engine:
+    version: "4.3.0.2507"
+  Stride.Games:
     version: "4.3.0.2507"
