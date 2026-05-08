@@ -172,6 +172,42 @@ dependencies:
             Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("has no supported compile reference assemblies")))
         )
 
+
+    [<Fact>]
+    let ``buildProject should fallback to netfx tfm when modern tfm directories are absent`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+        let packageRoot = Path.Join(packagesRoot, "sharpdx.direct3d11", "4.2.0")
+        let refNet472 = Path.Join(packageRoot, "ref", "net472")
+        let libNet472 = Path.Join(packageRoot, "lib", "net472")
+        Directory.CreateDirectory(refNet472) |> ignore
+        Directory.CreateDirectory(libNet472) |> ignore
+        File.WriteAllText(Path.Join(refNet472, "SharpDX.Direct3D11.dll"), "")
+        File.WriteAllText(Path.Join(libNet472, "SharpDX.Direct3D11.dll"), "")
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  SharpDX.Direct3D11:
+    version: "4.2.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
+            Assert.True(result.succeeded)
+
+            match result.plan with
+            | Some plan ->
+                let dependency = Assert.Single(plan.dependencies)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(refNet472, "SharpDX.Direct3D11.dll")) ], dependency.compileReferencePaths)
+                Assert.Equal<string list>([ Path.GetFullPath(Path.Join(libNet472, "SharpDX.Direct3D11.dll")) ], dependency.runtimeLoadPaths)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
     [<Fact>]
     let ``buildProject should create empty nuget lock when only path dependencies exist`` () =
         let rootProject = createTempProjectDir ()
