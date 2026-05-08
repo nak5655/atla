@@ -2,8 +2,11 @@ namespace Atla.Build.Tests
 
 open System
 open System.IO
+open System.Reflection
 open Xunit
 open Atla.Build
+open Atla.Compiler
+open Atla.Core.Semantics.Data
 
 module BuildTests =
     let private createTempProjectDir () =
@@ -409,3 +412,58 @@ dependencies:
             Assert.Equal("fake-win-native", File.ReadAllText(Path.Join(outDir, "runtimes", "win-x64", "native", "libSkiaSharp.dll")))
             Assert.Equal("fake-linux-native", File.ReadAllText(Path.Join(outDir, "runtimes", "linux-x64", "native", "libSkiaSharp.so")))
         | Result.Error _ -> Assert.Fail("expected Ok")
+
+    [<Fact>]
+    let ``dependency loader should classify missing chained dependency as warning`` () =
+        let dependencyLoaderType = Type.GetType("Atla.Compiler.DependencyLoader, Atla.Core")
+
+        if isNull dependencyLoaderType then
+            Assert.Fail("expected Atla.Compiler.DependencyLoader type to exist")
+
+        let methodInfo =
+            dependencyLoaderType.GetMethod("toLoadDiagnostic", BindingFlags.NonPublic ||| BindingFlags.Static)
+
+        if isNull methodInfo then
+            Assert.Fail("expected DependencyLoader.toLoadDiagnostic to exist")
+
+        let diagnostic =
+            methodInfo.Invoke(
+                null,
+                [| "stride" :> obj
+                   "/tmp/Stride.Engine.dll" :> obj
+                   FileNotFoundException("missing chained dependency", "SharpDX.Direct3D11") :> obj |]
+            )
+            :?> Diagnostic
+
+        Assert.Equal(DiagnosticSeverity.Warning, diagnostic.severity)
+        Assert.Contains("skipped missing chained dependency", diagnostic.message)
+
+    [<Fact>]
+    let ``dependency loader should continue attempting all assemblies after first load failure`` () =
+        let tempDir = createTempProjectDir ()
+        let bad1 = Path.Join(tempDir, "bad1.dll")
+        let bad2 = Path.Join(tempDir, "bad2.dll")
+        File.WriteAllText(bad1, "not-a-dotnet-assembly-1")
+        File.WriteAllText(bad2, "not-a-dotnet-assembly-2")
+
+        let result = DependencyLoader.loadDependencies [ "stride", [ bad1; bad2 ] ]
+
+        Assert.False(result.succeeded)
+        Assert.Equal(2, result.diagnostics |> List.length)
+        Assert.All(result.diagnostics, fun d -> Assert.Equal(DiagnosticSeverity.Error, d.severity))
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains(bad1))
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains(bad2))
+
+    [<Fact>]
+    let ``dependency loader should fail for bad image format`` () =
+        let tempDir = createTempProjectDir ()
+        let badAssemblyPath = Path.Join(tempDir, "bad.dll")
+        File.WriteAllText(badAssemblyPath, "not-a-dotnet-assembly")
+
+        let result = DependencyLoader.loadDependencies [ "stride", [ badAssemblyPath ] ]
+
+        Assert.False(result.succeeded)
+        Assert.True(result.loadContext.IsNone)
+        Assert.Single(result.diagnostics) |> ignore
+        Assert.Equal(DiagnosticSeverity.Error, result.diagnostics[0].severity)
+        Assert.Contains("not a valid .NET assembly", result.diagnostics[0].message)

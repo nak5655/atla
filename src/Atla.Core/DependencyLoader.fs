@@ -30,9 +30,9 @@ module DependencyLoader =
           diagnostics: Diagnostic list
           loadContext: AssemblyLoadContext option }
 
-    let private succeeded (context: AssemblyLoadContext option) : DependencyLoadResult =
+    let private succeeded (context: AssemblyLoadContext option) (diagnostics: Diagnostic list) : DependencyLoadResult =
         { succeeded = true
-          diagnostics = []
+          diagnostics = diagnostics
           loadContext = context }
 
     let private failed (diagnostics: Diagnostic list) : DependencyLoadResult =
@@ -98,8 +98,8 @@ module DependencyLoader =
                 else
                     fileNotFound.FileName
 
-            Diagnostic.Error(
-                $"dependency `{dependencyName}` failed runtime load due to missing chained dependency while loading `{assemblyPath}`: {missingDetail}",
+            Diagnostic.Warning(
+                $"dependency `{dependencyName}` skipped missing chained dependency while loading `{assemblyPath}`: {missingDetail}",
                 Span.Empty
             )
         | :? FileLoadException as fileLoad ->
@@ -121,7 +121,7 @@ module DependencyLoader =
         elif not (List.isEmpty conflictDiagnostics) then
             failed conflictDiagnostics
         elif List.isEmpty normalizedRuntimeLoads then
-            succeeded None
+            succeeded None []
         else
             let assemblyIndex =
                 normalizedRuntimeLoads
@@ -133,23 +133,21 @@ module DependencyLoader =
             let context = new DependencyAssemblyLoadContext(assemblyIndex)
 
             let folder (loadedPaths, diagnostics) (dependencyName, assemblyPath) =
-                if List.isEmpty diagnostics then
-                    try
-                        let normalizedPath = Path.GetFullPath(assemblyPath)
-                        context.LoadFromAssemblyPath(normalizedPath) |> ignore
-                        (normalizedPath :: loadedPaths, diagnostics)
-                    with ex ->
-                        (loadedPaths, diagnostics @ [ toLoadDiagnostic dependencyName assemblyPath ex ])
-                else
-                    (loadedPaths, diagnostics)
+                try
+                    let normalizedPath = Path.GetFullPath(assemblyPath)
+                    context.LoadFromAssemblyPath(normalizedPath) |> ignore
+                    (normalizedPath :: loadedPaths, diagnostics)
+                with ex ->
+                    (loadedPaths, diagnostics @ [ toLoadDiagnostic dependencyName assemblyPath ex ])
 
             let _, diagnostics = normalizedRuntimeLoads |> List.fold folder ([], [])
+            let hasErrors = diagnostics |> List.exists (fun diag -> diag.isError)
 
-            if List.isEmpty diagnostics then
-                succeeded (Some context)
-            else
+            if hasErrors then
                 context.Unload()
                 failed diagnostics
+            else
+                succeeded (Some context) diagnostics
 
     (* ロードした依存を明示的に解放する。 *)
     let unloadDependencies (loadContext: AssemblyLoadContext option) : unit =
