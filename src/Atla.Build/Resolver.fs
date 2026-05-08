@@ -175,7 +175,7 @@ module internal Resolver =
 
     (* 参照DLL探索で許可する TFM を優先順で保持する。 *)
     let private tfmPriority: string list =
-        [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
+        [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0"; "netstandard1.1"; "net48"; "net472"; "net471"; "net462"; "net461" ]
 
     (* 指定ディレクトリ直下から、優先順位に従って採用する TFM ディレクトリを決める。 *)
     let private trySelectTfmDirectory (root: string) : string option =
