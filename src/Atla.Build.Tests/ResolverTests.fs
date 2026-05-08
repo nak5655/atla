@@ -680,15 +680,18 @@ dependencies:
         )
 
     [<Fact>]
-    let ``buildProject should report version conflict for transitive nuget dependency`` () =
+    let ``buildProject should resolve transitive nuget dependency via MVS when versions differ`` () =
         let rootProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
 
-        (* PkgA と PkgB が SharedPkg の異なるバージョンに依存する。 *)
+        (* PkgA と PkgB が SharedPkg の異なるバージョンに依存する（ダイヤモンド型）。
+           nuspec 由来の依存は "version >= X" のレンジとして扱われるため、
+           MVS（Minimum Version Selection）により高い方の 2.0.0 が選択される。
+           PkgA の ">= 1.0.0" は 2.0.0 で充足されるため競合とはならない。 *)
         let pkgAPath = createNuGetPackage packagesRoot "PkgA" "1.0.0" "net8.0"
         let pkgBPath = createNuGetPackage packagesRoot "PkgB" "1.0.0" "net8.0"
         let _sharedV1 = createNuGetPackage packagesRoot "SharedPkg" "1.0.0" "net8.0"
-        let _sharedV2 = createNuGetPackage packagesRoot "SharedPkg" "2.0.0" "net8.0"
+        let sharedV2Path = createNuGetPackage packagesRoot "SharedPkg" "2.0.0" "net8.0"
 
         writeNuspec pkgAPath "PkgA" "1.0.0" """
 <?xml version="1.0" encoding="utf-8"?>
@@ -734,10 +737,83 @@ dependencies:
         withNuGetPackagesRoot packagesRoot (fun () ->
             let result = BuildSystem.buildProject { projectRoot = rootProject }
 
+            (* MVS により SharedPkg 2.0.0 が選択され、1.0.0 の ">= 1.0.0" も充足される。 *)
+            Assert.True(result.succeeded)
+            Assert.Empty(result.diagnostics)
+
+            match result.plan with
+            | Some plan ->
+                let names = plan.dependencies |> List.map (fun dep -> dep.name) |> List.sort
+                Assert.Equal<string list>([ "PkgA"; "PkgB"; "SharedPkg" ], names)
+                let sharedDep = plan.dependencies |> List.find (fun dep -> dep.name = "SharedPkg")
+                Assert.Equal("2.0.0", sharedDep.version)
+                Assert.Equal(Path.GetFullPath(sharedV2Path), sharedDep.source)
+            | None ->
+                Assert.Fail("expected build plan")
+        )
+
+    [<Fact>]
+    let ``buildProject should report version conflict for true range conflict in transitive nuget dependency`` () =
+        let rootProject = createTempProjectDir ()
+        let packagesRoot = createTempProjectDir ()
+
+        (* PkgA が SharedPkg [1.0.0, 2.0.0)（上限排他）を要求し、
+           PkgB が SharedPkg >= 3.0.0 を要求する。3.0.0 は [1.0.0, 2.0.0) を満たさないため真の競合となる。
+           nuspec では上限排他レンジを "[1.0.0, 2.0.0)" 形式で記述する。 *)
+        let pkgAPath = createNuGetPackage packagesRoot "PkgA" "1.0.0" "net8.0"
+        let pkgBPath = createNuGetPackage packagesRoot "PkgB" "1.0.0" "net8.0"
+        let _sharedV1 = createNuGetPackage packagesRoot "SharedPkg" "1.0.0" "net8.0"
+        let _sharedV3 = createNuGetPackage packagesRoot "SharedPkg" "3.0.0" "net8.0"
+
+        writeNuspec pkgAPath "PkgA" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>PkgA</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="SharedPkg" version="[1.0.0, 2.0.0)" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        writeNuspec pkgBPath "PkgB" "1.0.0" """
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>PkgB</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="SharedPkg" version="3.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+        writeManifest rootProject """
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  PkgA:
+    version: "1.0.0"
+  PkgB:
+    version: "1.0.0"
+"""
+
+        withNuGetPackagesRoot packagesRoot (fun () ->
+            let result = BuildSystem.buildProject { projectRoot = rootProject }
+
             Assert.False(result.succeeded)
             Assert.True(result.plan.IsNone)
             Assert.True(result.diagnostics |> List.exists (fun d -> d.message.Contains("dependency version conflict `SharedPkg`")))
         )
+
 
     [<Fact>]
     let ``buildProject should resolve multi-level transitive nuget dependencies`` () =
