@@ -143,9 +143,7 @@ dependencies:
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(pathLibDir, "dep-lib-runtime.dll")) ], localDependency.runtimeLoadPaths)
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetRefDir, "Newtonsoft.Json.dll")) ], nugetDependency.compileReferencePaths)
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetLibDir, "Newtonsoft.Json.dll")) ], nugetDependency.runtimeLoadPaths)
-                let lockText = readLockFile rootProject
-                Assert.Contains("Newtonsoft.Json: \"13.0.3\"", lockText)
-                Assert.DoesNotContain("dep-lib", lockText)
+                assertLockFileEquals rootProject "nuget:\n  Newtonsoft.Json: \"13.0.3\"\n"
             | None ->
                 Assert.Fail("expected build plan")
         )
