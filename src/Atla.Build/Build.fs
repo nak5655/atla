@@ -58,10 +58,10 @@ module BuildSystem =
         let nugetDependencies =
             dependencies
             |> List.filter (fun dep -> isUnderPath nugetPackagesRoot dep.source)
-            |> List.sortBy (fun dep -> dep.name.ToLowerInvariant())
+            |> List.sortWith (fun left right -> StringComparer.OrdinalIgnoreCase.Compare(left.name, right.name))
 
         if List.isEmpty nugetDependencies then
-            "nuget: {}" + Environment.NewLine
+            "nuget:" + Environment.NewLine
         else
             let lines =
                 nugetDependencies

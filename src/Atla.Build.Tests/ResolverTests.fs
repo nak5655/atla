@@ -23,6 +23,15 @@ module ResolverTests =
     let private readLockFile (projectRoot: string) =
         File.ReadAllText(Path.Join(projectRoot, "atla.lock"))
 
+    /// 改行差分（CRLF/LF）を吸収して比較しやすい文字列へ正規化する。
+    let private normalizeNewLines (text: string) =
+        text.Replace("\r\n", "\n")
+
+    /// atla.lock の内容が期待値と一致することを検証する。
+    let private assertLockFileEquals (projectRoot: string) (expected: string) =
+        let actual = readLockFile projectRoot |> normalizeNewLines
+        Assert.Equal(expected |> normalizeNewLines, actual)
+
     /// YAML の basic string で解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
     let private toYamlPath (path: string) =
         path.Replace("\\", "/")
@@ -77,8 +86,7 @@ dependencies:
                 Assert.Equal(Path.GetFullPath(expectedPackagePath), dependency.source)
                 Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.compileReferencePaths)
                 Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.runtimeLoadPaths)
-                let lockText = readLockFile rootProject
-                Assert.Equal("nuget:\n  Newtonsoft.Json: \"13.0.3\"\n", lockText.Replace("\r\n", "\n"))
+                assertLockFileEquals rootProject "nuget:\n  Newtonsoft.Json: \"13.0.3\"\n"
             | None ->
                 Assert.Fail("expected build plan")
         )
@@ -618,9 +626,7 @@ dependencies:
             | Some plan ->
                 let names = plan.dependencies |> List.map (fun dep -> dep.name) |> List.sort
                 Assert.Equal<string list>([ "Primary"; "TransitivePkg" ], names)
-                let lockText = readLockFile rootProject
-                let normalized = lockText.Replace("\r\n", "\n")
-                Assert.Equal("nuget:\n  Primary: \"1.0.0\"\n  TransitivePkg: \"2.0.0\"\n", normalized)
+                assertLockFileEquals rootProject "nuget:\n  Primary: \"1.0.0\"\n  TransitivePkg: \"2.0.0\"\n"
             | None ->
                 Assert.Fail("expected build plan")
         )
