@@ -680,7 +680,7 @@ dependencies:
         )
 
     [<Fact>]
-    let ``buildProject should resolve transitive nuget dependency via MVS when versions differ`` () =
+    let ``buildProject should resolve diamond dependency using MVS upgrade when transitive nuget versions differ`` () =
         let rootProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
 
@@ -753,7 +753,7 @@ dependencies:
         )
 
     [<Fact>]
-    let ``buildProject should report version conflict for true range conflict in transitive nuget dependency`` () =
+    let ``buildProject should report version conflict when transitive dependency ranges are incompatible`` () =
         let rootProject = createTempProjectDir ()
         let packagesRoot = createTempProjectDir ()
 

@@ -108,11 +108,10 @@ module BuildSystem =
                 (* ユーザー指定バージョンは「その値以上」の開区間 range として解釈する。
                    nuspec 由来の推移依存と同じ VersionRange 型で統一することで、
                    MVS（Minimum Version Selection）ロジックが範囲比較を一貫して扱える。 *)
-                let mutable parsedVersion: NuGetVersion = null
-
-                if NuGetVersion.TryParse(versionValue, &parsedVersion) then
+                try
+                    let parsedVersion = NuGetVersion.Parse(versionValue)
                     Ok(Resolver.NuGetDependency(dependencyName, VersionRange(parsedVersion, true)))
-                else
+                with _ ->
                     Result.Error [ error $"`dependencies.{dependencyName}.version` is not a valid NuGet version: `{versionValue}`" ]
             | Ok None, Ok None ->
                 Result.Error [ error $"`dependencies.{dependencyName}` must define either `path` or `version`" ]

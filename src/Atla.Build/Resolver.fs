@@ -443,7 +443,7 @@ module internal Resolver =
         (manifest: Manifest)
         : Result<Compiler.ResolvedDependency list, Diagnostic list> =
         (* 依存名単位での DLL パス登録を行う。バージョン選択は呼び出し元（visitDependency / visitTransitiveDependency）で
-           完了済みのため、ここではソース（依存元）が異なる場合のみ競合として診断する。
+           完了済みのため、ここでは同一パッケージ名が異なるソース（異なるバージョン）から解決された場合のみ競合として診断する。
            path 依存と nuget 依存が同一パッケージ名で衝突する場合も、ソース不一致として捕捉される。 *)
         let mergeResolvedDependency (state: ResolveState) (resolved: Compiler.ResolvedDependency) : ResolveState =
             let dependencyNameKey = resolved.name.ToLowerInvariant()
@@ -452,6 +452,7 @@ module internal Resolver =
             | None ->
                 { state with resolvedByName = state.resolvedByName.Add(dependencyNameKey, resolved) }
             | Some existing when not (String.Equals(existing.source, resolved.source, StringComparison.Ordinal)) ->
+                (* ソースが異なる場合は常にバージョン競合である（同一ソースなら同一バージョン）。 *)
                 { state with
                     diagnostics =
                         state.diagnostics
@@ -591,10 +592,12 @@ module internal Resolver =
                             let violatingRanges = prevRanges |> List.filter (fun r -> not (r.Satisfies(minVersion)))
 
                             if not (List.isEmpty violatingRanges) then
+                                let violatingDesc = violatingRanges |> List.map (fun r -> $"`{r}`") |> String.concat ", "
+
                                 { stateWithRange with
                                     diagnostics =
                                         stateWithRange.diagnostics
-                                        @ [ error $"dependency version conflict `{packageId}`: `{versionStr}` does not satisfy `{violatingRanges |> List.head}`" ] }
+                                        @ [ error $"dependency version conflict `{packageId}`: `{versionStr}` does not satisfy {violatingDesc}" ] }
                             else
                                 match tryResolveNuGetDependency packageId versionStr with
                                 | Result.Error _ ->
