@@ -18,10 +18,13 @@ open NuGet.Protocol.Core.Types
 open NuGet.Versioning
 
 module internal Resolver =
-    (* Manifest で受け入れる依存指定の正規化表現。 *)
+    (* Manifest で受け入れる依存指定の正規化表現。
+       NuGetDependency は NuGet.Versioning の VersionRange で依存範囲を表現する。
+       - manifest 指定: VersionRange(NuGetVersion.Parse(ver), true) → [ver, ∞)
+       - nuspec 指定: pkg.VersionRange をそのまま保持し、範囲情報（上限等）を失わない。 *)
     type DependencySpec =
         | PathDependency of name: string * relativePath: string
-        | NuGetDependency of packageId: string * version: string
+        | NuGetDependency of packageId: string * versionRange: VersionRange
 
     type Manifest =
         { name: string
@@ -32,6 +35,13 @@ module internal Resolver =
         { stack: string list
           visitedByPath: Map<string, Compiler.ResolvedDependency>
           resolvedByName: Map<string, Compiler.ResolvedDependency>
+          (* MVS (Minimum Version Selection) で選択済みの具体バージョン。
+             packageId 小文字 → 現在選択されている NuGetVersion。
+             nuspec 由来の推移依存でバージョン範囲の比較・アップグレード判定に使用する。 *)
+          selectedVersions: Map<string, NuGetVersion>
+          (* 各パッケージに対してこれまでに観測した全バージョン範囲制約のリスト。
+             アップグレード時に候補バージョンが全制約を充足するかを検証するために使用する。 *)
+          seenRanges: Map<string, VersionRange list>
           diagnostics: Diagnostic list }
 
     let private normalizePath (path: string) : string =
@@ -369,12 +379,12 @@ module internal Resolver =
                             group.Packages
                             |> Seq.toList
                             |> List.choose (fun pkg ->
-                                let minVersion = pkg.VersionRange.MinVersion
-
-                                if isNull minVersion then
+                                (* VersionRange をそのまま保持することで範囲情報（上限等）を失わない。
+                                   MinVersion が null のエントリは解決対象外としてスキップする。 *)
+                                if isNull pkg.VersionRange || isNull pkg.VersionRange.MinVersion then
                                     None
                                 else
-                                    Some(NuGetDependency(pkg.Id, minVersion.ToNormalizedString())))
+                                    Some(NuGetDependency(pkg.Id, pkg.VersionRange)))
 
                         Ok deps
             with ex ->
@@ -432,52 +442,71 @@ module internal Resolver =
         (projectRoot: string)
         (manifest: Manifest)
         : Result<Compiler.ResolvedDependency list, Diagnostic list> =
-        (* 依存名単位での一意化と競合診断を行う。 *)
+        (* 依存名単位での DLL パス登録を行う。バージョン選択は呼び出し元（visitDependency / visitTransitiveDependency）で
+           完了済みのため、ここでは同一パッケージ名が異なるソース（異なるバージョン）から解決された場合のみ競合として診断する。
+           path 依存と nuget 依存が同一パッケージ名で衝突する場合も、ソース不一致として捕捉される。 *)
         let mergeResolvedDependency (state: ResolveState) (resolved: Compiler.ResolvedDependency) : ResolveState =
             let dependencyNameKey = resolved.name.ToLowerInvariant()
 
             match state.resolvedByName.TryFind(dependencyNameKey) with
             | None ->
                 { state with resolvedByName = state.resolvedByName.Add(dependencyNameKey, resolved) }
-            | Some existing when not (String.Equals(existing.version, resolved.version, StringComparison.Ordinal)) ->
+            | Some existing when not (String.Equals(existing.source, resolved.source, StringComparison.Ordinal)) ->
+                (* ソースが異なる場合は常にバージョン競合である（同一ソースなら同一バージョン）。 *)
                 { state with
                     diagnostics =
                         state.diagnostics
                         @ [ error $"dependency version conflict `{resolved.name}`: `{existing.version}` vs `{resolved.version}`" ] }
-            | Some existing when not (String.Equals(existing.source, resolved.source, StringComparison.Ordinal)) ->
-                { state with
-                    diagnostics =
-                        state.diagnostics
-                        @ [ error $"duplicate dependency name `{resolved.name}` resolved from `{existing.source}` and `{resolved.source}`" ] }
             | Some _ ->
                 state
 
         (* 依存木 DFS:
            - path 依存は再帰的に manifest を読む
            - nuget 依存はローカルキャッシュを解決し、nuspec から推移的依存を再帰的に処理する
-           - stack で循環参照を検出する *)
+           - stack で循環参照を検出する
+           - nuget 依存のバージョンは manifest で明示されるため、selectedVersions で厳密に一致を検査する *)
         let rec visitDependency (state: ResolveState) (ownerRoot: string) (dependency: DependencySpec) : ResolveState =
             match dependency with
-            | NuGetDependency(packageId, version) ->
-                (* 既に resolvedByName に登録済みの場合は推移的依存を再処理しない（無限ループ防止）。 *)
-                let alreadyResolved = state.resolvedByName.ContainsKey(packageId.ToLowerInvariant())
+            | NuGetDependency(packageId, range) ->
+                let packageIdKey = packageId.ToLowerInvariant()
 
-                match tryResolveNuGetDependency packageId version with
-                | Result.Error diagnostics ->
-                    { state with diagnostics = state.diagnostics @ diagnostics }
-                | Ok resolved ->
-                    let mergedState = mergeResolvedDependency state resolved
+                match range.MinVersion with
+                | null ->
+                    { state with
+                        diagnostics = state.diagnostics @ [ error $"dependency `{packageId}` version range has no minimum version" ] }
+                | minVersion ->
+                    let versionStr = minVersion.ToNormalizedString()
 
-                    if alreadyResolved then
-                        mergedState
-                    else
-                        (* nuspec から推移的依存を読み取り、再帰的に解決する。 *)
-                        match tryReadTransitiveNuGetDependencies packageId resolved.source with
+                    (* manifest 指定の NuGet 依存は明示バージョンとして扱う。
+                       すでに別のバージョンが選択済みであれば競合エラーとする。 *)
+                    match state.selectedVersions.TryFind(packageIdKey) with
+                    | Some existing when not (existing.Equals(minVersion)) ->
+                        { state with
+                            diagnostics =
+                                state.diagnostics
+                                @ [ error $"dependency version conflict `{packageId}`: `{existing.ToNormalizedString()}` vs `{versionStr}`" ] }
+                    | _ ->
+                        (* 既に resolvedByName に登録済みの場合は推移的依存を再処理しない（無限ループ防止）。 *)
+                        let alreadyResolved = state.resolvedByName.ContainsKey(packageIdKey)
+
+                        match tryResolveNuGetDependency packageId versionStr with
                         | Result.Error diagnostics ->
-                            { mergedState with diagnostics = mergedState.diagnostics @ diagnostics }
-                        | Ok transitiveDeps ->
-                            transitiveDeps
-                            |> List.fold (fun currentState dep -> visitTransitiveDependency currentState ownerRoot dep) mergedState
+                            { state with diagnostics = state.diagnostics @ diagnostics }
+                        | Ok resolved ->
+                            let mergedState = mergeResolvedDependency state resolved
+                            let stateWithVersion =
+                                { mergedState with selectedVersions = mergedState.selectedVersions.Add(packageIdKey, minVersion) }
+
+                            if alreadyResolved then
+                                stateWithVersion
+                            else
+                                (* nuspec から推移的依存を読み取り、再帰的に解決する。 *)
+                                match tryReadTransitiveNuGetDependencies packageId resolved.source with
+                                | Result.Error diagnostics ->
+                                    { stateWithVersion with diagnostics = stateWithVersion.diagnostics @ diagnostics }
+                                | Ok transitiveDeps ->
+                                    transitiveDeps
+                                    |> List.fold (fun currentState dep -> visitTransitiveDependency currentState ownerRoot dep) stateWithVersion
             | PathDependency(name, relativePath) ->
                 let dependencyRoot = normalizePath (Path.Join(ownerRoot, relativePath))
                 let manifestPath = Path.Join(dependencyRoot, manifestFileName)
@@ -524,37 +553,104 @@ module internal Resolver =
 
                             { nestedState with stack = state.stack }
 
-        (* 推移的 NuGet 依存の DFS:
-           ユーザー指定の依存（visitDependency）と異なり、DLL を持たないビルドツール等の
-           パッケージを解決できない場合はエラーとせずスキップして続行する。
-           バージョン競合は通常どおり診断として報告する。 *)
+        (* 推移的 NuGet 依存の DFS（Minimum Version Selection）:
+           nuspec 由来の依存は VersionRange で表現されており、単純なバージョン一致ではなく
+           範囲の充足性で既存選択を評価する。以下の 3 ケースで処理を分岐する:
+           1. 選択済みバージョンが range を満たす → 制約を記録してスキップ
+           2. range.MinVersion が選択済みより高い → アップグレード候補を検証して採否を決定
+              - 候補バージョンが seenRanges の全制約を満たす場合のみアップグレード（MVS）
+              - いずれかの既存制約を違反する場合は真の競合として診断する
+           3. 選択済みが range の上限制約を超えている → 真の競合エラー
+           DLL を持たないパッケージ（ビルドツール・アナライザー等）の解決失敗はスキップする。 *)
         and visitTransitiveDependency (state: ResolveState) (ownerRoot: string) (dependency: DependencySpec) : ResolveState =
             match dependency with
             | PathDependency _ ->
                 visitDependency state ownerRoot dependency
-            | NuGetDependency(packageId, version) ->
-                let alreadyResolved = state.resolvedByName.ContainsKey(packageId.ToLowerInvariant())
+            | NuGetDependency(packageId, range) ->
+                let packageIdKey = packageId.ToLowerInvariant()
 
-                match tryResolveNuGetDependency packageId version with
-                | Result.Error _ ->
-                    (* DLL を持たないパッケージ（ビルドツール・アナライザー等）はスキップする。 *)
+                match range.MinVersion with
+                | null ->
+                    (* MinVersion のない range は解決対象外としてスキップする。 *)
                     state
-                | Ok resolved ->
-                    let mergedState = mergeResolvedDependency state resolved
+                | minVersion ->
+                    (* この range を seenRanges へ追加する。アップグレード時の全制約検証に使う。 *)
+                    let prevRanges = state.seenRanges.TryFind(packageIdKey) |> Option.defaultValue []
+                    let allRanges = range :: prevRanges
+                    let stateWithRange = { state with seenRanges = state.seenRanges.Add(packageIdKey, allRanges) }
 
-                    if alreadyResolved then
-                        mergedState
-                    else
-                        match tryReadTransitiveNuGetDependencies packageId resolved.source with
-                        | Result.Error _ -> mergedState
-                        | Ok transitiveDeps ->
-                            transitiveDeps
-                            |> List.fold (fun currentState dep -> visitTransitiveDependency currentState ownerRoot dep) mergedState
+                    match stateWithRange.selectedVersions.TryFind(packageIdKey) with
+                    | Some selected ->
+                        if range.Satisfies(selected) then
+                            (* ケース 1: 選択済みバージョンが要求 range を満たす。追加アクション不要。 *)
+                            stateWithRange
+                        elif minVersion.CompareTo(selected) > 0 then
+                            (* ケース 2: より高い最小バージョンが要求されている。
+                               候補バージョン（minVersion）が seenRanges 内の全既存制約を充足する場合のみアップグレードする。
+                               いずれかの既存制約を違反する場合は、どのバージョンでも両立できない真の競合である。 *)
+                            let versionStr = minVersion.ToNormalizedString()
+                            let violatingRanges = prevRanges |> List.filter (fun r -> not (r.Satisfies(minVersion)))
+
+                            if not (List.isEmpty violatingRanges) then
+                                let violatingDesc = violatingRanges |> List.map (fun r -> $"`{r}`") |> String.concat ", "
+
+                                { stateWithRange with
+                                    diagnostics =
+                                        stateWithRange.diagnostics
+                                        @ [ error $"dependency version conflict `{packageId}`: `{versionStr}` does not satisfy {violatingDesc}" ] }
+                            else
+                                match tryResolveNuGetDependency packageId versionStr with
+                                | Result.Error _ ->
+                                    (* アップグレード先パッケージが解決できない場合はスキップする。 *)
+                                    stateWithRange
+                                | Ok resolved ->
+                                    let upgraded =
+                                        { stateWithRange with
+                                            selectedVersions = stateWithRange.selectedVersions.Add(packageIdKey, minVersion)
+                                            resolvedByName = stateWithRange.resolvedByName.Add(packageIdKey, resolved) }
+
+                                    match tryReadTransitiveNuGetDependencies packageId resolved.source with
+                                    | Result.Error _ -> upgraded
+                                    | Ok transitiveDeps ->
+                                        transitiveDeps
+                                        |> List.fold (fun currentState dep -> visitTransitiveDependency currentState ownerRoot dep) upgraded
+                        else
+                            (* ケース 3: 選択済みが range の上限制約を超えている等、真の競合。 *)
+                            let selectedStr = selected.ToNormalizedString()
+
+                            { stateWithRange with
+                                diagnostics =
+                                    stateWithRange.diagnostics
+                                    @ [ error $"dependency version conflict `{packageId}`: `{selectedStr}` does not satisfy `{range}`" ] }
+                    | None ->
+                        (* パッケージが未解決。path 依存等で既に resolvedByName に存在する場合はスキップする。 *)
+                        if stateWithRange.resolvedByName.ContainsKey(packageIdKey) then
+                            stateWithRange
+                        else
+                            (* 初回解決。range の最小バージョンを選択し DFS する。 *)
+                            let versionStr = minVersion.ToNormalizedString()
+
+                            match tryResolveNuGetDependency packageId versionStr with
+                            | Result.Error _ ->
+                                (* DLL を持たないパッケージ（ビルドツール・アナライザー等）はスキップする。 *)
+                                stateWithRange
+                            | Ok resolved ->
+                                let state1 =
+                                    { mergeResolvedDependency stateWithRange resolved with
+                                        selectedVersions = stateWithRange.selectedVersions.Add(packageIdKey, minVersion) }
+
+                                match tryReadTransitiveNuGetDependencies packageId resolved.source with
+                                | Result.Error _ -> state1
+                                | Ok transitiveDeps ->
+                                    transitiveDeps
+                                    |> List.fold (fun currentState dep -> visitTransitiveDependency currentState ownerRoot dep) state1
 
         let initialState =
             { stack = [ normalizePath projectRoot ]
               visitedByPath = Map.empty
               resolvedByName = Map.empty
+              selectedVersions = Map.empty
+              seenRanges = Map.empty
               diagnostics = [] }
 
         (* top-level dependencies を順序付きで走査し、結果を名前順で正規化して返す。 *)

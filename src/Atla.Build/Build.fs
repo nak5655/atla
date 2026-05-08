@@ -5,6 +5,7 @@ open System.IO
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
 open Atla.Compiler
+open NuGet.Versioning
 open YamlDotNet.Core
 open YamlDotNet.RepresentationModel
 
@@ -104,7 +105,14 @@ module BuildSystem =
             | Ok(Some pathValue), Ok None ->
                 Ok(Resolver.PathDependency(dependencyName, pathValue))
             | Ok None, Ok(Some versionValue) ->
-                Ok(Resolver.NuGetDependency(dependencyName, versionValue))
+                (* ユーザー指定バージョンは「その値以上」の開区間 range として解釈する。
+                   nuspec 由来の推移依存と同じ VersionRange 型で統一することで、
+                   MVS（Minimum Version Selection）ロジックが範囲比較を一貫して扱える。 *)
+                try
+                    let parsedVersion = NuGetVersion.Parse(versionValue)
+                    Ok(Resolver.NuGetDependency(dependencyName, VersionRange(parsedVersion, true)))
+                with _ ->
+                    Result.Error [ error $"`dependencies.{dependencyName}.version` is not a valid NuGet version: `{versionValue}`" ]
             | Ok None, Ok None ->
                 Result.Error [ error $"`dependencies.{dependencyName}` must define either `path` or `version`" ]
         | _ ->
