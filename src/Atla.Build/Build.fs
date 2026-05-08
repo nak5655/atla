@@ -26,10 +26,58 @@ type BuildResult =
 module BuildSystem =
     (* Manifest ファイル関連の固定設定と、共通ユーティリティ。 *)
     let private manifestFileName = "atla.yaml"
+    let private lockFileName = "atla.lock"
 
     /// Build 入力パスを絶対パスへ正規化する。
     let private normalizePath (path: string) : string =
         Path.GetFullPath(path)
+
+    /// NuGet キャッシュルートを取得する（NUGET_PACKAGES 優先、未設定時は ~/.nuget/packages）。
+    let private getNuGetPackagesRoot () : string =
+        match Environment.GetEnvironmentVariable("NUGET_PACKAGES") with
+        | value when not (String.IsNullOrWhiteSpace value) -> normalizePath value
+        | _ ->
+            let homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            normalizePath (Path.Join(homeDir, ".nuget", "packages"))
+
+    /// パス区切りを考慮して、candidate が root 配下（または同一）かを判定する。
+    let private isUnderPath (root: string) (candidate: string) : bool =
+        let normalizedRoot = normalizePath root
+        let normalizedCandidate = normalizePath candidate
+        let comparison =
+            if OperatingSystem.IsWindows() then
+                StringComparison.OrdinalIgnoreCase
+            else
+                StringComparison.Ordinal
+        let rootWithSeparator = normalizedRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + string Path.DirectorySeparatorChar
+        normalizedCandidate.Equals(normalizedRoot, comparison) || normalizedCandidate.StartsWith(rootWithSeparator, comparison)
+
+    /// 依存解決結果から NuGet 依存のみ抽出し、atla.lock の YAML テキストを生成する。
+    let private buildLockFileContent (dependencies: Compiler.ResolvedDependency list) : string =
+        let nugetPackagesRoot = getNuGetPackagesRoot ()
+        let nugetDependencies =
+            dependencies
+            |> List.filter (fun dep -> isUnderPath nugetPackagesRoot dep.source)
+            |> List.sortBy (fun dep -> dep.name.ToLowerInvariant())
+
+        if List.isEmpty nugetDependencies then
+            "nuget: {}" + Environment.NewLine
+        else
+            let lines =
+                nugetDependencies
+                |> List.map (fun dep -> $"  {dep.name}: \"{dep.version}\"")
+            String.concat Environment.NewLine ("nuget:" :: lines) + Environment.NewLine
+
+    /// 依存解決結果を atla.lock として projectRoot 配下へ書き出す。
+    let private writeLockFile (projectRoot: string) (dependencies: Compiler.ResolvedDependency list) : Result<unit, Diagnostic list> =
+        let lockPath = Path.Join(projectRoot, lockFileName)
+
+        try
+            let content = buildLockFileContent dependencies
+            File.WriteAllText(lockPath, content)
+            Ok ()
+        with ex ->
+            Result.Error [ error $"failed to write `{lockFileName}`: {ex.Message}" ]
 
     /// エラーメッセージを Diagnostic.Error へ変換する。
     let private error (message: string) : Diagnostic =
@@ -293,9 +341,12 @@ module BuildSystem =
             match Resolver.resolveDependencies manifestFileName parseManifest projectRoot manifest with
             | Result.Error diagnostics -> failed diagnostics
             | Ok dependencies ->
-                succeeded {
-                    projectName = manifest.name
-                    projectVersion = manifest.version
-                    projectRoot = projectRoot
-                    dependencies = dependencies
-                }
+                match writeLockFile projectRoot dependencies with
+                | Result.Error diagnostics -> failed diagnostics
+                | Ok () ->
+                    succeeded {
+                        projectName = manifest.name
+                        projectVersion = manifest.version
+                        projectRoot = projectRoot
+                        dependencies = dependencies
+                    }

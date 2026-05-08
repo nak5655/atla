@@ -19,6 +19,10 @@ module ResolverTests =
         Directory.CreateDirectory(tfmDir) |> ignore
         File.WriteAllText(Path.Join(tfmDir, assemblyFileName), "")
 
+    /// プロジェクト直下の atla.lock を文字列として読み込む。
+    let private readLockFile (projectRoot: string) =
+        File.ReadAllText(Path.Join(projectRoot, "atla.lock"))
+
     /// YAML の basic string で解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
     let private toYamlPath (path: string) =
         path.Replace("\\", "/")
@@ -73,6 +77,8 @@ dependencies:
                 Assert.Equal(Path.GetFullPath(expectedPackagePath), dependency.source)
                 Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.compileReferencePaths)
                 Assert.Equal<string list>([ Path.GetFullPath(expectedDllPath) ], dependency.runtimeLoadPaths)
+                let lockText = readLockFile rootProject
+                Assert.Equal("nuget:\n  Newtonsoft.Json: \"13.0.3\"\n", lockText.Replace("\r\n", "\n"))
             | None ->
                 Assert.Fail("expected build plan")
         )
@@ -129,6 +135,9 @@ dependencies:
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(pathLibDir, "dep-lib-runtime.dll")) ], localDependency.runtimeLoadPaths)
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetRefDir, "Newtonsoft.Json.dll")) ], nugetDependency.compileReferencePaths)
                 Assert.Equal<string list>([ Path.GetFullPath(Path.Join(nugetLibDir, "Newtonsoft.Json.dll")) ], nugetDependency.runtimeLoadPaths)
+                let lockText = readLockFile rootProject
+                Assert.Contains("Newtonsoft.Json: \"13.0.3\"", lockText)
+                Assert.DoesNotContain("dep-lib", lockText)
             | None ->
                 Assert.Fail("expected build plan")
         )
@@ -609,6 +618,9 @@ dependencies:
             | Some plan ->
                 let names = plan.dependencies |> List.map (fun dep -> dep.name) |> List.sort
                 Assert.Equal<string list>([ "Primary"; "TransitivePkg" ], names)
+                let lockText = readLockFile rootProject
+                let normalized = lockText.Replace("\r\n", "\n")
+                Assert.Equal("nuget:\n  Primary: \"1.0.0\"\n  TransitivePkg: \"2.0.0\"\n", normalized)
             | None ->
                 Assert.Fail("expected build plan")
         )
