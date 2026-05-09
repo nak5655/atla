@@ -989,8 +989,8 @@ module ExprAnalyze =
                         | _ -> Result.Error (sprintf "Type '%s' has no static member '%s'" receiverTypeName memberAccessExpr.memberName)
                     | None -> Result.Error (sprintf "Undefined type symbol '%s'" receiverTypeName)
 
-            /// `base'member` を現在の `this` と impl で確定した基底型へ解決する。
-            /// `base` はインスタンス impl メソッド内でのみ有効。
+            /// Resolve `base'member` using current `this` and the base type fixed by impl metadata.
+            /// `base` is valid only inside instance impl methods.
             let resolveMemberFromBaseReceiver () : Result<Hir.Expr, string> =
                 let thisSidOpt = nameEnv.resolveVar "this" |> List.tryHead
                 match thisSidOpt with

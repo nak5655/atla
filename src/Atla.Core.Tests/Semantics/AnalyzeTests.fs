@@ -2516,8 +2516,8 @@ fn setLink (e: MyError): () = do
 
     [<Fact>]
     let ``semantic analysis resolves base member access inside impl as instance method`` () =
-        // 回帰テスト: `base'...` は impl as のインスタンスメソッド内で
-        // 現在の this + 基底型メンバーとして解決できる必要がある。
+        // Regression: `base'...` must resolve inside impl-as instance methods
+        // using current `this` and the declared native base type.
         let source = """
 import System'Exception
 data MyError = { code: Int }
