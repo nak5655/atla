@@ -1017,8 +1017,27 @@ module ExprAnalyze =
                                 tryResolveDataInstanceMember nameEnv typeEnv tid baseSid memberAccessExpr.memberName memberAccessExpr.span thisExpr
                             | Some (TypeId.Native baseSysType) ->
                                 let memberInfos =
-                                    NativeInterop.getPublicInstanceMembersIncludingInterfaces baseSysType
-                                    |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
+                                    baseSysType.GetMembers(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance)
+                                    |> Seq.filter (fun m ->
+                                        if m.Name <> memberAccessExpr.memberName then
+                                            false
+                                        else
+                                            match m with
+                                            | :? MethodInfo as methodInfo ->
+                                                methodInfo.IsPublic || methodInfo.IsFamily || methodInfo.IsFamilyOrAssembly || methodInfo.IsFamilyAndAssembly
+                                            | :? FieldInfo as fieldInfo ->
+                                                fieldInfo.IsPublic || fieldInfo.IsFamily || fieldInfo.IsFamilyOrAssembly || fieldInfo.IsFamilyAndAssembly
+                                            | :? PropertyInfo as propertyInfo ->
+                                                let accessorOpt =
+                                                    if obj.ReferenceEquals(propertyInfo.GetMethod, null) then
+                                                        if obj.ReferenceEquals(propertyInfo.SetMethod, null) then None
+                                                        else Some propertyInfo.SetMethod
+                                                    else Some propertyInfo.GetMethod
+                                                match accessorOpt with
+                                                | Some accessor ->
+                                                    accessor.IsPublic || accessor.IsFamily || accessor.IsFamilyOrAssembly || accessor.IsFamilyAndAssembly
+                                                | None -> false
+                                            | _ -> false)
                                     |> Seq.toList
                                 match NativeInterop.resolveNativeMember typeEnv memberInfos tid with
                                 | [memberInfo, resolvedTid] ->
@@ -1039,6 +1058,8 @@ module ExprAnalyze =
                                         Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some thisExpr, tid, memberAccessExpr.span))
                                     else
                                         Result.Error(sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName baseSysType.FullName)
+                            | Some unsupportedBaseType ->
+                                Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv unsupportedBaseType))
                     | _ ->
                         Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv thisType))
 
