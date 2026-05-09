@@ -1029,8 +1029,8 @@ module ExprAnalyze =
                                                 fieldInfo.IsPublic || fieldInfo.IsFamily || fieldInfo.IsFamilyOrAssembly || fieldInfo.IsFamilyAndAssembly
                                             | :? PropertyInfo as propertyInfo ->
                                                 let accessorOpt =
-                                                    if obj.ReferenceEquals(propertyInfo.GetMethod, null) then
-                                                        if obj.ReferenceEquals(propertyInfo.SetMethod, null) then None
+                                                    if isNull propertyInfo.GetMethod then
+                                                        if isNull propertyInfo.SetMethod then None
                                                         else Some propertyInfo.SetMethod
                                                     else Some propertyInfo.GetMethod
                                                 match accessorOpt with
@@ -1106,7 +1106,7 @@ module ExprAnalyze =
                                             Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
                                         | [] when systemType.IsValueType && memberAccessExpr.memberName = "ToString" ->
                                             let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
-                                            if obj.ReferenceEquals(convertMethod, null) then
+                                            if isNull convertMethod then
                                                 Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                             else
                                                 Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
@@ -1162,7 +1162,7 @@ module ExprAnalyze =
                                 Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
                             | [] when systemType.IsValueType && memberAccessExpr.memberName = "ToString" ->
                                 let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
-                                if obj.ReferenceEquals(convertMethod, null) then
+                                if isNull convertMethod then
                                     Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                 else
                                     Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
