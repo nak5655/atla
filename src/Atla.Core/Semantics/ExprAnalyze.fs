@@ -989,77 +989,154 @@ module ExprAnalyze =
                         | _ -> Result.Error (sprintf "Type '%s' has no static member '%s'" receiverTypeName memberAccessExpr.memberName)
                     | None -> Result.Error (sprintf "Undefined type symbol '%s'" receiverTypeName)
 
+            /// Resolve `base'member` using current `this` and the base type fixed by impl metadata.
+            /// `base` is valid only inside instance impl methods.
+            let resolveMemberFromBaseReceiver () : Result<Hir.Expr, string> =
+                let thisSymbolIdOpt = nameEnv.resolveVar "this" |> List.tryHead
+                match thisSymbolIdOpt with
+                | None ->
+                    Result.Error("Keyword 'base' can only be used inside an instance impl method")
+                | Some thisSymbolId ->
+                    let resolvedThisType = nameEnv.resolveSymType thisSymbolId |> typeEnv.resolveType
+                    let resolvedThisExpr = Hir.Expr.Id(thisSymbolId, resolvedThisType, memberAccessExpr.receiver.span)
+                    match resolvedThisType with
+                    | TypeId.Name thisTypeSid ->
+                        let thisTypeDefOpt =
+                            nameEnv.dataTypeDefs
+                            |> Map.toSeq
+                            |> Seq.tryPick (fun (_, def) ->
+                                if def.typeSid.id = thisTypeSid.id then Some def else None)
+                        match thisTypeDefOpt with
+                        | None ->
+                            Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedThisType))
+                        | Some thisTypeDef ->
+                            match thisTypeDef.baseType with
+                            | None ->
+                                Result.Error(sprintf "Type '%s' has no base type for 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedThisType))
+                            | Some (TypeId.Name baseSid) ->
+                                tryResolveDataInstanceMember nameEnv typeEnv tid baseSid memberAccessExpr.memberName memberAccessExpr.span resolvedThisExpr
+                            | Some (TypeId.Native baseSysType) ->
+                                let memberInfos =
+                                    baseSysType.GetMembers(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance)
+                                    |> Seq.filter (fun m ->
+                                        if m.Name <> memberAccessExpr.memberName then
+                                            false
+                                        else
+                                            match m with
+                                            | :? MethodInfo as methodInfo ->
+                                                methodInfo.IsPublic || methodInfo.IsFamily || methodInfo.IsFamilyOrAssembly || methodInfo.IsFamilyAndAssembly
+                                            | :? FieldInfo as fieldInfo ->
+                                                fieldInfo.IsPublic || fieldInfo.IsFamily || fieldInfo.IsFamilyOrAssembly || fieldInfo.IsFamilyAndAssembly
+                                            | :? PropertyInfo as propertyInfo ->
+                                                let accessorOpt =
+                                                    if isNull propertyInfo.GetMethod then
+                                                        if isNull propertyInfo.SetMethod then None
+                                                        else Some propertyInfo.SetMethod
+                                                    else Some propertyInfo.GetMethod
+                                                match accessorOpt with
+                                                | Some accessor ->
+                                                    accessor.IsPublic || accessor.IsFamily || accessor.IsFamilyOrAssembly || accessor.IsFamilyAndAssembly
+                                                | None -> false
+                                            | _ -> false)
+                                    |> Seq.toList
+                                match NativeInterop.resolveNativeMember typeEnv memberInfos tid with
+                                | [memberInfo, resolvedTid] ->
+                                    match memberInfo with
+                                    | :? MethodInfo as methodInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some resolvedThisExpr, resolvedTid, memberAccessExpr.span))
+                                    | :? FieldInfo as fieldInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some resolvedThisExpr, resolvedTid, memberAccessExpr.span))
+                                    | :? PropertyInfo as propertyInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some resolvedThisExpr, resolvedTid, memberAccessExpr.span))
+                                    | _ -> Result.Error(sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
+                                | [] -> Result.Error(sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName baseSysType.FullName)
+                                | members ->
+                                    let methodInfos =
+                                        members
+                                        |> List.choose (fun (memberInfo, _) ->
+                                            match memberInfo with
+                                            | :? MethodInfo as methodInfo -> Some methodInfo
+                                            | _ -> None)
+                                    if methodInfos.Length = members.Length then
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some resolvedThisExpr, tid, memberAccessExpr.span))
+                                    else
+                                        Result.Error(sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName baseSysType.FullName)
+                            | Some unsupportedBaseType ->
+                                Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv unsupportedBaseType))
+                    | _ ->
+                        Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedThisType))
+
             let resolvedMemberResult =
                 match memberAccessExpr.receiver with
                 | :? Ast.Expr.Id as receiverId ->
-                    match nameEnv.tryResolveImportedModuleMember receiverId.name memberAccessExpr.memberName with
-                    | Some moduleMember ->
-                        Result.Ok(Hir.Expr.Id(moduleMember.symbolId, moduleMember.typ, memberAccessExpr.span))
-                    | None ->
-                        match nameEnv.scope.ResolveType(receiverId.name) with
-                        | Some (TypeId.Name sid) ->
-                            resolveMemberFromTypeName sid receiverId.name
-                        // Float, Int, Bool, String などのビルトイン型を静的メンバーアクセスのレシーバとして使う場合、
-                        // 対応する .NET ランタイム型へ変換して静的メンバーを探索する。
-                        // 例: `Float'Parse` → `System.Double.Parse`
-                        | Some builtinType ->
-                            match TypeId.tryToRuntimeSystemType builtinType with
-                            | Some sysType -> resolveMemberFromSystemTypeResult sysType
-                            | None -> Result.Error (sprintf "Builtin type '%s' cannot be mapped to a .NET runtime type for static member access" receiverId.name)
+                    if receiverId.name = "base" then
+                        resolveMemberFromBaseReceiver ()
+                    else
+                        match nameEnv.tryResolveImportedModuleMember receiverId.name memberAccessExpr.memberName with
+                        | Some moduleMember ->
+                            Result.Ok(Hir.Expr.Id(moduleMember.symbolId, moduleMember.typ, memberAccessExpr.span))
                         | None ->
-                        let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
-                        let receiverType = typeEnv.resolveType receiver.typ
-                        match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverType with
-                        | Some systemType ->
-                            let memberInfos =
-                                NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
-                                |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
-                                |> Seq.toList
-                            match NativeInterop.resolveNativeMember typeEnv memberInfos tid with
-                            | [memberInfo, resolvedTid] ->
-                                match memberInfo with
-                                | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
-                                | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some receiver, resolvedTid, memberAccessExpr.span))
-                                | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some receiver, resolvedTid, memberAccessExpr.span))
-                                | _ -> Result.Error (sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
-                            | [] ->
-                                let extensionMemberInfos = NativeInterop.findExtensionMethodCandidates systemType memberAccessExpr.memberName
-                                match NativeInterop.resolveExtensionMember typeEnv extensionMemberInfos tid with
-                                | [methodInfo, resolvedTid] ->
-                                    Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
-                                | [] when systemType.IsValueType && memberAccessExpr.memberName = "ToString" ->
-                                    let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
-                                    if obj.ReferenceEquals(convertMethod, null) then
-                                        Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                                    else
-                                        Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
-                                | [] ->
-                                    Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                                | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                            | members ->
-                                let methodInfos =
-                                    members
-                                    |> List.choose (fun (memberInfo, _) ->
+                            match nameEnv.scope.ResolveType(receiverId.name) with
+                            | Some (TypeId.Name sid) ->
+                                resolveMemberFromTypeName sid receiverId.name
+                            // Float, Int, Bool, String などのビルトイン型を静的メンバーアクセスのレシーバとして使う場合、
+                            // 対応する .NET ランタイム型へ変換して静的メンバーを探索する。
+                            // 例: `Float'Parse` → `System.Double.Parse`
+                            | Some builtinType ->
+                                match TypeId.tryToRuntimeSystemType builtinType with
+                                | Some sysType -> resolveMemberFromSystemTypeResult sysType
+                                | None -> Result.Error (sprintf "Builtin type '%s' cannot be mapped to a .NET runtime type for static member access" receiverId.name)
+                            | None ->
+                                let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
+                                let receiverType = typeEnv.resolveType receiver.typ
+                                match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverType with
+                                | Some systemType ->
+                                    let memberInfos =
+                                        NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
+                                        |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
+                                        |> Seq.toList
+                                    match NativeInterop.resolveNativeMember typeEnv memberInfos tid with
+                                    | [memberInfo, resolvedTid] ->
                                         match memberInfo with
-                                        | :? MethodInfo as methodInfo -> Some methodInfo
-                                        | _ -> None)
-                                if methodInfos.Length = members.Length then
-                                    Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some receiver, tid, memberAccessExpr.span))
-                                else
-                                    Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                        | None ->
-                            match typeEnv.resolveType receiver.typ with
-                            | TypeId.Name receiverTypeSid ->
-                                match tryResolveDataInstanceMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
-                                | Result.Ok resolvedMember -> Result.Ok resolvedMember
-                                | Result.Error _ ->
-                                    match resolveTyp nameEnv typeEnv receiver.typ with
-                                    | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
-                                    | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
-                            | _ ->
-                                match resolveTyp nameEnv typeEnv receiver.typ with
-                                | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
-                                | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
+                                        | :? MethodInfo as methodInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                                        | :? FieldInfo as fieldInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                                        | :? PropertyInfo as propertyInfo -> Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                                        | _ -> Result.Error (sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
+                                    | [] ->
+                                        let extensionMemberInfos = NativeInterop.findExtensionMethodCandidates systemType memberAccessExpr.memberName
+                                        match NativeInterop.resolveExtensionMember typeEnv extensionMemberInfos tid with
+                                        | [methodInfo, resolvedTid] ->
+                                            Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
+                                        | [] when systemType.IsValueType && memberAccessExpr.memberName = "ToString" ->
+                                            let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
+                                            if isNull convertMethod then
+                                                Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                                            else
+                                                Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
+                                        | [] ->
+                                            Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                                        | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                                    | members ->
+                                        let methodInfos =
+                                            members
+                                            |> List.choose (fun (memberInfo, _) ->
+                                                match memberInfo with
+                                                | :? MethodInfo as methodInfo -> Some methodInfo
+                                                | _ -> None)
+                                        if methodInfos.Length = members.Length then
+                                            Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some receiver, tid, memberAccessExpr.span))
+                                        else
+                                            Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                                | None ->
+                                    match typeEnv.resolveType receiver.typ with
+                                    | TypeId.Name receiverTypeSid ->
+                                        match tryResolveDataInstanceMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
+                                        | Result.Ok resolvedMember -> Result.Ok resolvedMember
+                                        | Result.Error _ ->
+                                            match resolveTyp nameEnv typeEnv receiver.typ with
+                                            | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                                            | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
+                                    | _ ->
+                                        match resolveTyp nameEnv typeEnv receiver.typ with
+                                        | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
+                                        | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
                 | _ ->
                     let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                     let receiverType = typeEnv.resolveType receiver.typ
@@ -1085,7 +1162,7 @@ module ExprAnalyze =
                                 Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some receiver, resolvedTid, memberAccessExpr.span))
                             | [] when systemType.IsValueType && memberAccessExpr.memberName = "ToString" ->
                                 let convertMethod = typeof<System.Convert>.GetMethod("ToString", [| systemType |])
-                                if obj.ReferenceEquals(convertMethod, null) then
+                                if isNull convertMethod then
                                     Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                 else
                                     Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
