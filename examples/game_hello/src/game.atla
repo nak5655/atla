@@ -1,0 +1,11 @@
+import Stride'Engine'Game
+
+data MyGame =
+    { _: Int }
+
+impl MyGame as Game
+    fn new: MyGame =
+        MyGame { _ = 0 }
+
+    fn Initialize (this: MyGame): () =
+        base'Initialize.

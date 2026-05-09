@@ -1,5 +1,6 @@
 import Stride'Engine'Game
+import game'MyGame
 
 fn main: () =
-    let game = Game.
+    let game = MyGame'new.
     game'Run.
