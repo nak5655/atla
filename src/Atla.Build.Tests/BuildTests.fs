@@ -3,6 +3,7 @@ namespace Atla.Build.Tests
 open System
 open System.IO
 open System.Reflection
+open System.Text.Json
 open Xunit
 open Atla.Build
 open Atla.Compiler
@@ -227,6 +228,55 @@ dependencies:
           compileReferencePaths = []
           runtimeLoadPaths = runtimePaths
           nativeRuntimePaths = [] }
+
+    [<Fact>]
+    let ``writeDepsFile should create deps json with app runtime entry`` () =
+        let outDir = createTempProjectDir ()
+        let result = BuildSystem.writeDepsFile "hello" "0.1.0" "HelloAsm" [] outDir
+
+        match result with
+        | Result.Error _ -> Assert.Fail("expected Ok")
+        | Ok depsPath ->
+            Assert.True(File.Exists(depsPath))
+            use json = JsonDocument.Parse(File.ReadAllText(depsPath))
+            let root = json.RootElement
+            Assert.Equal(".NETCoreApp,Version=v10.0", root.GetProperty("runtimeTarget").GetProperty("name").GetString())
+            let targets = root.GetProperty("targets").GetProperty(".NETCoreApp,Version=v10.0")
+            let appTarget = targets.GetProperty("hello/0.1.0")
+            let mutable runtimeAsset = Unchecked.defaultof<JsonElement>
+            Assert.True(appTarget.GetProperty("runtime").TryGetProperty("HelloAsm.dll", &runtimeAsset))
+
+    [<Fact>]
+    let ``writeDepsFile should include dependency runtime and native entries`` () =
+        let pkgRoot = createTempProjectDir ()
+        let outDir = createTempProjectDir ()
+        let managedPath = Path.Join(pkgRoot, "lib", "net8.0", "Stride.Engine.dll")
+        let nativePath = Path.Join(pkgRoot, "runtimes", "linux-x64", "native", "libSDL2.so")
+        Directory.CreateDirectory(Path.GetDirectoryName(managedPath)) |> ignore
+        Directory.CreateDirectory(Path.GetDirectoryName(nativePath)) |> ignore
+        File.WriteAllText(managedPath, "managed")
+        File.WriteAllText(nativePath, "native")
+
+        let dependency : Atla.Compiler.Compiler.ResolvedDependency =
+            { name = "Stride.Engine"
+              version = "4.3.0.2507"
+              source = pkgRoot
+              compileReferencePaths = []
+              runtimeLoadPaths = [ managedPath ]
+              nativeRuntimePaths = [ nativePath ] }
+
+        let result = BuildSystem.writeDepsFile "game_hello" "0.1.0" "GameHello" [ dependency ] outDir
+
+        match result with
+        | Result.Error _ -> Assert.Fail("expected Ok")
+        | Ok depsPath ->
+            use json = JsonDocument.Parse(File.ReadAllText(depsPath))
+            let target = json.RootElement.GetProperty("targets").GetProperty(".NETCoreApp,Version=v10.0")
+            let depTarget = target.GetProperty("Stride.Engine/4.3.0.2507")
+            let mutable managedAsset = Unchecked.defaultof<JsonElement>
+            let mutable nativeAsset = Unchecked.defaultof<JsonElement>
+            Assert.True(depTarget.GetProperty("runtime").TryGetProperty("Stride.Engine.dll", &managedAsset))
+            Assert.True(depTarget.GetProperty("native").TryGetProperty("runtimes/linux-x64/native/libSDL2.so", &nativeAsset))
 
     [<Fact>]
     let ``copyDependencies should return empty list when dependencies are empty`` () =

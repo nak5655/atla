@@ -170,7 +170,13 @@ module Console =
                                             1
                                         | Ok copied ->
                                             copied |> List.iter (fun path -> Console.WriteLine($"Copied: {path}"))
-                                            0
+                                            match BuildSystem.writeDepsFile plan.projectName plan.projectVersion asmName plan.dependencies outDir with
+                                            | Result.Error diagnostics ->
+                                                printDiagnostics diagnostics
+                                                1
+                                            | Ok depsPath ->
+                                                Console.WriteLine($"Generated: {depsPath}")
+                                                0
                                     else
                                         1
         | command :: _ ->

@@ -79,6 +79,7 @@ fn main: () =
 
         Assert.Equal(0, code)
         Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.dll")))
+        Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.deps.json")))
 
     [<Fact>]
     let ``build should succeed for examples gui_hello`` () =
