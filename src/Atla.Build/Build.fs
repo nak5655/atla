@@ -28,7 +28,6 @@ type BuildResult =
 module BuildSystem =
     (* Manifest ファイル関連の固定設定と、共通ユーティリティ。 *)
     let private manifestFileName = "atla.yaml"
-    let private lockFileName = "atla.lock"
     let private targetFrameworkMoniker = ".NETCoreApp,Version=v10.0"
 
     /// Build 入力パスを絶対パスへ正規化する。
