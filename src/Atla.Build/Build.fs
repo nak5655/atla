@@ -2,6 +2,8 @@ namespace Atla.Build
 
 open System
 open System.IO
+open System.Text.Json
+open System.Text.Json.Nodes
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
 open Atla.Compiler
@@ -27,6 +29,7 @@ module BuildSystem =
     (* Manifest ファイル関連の固定設定と、共通ユーティリティ。 *)
     let private manifestFileName = "atla.yaml"
     let private lockFileName = "atla.lock"
+    let private targetFrameworkMoniker = ".NETCoreApp,Version=v10.0"
 
     /// Build 入力パスを絶対パスへ正規化する。
     let private normalizePath (path: string) : string =
@@ -80,6 +83,125 @@ module BuildSystem =
             Ok ()
         with ex ->
             Result.Error [ Diagnostic.Error($"Failed to write `{lockFileName}`: {ex.Message}", Span.Empty) ]
+
+    /// パスを .deps.json 向けに正規化する（`/` 区切り）。
+    let private normalizeDepsPath (path: string) : string =
+        path.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/')
+
+    /// runtimeLoadPaths のコピー先パスを返す（copyDependencies と同一規則）。
+    let private getManagedDestinationPath (outDir: string) (srcPath: string) : string =
+        Path.Join(outDir, Path.GetFileName(srcPath))
+
+    /// nativeRuntimePaths のコピー先パスを返す（copyDependencies と同一規則）。
+    let private getNativeDestinationPath (outDir: string) (dep: Compiler.ResolvedDependency) (srcPath: string) : string =
+        if String.IsNullOrWhiteSpace dep.source then
+            Path.Join(outDir, Path.GetFileName(srcPath))
+        else
+            let normalizedSource = Path.GetFullPath(dep.source)
+            let normalizedSrc = Path.GetFullPath(srcPath)
+            Path.Join(outDir, Path.GetRelativePath(normalizedSource, normalizedSrc))
+
+    /// 依存アセットの出力先相対パスを計算する。
+    let private collectDependencyAssetPaths
+        (outDir: string)
+        (dep: Compiler.ResolvedDependency)
+        : string list * string list =
+        let runtimePaths =
+            dep.runtimeLoadPaths
+            |> List.map (getManagedDestinationPath outDir)
+            |> List.map (fun dstPath -> Path.GetRelativePath(outDir, dstPath))
+            |> List.map normalizeDepsPath
+            |> List.distinct
+            |> List.sort
+
+        let nativePaths =
+            dep.nativeRuntimePaths
+            |> List.map (getNativeDestinationPath outDir dep)
+            |> List.map (fun dstPath -> Path.GetRelativePath(outDir, dstPath))
+            |> List.map normalizeDepsPath
+            |> List.distinct
+            |> List.sort
+
+        runtimePaths, nativePaths
+
+    /// `asmName.deps.json` を outDir 配下へ書き出す。
+    let writeDepsFile
+        (projectName: string)
+        (projectVersion: string)
+        (asmName: string)
+        (dependencies: Compiler.ResolvedDependency list)
+        (outDir: string)
+        : Result<string, Diagnostic list> =
+        try
+            let appLibraryName = $"{projectName}/{projectVersion}"
+
+            let runtimeTargetNode = JsonObject()
+            runtimeTargetNode.Add("name", JsonValue.Create(targetFrameworkMoniker))
+            runtimeTargetNode.Add("signature", JsonValue.Create(""))
+
+            let appRuntimeNode = JsonObject()
+            appRuntimeNode.Add($"{asmName}.dll", JsonObject())
+            let appTargetNode = JsonObject()
+            appTargetNode.Add("runtime", appRuntimeNode)
+
+            let dependencyTargetNodes =
+                dependencies
+                |> List.sortBy (fun dep -> dep.name.ToLowerInvariant())
+                |> List.choose (fun dep ->
+                    let runtimePaths, nativePaths = collectDependencyAssetPaths outDir dep
+
+                    let node = JsonObject()
+
+                    if not (List.isEmpty runtimePaths) then
+                        let runtimeNode = JsonObject()
+                        runtimePaths |> List.iter (fun path -> runtimeNode.Add(path, JsonObject()))
+                        node.Add("runtime", runtimeNode)
+
+                    if not (List.isEmpty nativePaths) then
+                        let nativeNode = JsonObject()
+                        nativePaths |> List.iter (fun path -> nativeNode.Add(path, JsonObject()))
+                        node.Add("native", nativeNode)
+
+                    if node.Count = 0 then
+                        None
+                    else
+                        Some($"{dep.name}/{dep.version}", node))
+
+            let targetNode = JsonObject()
+            targetNode.Add(appLibraryName, appTargetNode)
+            dependencyTargetNodes |> List.iter (fun (name, node) -> targetNode.Add(name, node))
+
+            let targetsNode = JsonObject()
+            targetsNode.Add(targetFrameworkMoniker, targetNode)
+
+            let librariesNode = JsonObject()
+            let appLibraryNode = JsonObject()
+            appLibraryNode.Add("type", JsonValue.Create("project"))
+            appLibraryNode.Add("serviceable", JsonValue.Create(false))
+            appLibraryNode.Add("sha512", JsonValue.Create(""))
+            librariesNode.Add(appLibraryName, appLibraryNode)
+
+            dependencies
+            |> List.sortBy (fun dep -> dep.name.ToLowerInvariant())
+            |> List.iter (fun dep ->
+                let packageLibraryNode = JsonObject()
+                packageLibraryNode.Add("type", JsonValue.Create("package"))
+                packageLibraryNode.Add("serviceable", JsonValue.Create(true))
+                packageLibraryNode.Add("sha512", JsonValue.Create(""))
+                librariesNode.Add($"{dep.name}/{dep.version}", packageLibraryNode))
+
+            let rootNode = JsonObject()
+            rootNode.Add("runtimeTarget", runtimeTargetNode)
+            rootNode.Add("compilationOptions", JsonObject())
+            rootNode.Add("targets", targetsNode)
+            rootNode.Add("libraries", librariesNode)
+
+            let depsPath = Path.Join(outDir, $"{asmName}.deps.json")
+            let options = JsonSerializerOptions(WriteIndented = true)
+            File.WriteAllText(depsPath, rootNode.ToJsonString(options))
+            Ok depsPath
+        with ex ->
+            Result.Error [ Diagnostic.Error($"Failed to write `{asmName}.deps.json`: {ex.Message}", Span.Empty) ]
 
     /// エラーメッセージを Diagnostic.Error へ変換する。
     let private error (message: string) : Diagnostic =
