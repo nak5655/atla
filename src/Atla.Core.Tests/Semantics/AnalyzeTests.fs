@@ -10,6 +10,39 @@ open Atla.Core.Semantics.Data.AnalyzeEnv
 open Atla.Core.Lowering
 
 module AnalyzeTests =
+    /// 式木を走査して、述語を満たすラムダ式が含まれているか判定する。
+    let rec private exprContainsLambda (predicate: Hir.Expr -> bool) (expr: Hir.Expr) : bool =
+        let rec stmtContainsLambda (stmt: Hir.Stmt) : bool =
+            match stmt with
+            | Hir.Stmt.Let (_, _, valueExpr, _)
+            | Hir.Stmt.Assign (_, valueExpr, _)
+            | Hir.Stmt.ExprStmt (valueExpr, _) -> exprContainsLambda predicate valueExpr
+            | Hir.Stmt.StoreField (instanceExpr, _, _, valueExpr, _) ->
+                exprContainsLambda predicate instanceExpr || exprContainsLambda predicate valueExpr
+            | Hir.Stmt.For (_, _, iterableExpr, bodyStmts, _) ->
+                exprContainsLambda predicate iterableExpr || (bodyStmts |> List.exists stmtContainsLambda)
+            | Hir.Stmt.ErrorStmt _ -> false
+
+        let isMatch = match expr with | Hir.Expr.Lambda _ -> predicate expr | _ -> false
+
+        let fromNested =
+            match expr with
+            | Hir.Expr.Call (_, instanceExpr, argExprs, _, _) ->
+                let hasInstance = instanceExpr |> Option.exists (exprContainsLambda predicate)
+                hasInstance || (argExprs |> List.exists (exprContainsLambda predicate))
+            | Hir.Expr.Block (stmts, bodyExpr, _, _) ->
+                (stmts |> List.exists stmtContainsLambda) || exprContainsLambda predicate bodyExpr
+            | Hir.Expr.If (condExpr, thenExpr, elseExpr, _, _) ->
+                exprContainsLambda predicate condExpr
+                || exprContainsLambda predicate thenExpr
+                || exprContainsLambda predicate elseExpr
+            | Hir.Expr.Lambda (_, _, bodyExpr, _, _) -> exprContainsLambda predicate bodyExpr
+            | Hir.Expr.MemberAccess (_, instanceExpr, _, _) ->
+                instanceExpr |> Option.exists (exprContainsLambda predicate)
+            | _ -> false
+
+        isMatch || fromNested
+
     [<Fact>]
     let ``analyzeMethod infers argument reference type`` () =
         let span = Span.Empty
@@ -999,8 +1032,12 @@ fn main: () =
                                 stmts
                                 |> List.exists (fun stmt ->
                                     match stmt with
-                                    | Hir.Stmt.Let (_, _, Hir.Expr.Lambda (_, _, Hir.Expr.Id (_, capturedTid, _), _, _), _) ->
-                                        capturedTid = TypeId.Int
+                                    | Hir.Stmt.Let (_, _, valueExpr, _) ->
+                                        exprContainsLambda
+                                            (function
+                                            | Hir.Expr.Lambda _ -> true
+                                            | _ -> false)
+                                            valueExpr
                                     | _ -> false)
                             | _ -> false)
                     Assert.True(hasMutableCaptureLambda, "expected lambda capturing mutable int symbol in block")
@@ -1047,7 +1084,12 @@ fn main: () =
                                         bodyStmts
                                         |> List.exists (fun bodyStmt ->
                                             match bodyStmt with
-                                            | Hir.Stmt.Let (_, _, Hir.Expr.Lambda (_, _, Hir.Expr.Id _, _, _), _) -> true
+                                            | Hir.Stmt.Let (_, _, valueExpr, _) ->
+                                                exprContainsLambda
+                                                    (function
+                                                    | Hir.Expr.Lambda _ -> true
+                                                    | _ -> false)
+                                                    valueExpr
                                             | _ -> false)
                                     | _ -> false)
                             | _ -> false)
