@@ -393,6 +393,24 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        /// `role` 宣言の抽象メソッドシグネチャ（ボディなし）。
+        type RoleFn(name: string, args: FnArg list, ret: TypeExpr, span: Span) =
+            member this.name = name
+            member this.args = args
+            member this.ret = ret
+            member this.span = span
+
+        /// `role TypeName` — インターフェイス相当の役割型宣言。
+        /// 内部的に .NET interface として CIL 出力される。
+        type Role(name: string, methods: RoleFn list, span: Span) =
+            member this.name = name
+            member this.methods = methods
+            member this.span = span
+            interface Decl with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type Error(message: string, span: Span) =
             member this.message = message
             member this.span = span

@@ -9,6 +9,10 @@ module Resolve =
         { typeSid: SymbolId
           decl: Ast.Decl.Data }
 
+    type ResolvedRoleDecl =
+        { typeSid: SymbolId
+          decl: Ast.Decl.Role }
+
     type ResolvedModule =
         { moduleName: string
           moduleScope: Scope
@@ -16,6 +20,7 @@ module Resolve =
           importedTypeAliases: Map<string, string>
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
+          roleDecls: ResolvedRoleDecl list
           implDecls: (SymbolId * TypeId option * string option * Ast.Decl.Impl) list }
 
     let private tryResolveSystemType (classPath: string) : System.Type option =
@@ -115,12 +120,13 @@ module Resolve =
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
+        let roleDecls = ResizeArray<ResolvedRoleDecl>()
         let implDecls = ResizeArray<SymbolId * TypeId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
         let importedTypeAliases = ResizeArray<string * string>()
         let diagnostics = ResizeArray<Diagnostic>()
 
-        // data 型名を先に登録し、同一モジュール内で相互参照可能にする。
+        // data 型名と role 型名を先に登録し、同一モジュール内で相互参照可能にする。
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Data as dataDecl ->
@@ -132,6 +138,16 @@ module Resolve =
                     symbolTable.Add(typeSid, { name = dataDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
                     moduleScope.DeclareType(dataDecl.name, TypeId.Name typeSid)
                     dataDecls.Add({ typeSid = typeSid; decl = dataDecl })
+            | :? Ast.Decl.Role as roleDecl ->
+                // role 型を型スコープへ事前登録し、同一モジュール内での型注釈で参照可能にする。
+                match moduleScope.ResolveType(roleDecl.name) with
+                | Some _ ->
+                    diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" roleDecl.name, roleDecl.span))
+                | None ->
+                    let typeSid = symbolTable.NextId()
+                    symbolTable.Add(typeSid, { name = roleDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
+                    moduleScope.DeclareType(roleDecl.name, TypeId.Name typeSid)
+                    roleDecls.Add({ typeSid = typeSid; decl = roleDecl })
             | _ -> ()
 
         for decl in moduleAst.decls do
@@ -306,6 +322,9 @@ module Resolve =
                     diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl target type '%s'" implDecl.typeName, implDecl.span))
             | :? Ast.Decl.Fn as fnDecl ->
                 fnDecls.Add(fnDecl)
+            | :? Ast.Decl.Role ->
+                // role 宣言は第一パスで登録済みのため、ここでは何もしない。
+                ()
             | _ -> diagnostics.Add(Diagnostic.Error("Unsupported declaration type in module", decl.span))
 
         // data 型の継承関係（impl B for A）に循環がないことを検証する。
@@ -344,6 +363,7 @@ module Resolve =
                   importedTypeAliases = importedTypeAliases |> Seq.distinct |> Map.ofSeq
                   fnDecls = Seq.toList fnDecls
                   dataDecls = Seq.toList dataDecls
+                  roleDecls = Seq.toList roleDecls
                   implDecls = Seq.toList implDecls }
                 allDiagnostics
 

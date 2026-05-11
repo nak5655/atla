@@ -62,7 +62,7 @@ module Analyze =
                             resolvedFields
                             |> List.map (fun fieldDef ->
                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                        types.Add(Hir.Type(resolvedDataDecl.typeSid, None, hirFields, []))
+                        types.Add(Hir.Type(resolvedDataDecl.typeSid, false, None, hirFields, []))
                         Map.add
                             resolvedDataDecl.decl.name
                             { typeSid = resolvedDataDecl.typeSid
@@ -72,6 +72,43 @@ module Analyze =
                               methods = Map.empty }
                             defs)
                     Map.empty
+
+            // role 宣言を HIR インターフェイス型として処理する。
+            // role の各メソッドシグネチャをシンボルテーブルへ登録し、
+            // isInterface=true の Hir.Type を生成する。
+            // method の body はプレースホルダー（Hir.Expr.Unit）とし、Gen 側で本体なし abstract として処理する。
+            for resolvedRoleDecl in resolvedModule.roleDecls do
+                let roleName = resolvedRoleDecl.decl.name
+                let roleSpan = resolvedRoleDecl.decl.span
+                let hirMethods =
+                    resolvedRoleDecl.decl.methods
+                    |> List.map (fun roleFn ->
+                        let argTypes =
+                            roleFn.args
+                            |> List.map bootstrapNameEnv.resolveArgType
+                            |> (fun raw ->
+                                match roleFn.args, raw with
+                                | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
+                                | _ -> raw)
+                        let retType = bootstrapNameEnv.resolveTypeExpr roleFn.ret
+                        let methodType = TypeId.Fn(argTypes, retType)
+                        let methodSid = symbolTable.NextId()
+                        symbolTable.Add(methodSid, { name = $"{roleName}.{roleFn.name}"; typ = methodType; kind = SymbolKind.Local() })
+                        // abstract メソッドを引数 SID と共に構築する。ボディはプレースホルダー。
+                        let argSids =
+                            roleFn.args
+                            |> List.mapi (fun i arg ->
+                                match arg with
+                                | :? Ast.FnArg.Named as namedArg ->
+                                    let argType = argTypes.[i]
+                                    let argSid = symbolTable.NextId()
+                                    symbolTable.Add(argSid, { name = namedArg.name; typ = argType; kind = SymbolKind.Arg() })
+                                    Some (argSid, argType)
+                                | :? Ast.FnArg.Unit -> None
+                                | _ -> None)
+                            |> List.choose id
+                        Hir.Method(methodSid, argSids, Hir.Expr.Unit(roleSpan), methodType, roleSpan))
+                types.Add(Hir.Type(resolvedRoleDecl.typeSid, true, None, [], hirMethods))
 
             let importedDataTypeDefs, importedTypeDiagnostics =
                 resolvedModule.importedTypeAliases
@@ -141,7 +178,7 @@ module Analyze =
                                     resolvedFields
                                     |> List.map (fun fieldDef ->
                                         Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                                types.Add(Hir.Type(typeSid, None, hirFields, []))
+                                types.Add(Hir.Type(typeSid, false, None, hirFields, []))
                             let importedImplMethodMap, importedImplDiagnostics =
                                 let lastDot = fullTypePath.LastIndexOf('.')
                                 if lastDot <= 0 then
@@ -327,8 +364,11 @@ module Analyze =
                 types
                 |> Seq.toList
                 |> List.map (fun typ ->
-                    let baseTypeOpt = baseTypeById |> Map.tryFind typ.sym.id |> Option.flatten
-                    Hir.Type(typ.sym, baseTypeOpt, typ.fields, typ.methods))
+                    // interface 型（role）は baseType を変更しない。data 型のみ impl で確定した baseType を反映する。
+                    let baseTypeOpt =
+                        if typ.isInterface then typ.baseType
+                        else baseTypeById |> Map.tryFind typ.sym.id |> Option.flatten
+                    Hir.Type(typ.sym, typ.isInterface, baseTypeOpt, typ.fields, typ.methods))
 
             let untypedHirModule =
                 Hir.Module(

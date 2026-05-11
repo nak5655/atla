@@ -1021,3 +1021,50 @@ fn main: () = do
         let lines = stdout.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
         Assert.Equal(1, lines.Length)
         Assert.Equal("-42", lines.[0].Trim())
+
+    [<Fact>]
+    let ``role and impl for compiles and executes correctly`` () =
+        // role 型を宣言し impl ... for ... で実装した型のメソッドが正しく実行されることを検証する。
+        // hello_role example と同等のプログラム。
+        let program = """
+import System'Console
+
+role Geometry
+    fn area (this: Geometry): Float
+
+data Rectangle = { width: Float, height: Float }
+
+impl Geometry for Rectangle
+    fn area (this: Rectangle): Float =
+        this'width * this'height
+
+fn main: () =
+    let rect = Rectangle { width = 5.0, height = 10.0 }
+    rect'area. Console'WriteLine.
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "HelloRole"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "HelloRole.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("50", stdout.Trim())

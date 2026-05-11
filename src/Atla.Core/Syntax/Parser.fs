@@ -523,6 +523,17 @@ module Parser =
                     (fun (msg, span) ->
                         Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), span))))
 
+    // role 宣言の抽象メソッドシグネチャ（ボディなし）。
+    // `fn name args: ret` の形式で、`= body` を持たない。
+    and roleFnDecl: PackratParser<Token, Ast.Decl.RoleFn> =
+        Delay (fun () ->
+            block (asToken (keyword "fn"))
+                    (Once
+                    (tid <&> Many fnArg <& delim ':' <&> typeExpr
+                     |>> fun ((id, args), ret) -> Ast.Decl.RoleFn(id.str, args, ret, { left = id.span.left; right = ret.span.right }))
+                    (fun (msg, span) ->
+                        Ast.Decl.RoleFn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), span))))
+
     and implDecl: PackratParser<Token, Ast.Decl> =
         // `impl A as B` と `impl A [for Role] [by field]` は相互に排他的な構文。
         // `as` を検出した場合は .NET 継承形式として処理し、`for`/`by` は禁止する。
@@ -560,7 +571,21 @@ module Parser =
                     (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     and decl: PackratParser<Token, Ast.Decl> =
-        Delay (fun () -> dataDecl <|> importDecl <|> fnDecl <|> implDecl)
+        Delay (fun () -> dataDecl <|> importDecl <|> fnDecl <|> implDecl <|> roleDecl)
+
+    // role 型宣言: `role TypeName` に続くインデントブロック内に抽象メソッドシグネチャを列挙する。
+    and roleDecl: PackratParser<Token, Ast.Decl> =
+        Delay (fun () ->
+            block (asToken (keyword "role"))
+                (Once
+                    (tid <&> Many roleFnDecl
+                     |>> fun (id, methods) ->
+                         let rightSpan =
+                             match methods |> List.tryLast with
+                             | Some lastMethod -> lastMethod.span.right
+                             | None -> id.span.right
+                         Ast.Decl.Role(id.str, methods, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
+                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     // モジュール
     and fileModule: PackratParser<Token, Ast.Module> =
