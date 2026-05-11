@@ -1,0 +1,19 @@
+import System'Console
+
+role Geometry
+    data Circle = { radius: Float }
+    data Rectangle = { width: Float, height: Float }
+    
+    fn area (this: Geometry): Float
+
+impl Geometry for Geometry'Circle
+    fn area (this: Circle): Float =
+        3.14159 * this.radius * this.radius
+
+impl Geometry for Geometry'Rectangle
+    fn area (this: Rectangle): Float =
+        this.width * this.height
+
+fn main: () =
+    let rect = Geometry'Rectangle { width = 5.0, height = 10.0 }
+    rect'area. Console'WriteLine.

@@ -1,13 +1,13 @@
 import System'Console
 
-role Geometry
-    fn area (this: Geometry): Float
+role Shape
+    fn area self: Float
 
 data Rectangle = { width: Float, height: Float }
 
-impl Geometry for Rectangle
-    fn area (this: Rectangle): Float =
-        this.width * this.height
+impl Shape for Rectangle
+    fn area self: Float =
+        self.width * self.height
 
 fn main: () =
     let rect = Rectangle { width = 5.0, height = 10.0 }
