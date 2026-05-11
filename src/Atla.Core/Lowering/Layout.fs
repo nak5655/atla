@@ -507,11 +507,41 @@ module Layout =
                 Ok (Mir.Method(methodName, hirMethod.sym, args, ret, body, finalState.frame))
         | _ -> Result.Error (Diagnostic.Error($"Expected function type for method: {hirMethod.typ}", hirMethod.span))
 
+    /// データ型または role 型のインスタンスメソッドを生成する。
+    /// layoutMethod との違い: 第一引数（this）を CIL の明示引数リストから除去する。
+    /// CIL インスタンスメソッドでは 'this' は暗黙の Arg(0) であり、DefineMethod のパラメーターに含めない。
+    let private layoutDataTypeMethod (methodName: string) (hirMethod: ClosedHir.Method) : Result<Mir.Method, Diagnostic> =
+        // 全引数（this を含む）をフレームへ事前登録する。
+        // CIL では this が Arg(0) のため、宣言順に登録することで正しいインデックスが得られる。
+        let initFrame =
+            hirMethod.args |> List.fold (fun frame (argSid, argType) ->
+                let _, newFrame = Mir.Frame.addArg argSid argType frame
+                newFrame) Mir.Frame.empty
+        let initState = { emptyState with frame = initFrame }
+        match hirMethod.typ with
+        | TypeId.Fn (_, ret) ->
+            match layoutExpr initState hirMethod.body with
+            | Result.Error e -> Result.Error e
+            | Ok (finalState, bodyKn) ->
+                let body =
+                    if ret = TypeId.Unit then bodyKn.ins @ [ Mir.Ins.Ret ]
+                    else
+                        match bodyKn.res with
+                        | Some v -> bodyKn.ins @ [ Mir.Ins.RetValue v ]
+                        | None -> bodyKn.ins @ [ Mir.Ins.Ret ]
+                // CIL インスタンスメソッドの引数リストは 'this' を除いた明示引数のみ。
+                let explicitArgs =
+                    match hirMethod.args with
+                    | _ :: rest -> rest |> List.map snd
+                    | [] -> []
+                Ok (Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, finalState.frame))
+        | _ -> Result.Error (Diagnostic.Error($"Expected function type for data type method: {hirMethod.typ}", hirMethod.span))
+
     let private layoutType (typeName: string) (resolveMethodName: SymbolId -> string) (hirType: ClosedHir.Type) : Result<Mir.Type, Diagnostic> =
         let fields = hirType.fields |> List.map (fun field -> Mir.Field(field.sym, field.typ))
         let methodResults =
             hirType.methods
-            |> List.map (fun hirMethod -> layoutMethod (resolveMethodName hirMethod.sym) hirMethod)
+            |> List.map (fun hirMethod -> layoutDataTypeMethod (resolveMethodName hirMethod.sym) hirMethod)
         let methodErrors, methodSuccesses =
             methodResults
             |> List.fold (fun (errs, oks) r ->
@@ -519,7 +549,7 @@ module Layout =
                 | Result.Error e -> (e :: errs, oks)
                 | Ok m -> (errs, m :: oks)) ([], [])
         if List.isEmpty methodErrors then
-            Result.Ok(Mir.Type(typeName, hirType.sym, hirType.baseType, fields, [], List.rev methodSuccesses))
+            Result.Ok(Mir.Type(typeName, hirType.sym, hirType.isInterface, hirType.baseType, fields, [], List.rev methodSuccesses))
         else
             Result.Error(List.rev methodErrors |> List.head)
 
@@ -594,7 +624,7 @@ module Layout =
                 match baseTypeResult with
                 | Result.Error e -> Result.Error [ e ]
                 | Result.Ok baseType when List.isEmpty invokeErrors ->
-                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.baseType, baseType.fields, baseType.ctors, baseType.methods @ (List.rev invokeSuccesses)))
+                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.isInterface, baseType.baseType, baseType.fields, baseType.ctors, baseType.methods @ (List.rev invokeSuccesses)))
                 | Result.Ok _ ->
                     Result.Error (List.rev invokeErrors))
 

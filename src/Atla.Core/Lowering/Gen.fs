@@ -465,71 +465,89 @@ module Gen =
             | TypeId.Unit -> typeof<Void>
             | _ -> resolveType env tid
 
-        // フィールド定義
-        for field in typ.fields do
-            let fieldType = resolveType env field.typ
-            field.builder <- typ.builder.DefineField(sprintf "field_%d" field.sym.id, fieldType, FieldAttributes.Public)
-            // env-class フィールドを fieldBuilders へ登録する（GenIns での LoadEnvField/StoreEnvField 解決に使用）。
-            env.fieldBuilders.[field.sym] <- field.builder
+        if typ.isInterface then
+            // インターフェイス型（role）: フィールドもコンストラクタも不要。
+            // 各メソッドを abstract virtual として宣言する。
+            for method in typ.methods do
+                let explicitArgTypes = method.args |> List.map (resolveType env) |> List.toArray
+                let methodRetType = resolveMethodReturnType method.ret
+                method.builder <-
+                    typ.builder.DefineMethod(
+                        method.name,
+                        MethodAttributes.Public ||| MethodAttributes.Abstract ||| MethodAttributes.Virtual ||| MethodAttributes.HideBySig,
+                        methodRetType,
+                        explicitArgTypes)
+                env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
+        else
+            // フィールド定義
+            for field in typ.fields do
+                let fieldType = resolveType env field.typ
+                field.builder <- typ.builder.DefineField(sprintf "field_%d" field.sym.id, fieldType, FieldAttributes.Public)
+                // env-class フィールドを fieldBuilders へ登録する（GenIns での LoadEnvField/StoreEnvField 解決に使用）。
+                env.fieldBuilders.[field.sym] <- field.builder
 
-        // 明示コンストラクタ定義（MethodBuilder のみ、本体生成は genTypeBodies で行う）。
-        for ctor in typ.ctors do
-            let ctorArgTypes = ctor.args |> List.map (resolveType env) |> List.toArray
-            ctor.builder <- typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorArgTypes)
+            // 明示コンストラクタ定義（MethodBuilder のみ、本体生成は genTypeBodies で行う）。
+            for ctor in typ.ctors do
+                let ctorArgTypes = ctor.args |> List.map (resolveType env) |> List.toArray
+                ctor.builder <- typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorArgTypes)
 
-        // 明示コンストラクタが無い場合はデフォルトコンストラクタを宣言し、本体も即時生成する。
-        // デフォルトコンストラクタは単純（ldarg.0; call base..ctor; ret）で外部参照を持たないため、
-        // 宣言と同時に生成しても問題ない。
-        if typ.ctors.IsEmpty then
-            let defaultCtor = typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [||])
-            let ctorIL = defaultCtor.GetILGenerator()
-            ctorIL.Emit(OpCodes.Ldarg_0)
-            // 基底型が指定されている場合はその型のパラメータなしコンストラクタを呼ぶ。
-            // 指定なし、またはパラメータなしコンストラクタが存在しない場合は Object のコンストラクタを呼ぶ。
-            let baseCtorInfo =
-                match typ.baseType with
-                | Some baseTid ->
-                    let resolvedBase = resolveType env baseTid
-                    if isNull resolvedBase then
-                        typeof<obj>.GetConstructor([||])
-                    else
-                        let baseCtor = resolvedBase.GetConstructor([||])
-                        if isNull baseCtor then typeof<obj>.GetConstructor([||])
-                        else baseCtor
-                | None -> typeof<obj>.GetConstructor([||])
-            ctorIL.Emit(OpCodes.Call, baseCtorInfo)
-            ctorIL.Emit(OpCodes.Ret)
-            env.typeCtors.[typ.sym] <- defaultCtor
+            // 明示コンストラクタが無い場合はデフォルトコンストラクタを宣言し、本体も即時生成する。
+            // デフォルトコンストラクタは単純（ldarg.0; call base..ctor; ret）で外部参照を持たないため、
+            // 宣言と同時に生成しても問題ない。
+            if typ.ctors.IsEmpty then
+                let defaultCtor = typ.builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [||])
+                let ctorIL = defaultCtor.GetILGenerator()
+                ctorIL.Emit(OpCodes.Ldarg_0)
+                // 基底型が指定されている場合はその型のパラメータなしコンストラクタを呼ぶ。
+                // 基底型がインターフェイス、または指定なし/パラメータなしコンストラクタが存在しない場合は Object のコンストラクタを呼ぶ。
+                let baseCtorInfo =
+                    match typ.baseType with
+                    | Some baseTid ->
+                        let resolvedBase = resolveType env baseTid
+                        if isNull resolvedBase || resolvedBase.IsInterface then
+                            typeof<obj>.GetConstructor([||])
+                        else
+                            let baseCtor = resolvedBase.GetConstructor([||])
+                            if isNull baseCtor then typeof<obj>.GetConstructor([||])
+                            else baseCtor
+                    | None -> typeof<obj>.GetConstructor([||])
+                ctorIL.Emit(OpCodes.Call, baseCtorInfo)
+                ctorIL.Emit(OpCodes.Ret)
+                env.typeCtors.[typ.sym] <- defaultCtor
 
-        // インスタンスメソッド（クロージャー invoke メソッド）の MethodBuilder を宣言・登録する。
-        // layoutInvokeMethod がすでに 'this'（env インスタンス）を method.args から除去しているため、
-        // method.args をそのまま CIL シグネチャとして使用する。
-        // 本体生成（IL emit）は genTypeBodies で行う。
-        for method in typ.methods do
-            let explicitArgTypes = method.args |> List.map (resolveType env) |> List.toArray
-            let methodRetType = resolveMethodReturnType method.ret
-            method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public, methodRetType, explicitArgTypes)
-            // invoke メソッドの SymbolId を methodBuilders へ登録する（FnDelegate・CallSym 解決に使用）。
-            env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
+            // インスタンスメソッドの MethodBuilder を宣言・登録する。
+            // layoutDataTypeMethod がすでに 'this' を method.args から除去しているため、
+            // method.args をそのまま CIL 明示引数シグネチャとして使用する。
+            // 本体生成（IL emit）は genTypeBodies で行う。
+            for method in typ.methods do
+                let explicitArgTypes = method.args |> List.map (resolveType env) |> List.toArray
+                let methodRetType = resolveMethodReturnType method.ret
+                method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public, methodRetType, explicitArgTypes)
+                env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
 
     /// 型の明示コンストラクタ本体と invoke メソッド本体を生成し、型を確定（CreateType）する。
     /// declareTypeMembers で全 MethodBuilder が登録済みであることが前提。
     /// main メソッドが型内に存在する場合はその MethodInfo を返す。
     let private genTypeBodies (env: Env) (typ: Mir.Type) : MethodInfo option =
-        // 明示コンストラクタ本体を生成する。
-        for ctor in typ.ctors do
-            genConstructor env ctor
+        if typ.isInterface then
+            // インターフェイス型（role）は abstract メソッドのみを持つため、本体生成は不要。
+            typ.builder.CreateType() |> ignore
+            None
+        else
+            // 明示コンストラクタ本体を生成する。
+            for ctor in typ.ctors do
+                genConstructor env ctor
 
-        // invoke メソッド本体を生成する。
-        for method in typ.methods do
-            genMethod env method
+            // invoke メソッド本体を生成する。
+            for method in typ.methods do
+                genMethod env method
 
-        // 型確定
-        typ.builder.CreateType() |> ignore
+            // 型確定
+            typ.builder.CreateType() |> ignore
 
-        // 型内main探索
-        typ.builder.DeclaredMethods
-        |> Seq.tryFind (fun method -> method.Name = "main")
+            // 型内main探索
+            typ.builder.DeclaredMethods
+            |> Seq.tryFind (fun method -> method.Name = "main")
 
     // モジュール単位で型とグローバル関数を生成し、mainメソッドを返す
     let private genModule (moduleBuilder: ModuleBuilder) (modul: Mir.Module) (symbolTable: SymbolTable) : MethodInfo option =
@@ -546,17 +564,41 @@ module Gen =
               methodBuilders = Dictionary<SymbolId, MethodInfo>()
               symbolTable = symbolTable }
 
-        // フェーズ 1: 全型の TypeBuilder を先行宣言してTypeId.Name解決を可能にする。
+        // フェーズ 1a: 全型の TypeBuilder を先行宣言する。
+        // インターフェイス型（role）は TypeAttributes.Interface | Abstract で定義し、
+        // 具象型（data）は通常の class として定義する。
+        // TypeId.Name による役割型参照の解決は Phase 1b で行う（この時点では未登録の可能性がある）。
         for typ in modul.types do
-            let resolvedBaseType =
+            let typeBuilder =
+                if typ.isInterface then
+                    // role 型は CIL インターフェイスとして定義する。
+                    moduleBuilder.DefineType(
+                        typ.name,
+                        TypeAttributes.Public ||| TypeAttributes.Interface ||| TypeAttributes.Abstract)
+                else
+                    let resolvedBaseType =
+                        match typ.baseType with
+                        | Some (TypeId.Native sysType) when not (obj.ReferenceEquals(sysType, null)) && not sysType.IsInterface ->
+                            // .NET 継承クラス（impl A as DotNetClass）: DefineType で基底クラスを指定する。
+                            sysType
+                        | _ ->
+                            // TypeId.Name（role）や None の場合は Phase 1b で AddInterfaceImplementation を使用する。
+                            typeof<obj>
+                    moduleBuilder.DefineType(typ.name, TypeAttributes.Public, resolvedBaseType)
+            typ.builder <- typeBuilder
+            env.typeBuilders.Add(typ.sym, typeBuilder)
+
+        // フェーズ 1b: 具象型に .NET ネイティブ基底インターフェイスの実装を追加する。
+        // role（TypeId.Name）経由のインターフェイス実装は、impl メソッドが現在モジュールレベルの
+        // 静的関数として生成されており、仮想インスタンスメソッドを要求するインターフェイスを
+        // 直接満たせないため、AddInterfaceImplementation を呼ばない（型安全性はセマンティクス層で保証）。
+        // TypeId.Native で指定された .NET インターフェイスのみ AddInterfaceImplementation を追加する。
+        for typ in modul.types do
+            if not typ.isInterface then
                 match typ.baseType with
-                | Some baseTid ->
-                    match resolveType env baseTid with
-                    | null -> typeof<obj>
-                    | runtimeBaseType -> runtimeBaseType
-                | None -> typeof<obj>
-            typ.builder <- moduleBuilder.DefineType(typ.name, TypeAttributes.Public, resolvedBaseType)
-            env.typeBuilders.Add(typ.sym, typ.builder)
+                | Some (TypeId.Native sysType) when not (obj.ReferenceEquals(sysType, null)) && sysType.IsInterface ->
+                    typ.builder.AddInterfaceImplementation(sysType)
+                | _ -> ()
 
         // フェーズ 2: 全型のフィールド・コンストラクタ・invoke メソッドを宣言し、
         // MethodBuilder を methodBuilders へ登録する（本体 IL はまだ生成しない）。

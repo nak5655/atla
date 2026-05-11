@@ -3107,3 +3107,79 @@ fn parse (s: String): Int = s Int'Parse.
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``role declaration produces isInterface HIR type`` () =
+        // role 宣言が isInterface=true の Hir.Type として解析されることを検証する。
+        let source = """
+role Geometry
+    fn area (this: Geometry): Float
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let geometryType =
+                        hirModule.types
+                        |> List.tryFind (fun t ->
+                            match symbolTable.Get(t.sym) with
+                            | Some symInfo -> symInfo.name = "Geometry"
+                            | None -> false)
+                    Assert.True(geometryType.IsSome, "Expected 'Geometry' HIR type to exist")
+                    Assert.True(geometryType.Value.isInterface, "Expected 'Geometry' HIR type to be an interface")
+                    Assert.Equal(1, geometryType.Value.methods.Length)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``role and impl for analyzed without errors`` () =
+        // role 宣言と impl ... for ... の組み合わせが解析エラーなく通ることを検証する。
+        let source = """
+role Geometry
+    fn area (this: Geometry): Float
+
+data Rectangle = { width: Float, height: Float }
+
+impl Geometry for Rectangle
+    fn area (this: Rectangle): Float =
+        this'width * this'height
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    Assert.False(hirModule.hasError, "HIR に ExprError/ErrorStmt が残っています。")
+                    let geometryType =
+                        hirModule.types
+                        |> List.tryFind (fun t ->
+                            match symbolTable.Get(t.sym) with
+                            | Some symInfo -> symInfo.name = "Geometry"
+                            | None -> false)
+                    Assert.True(geometryType.IsSome, "Expected 'Geometry' HIR type to exist")
+                    Assert.True(geometryType.Value.isInterface, "Expected 'Geometry' HIR type to be an interface")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

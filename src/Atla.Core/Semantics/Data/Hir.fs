@@ -136,8 +136,11 @@ module Hir =
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics
 
-    type Type(sid: SymbolId, baseType: TypeId option, fields: Field list, methods: Method list) =
+    type Type(sid: SymbolId, isInterface: bool, baseType: TypeId option, fields: Field list, methods: Method list) =
         member this.sym = sid
+        /// この型がインターフェイス（role 宣言から生成）であるかを示す。
+        /// true の場合、CIL 出力時に TypeAttributes.Interface として生成される。
+        member this.isInterface = isInterface
         member this.baseType = baseType
         member this.fields = fields
         member this.methods = methods
