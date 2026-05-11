@@ -1,0 +1,14 @@
+import System'Console
+
+role Geometry
+    fn area (this: Geometry): Float
+
+data Rectangle = { width: Float, height: Float }
+
+impl Geometry for Rectangle
+    fn area (this: Rectangle): Float =
+        this.width * this.height
+
+fn main: () =
+    let rect = Rectangle { width = 5.0, height = 10.0 }
+    rect'area. Console'WriteLine.
