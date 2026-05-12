@@ -1181,3 +1181,52 @@ impl Color
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("255", stdout.Trim())
+
+    [<Fact>]
+    let ``compileModules should implicitly import Std'Prelude when Std.Prelude exists`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            """
+fn main: String = Prelude'greet.
+"""
+
+        let preludeSource =
+            """
+fn greet (): String = "hello"
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "ImplicitStdPreludeImport"
+                modules =
+                    [ { moduleName = "main"; source = mainSource.Trim() }
+                      { moduleName = "Std.Prelude"; source = preludeSource.Trim() } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``compileModules should not self import Std.Prelude`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let preludeSource =
+            """
+fn main: String = "ok"
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "StdPreludeNoSelfImport"
+                modules = [ { moduleName = "Std.Prelude"; source = preludeSource.Trim() } ]
+                entryModuleName = "Std.Prelude"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))

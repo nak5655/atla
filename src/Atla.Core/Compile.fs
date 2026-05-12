@@ -10,6 +10,9 @@ open System.Collections.Generic
 open System.IO
 
 module Compiler =
+    let private stdPreludeModuleName = "Std.Prelude"
+    let private stdPreludeImportPath = [ "Std"; "Prelude" ]
+
     type ResolvedDependency =
         { name: string
           version: string
@@ -76,6 +79,28 @@ module Compiler =
             | Failure (reason, span) -> Result.Error [ Diagnostic.Error($"Parsing failed in module '{moduleName}': {reason}", span) ]
         | Failure (reason, span) ->
             Result.Error [ Diagnostic.Error($"Lexing failed in module '{moduleName}': {reason}", span) ]
+
+    /// import path が一致する import 宣言が含まれているかを判定する。
+    let private hasImportDecl (path: string list) (moduleAst: Ast.Module) : bool =
+        moduleAst.decls
+        |> List.exists (fun decl ->
+            match decl with
+            | :? Ast.Decl.Import as importDecl -> importDecl.path = path
+            | _ -> false)
+
+    /// `Std.Prelude` が入力に存在する場合、各モジュール先頭へ暗黙 import を注入する。
+    /// `Std.Prelude` 自身と、既に明示 import があるモジュールは対象外とする。
+    let private injectImplicitPreludeImports (moduleAsts: Map<string, Ast.Module>) : Map<string, Ast.Module> =
+        if not (moduleAsts.ContainsKey stdPreludeModuleName) then
+            moduleAsts
+        else
+            moduleAsts
+            |> Map.map (fun moduleName moduleAst ->
+                if moduleName = stdPreludeModuleName || hasImportDecl stdPreludeImportPath moduleAst then
+                    moduleAst
+                else
+                    let preludeImport = Ast.Decl.Import(stdPreludeImportPath, Span.Empty) :> Ast.Decl
+                    Ast.Module(preludeImport :: moduleAst.decls))
 
     /// import 依存グラフを DFS で辿り、エントリモジュールから必要なモジュールのトポロジカル順序を返す。
     let private topoSortModulesFromEntry
@@ -238,6 +263,7 @@ module Compiler =
                 | Result.Error diagnostics ->
                     failed diagnostics None None
                 | Ok moduleAsts ->
+                    let moduleAsts = injectImplicitPreludeImports moduleAsts
                     match topoSortModulesFromEntry request.entryModuleName moduleAsts with
                     | Result.Error diagnostics ->
                         failed diagnostics None None
