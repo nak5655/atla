@@ -606,7 +606,7 @@ module Gen =
             if not typ.typeParams.IsEmpty then
                 let gpBuilders = typeBuilder.DefineGenericParameters(typ.typeParams |> List.toArray)
                 let paramMap = Dictionary<string, Type>()
-                for i, paramName in List.indexed typ.typeParams do
+                for (i, paramName) in List.indexed typ.typeParams do
                     paramMap.[paramName] <- gpBuilders.[i] :> Type
                 genericParamBuildersByType.[typ.sym] <- paramMap
             typ.builder <- typeBuilder

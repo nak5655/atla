@@ -455,15 +455,16 @@ module GenTests =
             failwith $"Gen.genAssembly failed: {message}"
 
         let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
-        // ジェネリック型は .NET メタデータで "Wrapper`1" という内部名を持つ。
-        // GetTypes() でアセンブリ内の全型を検索し Wrapper で始まる型を探す。
-        let wrapperType = loaded.GetTypes() |> Array.tryFind (fun t -> t.Name.StartsWith("Wrapper"))
-        Assert.True(wrapperType.IsSome, "Expected 'Wrapper' type in assembly")
+        // PersistedAssemblyBuilder が生成するジェネリック型の Name は "Wrapper"（arity サフィックスなし）。
+        // IsGenericTypeDefinition と Name で正確に絞り込む。
+        let wrapperType =
+            loaded.GetTypes()
+            |> Array.tryFind (fun t -> t.IsGenericTypeDefinition && t.Name = "Wrapper")
+        Assert.True(wrapperType.IsSome, "Expected 'Wrapper<T>' generic type in assembly")
         let wt = wrapperType.Value
-        Assert.True(wt.IsGenericTypeDefinition, "Wrapper should be a generic type definition")
         let gargs = wt.GetGenericArguments()
         Assert.Equal(1, gargs.Length)
         Assert.Equal("T", gargs.[0].Name)
-        // フィールド value が汎用型パラメータ T を持つことを確認する。
+        // フィールドが汎用型パラメータ T を持つことを確認する。
         let valueField = wt.GetFields(BindingFlags.Public ||| BindingFlags.Instance) |> Array.tryFind (fun f -> f.FieldType.IsGenericParameter && f.FieldType.Name = "T")
         Assert.True(valueField.IsSome, "Expected a field of type T in Wrapper<T>")
