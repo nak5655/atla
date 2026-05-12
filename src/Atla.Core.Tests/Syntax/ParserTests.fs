@@ -918,7 +918,7 @@ fn main (): () =
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses impl declaration with explicit this argument`` () =
+    let ``fileModule parses impl declaration with self receiver argument`` () =
         let program = """
 data Line =
     { slope: Float

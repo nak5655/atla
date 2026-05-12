@@ -47,6 +47,11 @@ module Analyze =
                 | :? Ast.FnArg.Inferred as inferredArg -> inferredArg.name = "self"
                 | _ -> false
 
+            let isInstanceMethod (args: Ast.FnArg list) =
+                match args with
+                | firstArg :: _ when isSelfReceiverArg firstArg -> true
+                | _ -> false
+
             let resolveArgTypeWithSelf (selfType: TypeId) (arg: Ast.FnArg) =
                 match arg with
                 | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> selfType
@@ -226,10 +231,7 @@ module Analyze =
 
                                             match exportInfoOpt with
                                             | Some exportInfo ->
-                                                let isStatic =
-                                                    match methodDecl.args with
-                                                    | firstArg :: _ when isSelfReceiverArg firstArg -> false
-                                                    | _ -> true
+                                                let isStatic = not (isInstanceMethod methodDecl.args)
                                                 Map.add methodDecl.name (exportInfo.symbolId, exportInfo.typ, isStatic) methodMap, diagAcc
                                             | None ->
                                                 methodMap, diagAcc @ [ Diagnostic.Error(sprintf "Imported method '%s' for type '%s' was not found in module exports" methodDecl.name fullTypePath, methodDecl.span) ])
@@ -328,10 +330,9 @@ module Analyze =
                                                     resolvedModule.moduleScope.DeclareVar(methodDecl.name, methodSid)
                                                 Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap, (methodSid, methodDecl) :: declAcc, diagAcc
 
-                                        match methodDecl.args with
-                                        | firstArg :: _ when isSelfReceiverArg firstArg ->
+                                        if isInstanceMethod methodDecl.args then
                                             registerImplMethod false
-                                        | _ ->
+                                        else
                                             registerImplMethod true)
                                     (dataTypeDef.methods, [], [])
 
