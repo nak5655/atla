@@ -1232,6 +1232,27 @@ fn main: String = "ok"
         Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
 
     [<Fact>]
+    let ``compileModules should always include Std.Prelude in compile targets`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            """
+fn main: Int = 1
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "StdPreludeAlwaysIncluded"
+                modules = [ { moduleName = "main"; source = mainSource.Trim() } ]
+                entryModuleName = "Std.Prelude"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
     let ``compileModules should report conflict for duplicate Std.Prelude modules`` () =
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore

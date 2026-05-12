@@ -109,6 +109,13 @@ module Compiler =
         |> List.choose (fun (moduleName, entries) -> if entries.Length >= 2 then Some moduleName else None)
         |> List.sort
 
+    /// コンパイル対象に `Std.Prelude` が存在しない場合、空モジュールを追加する。
+    let private ensureStdPreludeModule (modules: ModuleSource list) : ModuleSource list =
+        if modules |> List.exists (fun moduleSource -> moduleSource.moduleName = stdPreludeModuleName) then
+            modules
+        else
+            modules @ [ { moduleName = stdPreludeModuleName; source = "" } ]
+
     /// import 依存グラフを DFS で辿り、エントリモジュールから必要なモジュールのトポロジカル順序を返す。
     let private topoSortModulesFromEntry
         (entryModuleName: string)
@@ -253,7 +260,8 @@ module Compiler =
         if List.isEmpty request.modules then
             failed [ Diagnostic.Error("No source modules were provided", Span.Empty) ] None None
         else
-            let duplicateModuleNames = findDuplicateModuleNames request.modules
+            let modules = ensureStdPreludeModule request.modules
+            let duplicateModuleNames = findDuplicateModuleNames modules
             if not duplicateModuleNames.IsEmpty then
                 let diagnostics =
                     duplicateModuleNames
@@ -266,7 +274,7 @@ module Compiler =
             else
                 try
                     let parsedModulesResult =
-                        request.modules
+                        modules
                         |> List.fold
                             (fun state moduleSource ->
                                 match state with
