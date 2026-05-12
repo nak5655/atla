@@ -1275,3 +1275,64 @@ fn main (): Unit =
             | None -> Assert.True(false, "no fn declaration found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses generic enum declaration with one type parameter`` () =
+        let program = """
+enum Opt T
+    | None
+    | Some { value: T }
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let enumDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Enum as enumDecl -> Some enumDecl
+                    | _ -> None)
+            match enumDecl with
+            | Some enumDecl ->
+                Assert.Equal("Opt", enumDecl.name)
+                Assert.Equal<string list>(["T"], enumDecl.typeParams)
+                Assert.Equal(2, enumDecl.cases.Length)
+                match enumDecl.cases |> List.item 1 with
+                | :? Ast.EnumCase.Case as someCase ->
+                    Assert.Equal("Some", someCase.name)
+                    Assert.Equal(1, someCase.fields.Length)
+                | _ -> Assert.True(false, "expected Ast.EnumCase.Case for Some case")
+            | None ->
+                Assert.True(false, "enum declaration not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses generic impl declaration with type parameter`` () =
+        let program = """
+enum Opt T
+    | None
+    | Some { value: T }
+
+impl Opt T
+    fn isSome self: Bool = true
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as implDecl -> Some implDecl
+                    | _ -> None)
+            match implDecl with
+            | Some implDecl ->
+                Assert.Equal("Opt", implDecl.typeName)
+                Assert.Equal<string list>(["T"], implDecl.typeParams)
+                Assert.Equal(1, implDecl.methods.Length)
+                Assert.Equal("isSome", implDecl.methods.[0].name)
+            | None ->
+                Assert.True(false, "impl declaration not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

@@ -440,8 +440,10 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Data(name: string, items: DataItem list, span: Span) =
+        type Data(name: string, typeParams: string list, items: DataItem list, span: Span) =
             member this.name = name
+            /// 型パラメータ名のリスト（例: `data Pair A B` では `["A"; "B"]`）。非ジェネリックの場合は空リスト。
+            member this.typeParams = typeParams
             member this.items = items
             member this.span = span
             interface Decl with
@@ -449,8 +451,10 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Enum(name: string, cases: EnumCase list, span: Span) =
+        type Enum(name: string, typeParams: string list, cases: EnumCase list, span: Span) =
             member this.name = name
+            /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
+            member this.typeParams = typeParams
             member this.cases = cases
             member this.span = span
             interface Decl with
@@ -471,8 +475,10 @@ module Ast =
 
         /// `impl TypeName as DotNetClass { methods }` — .NET クラスを継承する形式。
         /// `asTypeName` が `Some` のとき `forTypeName` と `byFieldName` は常に `None`（パーサーが保証）。
-        type Impl(typeName: string, asTypeName: string option, forTypeName: string option, byFieldName: string option, methods: Fn list, span: Span) =
+        type Impl(typeName: string, typeParams: string list, asTypeName: string option, forTypeName: string option, byFieldName: string option, methods: Fn list, span: Span) =
             member this.typeName = typeName
+            /// 型パラメータ名のリスト（例: `impl Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
+            member this.typeParams = typeParams
             member this.asTypeName = asTypeName
             member this.forTypeName = forTypeName
             member this.byFieldName = byFieldName

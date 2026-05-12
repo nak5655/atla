@@ -31,6 +31,8 @@ let rec formatType (resolve: SymbolId -> string) (tid: TypeId) : string =
     | TypeId.Meta _ -> "?"
     | TypeId.Native t -> t.Name
     | TypeId.Error msg -> sprintf "error(%s)" msg
+    // 型パラメータ（TypeVar）は型パラメータ名をそのまま表示する。
+    | TypeId.TypeVar name -> name
 
 /// SymbolTable を使って TypeId をフォーマットする。
 let formatTypeWithTable (symbolTable: SymbolTable) (tid: TypeId) : string =

@@ -497,6 +497,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let dataDecl =
             Ast.Decl.Data(
                 "Line",
+                [],
                 [ Ast.DataItem.Field("slope", floatType, span) :> Ast.DataItem
                   Ast.DataItem.Field("intercept", floatType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
@@ -505,7 +506,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
         let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("self", span) :> Ast.Expr, "slope", span) :> Ast.Expr
         let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, span)
-        let implDecl = Ast.Decl.Impl("Line", None, None, None, [ evalFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
             Ast.Expr.DataInit(
@@ -540,11 +541,12 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let dataDecl =
             Ast.Decl.Data(
                 "Line",
+                [],
                 [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
-        let implDecl = Ast.Decl.Impl("Line", None, None, None, [ oneFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
         let staticCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(Ast.Expr.Id("Line", span) :> Ast.Expr, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
         let mainDecl = Ast.Decl.Fn("main", [], intType, staticCall, span) :> Ast.Decl
 
@@ -570,11 +572,12 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let dataDecl =
             Ast.Decl.Data(
                 "Line",
+                [],
                 [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
         let helperFn = Ast.Decl.Fn("helper", [], intType, Ast.Expr.Int(42, span) :> Ast.Expr, span)
-        let implDecl = Ast.Decl.Impl("Line", None, None, None, [ helperFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ helperFn ], span) :> Ast.Decl
 
         // main calls `helper` as a bare name — this was previously "Undefined variable 'helper'"
         let bareNameCall = Ast.Expr.Apply(Ast.Expr.Id("helper", span) :> Ast.Expr, [], span) :> Ast.Expr
@@ -597,11 +600,12 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let dataDecl =
             Ast.Decl.Data(
                 "Line",
+                [],
                 [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
-        let implDecl = Ast.Decl.Impl("Line", None, None, None, [ oneFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
         let lineInit =
             Ast.Expr.DataInit(
                 "Line",
@@ -3311,6 +3315,90 @@ impl Geometry for Rectangle
                             | None -> false)
                     Assert.True(geometryType.IsSome, "Expected 'Geometry' HIR type to exist")
                     Assert.True(geometryType.Value.isInterface, "Expected 'Geometry' HIR type to be an interface")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``generic enum declaration produces HIR type with typeParams`` () =
+        // `enum Opt T` が typeParams=["T"] を持つ Hir.Type として解析されることを検証する。
+        let source = """
+enum Opt T
+    | None
+    | Some { value: T }
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let optType =
+                        hirModule.types
+                        |> List.tryFind (fun t ->
+                            match symbolTable.Get(t.sym) with
+                            | Some symInfo -> symInfo.name = "Opt"
+                            | None -> false)
+                    Assert.True(optType.IsSome, "Expected 'Opt' HIR type to exist")
+                    Assert.Equal<string list>(["T"], optType.Value.typeParams)
+                    let payloadType =
+                        hirModule.types
+                        |> List.tryFind (fun t ->
+                            match symbolTable.Get(t.sym) with
+                            // ペイロード型名は "Opt.__enum_payload_Some_type" の形式。
+                            | Some symInfo -> symInfo.name.Contains("__enum_payload_Some")
+                            | None -> false)
+                    match payloadType with
+                    | Some p ->
+                        Assert.Equal<string list>(["T"], p.typeParams)
+                        // フィールド value の型が TypeId.TypeVar "T" であることを確認する。
+                        match p.fields |> List.tryFind (fun f -> symbolTable.Get(f.sym) |> Option.map (fun s -> s.name.EndsWith(".value")) |> Option.defaultValue false) with
+                        | Some field -> Assert.Equal(TypeId.TypeVar "T", field.typ)
+                        | None -> Assert.True(false, "Expected 'value' field in payload type")
+                    | None -> Assert.True(false, "Expected payload type for Some case")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``generic enum with impl analyzes without errors`` () =
+        // ジェネリック enum + impl の組み合わせが解析エラーなく通ることを検証する。
+        let source = """
+enum Opt T
+    | None
+    | Some { value: T }
+
+impl Opt T
+    fn isSome self: Bool =
+        match self
+            | Opt'None -> False
+            | Opt'Some { value } -> True
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    Assert.False(hirModule.hasError, "HIR に ExprError/ErrorStmt が残っています。")
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")

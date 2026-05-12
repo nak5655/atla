@@ -57,6 +57,8 @@ module ExprAnalyze =
             | None -> "<named type>"
         | TypeId.Meta _ -> "unknown"
         | TypeId.Error _ -> "<error>"
+        // 型パラメータ（TypeVar）は型パラメータ名をそのまま表示する。
+        | TypeId.TypeVar name -> name
 
     // UnifyError を人間が読みやすいメッセージへ変換する。
     // formatTypeForDisplay を使い、型変数（Meta）を "unknown" に、既知の型を短い名前で表示する。
