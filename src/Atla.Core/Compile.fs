@@ -12,6 +12,7 @@ open System.IO
 module Compiler =
     let private stdPreludeModuleName = "Std.Prelude"
     let private stdPreludeImportPath = [ "Std"; "Prelude" ]
+    let private bundledStdPreludeResourceName = "Atla.Core.Std.Prelude.atla"
 
     type ResolvedDependency =
         { name: string
@@ -109,12 +110,23 @@ module Compiler =
         |> List.choose (fun (moduleName, entries) -> if entries.Length >= 2 then Some moduleName else None)
         |> List.sort
 
-    /// コンパイル対象に `Std.Prelude` が存在しない場合、空モジュールを追加する。
+    /// コンパイラに同梱された `Std.Prelude` ソースを取得する。
+    let private bundledStdPreludeSource: Lazy<string> =
+        lazy (
+            let asm = typeof<CompileModulesRequest>.Assembly
+            use stream = asm.GetManifestResourceStream(bundledStdPreludeResourceName)
+            if isNull stream then
+                invalidOp $"Bundled prelude resource was not found: {bundledStdPreludeResourceName}"
+            use reader = new StreamReader(stream)
+            reader.ReadToEnd()
+        )
+
+    /// コンパイル対象に `Std.Prelude` が存在しない場合、同梱 Prelude を追加する。
     let private ensureStdPreludeModule (modules: ModuleSource list) : ModuleSource list =
         if modules |> List.exists (fun moduleSource -> moduleSource.moduleName = stdPreludeModuleName) then
             modules
         else
-            modules @ [ { moduleName = stdPreludeModuleName; source = "" } ]
+            modules @ [ { moduleName = stdPreludeModuleName; source = bundledStdPreludeSource.Value } ]
 
     /// import 依存グラフを DFS で辿り、エントリモジュールから必要なモジュールのトポロジカル順序を返す。
     let private topoSortModulesFromEntry
