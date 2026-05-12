@@ -15,7 +15,7 @@ module GenTests =
         let mainSym = SymbolId 101
         let useFooSym = SymbolId 102
 
-        let mirType = Mir.Type("Foo", typeSym, false, None, [], [], [])
+        let mirType = Mir.Type("Foo", typeSym, false, None, [], [], [], [])
 
         let mainMethod =
             Mir.Method(
@@ -331,7 +331,7 @@ module GenTests =
         let typeSym = SymbolId 600
         let mainSym = SymbolId 601
 
-        let mirType = Mir.Type("MyError", typeSym, false, Some(TypeId.Native typeof<Exception>), (* fields *) [], (* ctors *) [], (* methods *) [])
+        let mirType = Mir.Type("MyError", typeSym, false, Some(TypeId.Native typeof<Exception>), (* typeParams *) [], (* fields *) [], (* ctors *) [], (* methods *) [])
 
         let mainMethod =
             Mir.Method(
@@ -424,3 +424,47 @@ module GenTests =
         // InvalidProgramException が発生しないこと、および正しい計算結果（3.0）が返ることを確認する。
         let result = mainMi.Invoke(null, [||]) :?> float
         Assert.Equal(3.0, result)
+
+    /// ジェネリック型（typeParams が非空の Mir.Type）に対して
+    /// DefineGenericParameters が正しく呼ばれ、GenericTypeParameterBuilder が
+    /// フィールド型として使用されることを検証する。
+    [<Fact>]
+    let ``GenAssembly generates generic type when typeParams is non-empty`` () =
+        let typeSym = SymbolId 900
+        let fieldSym = SymbolId 901
+        let mainSym = SymbolId 902
+
+        // フィールド value: T（TypeId.TypeVar "T"）を持つジェネリック型 Wrapper<T>。
+        let mirField = Mir.Field(fieldSym, TypeId.TypeVar "T")
+        let mirType = Mir.Type("Wrapper", typeSym, false, None, ["T"], [ mirField ], [], [])
+
+        let mainMethod =
+            Mir.Method("main", mainSym, [], TypeId.Unit, [ Mir.Ins.Ret ], Mir.Frame.empty)
+
+        let assembly =
+            Mir.Assembly("GenGenericType", [ Mir.Module("MainModule", [ mirType ], [ mainMethod ]) ])
+
+        let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
+        Directory.CreateDirectory(outputDir) |> ignore
+
+        let asmPath = Path.Join(outputDir, "gen-generic-type.dll")
+        match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
+        | { succeeded = true } -> ()
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+            failwith $"Gen.genAssembly failed: {message}"
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
+        // PersistedAssemblyBuilder が生成するジェネリック型の Name は "Wrapper"（arity サフィックスなし）。
+        // IsGenericTypeDefinition と Name で正確に絞り込む。
+        let wrapperType =
+            loaded.GetTypes()
+            |> Array.tryFind (fun t -> t.IsGenericTypeDefinition && t.Name = "Wrapper")
+        Assert.True(wrapperType.IsSome, "Expected 'Wrapper<T>' generic type in assembly")
+        let wt = wrapperType.Value
+        let gargs = wt.GetGenericArguments()
+        Assert.Equal(1, gargs.Length)
+        Assert.Equal("T", gargs.[0].Name)
+        // フィールドが汎用型パラメータ T を持つことを確認する。
+        let valueField = wt.GetFields(BindingFlags.Public ||| BindingFlags.Instance) |> Array.tryFind (fun f -> f.FieldType.IsGenericParameter && f.FieldType.Name = "T")
+        Assert.True(valueField.IsSome, "Expected a field of type T in Wrapper<T>")

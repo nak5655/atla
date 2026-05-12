@@ -26,6 +26,9 @@ type TypeId =
     | Meta of TypeMeta
     | Native of System.Type
     | Error of message: string
+    /// ジェネリック型定義のスコープ内で使われる型パラメータ（例: `enum Opt T` の `T`）。
+    /// この TypeId は型検査・HIR/MIR を経て Gen.fs で GenericTypeParameterBuilder へ解決される。
+    | TypeVar of name: string
 
 module TypeId =
     let rec fromSystemType (t: System.Type) : TypeId =
@@ -161,6 +164,8 @@ module Type =
                 && (List.zip fnArgs dArgs |> List.forall (fun (a, da) -> canUnify subst a da))
                 && canUnify subst fnRet dRet
         | Native t, Fn _ when TypeId.isDelegateType t -> canUnify subst tid2 tid1
+        // 同名の型パラメータは互換とみなす。
+        | TypeVar n1, TypeVar n2 -> n1 = n2
         | Meta m, tid ->
             match subst.TryGetValue(m) with
             | true, resolvedTid -> canUnify subst resolvedTid tid
@@ -257,6 +262,8 @@ module Type =
             match unify subst tid2 tid1 with
             | Result.Ok _ -> Result.Ok (Native t)
             | Result.Error e -> Result.Error e
+        // 同名の型パラメータは同一型として単一化する。
+        | TypeVar n1, TypeVar n2 when n1 = n2 -> Result.Ok (TypeVar n1)
         | Meta m, tid
         | tid, Meta m ->
             let resolvedTid = resolve subst tid

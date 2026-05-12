@@ -26,6 +26,8 @@ module AnalyzeEnv =
         { typeSid: SymbolId
           baseType: TypeId option
           delegatedByFieldName: string option
+          /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
+          typeParams: string list
           fields: DataFieldDef list
           hiddenFields: DataFieldDef list
           enumInfo: EnumTypeDef option

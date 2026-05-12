@@ -104,11 +104,13 @@ module ClosedHir =
         member this.span = span
 
     /// クロージャー変換後の型定義。
-    type Type(sid: SymbolId, isInterface: bool, baseType: TypeId option, fields: Field list, methods: Method list) =
+    type Type(sid: SymbolId, isInterface: bool, baseType: TypeId option, typeParams: string list, fields: Field list, methods: Method list) =
         member this.sym = sid
         /// この型がインターフェイス（role 宣言から生成）であるかを示す。
         member this.isInterface = isInterface
         member this.baseType = baseType
+        /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
+        member this.typeParams = typeParams
         member this.fields = fields
         member this.methods = methods
 

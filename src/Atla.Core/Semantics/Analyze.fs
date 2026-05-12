@@ -75,12 +75,23 @@ module Analyze =
                 resolvedModule.dataDecls
                 |> List.fold
                     (fun defs resolvedDataDecl ->
+                        // 型パラメータをサブスコープに登録してフィールド型を解決する。
+                        // TypeId.TypeVar はジェネリック型パラメータとして Gen.fs まで伝播し、
+                        // GenericTypeParameterBuilder へ解決される。
+                        let fieldNameEnv =
+                            if resolvedDataDecl.typeParams.IsEmpty then
+                                bootstrapNameEnv
+                            else
+                                let sub = bootstrapNameEnv.sub()
+                                for paramName in resolvedDataDecl.typeParams do
+                                    sub.scope.DeclareType(paramName, TypeId.TypeVar paramName)
+                                sub
                         let resolvedFields =
                             resolvedDataDecl.decl.items
                             |> List.choose (fun item ->
                                 match item with
                                 | :? Ast.DataItem.Field as fieldItem ->
-                                    let fieldType = bootstrapNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                    let fieldType = fieldNameEnv.resolveTypeExpr fieldItem.typeExpr
                                     let fieldSid = symbolTable.NextId()
                                     symbolTable.Add(fieldSid, { name = $"{resolvedDataDecl.decl.name}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
                                     Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; span = fieldItem.span }
@@ -90,12 +101,13 @@ module Analyze =
                             resolvedFields
                             |> List.map (fun fieldDef ->
                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                        types.Add(Hir.Type(resolvedDataDecl.typeSid, false, None, hirFields, []))
+                        types.Add(Hir.Type(resolvedDataDecl.typeSid, false, None, resolvedDataDecl.typeParams, hirFields, []))
                         Map.add
                             resolvedDataDecl.decl.name
                             { typeSid = resolvedDataDecl.typeSid
                               baseType = None
                               delegatedByFieldName = None
+                              typeParams = resolvedDataDecl.typeParams
                               fields = resolvedFields
                               hiddenFields = []
                               enumInfo = None
@@ -109,6 +121,15 @@ module Analyze =
                 |> List.fold
                     (fun defs resolvedEnumDecl ->
                         let typeName = resolvedEnumDecl.decl.name
+                        // 型パラメータをサブスコープに登録してケースのフィールド型を解決する。
+                        let caseFieldNameEnv =
+                            if resolvedEnumDecl.typeParams.IsEmpty then
+                                bootstrapNameEnv
+                            else
+                                let sub = bootstrapNameEnv.sub()
+                                for paramName in resolvedEnumDecl.typeParams do
+                                    sub.scope.DeclareType(paramName, TypeId.TypeVar paramName)
+                                sub
                         let tagFieldSid = symbolTable.NextId()
                         let tagFieldDef =
                             let fieldName = enumTagFieldName typeName
@@ -129,7 +150,7 @@ module Analyze =
                                         enumCase.fields
                                         |> List.map (fun caseField ->
                                             let fieldSid = symbolTable.NextId()
-                                            let fieldType = bootstrapNameEnv.resolveTypeExpr caseField.typeExpr
+                                            let fieldType = caseFieldNameEnv.resolveTypeExpr caseField.typeExpr
                                             let symbolName = $"{payloadTypeName}.{caseField.name}"
                                             symbolTable.Add(fieldSid, { name = symbolName; typ = fieldType; kind = SymbolKind.Local() })
                                             { name = caseField.name
@@ -165,7 +186,8 @@ module Analyze =
                                                 payloadFieldDefs
                                                 |> List.map (fun fieldDef ->
                                                     Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                                            Hir.Type(payloadTypeSid, false, None, payloadFields, [])
+                                            // payload 型にも型パラメータを伝播する（GenType の型引数解決に必要）。
+                                            Hir.Type(payloadTypeSid, false, None, resolvedEnumDecl.typeParams, payloadFields, [])
 
                                         { name = enumCase.name
                                           tag = tag
@@ -198,13 +220,14 @@ module Analyze =
                             |> List.map (fun fieldDef ->
                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
 
-                        types.Add(Hir.Type(resolvedEnumDecl.typeSid, false, None, rootFields, []))
+                        types.Add(Hir.Type(resolvedEnumDecl.typeSid, false, None, resolvedEnumDecl.typeParams, rootFields, []))
 
                         Map.add
                             typeName
                             { typeSid = resolvedEnumDecl.typeSid
                               baseType = None
                               delegatedByFieldName = None
+                              typeParams = resolvedEnumDecl.typeParams
                               fields = []
                               hiddenFields = hiddenRootFields
                               enumInfo =
@@ -255,7 +278,7 @@ module Analyze =
                                 | _ -> None)
                             |> List.choose id
                         Hir.Method(methodSid, argSids, Hir.Expr.Unit(roleSpan), methodType, roleSpan))
-                types.Add(Hir.Type(resolvedRoleDecl.typeSid, true, None, [], hirMethods))
+                types.Add(Hir.Type(resolvedRoleDecl.typeSid, true, None, [], [], hirMethods))
 
             let importedTypeDefs, importedTypeDiagnostics =
                 resolvedModule.importedTypeAliases
@@ -314,11 +337,12 @@ module Analyze =
                                             resolvedFields
                                             |> List.map (fun fieldDef ->
                                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                                        types.Add(Hir.Type(typeSid, false, None, hirFields, []))
+                                        types.Add(Hir.Type(typeSid, false, None, [], hirFields, []))
 
                                     { typeSid = typeSid
                                       baseType = None
                                       delegatedByFieldName = None
+                                      typeParams = []
                                       fields = resolvedFields
                                       hiddenFields = []
                                       enumInfo = None
@@ -409,7 +433,7 @@ module Analyze =
                                                                 payloadFieldDefs
                                                                 |> List.map (fun fieldDef ->
                                                                     Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                                                            Some (Hir.Type(payloadTypeSid, false, None, payloadFields, []))
+                                                            Some (Hir.Type(payloadTypeSid, false, None, [], payloadFields, []))
                                                     { name = enumCase.name
                                                       tag = tag
                                                       payloadTypeSid = Some payloadTypeSid
@@ -440,11 +464,12 @@ module Analyze =
                                             hiddenFields
                                             |> List.map (fun fieldDef ->
                                                 Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                                        types.Add(Hir.Type(typeSid, false, None, rootFields, []))
+                                        types.Add(Hir.Type(typeSid, false, None, [], rootFields, []))
 
                                     { typeSid = typeSid
                                       baseType = None
                                       delegatedByFieldName = None
+                                      typeParams = []
                                       fields = []
                                       hiddenFields = hiddenFields
                                       enumInfo =
@@ -456,6 +481,7 @@ module Analyze =
                                     { typeSid = typeSid
                                       baseType = None
                                       delegatedByFieldName = None
+                                      typeParams = []
                                       fields = []
                                       hiddenFields = []
                                       enumInfo = None
@@ -568,6 +594,15 @@ module Analyze =
                         | None ->
                             defs, methodDecls, diagnostics @ [ Diagnostic.Error(sprintf "Undefined impl target type '%s'" targetTypeName, implDecl.span) ]
                         | Some dataTypeDef ->
+                            // 型パラメータをサブスコープに登録し、メソッドの引数型・戻り型解決に使用する。
+                            let implNameEnv =
+                                if implDecl.typeParams.IsEmpty then
+                                    bootstrapNameEnv
+                                else
+                                    let sub = bootstrapNameEnv.sub()
+                                    for paramName in implDecl.typeParams do
+                                        sub.scope.DeclareType(paramName, TypeId.TypeVar paramName)
+                                    sub
                             let foldResult =
                                 implDecl.methods
                                 |> List.fold
@@ -581,7 +616,7 @@ module Analyze =
                                                     methodDecl.args
                                                     |> List.map (resolveArgTypeWithSelf (TypeId.Name typeSid))
                                                     |> List.filter (fun t -> t <> TypeId.Unit)
-                                                let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
+                                                let retType = implNameEnv.resolveTypeExpr methodDecl.ret
                                                 let methodType = TypeId.Fn(argTypes, retType)
                                                 let methodSid = symbolTable.NextId()
                                                 symbolTable.Add(methodSid, { name = $"{targetTypeName}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
@@ -633,7 +668,7 @@ module Analyze =
                     let baseTypeOpt =
                         if typ.isInterface then typ.baseType
                         else baseTypeById |> Map.tryFind typ.sym.id |> Option.flatten
-                    Hir.Type(typ.sym, typ.isInterface, baseTypeOpt, typ.fields, typ.methods))
+                    Hir.Type(typ.sym, typ.isInterface, baseTypeOpt, typ.typeParams, typ.fields, typ.methods))
 
             let untypedHirModule =
                 Hir.Module(

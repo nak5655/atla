@@ -56,7 +56,10 @@ module Gen =
           fieldBuilders: Dictionary<SymbolId, FieldBuilder>
           methodBuilders: Dictionary<SymbolId, MethodInfo>
           // インポート型（TypeId.Name sid）を System.Type へ解決するためのシンボルテーブル。
-          symbolTable: SymbolTable }
+          symbolTable: SymbolTable
+          // 現在処理中のジェネリック型の型パラメータビルダー（型パラメータ名 -> System.Type）。
+          // 型メンバー宣言・本体生成フェーズで TypeId.TypeVar を解決するために使用する。
+          typeParamBuilders: Dictionary<string, Type> }
 
     // MIRのTypeIdをCIL生成用のSystem.Typeへ解決する
     let private resolveType (env: Env) (tid: TypeId) : Type =
@@ -69,6 +72,14 @@ module Gen =
                 | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
                     Some sysType
                 | _ -> None
+
+        // TypeId.TypeVar は現在処理中のジェネリック型パラメータへ解決する。
+        match tid with
+        | TypeId.TypeVar name ->
+            match env.typeParamBuilders.TryGetValue(name) with
+            | true, builder -> builder
+            | false, _ -> failwithf "Unresolved type parameter '%s' in CIL generation" name
+        | _ ->
 
         match TypeId.tryResolveToSystemType resolveName tid with
         | Some resolvedType -> resolvedType
@@ -562,12 +573,18 @@ module Gen =
               typeCtors = Dictionary<SymbolId, ConstructorBuilder>()
               fieldBuilders = Dictionary<SymbolId, FieldBuilder>()
               methodBuilders = Dictionary<SymbolId, MethodInfo>()
-              symbolTable = symbolTable }
+              symbolTable = symbolTable
+              // 型パラメータビルダーは型処理フェーズで逐次設定・クリアする可変テーブル。
+              typeParamBuilders = Dictionary<string, Type>() }
+
+        // 型ごとの型パラメータビルダーを保持するテーブル（Phase 1a で構築、Phase 2/4 で参照）。
+        let genericParamBuildersByType = Dictionary<SymbolId, Dictionary<string, Type>>()
 
         // フェーズ 1a: 全型の TypeBuilder を先行宣言する。
         // インターフェイス型（role）は TypeAttributes.Interface | Abstract で定義し、
         // 具象型（data）は通常の class として定義する。
         // TypeId.Name による役割型参照の解決は Phase 1b で行う（この時点では未登録の可能性がある）。
+        // ジェネリック型の場合は DefineGenericParameters を呼び出して型パラメータを登録する。
         for typ in modul.types do
             let typeBuilder =
                 if typ.isInterface then
@@ -585,6 +602,13 @@ module Gen =
                             // TypeId.Name（role）や None の場合は Phase 1b で AddInterfaceImplementation を使用する。
                             typeof<obj>
                     moduleBuilder.DefineType(typ.name, TypeAttributes.Public, resolvedBaseType)
+            // ジェネリック型パラメータを定義し、名前→GenericTypeParameterBuilder のマップを構築する。
+            if not typ.typeParams.IsEmpty then
+                let gpBuilders = typeBuilder.DefineGenericParameters(typ.typeParams |> List.toArray)
+                let paramMap = Dictionary<string, Type>()
+                for (i, paramName) in List.indexed typ.typeParams do
+                    paramMap.[paramName] <- gpBuilders.[i] :> Type
+                genericParamBuildersByType.[typ.sym] <- paramMap
             typ.builder <- typeBuilder
             env.typeBuilders.Add(typ.sym, typeBuilder)
 
@@ -602,13 +626,22 @@ module Gen =
 
         // フェーズ 2: 全型のフィールド・コンストラクタ・invoke メソッドを宣言し、
         // MethodBuilder を methodBuilders へ登録する（本体 IL はまだ生成しない）。
+        // ジェネリック型の場合は先に型パラメータビルダーを env へ設定する。
         for typ in modul.types do
+            env.typeParamBuilders.Clear()
+            match genericParamBuildersByType.TryGetValue(typ.sym) with
+            | true, paramMap ->
+                for kvp in paramMap do
+                    env.typeParamBuilders.[kvp.Key] <- kvp.Value
+            | false, _ -> ()
             declareTypeMembers env typ
 
         // フェーズ 3: モジュール直下メソッド（静的グローバル）を宣言し、
         // MethodBuilder を methodBuilders へ登録する（本体 IL はまだ生成しない）。
         // 全 MethodBuilder を先行登録することで、invoke メソッド本体が
         // モジュールレベル関数を CallSym/FnDelegate で参照できるようになる。
+        // グローバル関数は型パラメータを持たないため typeParamBuilders をクリアしておく。
+        env.typeParamBuilders.Clear()
         let globalsTypeBuilder =
             moduleBuilder.DefineType(
                 $"{modul.name}.Globals",
@@ -623,11 +656,20 @@ module Gen =
         // フェーズ 4: 全型の本体 IL を生成して型を確定（CreateType）する。
         // この時点で全 MethodBuilder（型 invoke + モジュールグローバル）が登録済みのため、
         // 相互参照（クロージャー → グローバル関数 など）が正しく解決される。
+        // ジェネリック型の場合は型パラメータビルダーを再設定してから本体を生成する。
         let mainInTypes =
             modul.types
-            |> List.tryPick (fun typ -> genTypeBodies env typ)
+            |> List.tryPick (fun typ ->
+                env.typeParamBuilders.Clear()
+                match genericParamBuildersByType.TryGetValue(typ.sym) with
+                | true, paramMap ->
+                    for kvp in paramMap do
+                        env.typeParamBuilders.[kvp.Key] <- kvp.Value
+                | false, _ -> ()
+                genTypeBodies env typ)
 
         // フェーズ 5: モジュールレベルメソッドの本体 IL を生成する。
+        env.typeParamBuilders.Clear()
         for method in modul.methods do
             genMethod env method
 

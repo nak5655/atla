@@ -7,10 +7,12 @@ open System.Runtime.Loader
 module Resolve =
     type ResolvedDataDecl =
         { typeSid: SymbolId
+          typeParams: string list
           decl: Ast.Decl.Data }
 
     type ResolvedEnumDecl =
         { typeSid: SymbolId
+          typeParams: string list
           decl: Ast.Decl.Enum }
 
     type ResolvedRoleDecl =
@@ -143,7 +145,7 @@ module Resolve =
                     let typeSid = symbolTable.NextId()
                     symbolTable.Add(typeSid, { name = dataDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
                     moduleScope.DeclareType(dataDecl.name, TypeId.Name typeSid)
-                    dataDecls.Add({ typeSid = typeSid; decl = dataDecl })
+                    dataDecls.Add({ typeSid = typeSid; typeParams = dataDecl.typeParams; decl = dataDecl })
             | :? Ast.Decl.Enum as enumDecl ->
                 match moduleScope.ResolveType(enumDecl.name) with
                 | Some _ ->
@@ -152,7 +154,7 @@ module Resolve =
                     let typeSid = symbolTable.NextId()
                     symbolTable.Add(typeSid, { name = enumDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
                     moduleScope.DeclareType(enumDecl.name, TypeId.Name typeSid)
-                    enumDecls.Add({ typeSid = typeSid; decl = enumDecl })
+                    enumDecls.Add({ typeSid = typeSid; typeParams = enumDecl.typeParams; decl = enumDecl })
             | :? Ast.Decl.Role as roleDecl ->
                 // role 型を型スコープへ事前登録し、同一モジュール内での型注釈で参照可能にする。
                 match moduleScope.ResolveType(roleDecl.name) with

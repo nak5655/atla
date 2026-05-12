@@ -191,13 +191,15 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Type(name: string, sid: SymbolId, isInterface: bool, baseType: TypeId option, fields: Field list, ctors: Constructor list, methods: Method list) =
+    type Type(name: string, sid: SymbolId, isInterface: bool, baseType: TypeId option, typeParams: string list, fields: Field list, ctors: Constructor list, methods: Method list) =
         let mutable _builder: TypeBuilder option = None
         member this.name = name
         member this.sym = sid
         /// この型がインターフェイス（role 宣言から生成）であるかを示す。
         member this.isInterface = isInterface
         member this.baseType = baseType
+        /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
+        member this.typeParams = typeParams
         member this.fields = fields
         member this.ctors = ctors
         member this.methods = methods
