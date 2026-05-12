@@ -79,3 +79,21 @@ module LexerTests =
                 | _ -> false)
         | Failure(reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``tokenize recognizes enum and match keywords`` () =
+        let program = "enum Color match value"
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success(tokens, _) ->
+            Assert.Contains(tokens, fun token ->
+                match token with
+                | :? Token.Keyword as kw -> kw.str = "enum"
+                | _ -> false)
+            Assert.Contains(tokens, fun token ->
+                match token with
+                | :? Token.Keyword as kw -> kw.str = "match"
+                | _ -> false)
+        | Failure(reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

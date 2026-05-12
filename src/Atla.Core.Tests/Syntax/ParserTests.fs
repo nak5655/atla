@@ -364,6 +364,111 @@ fn main (): Person = Person { name = "Alice", age = 20 }
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses enum declaration`` () =
+        let program = """
+enum Color
+    | Black
+    | Rgb { r: Int, g: Int, b: Int }
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let enumDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Enum as enumDecl -> Some enumDecl
+                    | _ -> None)
+
+            match enumDecl with
+            | Some enumDecl ->
+                Assert.Equal("Color", enumDecl.name)
+                Assert.Equal(2, enumDecl.cases.Length)
+                match enumDecl.cases |> List.last with
+                | :? Ast.EnumCase.Case as caseDecl ->
+                    Assert.Equal("Rgb", caseDecl.name)
+                    Assert.Equal(3, caseDecl.fields.Length)
+                | _ ->
+                    Assert.True(false, "expected Ast.EnumCase.Case for enum case")
+            | None ->
+                Assert.True(false, "enum declaration not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses enum initialization expression with payload`` () =
+        let program = """
+enum Color
+    | Rgb { r: Int, g: Int, b: Int }
+
+fn main (): Color = Color'Rgb { r = 255, g = 0, b = 0 }
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let mainDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match mainDecl with
+            | Some fnDecl ->
+                match terminalBodyExpr fnDecl.body with
+                | :? Ast.Expr.EnumInit as initExpr ->
+                    Assert.Equal("Color", initExpr.typeName)
+                    Assert.Equal("Rgb", initExpr.caseName)
+                    Assert.Equal(3, initExpr.fields.Length)
+                | _ ->
+                    Assert.True(false, "expected Ast.Expr.EnumInit in main body")
+            | None ->
+                Assert.True(false, "main declaration not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses match expression with enum patterns`` () =
+        let program = """
+fn main (color: Color): Int = match color
+    | Color'Black -> 0
+    | Color'Rgb { r, .. } -> r
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let mainDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+
+            match mainDecl with
+            | Some fnDecl ->
+                match terminalBodyExpr fnDecl.body with
+                | :? Ast.Expr.Match as matchExpr ->
+                    Assert.Equal(2, matchExpr.arms.Length)
+                    match matchExpr.arms |> List.last with
+                    | :? Ast.MatchArm.Arm as arm ->
+                        match arm.pattern with
+                        | :? Ast.Pattern.Enum as enumPattern ->
+                            Assert.Equal("Color", enumPattern.typeName)
+                            Assert.Equal("Rgb", enumPattern.caseName)
+                            Assert.True(enumPattern.hasRest)
+                            Assert.Single(enumPattern.fields) |> ignore
+                        | _ ->
+                            Assert.True(false, "expected Ast.Pattern.Enum in match arm")
+                    | _ ->
+                        Assert.True(false, "expected Ast.MatchArm.Arm in match expression")
+                | _ ->
+                    Assert.True(false, "expected Ast.Expr.Match in main body")
+            | None ->
+                Assert.True(false, "main declaration not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses apostrophe import syntax`` () =
         let program = """
 import System'Console
