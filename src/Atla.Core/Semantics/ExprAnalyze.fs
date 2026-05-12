@@ -992,10 +992,7 @@ module ExprAnalyze =
             /// Resolve `base'member` using current `this` and the base type fixed by impl metadata.
             /// `base` is valid only inside instance impl methods.
             let resolveMemberFromBaseReceiver () : Result<Hir.Expr, string> =
-                let selfSymbolIdOpt =
-                    nameEnv.resolveVar "self"
-                    |> List.tryHead
-                    |> Option.orElseWith (fun () -> nameEnv.resolveVar "this" |> List.tryHead)
+                let selfSymbolIdOpt = nameEnv.resolveVar "self" |> List.tryHead
                 match selfSymbolIdOpt with
                 | None ->
                     Result.Error("Keyword 'base' can only be used inside an instance impl method")

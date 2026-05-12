@@ -45,7 +45,6 @@ module Analyze =
             let isSelfReceiverArg (arg: Ast.FnArg) =
                 match arg with
                 | :? Ast.FnArg.Inferred as inferredArg -> inferredArg.name = "self"
-                | :? Ast.FnArg.Named as namedArg -> namedArg.name = "this"
                 | _ -> false
 
             // data 宣言を型定義へ正規化し、後続の式解析で参照するメタデータを構築する。

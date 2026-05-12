@@ -8,11 +8,11 @@ role Geometry
 
 impl Geometry for Geometry'Circle
     fn area self: Float =
-        3.14159 * this.radius * this.radius
+        3.14159 * self'radius * self'radius
 
 impl Geometry for Geometry'Rectangle
     fn area self: Float =
-        this.width * this.height
+        self'width * self'height
 
 fn main: () =
     let rect = Geometry'Rectangle { width = 5.0, height = 10.0 }

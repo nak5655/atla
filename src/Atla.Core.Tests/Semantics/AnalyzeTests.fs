@@ -355,10 +355,9 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``semantic analysis accepts impl method with explicit this and data member access`` () =
+    let ``semantic analysis accepts impl method with self receiver and data member access`` () =
         let span = Span.Empty
         let floatType = Ast.TypeExpr.Id("Float", span) :> Ast.TypeExpr
-        let lineType = Ast.TypeExpr.Id("Line", span) :> Ast.TypeExpr
         let dataDecl =
             Ast.Decl.Data(
                 "Line",
@@ -366,9 +365,9 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                   Ast.DataItem.Field("intercept", floatType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
-        let thisArg = Ast.FnArg.Named("this", lineType, span) :> Ast.FnArg
+        let thisArg = Ast.FnArg.Inferred("self", span) :> Ast.FnArg
         let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
-        let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("this", span) :> Ast.Expr, "slope", span) :> Ast.Expr
+        let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("self", span) :> Ast.Expr, "slope", span) :> Ast.Expr
         let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, span)
         let implDecl = Ast.Decl.Impl("Line", None, None, None, [ evalFn ], span) :> Ast.Decl
 
