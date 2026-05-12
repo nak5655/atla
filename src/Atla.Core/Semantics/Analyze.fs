@@ -47,6 +47,11 @@ module Analyze =
                 | :? Ast.FnArg.Inferred as inferredArg -> inferredArg.name = "self"
                 | _ -> false
 
+            let resolveArgTypeWithSelf (selfType: TypeId) (arg: Ast.FnArg) =
+                match arg with
+                | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> selfType
+                | _ -> bootstrapNameEnv.resolveArgType arg
+
             // data 宣言を型定義へ正規化し、後続の式解析で参照するメタデータを構築する。
             let dataTypeDefs =
                 resolvedModule.dataDecls
@@ -90,10 +95,7 @@ module Analyze =
                     |> List.map (fun roleFn ->
                         let argTypes =
                             roleFn.args
-                            |> List.map (fun arg ->
-                                match arg with
-                                | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> TypeId.Name resolvedRoleDecl.typeSid
-                                | _ -> bootstrapNameEnv.resolveArgType arg)
+                            |> List.map (resolveArgTypeWithSelf (TypeId.Name resolvedRoleDecl.typeSid))
                             |> (fun raw ->
                                 match roleFn.args, raw with
                                 | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
@@ -314,10 +316,7 @@ module Analyze =
                                             else
                                                 let argTypes =
                                                     methodDecl.args
-                                                    |> List.map (fun arg ->
-                                                        match arg with
-                                                        | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> TypeId.Name typeSid
-                                                        | _ -> bootstrapNameEnv.resolveArgType arg)
+                                                    |> List.map (resolveArgTypeWithSelf (TypeId.Name typeSid))
                                                     |> List.filter (fun t -> t <> TypeId.Unit)
                                                 let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
                                                 let methodType = TypeId.Fn(argTypes, retType)
