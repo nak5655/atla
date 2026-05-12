@@ -7,6 +7,15 @@ open Atla.Core.Semantics.Data.AnalyzeEnv
 
 module Analyze =
 
+    /// enum ルート型に埋め込む隠し tag フィールド名を決定する。
+    let private enumTagFieldName (typeName: string) = $"{typeName}.__enum_tag"
+
+    /// enum case ごとの隠し payload スロット名を決定する。
+    let private enumPayloadFieldName (typeName: string) (caseName: string) = $"{typeName}.__enum_payload_{caseName}"
+
+    /// enum case payload 用の隠し型名を決定する。
+    let private enumPayloadTypeName (typeName: string) (caseName: string) = $"{typeName}.__enum_payload_{caseName}_type"
+
     let analyzeModuleWithImports
         (
             symbolTable: SymbolTable,
@@ -16,7 +25,7 @@ module Analyze =
             moduleAst: Ast.Module,
             availableModuleNames: Set<string>,
             availableTypeFullNames: Set<string>,
-            availableDataTypeDecls: Map<string, Ast.Decl.Data>,
+            availableTypeDecls: Map<string, Ast.Decl>,
             availableDataTypeImplDecls: Map<string, Ast.Decl.Impl list>,
             importedModuleExports: Map<string, Map<string, ModuleExport>>
         )
@@ -88,9 +97,123 @@ module Analyze =
                               baseType = None
                               delegatedByFieldName = None
                               fields = resolvedFields
+                              hiddenFields = []
+                              enumInfo = None
                               methods = Map.empty }
                             defs)
                     Map.empty
+
+            // enum 宣言を root 型 + 隠し payload 型群へ正規化し、後続の式解析で参照するメタデータを構築する。
+            let dataTypeDefs =
+                resolvedModule.enumDecls
+                |> List.fold
+                    (fun defs resolvedEnumDecl ->
+                        let typeName = resolvedEnumDecl.decl.name
+                        let tagFieldSid = symbolTable.NextId()
+                        let tagFieldDef =
+                            let fieldName = enumTagFieldName typeName
+                            symbolTable.Add(tagFieldSid, { name = fieldName; typ = TypeId.Int; kind = SymbolKind.Local() })
+                            { name = fieldName
+                              sid = tagFieldSid
+                              typ = TypeId.Int
+                              span = resolvedEnumDecl.decl.span }
+
+                        let enumCases, hiddenRootFields, payloadTypes =
+                            resolvedEnumDecl.decl.cases
+                            |> List.mapi (fun tag caseDecl ->
+                                match caseDecl with
+                                | :? Ast.EnumCase.Case as enumCase ->
+                                    let payloadTypeName = enumPayloadTypeName typeName enumCase.name
+                                    let payloadFieldName = enumPayloadFieldName typeName enumCase.name
+                                    let payloadFieldDefs =
+                                        enumCase.fields
+                                        |> List.map (fun caseField ->
+                                            let fieldSid = symbolTable.NextId()
+                                            let fieldType = bootstrapNameEnv.resolveTypeExpr caseField.typeExpr
+                                            let symbolName = $"{payloadTypeName}.{caseField.name}"
+                                            symbolTable.Add(fieldSid, { name = symbolName; typ = fieldType; kind = SymbolKind.Local() })
+                                            { name = caseField.name
+                                              sid = fieldSid
+                                              typ = fieldType
+                                              span = caseField.span })
+
+                                    match payloadFieldDefs with
+                                    | [] ->
+                                        { name = enumCase.name
+                                          tag = tag
+                                          payloadTypeSid = None
+                                          payloadFieldSid = None
+                                          fields = []
+                                          span = enumCase.span },
+                                        None,
+                                        None
+                                    | _ ->
+                                        let payloadTypeSid = symbolTable.NextId()
+                                        symbolTable.Add(payloadTypeSid, { name = payloadTypeName; typ = TypeId.Name payloadTypeSid; kind = SymbolKind.Local() })
+
+                                        let payloadRootFieldSid = symbolTable.NextId()
+                                        symbolTable.Add(payloadRootFieldSid, { name = payloadFieldName; typ = TypeId.Name payloadTypeSid; kind = SymbolKind.Local() })
+
+                                        let payloadRootFieldDef =
+                                            { name = payloadFieldName
+                                              sid = payloadRootFieldSid
+                                              typ = TypeId.Name payloadTypeSid
+                                              span = enumCase.span }
+
+                                        let payloadType =
+                                            let payloadFields =
+                                                payloadFieldDefs
+                                                |> List.map (fun fieldDef ->
+                                                    Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                                            Hir.Type(payloadTypeSid, false, None, payloadFields, [])
+
+                                        { name = enumCase.name
+                                          tag = tag
+                                          payloadTypeSid = Some payloadTypeSid
+                                          payloadFieldSid = Some payloadRootFieldSid
+                                          fields = payloadFieldDefs
+                                          span = enumCase.span },
+                                        Some payloadRootFieldDef,
+                                        Some payloadType
+                                | _ ->
+                                    { name = $"error_case_{tag}"
+                                      tag = tag
+                                      payloadTypeSid = None
+                                      payloadFieldSid = None
+                                      fields = []
+                                      span = caseDecl.span },
+                                    None,
+                                    None)
+                            |> List.fold
+                                (fun (casesAcc, hiddenFieldsAcc, payloadTypesAcc) (caseDef, hiddenFieldOpt, payloadTypeOpt) ->
+                                    let hiddenFieldsAcc' = hiddenFieldOpt |> Option.map (fun fieldDef -> hiddenFieldsAcc @ [ fieldDef ]) |> Option.defaultValue hiddenFieldsAcc
+                                    let payloadTypesAcc' = payloadTypeOpt |> Option.map (fun payloadType -> payloadTypesAcc @ [ payloadType ]) |> Option.defaultValue payloadTypesAcc
+                                    casesAcc @ [ caseDef ], hiddenFieldsAcc', payloadTypesAcc')
+                                ([], [ tagFieldDef ], [])
+
+                        payloadTypes |> List.iter types.Add
+
+                        let rootFields =
+                            hiddenRootFields
+                            |> List.map (fun fieldDef ->
+                                Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+
+                        types.Add(Hir.Type(resolvedEnumDecl.typeSid, false, None, rootFields, []))
+
+                        Map.add
+                            typeName
+                            { typeSid = resolvedEnumDecl.typeSid
+                              baseType = None
+                              delegatedByFieldName = None
+                              fields = []
+                              hiddenFields = hiddenRootFields
+                              enumInfo =
+                                  Some
+                                      { hiddenTagField = tagFieldDef
+                                        cases = enumCases }
+                              methods = Map.empty }
+                            defs)
+                    dataTypeDefs
 
             // role 宣言を HIR インターフェイス型として処理する。
             // role の各メソッドシグネチャをシンボルテーブルへ登録し、
@@ -134,15 +257,15 @@ module Analyze =
                         Hir.Method(methodSid, argSids, Hir.Expr.Unit(roleSpan), methodType, roleSpan))
                 types.Add(Hir.Type(resolvedRoleDecl.typeSid, true, None, [], hirMethods))
 
-            let importedDataTypeDefs, importedTypeDiagnostics =
+            let importedTypeDefs, importedTypeDiagnostics =
                 resolvedModule.importedTypeAliases
                 |> Map.toList
                 |> List.fold
                     (fun (defs, diagnostics) (aliasName, fullTypePath) ->
-                        match availableDataTypeDecls.TryFind(fullTypePath) with
+                        match availableTypeDecls.TryFind(fullTypePath) with
                         | None ->
                             defs, diagnostics @ [ Diagnostic.Error(sprintf "Imported type '%s' was not found" fullTypePath, Atla.Core.Data.Span.Empty) ]
-                        | Some dataDecl ->
+                        | Some typeDecl ->
                             // 元モジュールが "type:{TypeName}" としてエクスポートした typeSid を再利用する。
                             // 再利用することでメソッドの引数型（元 typeSid）とレシーバー型（インポート typeSid）が
                             // 一致し、クロスモジュールのメソッド呼び出しが正しく型検査される。
@@ -162,47 +285,181 @@ module Analyze =
                                     newSid, false
                             resolvedModule.moduleScope.DeclareType(aliasName, TypeId.Name typeSid)
 
-                            let resolvedFields =
-                                dataDecl.items
-                                |> List.choose (fun item ->
-                                    match item with
-                                    | :? Ast.DataItem.Field as fieldItem ->
-                                        // 元モジュールが "field:{TypeName}.{FieldName}" としてエクスポートしたフィールド SID を
-                                        // 再利用する。再利用することで DataConstructor や DataField アクセスが
-                                        // CIL 生成フェーズの fieldBuilders と一致する。
-                                        // 型情報も export 由来を優先し、import 先モジュールが外部型を import していなくても
-                                        // 定義元と同じ TypeId で member 解決できるようにする。
-                                        let exportedFieldInfoOpt =
-                                            sourceModuleExports |> Map.tryFind $"field:{typeNameForLookup}.{fieldItem.name}"
-                                        let fieldType =
-                                            match exportedFieldInfoOpt with
-                                            | Some exportInfo -> exportInfo.typ
-                                            | None -> bootstrapNameEnv.resolveTypeExpr fieldItem.typeExpr
-                                        let fieldSid =
-                                            match exportedFieldInfoOpt with
-                                            | Some exportInfo ->
-                                                exportInfo.symbolId
-                                            | None ->
-                                                let newSid = symbolTable.NextId()
-                                                symbolTable.Add(newSid, { name = $"{aliasName}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
-                                                newSid
-                                        Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; span = fieldItem.span }
-                                    | _ -> None)
-
                             let importedDef =
-                                { typeSid = typeSid
-                                  baseType = None
-                                  delegatedByFieldName = None
-                                  fields = resolvedFields
-                                  methods = Map.empty }
-                            // 元 typeSid を再利用している場合は HIR 型ノードを追加しない。
-                            // 元モジュールの HIR に既に Hir.Type が存在するため、マージ後に重複を防ぐ。
-                            if not isReusingExistingType then
-                                let hirFields =
-                                    resolvedFields
-                                    |> List.map (fun fieldDef ->
-                                        Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                                types.Add(Hir.Type(typeSid, false, None, hirFields, []))
+                                match typeDecl with
+                                | :? Ast.Decl.Data as dataDecl ->
+                                    let resolvedFields =
+                                        dataDecl.items
+                                        |> List.choose (fun item ->
+                                            match item with
+                                            | :? Ast.DataItem.Field as fieldItem ->
+                                                let exportedFieldInfoOpt =
+                                                    sourceModuleExports |> Map.tryFind $"field:{typeNameForLookup}.{fieldItem.name}"
+                                                let fieldType =
+                                                    match exportedFieldInfoOpt with
+                                                    | Some exportInfo -> exportInfo.typ
+                                                    | None -> bootstrapNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                                let fieldSid =
+                                                    match exportedFieldInfoOpt with
+                                                    | Some exportInfo -> exportInfo.symbolId
+                                                    | None ->
+                                                        let newSid = symbolTable.NextId()
+                                                        symbolTable.Add(newSid, { name = $"{aliasName}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
+                                                        newSid
+                                                Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; span = fieldItem.span }
+                                            | _ -> None)
+
+                                    if not isReusingExistingType then
+                                        let hirFields =
+                                            resolvedFields
+                                            |> List.map (fun fieldDef ->
+                                                Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                                        types.Add(Hir.Type(typeSid, false, None, hirFields, []))
+
+                                    { typeSid = typeSid
+                                      baseType = None
+                                      delegatedByFieldName = None
+                                      fields = resolvedFields
+                                      hiddenFields = []
+                                      enumInfo = None
+                                      methods = Map.empty }
+                                | :? Ast.Decl.Enum as enumDecl ->
+                                    let tagFieldName = enumTagFieldName typeNameForLookup
+                                    let tagFieldExport = sourceModuleExports |> Map.tryFind $"field:{tagFieldName}"
+                                    let hiddenTagField =
+                                        match tagFieldExport with
+                                        | Some exportInfo ->
+                                            { name = tagFieldName
+                                              sid = exportInfo.symbolId
+                                              typ = exportInfo.typ
+                                              span = enumDecl.span }
+                                        | None ->
+                                            let sid = symbolTable.NextId()
+                                            symbolTable.Add(sid, { name = tagFieldName; typ = TypeId.Int; kind = SymbolKind.Local() })
+                                            { name = tagFieldName
+                                              sid = sid
+                                              typ = TypeId.Int
+                                              span = enumDecl.span }
+
+                                    let enumCases, hiddenFields, payloadTypes =
+                                        enumDecl.cases
+                                        |> List.mapi (fun tag caseDecl ->
+                                            match caseDecl with
+                                            | :? Ast.EnumCase.Case as enumCase ->
+                                                let payloadTypeName = enumPayloadTypeName typeNameForLookup enumCase.name
+                                                let payloadSlotName = enumPayloadFieldName typeNameForLookup enumCase.name
+                                                let payloadFieldDefs =
+                                                    enumCase.fields
+                                                    |> List.map (fun caseField ->
+                                                        let exportInfoOpt =
+                                                            sourceModuleExports |> Map.tryFind $"field:{payloadTypeName}.{caseField.name}"
+                                                        let fieldType =
+                                                            match exportInfoOpt with
+                                                            | Some exportInfo -> exportInfo.typ
+                                                            | None -> bootstrapNameEnv.resolveTypeExpr caseField.typeExpr
+                                                        let fieldSid =
+                                                            match exportInfoOpt with
+                                                            | Some exportInfo -> exportInfo.symbolId
+                                                            | None ->
+                                                                let sid = symbolTable.NextId()
+                                                                symbolTable.Add(sid, { name = $"{payloadTypeName}.{caseField.name}"; typ = fieldType; kind = SymbolKind.Local() })
+                                                                sid
+                                                        { name = caseField.name
+                                                          sid = fieldSid
+                                                          typ = fieldType
+                                                          span = caseField.span })
+
+                                                match payloadFieldDefs with
+                                                | [] ->
+                                                    { name = enumCase.name
+                                                      tag = tag
+                                                      payloadTypeSid = None
+                                                      payloadFieldSid = None
+                                                      fields = []
+                                                      span = enumCase.span },
+                                                    None,
+                                                    None
+                                                | _ ->
+                                                    let payloadTypeSid =
+                                                        match sourceModuleExports |> Map.tryFind $"type:{payloadTypeName}" with
+                                                        | Some exportInfo -> exportInfo.symbolId
+                                                        | None ->
+                                                            let sid = symbolTable.NextId()
+                                                            symbolTable.Add(sid, { name = payloadTypeName; typ = TypeId.Name sid; kind = SymbolKind.Local() })
+                                                            sid
+                                                    let payloadSlotDef =
+                                                        match sourceModuleExports |> Map.tryFind $"field:{payloadSlotName}" with
+                                                        | Some exportInfo ->
+                                                            { name = payloadSlotName
+                                                              sid = exportInfo.symbolId
+                                                              typ = exportInfo.typ
+                                                              span = enumCase.span }
+                                                        | None ->
+                                                            let sid = symbolTable.NextId()
+                                                            symbolTable.Add(sid, { name = payloadSlotName; typ = TypeId.Name payloadTypeSid; kind = SymbolKind.Local() })
+                                                            { name = payloadSlotName
+                                                              sid = sid
+                                                              typ = TypeId.Name payloadTypeSid
+                                                              span = enumCase.span }
+                                                    let payloadTypeOpt =
+                                                        if isReusingExistingType then
+                                                            None
+                                                        else
+                                                            let payloadFields =
+                                                                payloadFieldDefs
+                                                                |> List.map (fun fieldDef ->
+                                                                    Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                                                            Some (Hir.Type(payloadTypeSid, false, None, payloadFields, []))
+                                                    { name = enumCase.name
+                                                      tag = tag
+                                                      payloadTypeSid = Some payloadTypeSid
+                                                      payloadFieldSid = Some payloadSlotDef.sid
+                                                      fields = payloadFieldDefs
+                                                      span = enumCase.span },
+                                                    Some payloadSlotDef,
+                                                    payloadTypeOpt
+                                            | _ ->
+                                                { name = $"error_case_{tag}"
+                                                  tag = tag
+                                                  payloadTypeSid = None
+                                                  payloadFieldSid = None
+                                                  fields = []
+                                                  span = caseDecl.span },
+                                                None,
+                                                None)
+                                        |> List.fold
+                                            (fun (caseAcc, hiddenAcc, payloadTypeAcc) (caseDef, hiddenFieldOpt, payloadTypeOpt) ->
+                                                let hiddenAcc' = hiddenFieldOpt |> Option.map (fun fieldDef -> hiddenAcc @ [ fieldDef ]) |> Option.defaultValue hiddenAcc
+                                                let payloadTypeAcc' = payloadTypeOpt |> Option.map (fun payloadType -> payloadTypeAcc @ [ payloadType ]) |> Option.defaultValue payloadTypeAcc
+                                                caseAcc @ [ caseDef ], hiddenAcc', payloadTypeAcc')
+                                            ([], [ hiddenTagField ], [])
+
+                                    if not isReusingExistingType then
+                                        payloadTypes |> List.iter types.Add
+                                        let rootFields =
+                                            hiddenFields
+                                            |> List.map (fun fieldDef ->
+                                                Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                                        types.Add(Hir.Type(typeSid, false, None, rootFields, []))
+
+                                    { typeSid = typeSid
+                                      baseType = None
+                                      delegatedByFieldName = None
+                                      fields = []
+                                      hiddenFields = hiddenFields
+                                      enumInfo =
+                                          Some
+                                              { hiddenTagField = hiddenTagField
+                                                cases = enumCases }
+                                      methods = Map.empty }
+                                | _ ->
+                                    { typeSid = typeSid
+                                      baseType = None
+                                      delegatedByFieldName = None
+                                      fields = []
+                                      hiddenFields = []
+                                      enumInfo = None
+                                      methods = Map.empty }
                             let importedImplMethodMap, importedImplDiagnostics =
                                 let lastDot = fullTypePath.LastIndexOf('.')
                                 if lastDot <= 0 then
@@ -280,7 +537,7 @@ module Analyze =
                                         match delegatedImplDecl.byFieldName with
                                         | None -> None, []
                                         | Some byFieldName ->
-                                            let hasField = resolvedFields |> List.exists (fun fieldDef -> fieldDef.name = byFieldName)
+                                            let hasField = importedDef.fields |> List.exists (fun fieldDef -> fieldDef.name = byFieldName)
                                             if hasField then
                                                 Some byFieldName, []
                                             else
@@ -297,7 +554,7 @@ module Analyze =
                     (Map.empty, [])
 
             let dataTypeDefs =
-                importedDataTypeDefs
+                importedTypeDefs
                 |> Map.fold (fun defs aliasName importedDef -> Map.add aliasName importedDef defs) dataTypeDefs
 
             // impl 宣言のシグネチャを先に登録し、メソッド解決を安定化する。

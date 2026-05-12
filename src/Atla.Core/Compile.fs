@@ -266,16 +266,18 @@ module Compiler =
                                         |> List.choose (fun decl ->
                                             match decl with
                                             | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
+                                            | :? Ast.Decl.Enum as enumDecl -> Some $"{moduleName}.{enumDecl.name}"
                                             | _ -> None))
                                     |> Set.ofList
-                                let availableDataTypeDecls =
+                                let availableTypeDecls =
                                     moduleAsts
                                     |> Map.toList
                                     |> List.collect (fun (moduleName, moduleAst) ->
                                         moduleAst.decls
                                         |> List.choose (fun decl ->
                                             match decl with
-                                            | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl)
+                                            | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)
+                                            | :? Ast.Decl.Enum as enumDecl -> Some ($"{moduleName}.{enumDecl.name}", enumDecl :> Ast.Decl)
                                             | _ -> None))
                                     |> Map.ofList
                                 let availableDataTypeImplDecls =
@@ -306,7 +308,7 @@ module Compiler =
                                             moduleAst,
                                             availableModuleNames,
                                             availableTypeFullNames,
-                                            availableDataTypeDecls,
+                                            availableTypeDecls,
                                             availableDataTypeImplDecls,
                                             moduleExports
                                         )

@@ -15,6 +15,9 @@ module Ast =
     type DataItem =
         abstract member span: Span
 
+    type EnumCase =
+        abstract member span: Span
+
     type FnArg =
         abstract member span: Span
 
@@ -22,6 +25,15 @@ module Ast =
         abstract member span: Span
 
     type DataInitField =
+        abstract member span: Span
+
+    type PatternField =
+        abstract member span: Span
+
+    type Pattern =
+        abstract member span: Span
+
+    type MatchArm =
         abstract member span: Span
 
     type IfBranch =
@@ -189,6 +201,27 @@ module Ast =
                 member this.span = span
             interface HasSpan with
                 member this.span = span
+
+        /// `EnumType'CaseName { field = value, ... }` 形式の enum case 初期化式。
+        type EnumInit(typeName: string, caseName: string, fields: DataInitField list, span: Span) =
+            member this.typeName = typeName
+            member this.caseName = caseName
+            member this.fields = fields
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        /// `match expr | Pattern -> expr ...` 形式の match 式。
+        type Match(scrutinee: Expr, arms: MatchArm list, span: Span) =
+            member this.scrutinee = scrutinee
+            member this.arms = arms
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
     
     module Stmt =
         type Let(name: string, value: Expr, span: Span) =
@@ -313,6 +346,23 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+    module EnumCase =
+        type Field(name:string, typeExpr: TypeExpr, span: Span) =
+            member this.name = name
+            member this.typeExpr = typeExpr
+            member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        type Case(name: string, fields: Field list, span: Span) =
+            member this.name = name
+            member this.fields = fields
+            member this.span = span
+            interface EnumCase with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
     module DataInitField =
         /// data 初期化式の単一フィールド代入（`name = expr`）。
         type Field(name: string, value: Expr, span: Span) =
@@ -324,6 +374,37 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+    module PatternField =
+        type Named(name: string, span: Span) =
+            member this.name = name
+            member this.span = span
+            interface PatternField with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+    module Pattern =
+        /// `TypeName'CaseName` または `TypeName'CaseName { x, .. }` 形式の enum pattern。
+        type Enum(typeName: string, caseName: string, fields: PatternField list, hasRest: bool, span: Span) =
+            member this.typeName = typeName
+            member this.caseName = caseName
+            member this.fields = fields
+            member this.hasRest = hasRest
+            member this.span = span
+            interface Pattern with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+    module MatchArm =
+        type Arm(pattern: Pattern, body: Expr, span: Span) =
+            member this.pattern = pattern
+            member this.body = body
+            member this.span = span
+            interface MatchArm with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
 
     module FnArg =
         type Unit(span: Span) =
@@ -362,6 +443,15 @@ module Ast =
         type Data(name: string, items: DataItem list, span: Span) =
             member this.name = name
             member this.items = items
+            member this.span = span
+            interface Decl with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        type Enum(name: string, cases: EnumCase list, span: Span) =
+            member this.name = name
+            member this.cases = cases
             member this.span = span
             interface Decl with
                 member this.span = span

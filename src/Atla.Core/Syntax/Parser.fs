@@ -71,6 +71,10 @@ module Parser =
         p |>> fun d -> d :> Ast.Decl
     let asTypeExpr<'T when 'T :> Ast.TypeExpr> (p: PackratParser<Token, 'T>) : PackratParser<Token, Ast.TypeExpr> =
         p |>> fun t -> t :> Ast.TypeExpr
+    let asPattern<'P when 'P :> Ast.Pattern> (p: PackratParser<Token, 'P>) : PackratParser<Token, Ast.Pattern> =
+        p |>> fun pattern -> pattern :> Ast.Pattern
+    let asMatchArm<'MA when 'MA :> Ast.MatchArm> (p: PackratParser<Token, 'MA>) : PackratParser<Token, Ast.MatchArm> =
+        p |>> fun arm -> arm :> Ast.MatchArm
     let asFnDecl (p: PackratParser<Token, Ast.Decl.Fn>) : PackratParser<Token, Ast.Decl> =
         p |>> fun f -> f :> Ast.Decl
 
@@ -143,7 +147,20 @@ module Parser =
     // 他のパーサを即座に評価せず、解析呼び出し時まで遅延させるため、
     // 全バインディング初期化後の値として正しく参照される。
     let rec paren: PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> delim '(' &> expr <& delim ')')
+        Delay (fun () -> fun input pos ->
+            match (delim '(') input pos with
+            | Failure (reason, span) -> Failure (reason, span)
+            | Success (l, afterOpenPos) ->
+                match (delim ')') input afterOpenPos with
+                | Success (r, nextPos) ->
+                    Success (Ast.Expr.Unit({ left = l.span.left; right = r.span.right }) :> Ast.Expr, nextPos)
+                | Failure _ ->
+                    match expr input afterOpenPos with
+                    | Success (innerExpr, afterExprPos) ->
+                        match (delim ')') input afterExprPos with
+                        | Success (_, nextPos) -> Success (innerExpr, nextPos)
+                        | Failure (reason, span) -> Failure (reason, span)
+                    | Failure (reason, span) -> Failure (reason, span))
     and doExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
             block (asToken (keyword "do")) (Once ((Many1 stmt |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right })) <& Eoi) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)))
@@ -175,8 +192,54 @@ module Parser =
             |>> fun ((typeId, fields), closeBrace) ->
                 Ast.Expr.DataInit(typeId.str, fields, { left = typeId.span.left; right = closeBrace.span.right }) :> Ast.Expr)
 
+    // `EnumType'CaseName { field = value, ... }` 形式の enum case 初期化式を解析する。
+    and enumInitExpr: PackratParser<Token, Ast.Expr> =
+        Delay (fun () ->
+            tid <& delim '\'' <&> tid <& delim '{' <&> SepBy1 dataInitField (delim ',') <&> delim '}'
+            |>> fun (((typeId, caseId), fields), closeBrace) ->
+                Ast.Expr.EnumInit(typeId.str, caseId.str, fields, { left = typeId.span.left; right = closeBrace.span.right }) :> Ast.Expr)
+
+    and patternField: PackratParser<Token, Ast.PatternField> =
+        Delay (fun () ->
+            tid
+            |>> fun id ->
+                Ast.PatternField.Named(id.str, id.span) :> Ast.PatternField)
+
+    and enumPatternFieldList: PackratParser<Token, Ast.PatternField list * bool> =
+        Delay (fun () ->
+            ((patternField <&> Many (delim ',' &> patternField) <&> Optional (delim ',' &> symbol ".."))
+             |>> fun ((firstField, restFields), hasRestOpt) -> firstField :: restFields, hasRestOpt.IsSome)
+            <|> (symbol ".." |>> fun _ -> [], true))
+
+    and enumPattern: PackratParser<Token, Ast.Pattern> =
+        Delay (fun () ->
+            tid <& delim '\'' <&> tid <&> Optional (delim '{' &> enumPatternFieldList <&> delim '}')
+            |>> fun ((typeId, caseId), fieldSpecOpt) ->
+                let fields, hasRest =
+                    fieldSpecOpt
+                    |> Option.map fst
+                    |> Option.defaultValue ([], false)
+                let rightSpan =
+                    match fieldSpecOpt with
+                    | Some (_, closeBrace) -> closeBrace.span.right
+                    | None -> caseId.span.right
+                Ast.Pattern.Enum(typeId.str, caseId.str, fields, hasRest, { left = typeId.span.left; right = rightSpan }) :> Ast.Pattern)
+
+    and matchArm: PackratParser<Token, Ast.MatchArm> =
+        Delay (fun () ->
+            blockAtOpener (asToken (symbol "|")) (enumPattern <& keyword "->" <&> expr
+            |>> fun (pattern, body) ->
+                Ast.MatchArm.Arm(pattern, body, { left = pattern.span.left; right = body.span.right }) :> Ast.MatchArm))
+
+    and matchExpr: PackratParser<Token, Ast.Expr> =
+        Delay (fun () ->
+            block (asToken (keyword "match")) (Once (expr <&> Many1 matchArm
+            |>> fun (scrutinee, arms) ->
+                Ast.Expr.Match(scrutinee, arms, { left = scrutinee.span.left; right = (List.last arms).span.right }) :> Ast.Expr)
+            (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)))
+
     and factor: PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> unit <|> paren <|> ifExpr <|> doExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))
+        Delay (fun () -> paren <|> ifExpr <|> matchExpr <|> doExpr <|> enumInitExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))
 
     and postfixMemberAccess: PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
         Delay (fun () -> fun input pos ->
@@ -318,10 +381,10 @@ module Parser =
         Delay (fun () ->
             List.fold (fun acc prec -> 
                 let op = infixOp prec
-                acc <&> (Optional (op <&> acc)) |>> fun (left, opt) -> 
-                    match opt with
-                    | Some (op, right) -> Ast.Expr.Apply (Ast.Expr.Id(op.str, op.span), [left; right], { left = left.span.left; right = right.span.right }) :> Ast.Expr
-                    | None -> left
+                acc <&> Many (op <&> acc) |>> fun (left, rest) ->
+                    rest
+                    |> List.fold (fun current (op, right) ->
+                        Ast.Expr.Apply (Ast.Expr.Id(op.str, op.span), [current; right], { left = current.span.left; right = right.span.right }) :> Ast.Expr) left
             ) term2 [9 .. -1 .. 0])
 
     // lambda 引数名の重複を検証し、最初に見つかった重複名を返す。
@@ -481,6 +544,26 @@ module Parser =
     and dataItem: PackratParser<Token, Ast.DataItem> =
         Delay (fun () -> asDataItem dataField)
 
+    and enumCaseField: PackratParser<Token, Ast.EnumCase.Field> =
+        Delay (fun () ->
+            tid <& delim ':' <&> typeExpr
+            |>> fun (id, typeExpr) -> Ast.EnumCase.Field(id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right }))
+
+    and enumCase: PackratParser<Token, Ast.EnumCase> =
+        Delay (fun () ->
+            blockAtOpener (asToken (symbol "|"))
+                (tid <&> Optional (delim '{' &> SepBy1 enumCaseField (delim ',') <&> delim '}')
+                 |>> fun (caseId, fieldsOpt) ->
+                     let fields =
+                         fieldsOpt
+                         |> Option.map fst
+                         |> Option.defaultValue []
+                     let rightSpan =
+                         match fieldsOpt with
+                         | Some (_, closeBrace) -> closeBrace.span.right
+                         | None -> caseId.span.right
+                     Ast.EnumCase.Case(caseId.str, fields, { left = caseId.span.left; right = rightSpan }) :> Ast.EnumCase))
+
     and dataDecl: PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
             keyword "data"
@@ -489,6 +572,19 @@ module Parser =
                 |>> fun ((id, items), closeBrace) ->
                     Ast.Decl.Data (id.str, items, { left = id.span.left; right = closeBrace.span.right }) :> Ast.Decl
             ) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+
+    and enumDecl: PackratParser<Token, Ast.Decl> =
+        Delay (fun () ->
+            block (asToken (keyword "enum"))
+                (Once
+                    (tid <&> Many1 enumCase
+                     |>> fun (id, cases) ->
+                         let rightSpan =
+                             match cases |> List.tryLast with
+                             | Some lastCase -> lastCase.span.right
+                             | None -> id.span.right
+                         Ast.Decl.Enum(id.str, cases, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
+                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     // インポート宣言
     and importDecl: PackratParser<Token, Ast.Decl> =
@@ -581,7 +677,7 @@ module Parser =
                     (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     and decl: PackratParser<Token, Ast.Decl> =
-        Delay (fun () -> dataDecl <|> importDecl <|> fnDecl <|> implDecl <|> roleDecl)
+        Delay (fun () -> dataDecl <|> enumDecl <|> importDecl <|> fnDecl <|> implDecl <|> roleDecl)
 
     // role 型宣言: `role TypeName` に続くインデントブロック内に抽象メソッドシグネチャを列挙する。
     and roleDecl: PackratParser<Token, Ast.Decl> =

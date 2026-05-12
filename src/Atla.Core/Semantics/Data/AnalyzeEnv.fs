@@ -10,11 +10,25 @@ module AnalyzeEnv =
           typ: TypeId
           span: Atla.Core.Data.Span }
 
+    type EnumCaseDef =
+        { name: string
+          tag: int
+          payloadTypeSid: SymbolId option
+          payloadFieldSid: SymbolId option
+          fields: DataFieldDef list
+          span: Atla.Core.Data.Span }
+
+    type EnumTypeDef =
+        { hiddenTagField: DataFieldDef
+          cases: EnumCaseDef list }
+
     type DataTypeDef =
         { typeSid: SymbolId
           baseType: TypeId option
           delegatedByFieldName: string option
           fields: DataFieldDef list
+          hiddenFields: DataFieldDef list
+          enumInfo: EnumTypeDef option
           methods: Map<string, SymbolId * TypeId * bool> }
 
     type ModuleExport =

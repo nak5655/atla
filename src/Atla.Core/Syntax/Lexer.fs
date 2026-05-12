@@ -32,7 +32,7 @@ module Lexer =
 
     let keywords = [
         // declarations
-        "let"; "var"; "fn"; "mod"; "def"; "use"; "import"; "data"; "self"; "role"; "impl"; "as";
+        "let"; "var"; "fn"; "mod"; "def"; "use"; "import"; "data"; "enum"; "self"; "role"; "impl"; "as";
         // control flows
         "for"; "by"; "in"; "if"; "else"; "match"; "do"; "while";
         // block
