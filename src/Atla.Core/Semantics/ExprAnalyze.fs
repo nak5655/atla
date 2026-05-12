@@ -992,29 +992,29 @@ module ExprAnalyze =
             /// Resolve `base'member` using current `this` and the base type fixed by impl metadata.
             /// `base` is valid only inside instance impl methods.
             let resolveMemberFromBaseReceiver () : Result<Hir.Expr, string> =
-                let thisSymbolIdOpt = nameEnv.resolveVar "this" |> List.tryHead
-                match thisSymbolIdOpt with
+                let selfSymbolIdOpt = nameEnv.resolveVar "self" |> List.tryHead
+                match selfSymbolIdOpt with
                 | None ->
                     Result.Error("Keyword 'base' can only be used inside an instance impl method")
-                | Some thisSymbolId ->
-                    let resolvedThisType = nameEnv.resolveSymType thisSymbolId |> typeEnv.resolveType
-                    let resolvedThisExpr = Hir.Expr.Id(thisSymbolId, resolvedThisType, memberAccessExpr.receiver.span)
-                    match resolvedThisType with
-                    | TypeId.Name thisTypeSid ->
+                | Some selfSymbolId ->
+                    let resolvedSelfType = nameEnv.resolveSymType selfSymbolId |> typeEnv.resolveType
+                    let resolvedSelfExpr = Hir.Expr.Id(selfSymbolId, resolvedSelfType, memberAccessExpr.receiver.span)
+                    match resolvedSelfType with
+                    | TypeId.Name selfTypeSid ->
                         let thisTypeDefOpt =
                             nameEnv.dataTypeDefs
                             |> Map.toSeq
                             |> Seq.tryPick (fun (_, def) ->
-                                if def.typeSid.id = thisTypeSid.id then Some def else None)
+                                if def.typeSid.id = selfTypeSid.id then Some def else None)
                         match thisTypeDefOpt with
                         | None ->
-                            Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedThisType))
+                            Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedSelfType))
                         | Some thisTypeDef ->
                             match thisTypeDef.baseType with
                             | None ->
-                                Result.Error(sprintf "Type '%s' has no base type for 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedThisType))
+                                Result.Error(sprintf "Type '%s' has no base type for 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedSelfType))
                             | Some (TypeId.Name baseSid) ->
-                                tryResolveDataInstanceMember nameEnv typeEnv tid baseSid memberAccessExpr.memberName memberAccessExpr.span resolvedThisExpr
+                                tryResolveDataInstanceMember nameEnv typeEnv tid baseSid memberAccessExpr.memberName memberAccessExpr.span resolvedSelfExpr
                             | Some (TypeId.Native baseSysType) ->
                                 let memberInfos =
                                     baseSysType.GetMembers(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance)
@@ -1042,9 +1042,9 @@ module ExprAnalyze =
                                 match NativeInterop.resolveNativeMember typeEnv memberInfos tid with
                                 | [memberInfo, resolvedTid] ->
                                     match memberInfo with
-                                    | :? MethodInfo as methodInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some resolvedThisExpr, resolvedTid, memberAccessExpr.span))
-                                    | :? FieldInfo as fieldInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some resolvedThisExpr, resolvedTid, memberAccessExpr.span))
-                                    | :? PropertyInfo as propertyInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some resolvedThisExpr, resolvedTid, memberAccessExpr.span))
+                                    | :? MethodInfo as methodInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some resolvedSelfExpr, resolvedTid, memberAccessExpr.span))
+                                    | :? FieldInfo as fieldInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some resolvedSelfExpr, resolvedTid, memberAccessExpr.span))
+                                    | :? PropertyInfo as propertyInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some resolvedSelfExpr, resolvedTid, memberAccessExpr.span))
                                     | _ -> Result.Error(sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
                                 | [] -> Result.Error(sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName baseSysType.FullName)
                                 | members ->
@@ -1055,13 +1055,13 @@ module ExprAnalyze =
                                             | :? MethodInfo as methodInfo -> Some methodInfo
                                             | _ -> None)
                                     if methodInfos.Length = members.Length then
-                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some resolvedThisExpr, tid, memberAccessExpr.span))
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some resolvedSelfExpr, tid, memberAccessExpr.span))
                                     else
                                         Result.Error(sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName baseSysType.FullName)
                             | Some unsupportedBaseType ->
                                 Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv unsupportedBaseType))
                     | _ ->
-                        Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedThisType))
+                        Result.Error(sprintf "Type '%s' does not support 'base' access" (formatTypeForDisplay nameEnv typeEnv resolvedSelfType))
 
             let resolvedMemberResult =
                 match memberAccessExpr.receiver with
@@ -1590,7 +1590,18 @@ module ExprAnalyze =
     let analyzeMethodCore (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) : Hir.Method =
         let bodyNameEnv = nameEnv.sub()
         let retType = nameEnv.resolveTypeExpr fnDecl.ret
-        let rawArgTypes = fnDecl.args |> List.map bodyNameEnv.resolveArgType
+        let rawArgTypes =
+            let nonUnitArgCount =
+                fnDecl.args
+                |> List.filter (fun arg -> not (arg :? Ast.FnArg.Unit))
+                |> List.length
+            match nameEnv.resolveSymType sid |> typeEnv.resolveType with
+            | TypeId.Fn(symbolArgTypes, _) when symbolArgTypes.Length = nonUnitArgCount ->
+                symbolArgTypes
+            | _ ->
+                fnDecl.args
+                |> List.map bodyNameEnv.resolveArgType
+                |> List.filter (fun t -> t <> TypeId.Unit)
         let argTypes =
             match fnDecl.args, rawArgTypes with
             | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
@@ -1604,6 +1615,10 @@ module ExprAnalyze =
                 | :? Ast.FnArg.Named as namedArg ->
                     let argType = argTypes.[index]
                     let sid = bodyNameEnv.declareArg namedArg.name argType
+                    Some (sid, argType)
+                | :? Ast.FnArg.Inferred as inferredArg ->
+                    let argType = argTypes.[index]
+                    let sid = bodyNameEnv.declareArg inferredArg.name argType
                     Some (sid, argType)
                 | :? Ast.FnArg.Unit -> None
                 | _ -> None)

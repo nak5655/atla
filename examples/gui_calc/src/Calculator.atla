@@ -75,7 +75,7 @@ impl CalculatorWindow as Window
 
         window
 
-    fn addButton (this: CalculatorWindow) (label: String) (row: Int) (column: Int) (onClick: () -> ()): () =
+    fn addButton self (label: String) (row: Int) (column: Int) (onClick: () -> ()): () =
         let button = Button.
         button'Content = label
         button'FontSize = 20.0
@@ -87,77 +87,77 @@ impl CalculatorWindow as Window
         button row Grid'SetRow.
         button column Grid'SetColumn.
 
-        button this'_grid'Children'Add.
+        button self'_grid'Children'Add.
 
-    fn addDigitButton (this: CalculatorWindow) (digit: Int) (row: Int) (column: Int): () =
-        (digit'ToString.) row column (digit this'onDigit.) this'addButton.
+    fn addDigitButton self (digit: Int) (row: Int) (column: Int): () =
+        (digit'ToString.) row column (digit self'onDigit.) self'addButton.
 
-    fn onDigit (this: CalculatorWindow) (digit: Int): () -> () =
+    fn onDigit self (digit: Int): () -> () =
         fn () ->
-            if  | this'_clearOnNextDigit =>
-                    this'_display'Text = "0"
-                    this'_clearOnNextDigit = False
+            if  | self'_clearOnNextDigit =>
+                    self'_display'Text = "0"
+                    self'_clearOnNextDigit = False
                 | else => ()
 
-            if  | this'_display'Text == "0" && digit'ToString. != "." =>
-                    this'_display'Text = digit'ToString.
+            if  | self'_display'Text == "0" && digit'ToString. != "." =>
+                    self'_display'Text = digit'ToString.
                 | else =>
-                    this'_display'Text += digit'ToString.
+                    self'_display'Text += digit'ToString.
 
-    fn addOperatorButton (this: CalculatorWindow) (operator: String) (row: Int) (column: Int): () =
-        operator row column (operator this'onOperator.) this'addButton.
+    fn addOperatorButton self (operator: String) (row: Int) (column: Int): () =
+        operator row column (operator self'onOperator.) self'addButton.
 
-    fn onOperator (this: CalculatorWindow) (operator: String): () -> () =
+    fn onOperator self (operator: String): () -> () =
         fn () ->
-            let value = this'_display'Text Float'Parse.
+            let value = self'_display'Text Float'Parse.
 
-            if  | this'_pendingOperator != "" =>
-                    this'_currentValue = this'_currentValue value this'_pendingOperator this'applyOperator.
-                    this'_display'Text = this'_currentValue'ToString.
+            if  | self'_pendingOperator != "" =>
+                    self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
+                    self'_display'Text = self'_currentValue'ToString.
                 | else =>
-                    this'_currentValue = value
+                    self'_currentValue = value
             
-            this'_pendingOperator = operator
-            this'_clearOnNextDigit = True
+            self'_pendingOperator = operator
+            self'_clearOnNextDigit = True
 
-    fn applyOperator (this: CalculatorWindow) (left: Float) (right: Float) (operator: String): Float =
+    fn applyOperator self (left: Float) (right: Float) (operator: String): Float =
         if  | operator == "+" => left + right
             | operator == "-" => left - right
             | operator == "*" => left * right
             | operator == "/" => left / right
             | else => right
 
-    fn onEquals (this: CalculatorWindow): () -> () =
+    fn onEquals self: () -> () =
         fn () ->
-            let value = this'_display'Text Float'Parse.
+            let value = self'_display'Text Float'Parse.
 
-            if  | this'_pendingOperator == "" => ()
+            if  | self'_pendingOperator == "" => ()
                 | else =>
-                    this'_currentValue = this'_currentValue value this'_pendingOperator this'applyOperator.
-                    this'_display'Text = this'_currentValue'ToString.
-                    this'_pendingOperator = ""
-                    this'_clearOnNextDigit = True
+                    self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
+                    self'_display'Text = self'_currentValue'ToString.
+                    self'_pendingOperator = ""
+                    self'_clearOnNextDigit = True
 
-    fn onClear (this: CalculatorWindow): () -> () =
+    fn onClear self: () -> () =
         fn () ->
-            this'_currentValue = 0.0
-            this'_display'Text = "0"
-            this'_pendingOperator = ""
-            this'_clearOnNextDigit = False
+            self'_currentValue = 0.0
+            self'_display'Text = "0"
+            self'_pendingOperator = ""
+            self'_clearOnNextDigit = False
 
-    fn onBackspace (this: CalculatorWindow): () -> () =
+    fn onBackspace self: () -> () =
         fn () ->
-            if  | this'_clearOnNextDigit => ()
+            if  | self'_clearOnNextDigit => ()
                 | else =>
-                    let text = this'_display'Text
+                    let text = self'_display'Text
                     if  | text'Length == 1 =>
-                            this'_display'Text = "0"
+                            self'_display'Text = "0"
                         | else =>
-                            this'_display'Text = 0 (text'Length - 1) text'Substring.
+                            self'_display'Text = 0 (text'Length - 1) text'Substring.
 
-    fn onToggleSign (this: CalculatorWindow): () -> () =
+    fn onToggleSign self: () -> () =
         fn () ->
-            let value = this'_display'Text Float'Parse.
+            let value = self'_display'Text Float'Parse.
             let invertedValue = -value
             
-            this'_display'Text = invertedValue'ToString.
+            self'_display'Text = invertedValue'ToString.

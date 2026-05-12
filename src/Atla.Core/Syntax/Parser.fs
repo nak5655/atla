@@ -110,10 +110,11 @@ module Parser =
             | _ -> None)
 
     let tid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id -> Some(id) | _ -> None)
-    let thisKeywordId: PackratParser<Token, Token.Keyword> = AcceptMatch (fun t -> match t with :? Token.Keyword as kw when kw.str = "this" -> Some(kw) | _ -> None)
+    let nonLegacyThisTid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id when id.str <> "this" -> Some(id) | _ -> None)
+    let selfKeywordId: PackratParser<Token, Token.Keyword> = AcceptMatch (fun t -> match t with :? Token.Keyword as kw when kw.str = "self" -> Some(kw) | _ -> None)
     let valueIdent: PackratParser<Token, string * Span> =
         (tid |>> fun id -> id.str, id.span)
-        <|> (thisKeywordId |>> fun kw -> kw.str, kw.span)
+        <|> (selfKeywordId |>> fun kw -> kw.str, kw.span)
 
     let keyword kw: PackratParser<Token, Token.Keyword> = AcceptMatch (fun t -> match t with :? Token.Keyword as st when st.str = kw -> Some(st) | _ -> None)
     let delim d: PackratParser<Token, Token.Delim> = AcceptMatch (fun t -> match t with :? Token.Delim as st when st.char = d -> Some(st) | _ -> None)
@@ -497,7 +498,7 @@ module Parser =
     // 関数宣言
     and fnArgNamed: PackratParser<Token, Ast.FnArg> =
         Delay (fun () ->
-            delim '(' &> valueIdent <& delim ':' <&> typeExpr <& delim ')' |>> fun ((name, nameSpan), typeExpr) -> Ast.FnArg.Named(name, typeExpr, { left = nameSpan.left; right = typeExpr.span.right }) :> Ast.FnArg)
+            delim '(' &> nonLegacyThisTid <& delim ':' <&> typeExpr <& delim ')' |>> fun ((id, typeExpr)) -> Ast.FnArg.Named(id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right }) :> Ast.FnArg)
 
     and fnArgUnit: PackratParser<Token, Ast.FnArg> =
         Delay (fun () ->
@@ -505,6 +506,15 @@ module Parser =
 
     and fnArg: PackratParser<Token, Ast.FnArg> =
         Delay (fun () -> fnArgUnit <|> fnArgNamed)
+
+    and selfReceiverArg: PackratParser<Token, Ast.FnArg> =
+        Delay (fun () ->
+            keyword "self" |>> fun selfKeyword -> Ast.FnArg.Inferred("self", selfKeyword.span) :> Ast.FnArg)
+
+    and methodArgList: PackratParser<Token, Ast.FnArg list> =
+        Delay (fun () ->
+            Optional selfReceiverArg <&> Many fnArg
+            |>> fun (selfOpt, args) -> (Option.toList selfOpt) @ args)
 
     and fnBodyExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
@@ -518,7 +528,7 @@ module Parser =
         Delay (fun () ->
             block (asToken (keyword "fn"))
                     (Once
-                    (tid <&> Many fnArg <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr
+                    (tid <&> methodArgList <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr
                      |>> fun (((id, args), ret), body) -> Ast.Decl.Fn(id.str, args, ret, body, { left = id.span.left; right = body.span.right }))
                     (fun (msg, span) ->
                         Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), span))))
@@ -529,7 +539,7 @@ module Parser =
         Delay (fun () ->
             block (asToken (keyword "fn"))
                     (Once
-                    (tid <&> Many fnArg <& delim ':' <&> typeExpr
+                    (tid <&> methodArgList <& delim ':' <&> typeExpr
                      |>> fun ((id, args), ret) -> Ast.Decl.RoleFn(id.str, args, ret, { left = id.span.left; right = ret.span.right }))
                     (fun (msg, span) ->
                         Ast.Decl.RoleFn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), span))))

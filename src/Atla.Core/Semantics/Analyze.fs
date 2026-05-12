@@ -42,6 +42,25 @@ module Analyze =
             let methods = List<Hir.Method>()
             let types = List<Hir.Type>()
 
+            /// 引数が `self` レシーバー（`fn foo self ...` で導入される推論引数）かを判定する。
+            let isSelfReceiverArg (arg: Ast.FnArg) =
+                match arg with
+                | :? Ast.FnArg.Inferred as inferredArg -> inferredArg.name = "self"
+                | _ -> false
+
+            /// 先頭引数が `self` レシーバーである場合にインスタンスメソッドとして扱う。
+            let isInstanceMethod (args: Ast.FnArg list) =
+                match args with
+                | firstArg :: _ when isSelfReceiverArg firstArg -> true
+                | _ -> false
+
+            /// 関数引数型を解決する。`self` 推論引数は呼び出し側コンテキストで確定した receiver 型を使い、
+            /// それ以外の引数は通常の型注釈解決（bootstrapNameEnv.resolveArgType）に委譲する。
+            let resolveArgTypeWithSelf (selfType: TypeId) (arg: Ast.FnArg) =
+                match arg with
+                | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> selfType
+                | _ -> bootstrapNameEnv.resolveArgType arg
+
             // data 宣言を型定義へ正規化し、後続の式解析で参照するメタデータを構築する。
             let dataTypeDefs =
                 resolvedModule.dataDecls
@@ -85,7 +104,7 @@ module Analyze =
                     |> List.map (fun roleFn ->
                         let argTypes =
                             roleFn.args
-                            |> List.map bootstrapNameEnv.resolveArgType
+                            |> List.map (resolveArgTypeWithSelf (TypeId.Name resolvedRoleDecl.typeSid))
                             |> (fun raw ->
                                 match roleFn.args, raw with
                                 | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
@@ -103,6 +122,11 @@ module Analyze =
                                     let argType = argTypes.[i]
                                     let argSid = symbolTable.NextId()
                                     symbolTable.Add(argSid, { name = namedArg.name; typ = argType; kind = SymbolKind.Arg() })
+                                    Some (argSid, argType)
+                                | :? Ast.FnArg.Inferred as inferredArg ->
+                                    let argType = argTypes.[i]
+                                    let argSid = symbolTable.NextId()
+                                    symbolTable.Add(argSid, { name = inferredArg.name; typ = argType; kind = SymbolKind.Arg() })
                                     Some (argSid, argType)
                                 | :? Ast.FnArg.Unit -> None
                                 | _ -> None)
@@ -211,10 +235,7 @@ module Analyze =
 
                                             match exportInfoOpt with
                                             | Some exportInfo ->
-                                                let isStatic =
-                                                    match methodDecl.args with
-                                                    | (:? Ast.FnArg.Named as thisArg) :: _ when thisArg.name = "this" -> false
-                                                    | _ -> true
+                                                let isStatic = not (isInstanceMethod methodDecl.args)
                                                 Map.add methodDecl.name (exportInfo.symbolId, exportInfo.typ, isStatic) methodMap, diagAcc
                                             | None ->
                                                 methodMap, diagAcc @ [ Diagnostic.Error(sprintf "Imported method '%s' for type '%s' was not found in module exports" methodDecl.name fullTypePath, methodDecl.span) ])
@@ -299,7 +320,10 @@ module Analyze =
                                             if Map.containsKey methodDecl.name methodMap then
                                                 methodMap, declAcc, diagAcc @ [ Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodDecl.name targetTypeName, methodDecl.span) ]
                                             else
-                                                let argTypes = methodDecl.args |> List.map bootstrapNameEnv.resolveArgType |> List.filter (fun t -> t <> TypeId.Unit)
+                                                let argTypes =
+                                                    methodDecl.args
+                                                    |> List.map (resolveArgTypeWithSelf (TypeId.Name typeSid))
+                                                    |> List.filter (fun t -> t <> TypeId.Unit)
                                                 let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
                                                 let methodType = TypeId.Fn(argTypes, retType)
                                                 let methodSid = symbolTable.NextId()
@@ -310,25 +334,9 @@ module Analyze =
                                                     resolvedModule.moduleScope.DeclareVar(methodDecl.name, methodSid)
                                                 Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap, (methodSid, methodDecl) :: declAcc, diagAcc
 
-                                        match methodDecl.args with
-                                        | (:? Ast.FnArg.Named as thisArg) :: _ ->
-                                            let thisType = bootstrapNameEnv.resolveTypeExpr thisArg.typeExpr
-                                            // `this` は対象データ型か、`impl X for Y` の役割型 X のどちらでも許可する。
-                                            let isValidThisType =
-                                                match thisType with
-                                                | TypeId.Name thisTypeSid ->
-                                                    thisTypeSid.id = typeSid.id
-                                                    || (match baseTypeOpt with
-                                                        | Some (TypeId.Name roleSid) -> thisTypeSid.id = roleSid.id
-                                                        | _ -> false)
-                                                | _ -> false
-                                            match thisArg.name with
-                                            | "this" when isValidThisType -> registerImplMethod false
-                                            | "this" ->
-                                                methodMap, declAcc, diagAcc @ [ Diagnostic.Error("impl instance method '(this: ...)' must target the impl type", methodDecl.span) ]
-                                            | _ ->
-                                                registerImplMethod true
-                                        | _ ->
+                                        if isInstanceMethod methodDecl.args then
+                                            registerImplMethod false
+                                        else
                                             registerImplMethod true)
                                     (dataTypeDef.methods, [], [])
 

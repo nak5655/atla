@@ -833,7 +833,7 @@ fn main: () = do
             "import sub\nimport sub'Person\n\nfn main: () = do\n    let p = Person { name = \"alice\" }\n    p'greet."
 
         let subSource =
-            "import System'Console\n\ndata Person = { name: String }\n\nimpl Person\n    fn greet (this: Person): () = do\n        this'name Console'WriteLine."
+            "import System'Console\n\ndata Person = { name: String }\n\nimpl Person\n    fn greet self: () = do\n        self'name Console'WriteLine."
 
         let result =
             Compiler.compileModules {
@@ -1030,13 +1030,13 @@ fn main: () = do
 import System'Console
 
 role Geometry
-    fn area (this: Geometry): Float
+    fn area self: Float
 
 data Rectangle = { width: Float, height: Float }
 
 impl Geometry for Rectangle
-    fn area (this: Rectangle): Float =
-        this'width * this'height
+    fn area self: Float =
+        self'width * self'height
 
 fn main: () =
     let rect = Rectangle { width = 5.0, height = 10.0 }
