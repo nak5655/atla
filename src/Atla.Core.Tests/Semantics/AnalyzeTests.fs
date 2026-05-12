@@ -490,9 +490,9 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
 data A = { value: Int }
 data B = { value: Int }
 impl A for B
-    fn asInt (this: A): Int = this'value
+    fn asInt self: Int = self'value
 impl B for A
-    fn asInt (this: B): Int = this'value
+    fn asInt self: Int = self'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -592,9 +592,9 @@ data Shape = { value: Int }
 data Reader = { marker: Int }
 data Writer = { marker: Int }
 impl Shape for Reader
-    fn read (this: Shape): Int = this'value
+    fn read self: Int = self'value
 impl Shape for Writer
-    fn write (this: Shape): Int = this'value
+    fn write self: Int = self'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -625,9 +625,9 @@ impl Shape for Writer
         let source = """
 data Line = { value: Int }
 impl Line
-    fn first (this: Line): Int = this'value
+    fn first self: Int = self'value
 impl Line
-    fn second (this: Line): Int = this'value
+    fn second self: Int = self'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -658,9 +658,9 @@ impl Line
 data Line = { value: Int }
 data Reader = { marker: Int }
 impl Line for Reader
-    fn first (this: Line): Int = this'value
+    fn first self: Int = self'value
 impl Line for Reader
-    fn second (this: Line): Int = this'value
+    fn second self: Int = self'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -692,7 +692,7 @@ impl Line for Reader
 import System'IDisposable
 data Resource = { id: Int }
 impl Resource as IDisposable
-    fn dispose (this: Resource): Unit = ()
+    fn dispose self: Unit = ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -724,7 +724,7 @@ impl Resource as IDisposable
 import System'Math
 data Token = { value: Int }
 impl Token as Math
-    fn run (this: Token): Unit = ()
+    fn run self: Unit = ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -755,7 +755,7 @@ impl Token as Math
         let source = """
 data Widget = { id: Int }
 impl Widget as UnknownBase
-    fn run (this: Widget): Unit = ()
+    fn run self: Unit = ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2342,7 +2342,7 @@ fn main: () = do
 data CalculatorWindow = { value: Int }
 
 impl CalculatorWindow
-    fn addDigitButton (this: CalculatorWindow) (digit: Int) (row: Int) (column: Int): Int =
+    fn addDigitButton self (digit: Int) (row: Int) (column: Int): Int =
         digit
 
 fn main (): Int = do
@@ -2381,7 +2381,7 @@ data Line =
     }
 
 impl Line
-    fn evaluate (this: Line) (x: Float): Float =
+    fn evaluate self (x: Float): Float =
         x
 
 fn main (): () = do
@@ -2564,7 +2564,7 @@ fn setLink (e: MyError): () = do
 import System'Exception
 data MyError = { code: Int }
 impl MyError as Exception
-    fn baseText (this: MyError): String = base'ToString.
+    fn baseText self: String = base'ToString.
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -3113,7 +3113,7 @@ fn parse (s: String): Int = s Int'Parse.
         // role 宣言が isInterface=true の Hir.Type として解析されることを検証する。
         let source = """
 role Geometry
-    fn area (this: Geometry): Float
+    fn area self: Float
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3148,13 +3148,13 @@ role Geometry
         // role 宣言と impl ... for ... の組み合わせが解析エラーなく通ることを検証する。
         let source = """
 role Geometry
-    fn area (this: Geometry): Float
+    fn area self: Float
 
 data Rectangle = { width: Float, height: Float }
 
 impl Geometry for Rectangle
-    fn area (this: Rectangle): Float =
-        this'width * this'height
+    fn area self: Float =
+        self'width * self'height
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with

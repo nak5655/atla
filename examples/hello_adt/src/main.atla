@@ -4,14 +4,14 @@ role Geometry
     data Circle = { radius: Float }
     data Rectangle = { width: Float, height: Float }
     
-    fn area (this: Geometry): Float
+    fn area self: Float
 
 impl Geometry for Geometry'Circle
-    fn area (this: Circle): Float =
+    fn area self: Float =
         3.14159 * this.radius * this.radius
 
 impl Geometry for Geometry'Rectangle
-    fn area (this: Rectangle): Float =
+    fn area self: Float =
         this.width * this.height
 
 fn main: () =

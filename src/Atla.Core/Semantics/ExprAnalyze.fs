@@ -992,13 +992,16 @@ module ExprAnalyze =
             /// Resolve `base'member` using current `this` and the base type fixed by impl metadata.
             /// `base` is valid only inside instance impl methods.
             let resolveMemberFromBaseReceiver () : Result<Hir.Expr, string> =
-                let thisSymbolIdOpt = nameEnv.resolveVar "this" |> List.tryHead
-                match thisSymbolIdOpt with
+                let selfSymbolIdOpt =
+                    nameEnv.resolveVar "self"
+                    |> List.tryHead
+                    |> Option.orElseWith (fun () -> nameEnv.resolveVar "this" |> List.tryHead)
+                match selfSymbolIdOpt with
                 | None ->
                     Result.Error("Keyword 'base' can only be used inside an instance impl method")
-                | Some thisSymbolId ->
-                    let resolvedThisType = nameEnv.resolveSymType thisSymbolId |> typeEnv.resolveType
-                    let resolvedThisExpr = Hir.Expr.Id(thisSymbolId, resolvedThisType, memberAccessExpr.receiver.span)
+                | Some selfSymbolId ->
+                    let resolvedThisType = nameEnv.resolveSymType selfSymbolId |> typeEnv.resolveType
+                    let resolvedThisExpr = Hir.Expr.Id(selfSymbolId, resolvedThisType, memberAccessExpr.receiver.span)
                     match resolvedThisType with
                     | TypeId.Name thisTypeSid ->
                         let thisTypeDefOpt =
@@ -1590,7 +1593,18 @@ module ExprAnalyze =
     let analyzeMethodCore (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) : Hir.Method =
         let bodyNameEnv = nameEnv.sub()
         let retType = nameEnv.resolveTypeExpr fnDecl.ret
-        let rawArgTypes = fnDecl.args |> List.map bodyNameEnv.resolveArgType
+        let rawArgTypes =
+            let nonUnitArgCount =
+                fnDecl.args
+                |> List.filter (fun arg -> not (arg :? Ast.FnArg.Unit))
+                |> List.length
+            match nameEnv.resolveSymType sid |> typeEnv.resolveType with
+            | TypeId.Fn(symbolArgTypes, _) when symbolArgTypes.Length = nonUnitArgCount ->
+                symbolArgTypes
+            | _ ->
+                fnDecl.args
+                |> List.map bodyNameEnv.resolveArgType
+                |> List.filter (fun t -> t <> TypeId.Unit)
         let argTypes =
             match fnDecl.args, rawArgTypes with
             | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
@@ -1604,6 +1618,10 @@ module ExprAnalyze =
                 | :? Ast.FnArg.Named as namedArg ->
                     let argType = argTypes.[index]
                     let sid = bodyNameEnv.declareArg namedArg.name argType
+                    Some (sid, argType)
+                | :? Ast.FnArg.Inferred as inferredArg ->
+                    let argType = argTypes.[index]
+                    let sid = bodyNameEnv.declareArg inferredArg.name argType
                     Some (sid, argType)
                 | :? Ast.FnArg.Unit -> None
                 | _ -> None)

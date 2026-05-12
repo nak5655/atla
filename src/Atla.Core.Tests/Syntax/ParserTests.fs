@@ -925,8 +925,8 @@ data Line =
     , intercept: Float
     }
 impl Line
-    fn evaluate (this: Line) (x: Float): Float =
-        this'slope * x + this'intercept
+    fn evaluate self (x: Float): Float =
+        self'slope * x + self'intercept
 """
 
         match parseModule program with
@@ -955,8 +955,8 @@ impl Line
 data B =
     { value: Int }
 impl B for A
-    fn evaluate (this: A): Int =
-        this'value
+    fn evaluate self: Int =
+        self'value
 """
 
         match parseModule program with
@@ -1015,7 +1015,7 @@ data MyButton =
     { label: String
     }
 impl MyButton as Button
-    fn click (this: MyButton): Unit = ()
+    fn click self: Unit = ()
 """
 
         match parseModule program with

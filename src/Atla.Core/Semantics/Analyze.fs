@@ -42,6 +42,12 @@ module Analyze =
             let methods = List<Hir.Method>()
             let types = List<Hir.Type>()
 
+            let isSelfReceiverArg (arg: Ast.FnArg) =
+                match arg with
+                | :? Ast.FnArg.Inferred as inferredArg -> inferredArg.name = "self"
+                | :? Ast.FnArg.Named as namedArg -> namedArg.name = "this"
+                | _ -> false
+
             // data 宣言を型定義へ正規化し、後続の式解析で参照するメタデータを構築する。
             let dataTypeDefs =
                 resolvedModule.dataDecls
@@ -85,7 +91,10 @@ module Analyze =
                     |> List.map (fun roleFn ->
                         let argTypes =
                             roleFn.args
-                            |> List.map bootstrapNameEnv.resolveArgType
+                            |> List.map (fun arg ->
+                                match arg with
+                                | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> TypeId.Name resolvedRoleDecl.typeSid
+                                | _ -> bootstrapNameEnv.resolveArgType arg)
                             |> (fun raw ->
                                 match roleFn.args, raw with
                                 | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
@@ -103,6 +112,11 @@ module Analyze =
                                     let argType = argTypes.[i]
                                     let argSid = symbolTable.NextId()
                                     symbolTable.Add(argSid, { name = namedArg.name; typ = argType; kind = SymbolKind.Arg() })
+                                    Some (argSid, argType)
+                                | :? Ast.FnArg.Inferred as inferredArg ->
+                                    let argType = argTypes.[i]
+                                    let argSid = symbolTable.NextId()
+                                    symbolTable.Add(argSid, { name = inferredArg.name; typ = argType; kind = SymbolKind.Arg() })
                                     Some (argSid, argType)
                                 | :? Ast.FnArg.Unit -> None
                                 | _ -> None)
@@ -213,7 +227,7 @@ module Analyze =
                                             | Some exportInfo ->
                                                 let isStatic =
                                                     match methodDecl.args with
-                                                    | (:? Ast.FnArg.Named as thisArg) :: _ when thisArg.name = "this" -> false
+                                                    | firstArg :: _ when isSelfReceiverArg firstArg -> false
                                                     | _ -> true
                                                 Map.add methodDecl.name (exportInfo.symbolId, exportInfo.typ, isStatic) methodMap, diagAcc
                                             | None ->
@@ -299,7 +313,13 @@ module Analyze =
                                             if Map.containsKey methodDecl.name methodMap then
                                                 methodMap, declAcc, diagAcc @ [ Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodDecl.name targetTypeName, methodDecl.span) ]
                                             else
-                                                let argTypes = methodDecl.args |> List.map bootstrapNameEnv.resolveArgType |> List.filter (fun t -> t <> TypeId.Unit)
+                                                let argTypes =
+                                                    methodDecl.args
+                                                    |> List.map (fun arg ->
+                                                        match arg with
+                                                        | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> TypeId.Name typeSid
+                                                        | _ -> bootstrapNameEnv.resolveArgType arg)
+                                                    |> List.filter (fun t -> t <> TypeId.Unit)
                                                 let retType = bootstrapNameEnv.resolveTypeExpr methodDecl.ret
                                                 let methodType = TypeId.Fn(argTypes, retType)
                                                 let methodSid = symbolTable.NextId()
@@ -311,23 +331,8 @@ module Analyze =
                                                 Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap, (methodSid, methodDecl) :: declAcc, diagAcc
 
                                         match methodDecl.args with
-                                        | (:? Ast.FnArg.Named as thisArg) :: _ ->
-                                            let thisType = bootstrapNameEnv.resolveTypeExpr thisArg.typeExpr
-                                            // `this` は対象データ型か、`impl X for Y` の役割型 X のどちらでも許可する。
-                                            let isValidThisType =
-                                                match thisType with
-                                                | TypeId.Name thisTypeSid ->
-                                                    thisTypeSid.id = typeSid.id
-                                                    || (match baseTypeOpt with
-                                                        | Some (TypeId.Name roleSid) -> thisTypeSid.id = roleSid.id
-                                                        | _ -> false)
-                                                | _ -> false
-                                            match thisArg.name with
-                                            | "this" when isValidThisType -> registerImplMethod false
-                                            | "this" ->
-                                                methodMap, declAcc, diagAcc @ [ Diagnostic.Error("impl instance method '(this: ...)' must target the impl type", methodDecl.span) ]
-                                            | _ ->
-                                                registerImplMethod true
+                                        | firstArg :: _ when isSelfReceiverArg firstArg ->
+                                            registerImplMethod false
                                         | _ ->
                                             registerImplMethod true)
                                     (dataTypeDef.methods, [], [])

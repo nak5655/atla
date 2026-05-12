@@ -7,5 +7,5 @@ impl FlappyGame as Game
     fn new: FlappyGame =
         FlappyGame { _ = 0 }
 
-    fn Initialize (this: FlappyGame): () =
+    fn Initialize self: () =
         base'Initialize.
