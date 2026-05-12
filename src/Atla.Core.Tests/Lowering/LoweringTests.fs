@@ -1181,3 +1181,113 @@ impl Color
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("255", stdout.Trim())
+
+    [<Fact>]
+    let ``compileModules should implicitly import Std'Prelude when Std.Prelude exists`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            """
+fn main: String = Prelude'greet.
+"""
+
+        let preludeSource =
+            """
+fn greet (): String = "hello"
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "ImplicitStdPreludeImport"
+                modules =
+                    [ { moduleName = "main"; source = mainSource.Trim() }
+                      { moduleName = "Std.Prelude"; source = preludeSource.Trim() } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``compileModules should not self import Std.Prelude`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let preludeSource =
+            """
+fn main: String = "ok"
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "StdPreludeNoSelfImport"
+                modules = [ { moduleName = "Std.Prelude"; source = preludeSource.Trim() } ]
+                entryModuleName = "Std.Prelude"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``compileModules should always include Std.Prelude in compile targets`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            """
+fn main: Int = 1
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "StdPreludeAlwaysIncluded"
+                modules = [ { moduleName = "main"; source = mainSource.Trim() } ]
+                entryModuleName = "Std.Prelude"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``compileModules should reference bundled Std.Prelude when omitted from inputs`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            """
+fn main: String = Prelude'greet.
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "BundledStdPreludeReference"
+                modules = [ { moduleName = "main"; source = mainSource.Trim() } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``compileModules should report conflict for duplicate Std.Prelude modules`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let result =
+            Compiler.compileModules {
+                asmName = "StdPreludeConflict"
+                modules =
+                    [ { moduleName = "Std.Prelude"; source = "fn a: Int = 1" }
+                      { moduleName = "Std.Prelude"; source = "fn b: Int = 2" } ]
+                entryModuleName = "Std.Prelude"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains("Std.Prelude"))
