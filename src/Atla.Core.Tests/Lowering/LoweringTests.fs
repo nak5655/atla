@@ -1230,3 +1230,22 @@ fn main: String = "ok"
             }
 
         Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
+    let ``compileModules should report conflict for duplicate Std.Prelude modules`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let result =
+            Compiler.compileModules {
+                asmName = "StdPreludeConflict"
+                modules =
+                    [ { moduleName = "Std.Prelude"; source = "fn a: Int = 1" }
+                      { moduleName = "Std.Prelude"; source = "fn b: Int = 2" } ]
+                entryModuleName = "Std.Prelude"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains("Std.Prelude"))
