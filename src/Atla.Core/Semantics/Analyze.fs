@@ -42,16 +42,20 @@ module Analyze =
             let methods = List<Hir.Method>()
             let types = List<Hir.Type>()
 
+            /// 引数が `self` レシーバー（`fn foo self ...` で導入される推論引数）かを判定する。
             let isSelfReceiverArg (arg: Ast.FnArg) =
                 match arg with
                 | :? Ast.FnArg.Inferred as inferredArg -> inferredArg.name = "self"
                 | _ -> false
 
+            /// 先頭引数が `self` レシーバーである場合にインスタンスメソッドとして扱う。
             let isInstanceMethod (args: Ast.FnArg list) =
                 match args with
                 | firstArg :: _ when isSelfReceiverArg firstArg -> true
                 | _ -> false
 
+            /// 関数引数型を解決する。`self` 推論引数は呼び出し側コンテキストで確定した receiver 型を使い、
+            /// それ以外の引数は通常の型注釈解決（bootstrapNameEnv.resolveArgType）に委譲する。
             let resolveArgTypeWithSelf (selfType: TypeId) (arg: Ast.FnArg) =
                 match arg with
                 | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> selfType

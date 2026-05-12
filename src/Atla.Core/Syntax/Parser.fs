@@ -110,7 +110,7 @@ module Parser =
             | _ -> None)
 
     let tid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id -> Some(id) | _ -> None)
-    let nonThisTid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id when id.str <> "this" -> Some(id) | _ -> None)
+    let nonLegacyThisTid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id when id.str <> "this" -> Some(id) | _ -> None)
     let selfKeywordId: PackratParser<Token, Token.Keyword> = AcceptMatch (fun t -> match t with :? Token.Keyword as kw when kw.str = "self" -> Some(kw) | _ -> None)
     let valueIdent: PackratParser<Token, string * Span> =
         (tid |>> fun id -> id.str, id.span)
@@ -498,7 +498,7 @@ module Parser =
     // 関数宣言
     and fnArgNamed: PackratParser<Token, Ast.FnArg> =
         Delay (fun () ->
-            delim '(' &> nonThisTid <& delim ':' <&> typeExpr <& delim ')' |>> fun ((id, typeExpr)) -> Ast.FnArg.Named(id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right }) :> Ast.FnArg)
+            delim '(' &> nonLegacyThisTid <& delim ':' <&> typeExpr <& delim ')' |>> fun ((id, typeExpr)) -> Ast.FnArg.Named(id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right }) :> Ast.FnArg)
 
     and fnArgUnit: PackratParser<Token, Ast.FnArg> =
         Delay (fun () ->
