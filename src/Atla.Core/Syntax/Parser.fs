@@ -514,10 +514,7 @@ module Parser =
     and methodArgList: PackratParser<Token, Ast.FnArg list> =
         Delay (fun () ->
             Optional selfReceiverArg <&> Many fnArg
-            |>> fun (selfOpt, args) ->
-                match selfOpt with
-                | Some selfArg -> selfArg :: args
-                | None -> args)
+            |>> fun (selfOpt, args) -> (Option.toList selfOpt) @ args)
 
     and fnBodyExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
