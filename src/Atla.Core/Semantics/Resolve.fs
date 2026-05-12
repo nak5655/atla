@@ -9,6 +9,10 @@ module Resolve =
         { typeSid: SymbolId
           decl: Ast.Decl.Data }
 
+    type ResolvedEnumDecl =
+        { typeSid: SymbolId
+          decl: Ast.Decl.Enum }
+
     type ResolvedRoleDecl =
         { typeSid: SymbolId
           decl: Ast.Decl.Role }
@@ -20,6 +24,7 @@ module Resolve =
           importedTypeAliases: Map<string, string>
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
+          enumDecls: ResolvedEnumDecl list
           roleDecls: ResolvedRoleDecl list
           implDecls: (SymbolId * TypeId option * string option * Ast.Decl.Impl) list }
 
@@ -120,13 +125,14 @@ module Resolve =
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
+        let enumDecls = ResizeArray<ResolvedEnumDecl>()
         let roleDecls = ResizeArray<ResolvedRoleDecl>()
         let implDecls = ResizeArray<SymbolId * TypeId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
         let importedTypeAliases = ResizeArray<string * string>()
         let diagnostics = ResizeArray<Diagnostic>()
 
-        // data 型名と role 型名を先に登録し、同一モジュール内で相互参照可能にする。
+        // data / enum / role 型名を先に登録し、同一モジュール内で相互参照可能にする。
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Data as dataDecl ->
@@ -138,6 +144,15 @@ module Resolve =
                     symbolTable.Add(typeSid, { name = dataDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
                     moduleScope.DeclareType(dataDecl.name, TypeId.Name typeSid)
                     dataDecls.Add({ typeSid = typeSid; decl = dataDecl })
+            | :? Ast.Decl.Enum as enumDecl ->
+                match moduleScope.ResolveType(enumDecl.name) with
+                | Some _ ->
+                    diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" enumDecl.name, enumDecl.span))
+                | None ->
+                    let typeSid = symbolTable.NextId()
+                    symbolTable.Add(typeSid, { name = enumDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
+                    moduleScope.DeclareType(enumDecl.name, TypeId.Name typeSid)
+                    enumDecls.Add({ typeSid = typeSid; decl = enumDecl })
             | :? Ast.Decl.Role as roleDecl ->
                 // role 型を型スコープへ事前登録し、同一モジュール内での型注釈で参照可能にする。
                 match moduleScope.ResolveType(roleDecl.name) with
@@ -158,16 +173,20 @@ module Resolve =
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
                 ()
+            | :? Ast.Decl.Enum ->
+                ()
             | :? Ast.Decl.Impl as implDecl ->
                 let implTargetTypeName = implDecl.forTypeName |> Option.defaultValue implDecl.typeName
                 let typeResolution = moduleScope.ResolveType(implTargetTypeName)
                 match typeResolution with
                 | Some (TypeId.Name typeSid) ->
-                    let isDataType =
+                    let isNominalType =
                         dataDecls
                         |> Seq.exists (fun dataDecl -> dataDecl.typeSid.id = typeSid.id)
-                    if not isDataType then
-                        diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data type in this module" implTargetTypeName, implDecl.span))
+                        || enumDecls
+                        |> Seq.exists (fun enumDecl -> enumDecl.typeSid.id = typeSid.id)
+                    if not isNominalType then
+                        diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data or enum type in this module" implTargetTypeName, implDecl.span))
                     else
                         // `impl A as DotNetClass` の `as` 句を解決し .NET 基底型を返す。
                         // `impl B for A` の `for` 句は「A が B のサブタイプ」を意味するため、
@@ -363,6 +382,7 @@ module Resolve =
                   importedTypeAliases = importedTypeAliases |> Seq.distinct |> Map.ofSeq
                   fnDecls = Seq.toList fnDecls
                   dataDecls = Seq.toList dataDecls
+                  enumDecls = Seq.toList enumDecls
                   roleDecls = Seq.toList roleDecls
                   implDecls = Seq.toList implDecls }
                 allDiagnostics

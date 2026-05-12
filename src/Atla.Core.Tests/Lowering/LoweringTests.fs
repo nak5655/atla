@@ -1068,3 +1068,116 @@ fn main: () =
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("50", stdout.Trim())
+
+    [<Fact>]
+    let ``enum match and constructors compile and execute correctly`` () =
+        let program = """
+import System'Console
+
+enum Color
+    | Black
+    | White
+    | Rgb { r: Int, g: Int, b: Int }
+    | Hsv { h: Int, s: Int, v: Int }
+
+impl Color
+    fn red self: Int =
+        match self
+            | Color'Black -> 0
+            | Color'White -> 255
+            | Color'Rgb { r, .. } -> r
+            | Color'Hsv { h, s, v } -> (h * s * v) / 10000
+
+fn main: () =
+    let color = Color'Rgb { r = 255, g = 0, b = 0 }
+    color'red. Console'WriteLine.
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "HelloEnum"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "HelloEnum.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("255", stdout.Trim())
+
+    [<Fact>]
+    let ``compileModules should allow imported enum constructor and methods via import sub'Color`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            """
+import System'Console
+import sub
+import sub'Color
+
+fn main: () = do
+    let color = Color'Rgb { r = 255, g = 0, b = 0 }
+    color'red. Console'WriteLine.
+"""
+
+        let subSource =
+            """
+enum Color
+    | Black
+    | Rgb { r: Int, g: Int, b: Int }
+
+impl Color
+    fn red self: Int =
+        match self
+            | Color'Black -> 0
+            | Color'Rgb { r, .. } -> r
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "ImportEnumMethodCall"
+                modules =
+                    [ { moduleName = "main"; source = mainSource.Trim() }
+                      { moduleName = "sub"; source = subSource.Trim() } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "ImportEnumMethodCall.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("255", stdout.Trim())

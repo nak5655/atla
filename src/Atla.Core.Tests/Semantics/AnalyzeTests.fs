@@ -144,6 +144,142 @@ fn main (): Int = do
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
+    [<Fact>]
+    let ``semantic analysis lowers enum match into block and if chain`` () =
+        let source = """
+enum Color
+    | Black
+    | Rgb { r: Int, g: Int, b: Int }
+
+fn red (color: Color): Int =
+    match color
+        | Color'Black -> 0
+        | Color'Rgb { r, .. } -> r
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let redMethod =
+                        hirModule.methods
+                        |> List.find (fun methodDef ->
+                            match symbolTable.Get(methodDef.sym) with
+                            | Some symInfo -> symInfo.name = "red"
+                            | None -> false)
+                    match redMethod.body with
+                    | Hir.Expr.Block (_, Hir.Expr.Block ([ Hir.Stmt.Let _ ], Hir.Expr.If _, _, _), _, _) -> ()
+                    | other -> Assert.True(false, $"Expected enum match to lower into Hir.Expr.Block + Hir.Expr.If, got {other}")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun diagnostic -> diagnostic.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis lowers zero field enum constructor to data constructor call`` () =
+        let source = """
+enum Color
+    | Black
+
+fn main (): Color = Color'Black
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    match hirModule.methods.Head.body with
+                    | Hir.Expr.Block (_, Hir.Expr.Call (Hir.Callable.DataConstructor (_, fieldSids), None, [ Hir.Expr.Int (0, _) ], _, _), _, _) ->
+                        Assert.Single(fieldSids) |> ignore
+                    | other ->
+                        Assert.True(false, $"Expected zero-field enum constructor to lower into DataConstructor call, got {other}")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun diagnostic -> diagnostic.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports non exhaustive enum match`` () =
+        let source = """
+enum Color
+    | Black
+    | White
+
+fn main (color: Color): Int =
+    match color
+        | Color'Black -> 0
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Non-exhaustive match"))
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for non-exhaustive enum match")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports duplicate enum match arms`` () =
+        let source = """
+enum Color
+    | Black
+
+fn main (color: Color): Int =
+    match color
+        | Color'Black -> 0
+        | Color'Black -> 1
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Duplicate match arm"))
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for duplicate enum match arms")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
     /// 回帰テスト: do ブロック末尾式の型が unit でない場合に
     /// "Cannot unify: unit and T" が誤報告されなかったことを検証する。
     /// DataInit（具体型を直接返す式）を末尾に置くパターン。
@@ -2717,14 +2853,14 @@ fn getMessage (e: MyError): String = e'Message
                         | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
                         | _ -> None))
                 |> Set.ofList
-            let availableDataTypeDecls =
+            let availableTypeDecls =
                 moduleAsts
                 |> Map.toList
                 |> List.collect (fun (moduleName, moduleAst) ->
                     moduleAst.decls
                     |> List.choose (fun decl ->
                         match decl with
-                        | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl)
+                        | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)
                         | _ -> None))
                 |> Map.ofList
             let availableDataTypeImplDecls =
@@ -2753,7 +2889,7 @@ fn getMessage (e: MyError): String = e'Message
                 Analyze.analyzeModuleWithImports(
                     symbolTable, typeSubst, typeMetaFactory, nameA, astA,
                     availableModuleNames, availableTypeFullNames,
-                    availableDataTypeDecls, availableDataTypeImplDecls, Map.empty)
+                    availableTypeDecls, availableDataTypeImplDecls, Map.empty)
 
             match moduleAResult with
             | { succeeded = false; diagnostics = diagnostics } ->
@@ -2767,7 +2903,7 @@ fn getMessage (e: MyError): String = e'Message
                     Analyze.analyzeModuleWithImports(
                         symbolTable, typeSubst, typeMetaFactory, nameB, astB,
                         availableModuleNames, availableTypeFullNames,
-                        availableDataTypeDecls, availableDataTypeImplDecls,
+                        availableTypeDecls, availableDataTypeImplDecls,
                         Map.ofList [ nameA, moduleAExports ])
 
                 match moduleBResult with
@@ -2810,14 +2946,14 @@ fn setLink (e: MyError): () = do
                         | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
                         | _ -> None))
                 |> Set.ofList
-            let availableDataTypeDecls =
+            let availableTypeDecls =
                 moduleAsts
                 |> Map.toList
                 |> List.collect (fun (moduleName, moduleAst) ->
                     moduleAst.decls
                     |> List.choose (fun decl ->
                         match decl with
-                        | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl)
+                        | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)
                         | _ -> None))
                 |> Map.ofList
             let availableDataTypeImplDecls =
@@ -2845,7 +2981,7 @@ fn setLink (e: MyError): () = do
                 Analyze.analyzeModuleWithImports(
                     symbolTable, typeSubst, typeMetaFactory, nameA, astA,
                     availableModuleNames, availableTypeFullNames,
-                    availableDataTypeDecls, availableDataTypeImplDecls, Map.empty)
+                    availableTypeDecls, availableDataTypeImplDecls, Map.empty)
 
             match moduleAResult with
             | { succeeded = false; diagnostics = diagnostics } ->
@@ -2858,7 +2994,7 @@ fn setLink (e: MyError): () = do
                     Analyze.analyzeModuleWithImports(
                         symbolTable, typeSubst, typeMetaFactory, nameB, astB,
                         availableModuleNames, availableTypeFullNames,
-                        availableDataTypeDecls, availableDataTypeImplDecls,
+                        availableTypeDecls, availableDataTypeImplDecls,
                         Map.ofList [ nameA, moduleAExports ])
 
                 match moduleBResult with

@@ -147,7 +147,20 @@ module Parser =
     // 他のパーサを即座に評価せず、解析呼び出し時まで遅延させるため、
     // 全バインディング初期化後の値として正しく参照される。
     let rec paren: PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> delim '(' &> expr <& delim ')')
+        Delay (fun () -> fun input pos ->
+            match (delim '(') input pos with
+            | Failure (reason, span) -> Failure (reason, span)
+            | Success (l, afterOpenPos) ->
+                match (delim ')') input afterOpenPos with
+                | Success (r, nextPos) ->
+                    Success (Ast.Expr.Unit({ left = l.span.left; right = r.span.right }) :> Ast.Expr, nextPos)
+                | Failure _ ->
+                    match expr input afterOpenPos with
+                    | Success (innerExpr, afterExprPos) ->
+                        match (delim ')') input afterExprPos with
+                        | Success (_, nextPos) -> Success (innerExpr, nextPos)
+                        | Failure (reason, span) -> Failure (reason, span)
+                    | Failure (reason, span) -> Failure (reason, span))
     and doExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
             block (asToken (keyword "do")) (Once ((Many1 stmt |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right })) <& Eoi) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)))
@@ -194,8 +207,8 @@ module Parser =
 
     and enumPatternFieldList: PackratParser<Token, Ast.PatternField list * bool> =
         Delay (fun () ->
-            ((SepBy1 patternField (delim ',') <&> Optional (delim ',' &> symbol ".."))
-             |>> fun (fields, hasRestOpt) -> fields, hasRestOpt.IsSome)
+            ((patternField <&> Many (delim ',' &> patternField) <&> Optional (delim ',' &> symbol ".."))
+             |>> fun ((firstField, restFields), hasRestOpt) -> firstField :: restFields, hasRestOpt.IsSome)
             <|> (symbol ".." |>> fun _ -> [], true))
 
     and enumPattern: PackratParser<Token, Ast.Pattern> =
@@ -226,7 +239,7 @@ module Parser =
             (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)))
 
     and factor: PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> unit <|> paren <|> ifExpr <|> matchExpr <|> doExpr <|> enumInitExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))
+        Delay (fun () -> paren <|> ifExpr <|> matchExpr <|> doExpr <|> enumInitExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))
 
     and postfixMemberAccess: PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
         Delay (fun () -> fun input pos ->
@@ -368,10 +381,10 @@ module Parser =
         Delay (fun () ->
             List.fold (fun acc prec -> 
                 let op = infixOp prec
-                acc <&> (Optional (op <&> acc)) |>> fun (left, opt) -> 
-                    match opt with
-                    | Some (op, right) -> Ast.Expr.Apply (Ast.Expr.Id(op.str, op.span), [left; right], { left = left.span.left; right = right.span.right }) :> Ast.Expr
-                    | None -> left
+                acc <&> Many (op <&> acc) |>> fun (left, rest) ->
+                    rest
+                    |> List.fold (fun current (op, right) ->
+                        Ast.Expr.Apply (Ast.Expr.Id(op.str, op.span), [current; right], { left = current.span.left; right = right.span.right }) :> Ast.Expr) left
             ) term2 [9 .. -1 .. 0])
 
     // lambda 引数名の重複を検証し、最初に見つかった重複名を返す。

@@ -20,6 +20,23 @@ module LayoutTests =
         | { value = Some closedAsm } -> Layout.layoutAssembly(asmName, closedAsm)
         | _ -> PhaseResult.failed [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ]
 
+    /// HIR 式の形状を簡易スナップショット文字列へ変換する。
+    let rec private snapshotExprShape (expr: Hir.Expr) : string =
+        match expr with
+        | Hir.Expr.Block (_, body, _, _) -> $"Block({snapshotExprShape body})"
+        | Hir.Expr.If (_, thenExpr, elseExpr, _, _) -> $"If({snapshotExprShape thenExpr},{snapshotExprShape elseExpr})"
+        | Hir.Expr.Call _ -> "Call"
+        | Hir.Expr.MemberAccess _ -> "MemberAccess"
+        | Hir.Expr.Id _ -> "Id"
+        | Hir.Expr.Int _ -> "Int"
+        | Hir.Expr.Bool _ -> "Bool"
+        | Hir.Expr.Float _ -> "Float"
+        | Hir.Expr.String _ -> "String"
+        | Hir.Expr.Unit _ -> "Unit"
+        | Hir.Expr.Null _ -> "Null"
+        | Hir.Expr.Lambda _ -> "Lambda"
+        | Hir.Expr.ExprError _ -> "Error"
+
     [<Fact>]
     let ``layoutAssembly emits RetValue for non-unit method`` () =
         let span = { left = Position.Zero; right = Position.Zero }
@@ -111,6 +128,92 @@ fn main: () =
                         diagnostics
                         |> List.map (fun err -> err.toDisplayText())
                         |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``enum lowering snapshot stays stable across HIR and MIR`` () =
+        let program = """
+enum Color
+    | Black
+    | Rgb { r: Int, g: Int, b: Int }
+
+fn red (color: Color): Int =
+    match color
+        | Color'Black -> 0
+        | Color'Rgb { r, .. } -> r
+"""
+
+        let input: Input<SourceChar> = StringInput program
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let mirAssemblyResult = layoutHirAssembly("EnumSnapshot", Hir.Assembly("enum-snapshot", [ hirModule ]))
+                    let mirAssembly =
+                        match mirAssemblyResult with
+                        | { succeeded = true; value = Some asm } -> asm
+                        | { diagnostics = diagnostics } ->
+                            let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                            failwith $"layoutAssembly failed: {message}"
+
+                    let hirTypeSnapshot =
+                        hirModule.types
+                        |> List.map (fun hirType ->
+                            let typeName =
+                                match symbolTable.Get(hirType.sym) with
+                                | Some symInfo -> symInfo.name
+                                | None -> $"<{hirType.sym.id}>"
+                            let fieldNames =
+                                hirType.fields
+                                |> List.map (fun field ->
+                                    match symbolTable.Get(field.sym) with
+                                    | Some fieldInfo -> fieldInfo.name
+                                    | None -> $"<{field.sym.id}>")
+                                |> String.concat ","
+                            $"{typeName}=[{fieldNames}]")
+                        |> List.sort
+                        |> String.concat ";"
+
+                    let hirMethodSnapshot =
+                        hirModule.methods
+                        |> List.map (fun methodDef ->
+                            let methodName =
+                                match symbolTable.Get(methodDef.sym) with
+                                | Some symInfo -> symInfo.name
+                                | None -> $"<{methodDef.sym.id}>"
+                            $"{methodName}={snapshotExprShape methodDef.body}")
+                        |> String.concat ";"
+
+                    let mirTypeSnapshot =
+                        mirAssembly.modules.Head.types
+                        |> List.map (fun mirType ->
+                            let fieldNames =
+                                mirType.fields
+                                |> List.map (fun field ->
+                                    match symbolTable.Get(field.sym) with
+                                    | Some fieldInfo -> fieldInfo.name
+                                    | None -> $"<{field.sym.id}>")
+                                |> String.concat ","
+                            $"[{fieldNames}]")
+                        |> List.sort
+                        |> String.concat ";"
+
+                    let snapshot = $"{hirTypeSnapshot}\n{hirMethodSnapshot}\n{mirTypeSnapshot}"
+                    let expected =
+                        "Color.__enum_payload_Rgb_type=[Color.__enum_payload_Rgb_type.r,Color.__enum_payload_Rgb_type.g,Color.__enum_payload_Rgb_type.b];Color=[Color.__enum_tag,Color.__enum_payload_Rgb]\nred=Block(Block(If(Int,If(Block(Id),Block(Id)))))\n[Color.__enum_payload_Rgb_type.r,Color.__enum_payload_Rgb_type.g,Color.__enum_payload_Rgb_type.b];[Color.__enum_tag,Color.__enum_payload_Rgb]"
+                    Assert.Equal(expected, snapshot)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun err -> err.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

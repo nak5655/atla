@@ -329,6 +329,49 @@ module ExprAnalyze =
 
         loop receiverTypeSid Set.empty
 
+    /// 型 SID から Atla の data / enum 型メタデータを検索する。
+    let private tryFindTypeDefBySid (nameEnv: NameEnv) (typeSid: SymbolId) : DataTypeDef option =
+        nameEnv.dataTypeDefs
+        |> Map.toSeq
+        |> Seq.tryPick (fun (_, def) ->
+            if def.typeSid.id = typeSid.id then Some def else None)
+
+    /// enum case コンストラクターを既存の DataConstructor 呼び出しへ lower する。
+    let private lowerEnumCaseConstructor
+        (enumRootDef: DataTypeDef)
+        (enumDef: EnumTypeDef)
+        (caseDef: EnumCaseDef)
+        (payloadArgs: Hir.Expr list)
+        (span: Atla.Core.Data.Span)
+        : Hir.Expr =
+        let rootType = TypeId.Name enumRootDef.typeSid
+        let tagExpr = Hir.Expr.Int(caseDef.tag, span)
+
+        match caseDef.payloadTypeSid, caseDef.payloadFieldSid, caseDef.fields with
+        | None, None, [] ->
+            Hir.Expr.Call(
+                Hir.Callable.DataConstructor(enumRootDef.typeSid, [ enumDef.hiddenTagField.sid ]),
+                None,
+                [ tagExpr ],
+                rootType,
+                span)
+        | Some payloadTypeSid, Some payloadFieldSid, caseFields ->
+            let payloadExpr =
+                Hir.Expr.Call(
+                    Hir.Callable.DataConstructor(payloadTypeSid, caseFields |> List.map (fun fieldDef -> fieldDef.sid)),
+                    None,
+                    payloadArgs,
+                    TypeId.Name payloadTypeSid,
+                    span)
+            Hir.Expr.Call(
+                Hir.Callable.DataConstructor(enumRootDef.typeSid, [ enumDef.hiddenTagField.sid; payloadFieldSid ]),
+                None,
+                [ tagExpr; payloadExpr ],
+                rootType,
+                span)
+        | _ ->
+            Hir.Expr.ExprError(sprintf "Enum case '%s' has inconsistent payload metadata" caseDef.name, rootType, span)
+
     // Generate an overload error message with available candidates when argument count does not match.
     let private noOverloadMessage (callable: Hir.Callable) (argCount: int) : string =
         match callable with
@@ -480,6 +523,96 @@ module ExprAnalyze =
                                         typedArgs,
                                         dataType,
                                         dataInitExpr.span)
+        | :? Ast.Expr.EnumInit as enumInitExpr ->
+            match Map.tryFind enumInitExpr.typeName nameEnv.dataTypeDefs with
+            | None ->
+                Hir.Expr.ExprError(sprintf "Undefined enum type '%s'" enumInitExpr.typeName, tid, enumInitExpr.span)
+            | Some enumRootDef ->
+                match enumRootDef.enumInfo with
+                | None ->
+                    Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" enumInitExpr.typeName, tid, enumInitExpr.span)
+                | Some enumDef ->
+                    match enumDef.cases |> List.tryFind (fun caseDef -> caseDef.name = enumInitExpr.caseName) with
+                    | None ->
+                        Hir.Expr.ExprError(sprintf "Unknown enum case '%s' for type '%s'" enumInitExpr.caseName enumInitExpr.typeName, tid, enumInitExpr.span)
+                    | Some caseDef ->
+                        let initFields =
+                            enumInitExpr.fields
+                            |> List.choose (fun field ->
+                                match field with
+                                | :? Ast.DataInitField.Field as namedField -> Some namedField
+                                | _ -> None)
+
+                        let duplicateFieldName =
+                            initFields
+                            |> List.fold
+                                (fun (seen, dup) field ->
+                                    match dup with
+                                    | Some _ -> seen, dup
+                                    | None when Set.contains field.name seen -> seen, Some field.name
+                                    | None -> Set.add field.name seen, None)
+                                (Set.empty, None)
+                            |> snd
+
+                        match duplicateFieldName with
+                        | Some duplicatedName ->
+                            Hir.Expr.ExprError(sprintf "Duplicate field initializer '%s'" duplicatedName, tid, enumInitExpr.span)
+                        | None ->
+                            let caseFieldMap = caseDef.fields |> List.map (fun fieldDef -> fieldDef.name, fieldDef) |> Map.ofList
+                            let unknownFieldName =
+                                initFields
+                                |> List.tryPick (fun field ->
+                                    if Map.containsKey field.name caseFieldMap then None else Some field.name)
+                            match unknownFieldName with
+                            | Some unknownName ->
+                                Hir.Expr.ExprError(sprintf "Unknown field '%s' for enum case '%s'" unknownName enumInitExpr.caseName, tid, enumInitExpr.span)
+                            | None ->
+                                let providedFieldNames = initFields |> List.map (fun field -> field.name) |> Set.ofList
+                                let missingField =
+                                    caseDef.fields
+                                    |> List.tryFind (fun fieldDef -> not (Set.contains fieldDef.name providedFieldNames))
+                                match missingField with
+                                | Some missing ->
+                                    Hir.Expr.ExprError(sprintf "Missing required field '%s' for enum case '%s'" missing.name enumInitExpr.caseName, tid, enumInitExpr.span)
+                                | None ->
+                                    match caseDef.payloadTypeSid, caseDef.payloadFieldSid, caseDef.fields with
+                                    | None, None, [] ->
+                                        let enumType = TypeId.Name enumRootDef.typeSid
+                                        match unifyOrError nameEnv typeEnv tid enumType enumInitExpr.span with
+                                        | Result.Error exprErr -> exprErr
+                                        | Result.Ok _ -> lowerEnumCaseConstructor enumRootDef enumDef caseDef [] enumInitExpr.span
+                                    | Some _, Some _, caseFields ->
+                                        let initFieldMap =
+                                            initFields
+                                            |> List.map (fun field -> field.name, field.value)
+                                            |> Map.ofList
+
+                                        let typedArgsResult =
+                                            caseFields
+                                            |> List.fold
+                                                (fun acc fieldDef ->
+                                                    match acc with
+                                                    | Result.Error exprErr -> Result.Error exprErr
+                                                    | Result.Ok typedArgs ->
+                                                        match Map.tryFind fieldDef.name initFieldMap with
+                                                        | None ->
+                                                            Result.Error(Hir.Expr.ExprError(sprintf "Missing required field '%s' for enum case '%s'" fieldDef.name enumInitExpr.caseName, tid, enumInitExpr.span))
+                                                        | Some valueExpr ->
+                                                            let typedExpr = analyzeExpr nameEnv typeEnv valueExpr fieldDef.typ
+                                                            match typedExpr with
+                                                            | Hir.Expr.ExprError _ as errExpr -> Result.Error errExpr
+                                                            | _ -> Result.Ok (typedArgs @ [ typedExpr ]))
+                                                (Result.Ok [])
+
+                                        match typedArgsResult with
+                                        | Result.Error exprErr -> exprErr
+                                        | Result.Ok typedArgs ->
+                                            let enumType = TypeId.Name enumRootDef.typeSid
+                                            match unifyOrError nameEnv typeEnv tid enumType enumInitExpr.span with
+                                            | Result.Error exprErr -> exprErr
+                                            | Result.Ok _ -> lowerEnumCaseConstructor enumRootDef enumDef caseDef typedArgs enumInitExpr.span
+                                    | _ ->
+                                        Hir.Expr.ExprError(sprintf "Enum case '%s' has inconsistent payload metadata" enumInitExpr.caseName, tid, enumInitExpr.span)
         | :? Ast.Expr.Id as idExpr ->
             match nameEnv.resolveVar idExpr.name with
             | [sid] ->
@@ -978,9 +1111,25 @@ module ExprAnalyze =
 
             // 型名レシーバー（`Type'member`）で data 型 static メソッドを優先探索する。
             let resolveMemberFromTypeName (receiverTypeSid: SymbolId) (receiverTypeName: string) : Result<Hir.Expr, string> =
-                match tryResolveDataStaticMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span with
-                | Result.Ok resolvedMember -> Result.Ok resolvedMember
-                | Result.Error _ ->
+                match tryFindTypeDefBySid nameEnv receiverTypeSid with
+                | Some typeDef ->
+                    match typeDef.enumInfo |> Option.bind (fun enumDef -> enumDef.cases |> List.tryFind (fun caseDef -> caseDef.name = memberAccessExpr.memberName) |> Option.map (fun caseDef -> enumDef, caseDef)) with
+                    | Some (enumDef, caseDef) when caseDef.fields.IsEmpty ->
+                        Result.Ok(lowerEnumCaseConstructor typeDef enumDef caseDef [] memberAccessExpr.span)
+                    | Some (_, caseDef) ->
+                        Result.Error(sprintf "Enum case '%s' requires a payload initializer" caseDef.name)
+                    | None ->
+                        match tryResolveDataStaticMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span with
+                        | Result.Ok resolvedMember -> Result.Ok resolvedMember
+                        | Result.Error _ ->
+                            match nameEnv.resolveSym receiverTypeSid with
+                            | Some symInfo ->
+                                match symInfo.kind with
+                                | SymbolKind.External(ExternalBinding.SystemTypeRef sysType) when not (obj.ReferenceEquals(sysType, null)) -> resolveMemberFromSystemTypeResult sysType
+                                | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Result.Error (unresolvedImportedSystemTypeMessage receiverTypeName memberAccessExpr.span)
+                                | _ -> Result.Error (sprintf "Type '%s' has no static member '%s'" receiverTypeName memberAccessExpr.memberName)
+                            | None -> Result.Error (sprintf "Undefined type symbol '%s'" receiverTypeName)
+                | None ->
                     match nameEnv.resolveSym receiverTypeSid with
                     | Some symInfo ->
                         match symInfo.kind with
@@ -1278,6 +1427,162 @@ module ExprAnalyze =
                 | :? Ast.IfBranch.Else as elseBranch -> analyzeExpr nameEnv typeEnv elseBranch.body tid
                 | _ -> errorExpr tid (List.head branches).span "Unsupported if branch type"
             analyzeIfBranches ifExpr.branches
+        | :? Ast.Expr.Match as matchExpr ->
+            let analyzedScrutinee = analyzeExpr nameEnv typeEnv matchExpr.scrutinee (typeEnv.freshMeta ())
+            match typeEnv.resolveType analyzedScrutinee.typ with
+            | TypeId.Name scrutineeTypeSid ->
+                match tryFindTypeDefBySid nameEnv scrutineeTypeSid with
+                | None ->
+                    Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
+                | Some scrutineeTypeDef ->
+                    match scrutineeTypeDef.enumInfo with
+                    | None ->
+                        Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
+                    | Some enumDef ->
+                        let matchNameEnv = nameEnv.sub()
+                        let scrutineeSid = matchNameEnv.declareLocal "__match_scrutinee" analyzedScrutinee.typ
+                        let scrutineeRef = Hir.Expr.Id(scrutineeSid, analyzedScrutinee.typ, matchExpr.scrutinee.span)
+
+                        let analyzeArm (arm: Ast.MatchArm) =
+                            match arm with
+                            | :? Ast.MatchArm.Arm as matchArm ->
+                                match matchArm.pattern with
+                                | :? Ast.Pattern.Enum as enumPattern ->
+                                    let scrutineeTypeName =
+                                        nameEnv.resolveSym scrutineeTypeDef.typeSid
+                                        |> Option.map (fun symInfo -> symInfo.name)
+                                        |> Option.defaultValue enumPattern.typeName
+                                    if enumPattern.typeName <> scrutineeTypeName then
+                                        Result.Error(Hir.Expr.ExprError(sprintf "Pattern type '%s' does not match enum type '%s'" enumPattern.typeName scrutineeTypeName, tid, matchArm.span))
+                                    else
+                                        match enumDef.cases |> List.tryFind (fun caseDef -> caseDef.name = enumPattern.caseName) with
+                                        | None ->
+                                            Result.Error(Hir.Expr.ExprError(sprintf "Unknown enum case '%s' for type '%s'" enumPattern.caseName enumPattern.typeName, tid, matchArm.span))
+                                        | Some caseDef ->
+                                            let duplicateFieldName =
+                                                enumPattern.fields
+                                                |> List.choose (fun field ->
+                                                    match field with
+                                                    | :? Ast.PatternField.Named as namedField -> Some namedField.name
+                                                    | _ -> None)
+                                                |> List.fold
+                                                    (fun (seen, dup) fieldName ->
+                                                        match dup with
+                                                        | Some _ -> seen, dup
+                                                        | None when Set.contains fieldName seen -> seen, Some fieldName
+                                                        | None -> Set.add fieldName seen, None)
+                                                    (Set.empty, None)
+                                                |> snd
+
+                                            match duplicateFieldName with
+                                            | Some duplicatedName ->
+                                                Result.Error(Hir.Expr.ExprError(sprintf "Duplicate pattern field '%s'" duplicatedName, tid, matchArm.span))
+                                            | None ->
+                                                let caseFieldMap = caseDef.fields |> List.map (fun fieldDef -> fieldDef.name, fieldDef) |> Map.ofList
+                                                let patternFieldNames =
+                                                    enumPattern.fields
+                                                    |> List.choose (fun field ->
+                                                        match field with
+                                                        | :? Ast.PatternField.Named as namedField -> Some namedField.name
+                                                        | _ -> None)
+                                                let unknownFieldName =
+                                                    patternFieldNames
+                                                    |> List.tryFind (fun fieldName -> not (Map.containsKey fieldName caseFieldMap))
+
+                                                match unknownFieldName with
+                                                | Some unknownField ->
+                                                    Result.Error(Hir.Expr.ExprError(sprintf "Unknown pattern field '%s' for enum case '%s'" unknownField caseDef.name, tid, matchArm.span))
+                                                | None ->
+                                                    let missingField =
+                                                        if enumPattern.hasRest then
+                                                            None
+                                                        else
+                                                            caseDef.fields
+                                                            |> List.tryFind (fun fieldDef -> not (patternFieldNames |> List.contains fieldDef.name))
+                                                    match missingField with
+                                                    | Some fieldDef ->
+                                                        Result.Error(Hir.Expr.ExprError(sprintf "Missing pattern field '%s' for enum case '%s'" fieldDef.name caseDef.name, tid, matchArm.span))
+                                                    | None ->
+                                                        let armNameEnv = matchNameEnv.sub()
+                                                        let bindingStmts =
+                                                            match caseDef.payloadTypeSid, caseDef.payloadFieldSid with
+                                                            | Some payloadTypeSid, Some payloadFieldSid ->
+                                                                let payloadExpr =
+                                                                    Hir.Expr.MemberAccess(Hir.Member.DataField(scrutineeTypeDef.typeSid, payloadFieldSid), Some scrutineeRef, TypeId.Name payloadTypeSid, matchArm.span)
+                                                                patternFieldNames
+                                                                |> List.choose (fun fieldName ->
+                                                                    caseFieldMap
+                                                                    |> Map.tryFind fieldName
+                                                                    |> Option.map (fun fieldDef ->
+                                                                        let sid = armNameEnv.declareLocal fieldName fieldDef.typ
+                                                                        let valueExpr =
+                                                                            Hir.Expr.MemberAccess(Hir.Member.DataField(payloadTypeSid, fieldDef.sid), Some payloadExpr, fieldDef.typ, matchArm.span)
+                                                                        Hir.Stmt.Let(sid, false, valueExpr, matchArm.span)))
+                                                            | _ -> []
+
+                                                        let bodyExpr = analyzeExpr armNameEnv typeEnv matchArm.body tid
+                                                        let thenExpr =
+                                                            if bindingStmts.IsEmpty then
+                                                                bodyExpr
+                                                            else
+                                                                Hir.Expr.Block(bindingStmts, bodyExpr, bodyExpr.typ, matchArm.span)
+                                                        Result.Ok(caseDef, thenExpr)
+                                | _ ->
+                                    Result.Error(Hir.Expr.ExprError("Unsupported match pattern", tid, matchArm.span))
+                            | _ ->
+                                Result.Error(Hir.Expr.ExprError("Unsupported match arm", tid, arm.span))
+
+                        let armResults =
+                            matchExpr.arms
+                            |> List.map analyzeArm
+
+                        match armResults |> List.tryPick (function | Result.Error err -> Some err | _ -> None) with
+                        | Some errExpr -> errExpr
+                        | None ->
+                            let analyzedArms = armResults |> List.choose (function | Result.Ok value -> Some value | _ -> None)
+                            let duplicateCase =
+                                analyzedArms
+                                |> List.fold
+                                    (fun (seen, dup) (caseDef, _) ->
+                                        match dup with
+                                        | Some _ -> seen, dup
+                                        | None when Set.contains caseDef.name seen -> seen, Some caseDef.name
+                                        | None -> Set.add caseDef.name seen, None)
+                                    (Set.empty, None)
+                                |> snd
+                            match duplicateCase with
+                            | Some caseName ->
+                                Hir.Expr.ExprError(sprintf "Duplicate match arm for enum case '%s'" caseName, tid, matchExpr.span)
+                            | None ->
+                                let coveredCases = analyzedArms |> List.map (fun (caseDef, _) -> caseDef.name) |> Set.ofList
+                                let missingCase =
+                                    enumDef.cases
+                                    |> List.tryFind (fun caseDef -> not (Set.contains caseDef.name coveredCases))
+                                match missingCase with
+                                | Some caseDef ->
+                                    Hir.Expr.ExprError(sprintf "Non-exhaustive match: missing enum case '%s'" caseDef.name, tid, matchExpr.span)
+                                | None ->
+                                    let tagAccess caseTagSpan =
+                                        Hir.Expr.MemberAccess(Hir.Member.DataField(scrutineeTypeDef.typeSid, enumDef.hiddenTagField.sid), Some scrutineeRef, enumDef.hiddenTagField.typ, caseTagSpan)
+
+                                    let ifChain =
+                                        analyzedArms
+                                        |> List.rev
+                                        |> List.fold
+                                            (fun elseExpr (caseDef, thenExpr) ->
+                                                let condExpr =
+                                                    Hir.Expr.Call(
+                                                        Hir.Callable.BuiltinOperator Builtins.Operators.OpEq,
+                                                        None,
+                                                        [ tagAccess matchExpr.span
+                                                          Hir.Expr.Int(caseDef.tag, matchExpr.span) ],
+                                                        TypeId.Bool,
+                                                        matchExpr.span)
+                                                Hir.Expr.If(condExpr, thenExpr, elseExpr, tid, matchExpr.span))
+                                            (analyzedArms |> List.last |> snd)
+                                    Hir.Expr.Block([ Hir.Stmt.Let(scrutineeSid, false, analyzedScrutinee, matchExpr.scrutinee.span) ], ifChain, tid, matchExpr.span)
+            | _ ->
+                Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
         | :? Ast.Expr.Lambda as lambdaExpr ->
             // ラムダ本体専用のスコープを作成し、引数束縛を外側と分離する。
             let lambdaNameEnv = nameEnv.sub()
