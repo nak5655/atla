@@ -2,6 +2,7 @@ namespace Atla.Build.Tests
 
 open System
 open System.IO
+open System.IO.Compression
 open System.Reflection
 open System.Text.Json
 open Xunit
@@ -35,6 +36,7 @@ module BuildTests =
         Assert.Equal("/tmp/hello", plan.projectRoot)
         Assert.Equal<string>("", plan.projectName)
         Assert.Equal<string>("", plan.projectVersion)
+        Assert.Equal(BuildPackageType.Exe, plan.packageType)
         Assert.Empty(plan.dependencies)
 
     [<Fact>]
@@ -76,6 +78,24 @@ package:
 
         Assert.True(result.succeeded)
         Assert.Empty(result.diagnostics)
+        Assert.Equal(BuildPackageType.Lib, result.plan.Value.packageType)
+
+    [<Fact>]
+    let ``buildProject should parse dll package type`` () =
+        let projectRoot = createTempProjectDir ()
+
+        writeManifest projectRoot """
+package:
+  name: "hello"
+  version: "0.1.0"
+  type: "dll"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = projectRoot }
+
+        Assert.True(result.succeeded)
+        Assert.Empty(result.diagnostics)
+        Assert.Equal(BuildPackageType.Dll, result.plan.Value.packageType)
 
     [<Fact>]
     let ``buildProject should fail for unsupported package type`` () =
@@ -92,6 +112,59 @@ package:
 
         Assert.False(result.succeeded)
         Assert.Contains(result.diagnostics, fun d -> d.message.Contains("package.type"))
+
+    [<Fact>]
+    let ``createAtlaLib should generate required container entries`` () =
+        let compileOutDir = createTempProjectDir ()
+        let outDir = createTempProjectDir ()
+
+        let compileResult =
+            Compiler.compileModules {
+                asmName = "HelloLibAsm"
+                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = "fn main: () = ()" } ]
+                entryModuleName = "main"
+                outDir = compileOutDir
+                dependencies = []
+            }
+
+        Assert.True(compileResult.succeeded)
+
+        let packageResult =
+            BuildSystem.createAtlaLib "hello" "0.1.0" "HelloLibAsm" compileOutDir outDir [] compileResult
+
+        match packageResult with
+        | Result.Error diagnostics ->
+            Assert.Fail(String.concat Environment.NewLine (diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+        | Ok atlaLibPath ->
+            Assert.True(File.Exists(atlaLibPath))
+
+            use archive = ZipFile.OpenRead(atlaLibPath)
+            let entryNames = archive.Entries |> Seq.map (fun entry -> entry.FullName) |> Set.ofSeq
+            Assert.Contains("atlalib.json", entryNames)
+            Assert.Contains("assemblies/HelloLibAsm.dll", entryNames)
+            Assert.Contains("symbols/public.api.json", entryNames)
+            Assert.Contains("deps/manifest.lock.json", entryNames)
+            Assert.Contains("hashes/sha256sums.txt", entryNames)
+
+            let atlaLibMetadataEntry = archive.GetEntry("atlalib.json")
+            Assert.False(isNull atlaLibMetadataEntry)
+            use atlaLibMetadataStream = atlaLibMetadataEntry.Open()
+            use atlaLibMetadataJson = JsonDocument.Parse(atlaLibMetadataStream)
+            let metadataRoot = atlaLibMetadataJson.RootElement
+            Assert.Equal("1.0", metadataRoot.GetProperty("formatVersion").GetString())
+            Assert.Equal("hello", metadataRoot.GetProperty("package").GetProperty("name").GetString())
+            Assert.Equal("0.1.0", metadataRoot.GetProperty("package").GetProperty("version").GetString())
+            Assert.Equal("assemblies/HelloLibAsm.dll", metadataRoot.GetProperty("artifacts").GetProperty("assembly").GetString())
+            Assert.Equal("symbols/public.api.json", metadataRoot.GetProperty("artifacts").GetProperty("publicApi").GetString())
+            Assert.Equal("deps/manifest.lock.json", metadataRoot.GetProperty("artifacts").GetProperty("dependencyLock").GetString())
+
+            let publicApiEntry = archive.GetEntry("symbols/public.api.json")
+            Assert.False(isNull publicApiEntry)
+            use publicApiStream = publicApiEntry.Open()
+            use publicApiJson = JsonDocument.Parse(publicApiStream)
+            let publicApiRoot = publicApiJson.RootElement
+            let mutable modulesElement = Unchecked.defaultof<JsonElement>
+            Assert.True(publicApiRoot.TryGetProperty("modules", &modulesElement))
 
     [<Fact>]
     let ``buildProject should resolve direct dependencies`` () =

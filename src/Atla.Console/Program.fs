@@ -65,15 +65,36 @@ module Console =
         |> List.iter (fun diagnostic ->
             Console.Error.WriteLine($"{diagnosticPrefix diagnostic.severity}: {diagnostic.toDisplayText()}"))
 
-    let private resolveMainPath (projectRoot: string) : Result<string, string> =
-        let candidatePath = Path.Join(projectRoot, "src", "main.atla")
+    /// Resolve the compile entry module name from package.type and discovered source modules.
+    /// - exe: `main` is required
+    /// - lib/dll: prefer `main` when present; otherwise use the first discovered module
+    let private resolveEntryModuleName
+        (projectRoot: string)
+        (packageType: BuildPackageType)
+        (modules: Compiler.ModuleSource list)
+        : Result<string, string> =
+        let findMainModule () =
+            modules |> List.tryFind (fun modul -> modul.moduleName = "main")
 
-        if File.Exists candidatePath then
-            Ok candidatePath
-        else
-            Error $"project entrypoint not found: {candidatePath}"
+        match packageType with
+        | BuildPackageType.Exe ->
+            match findMainModule () with
+            | Some _ -> Ok "main"
+            | None ->
+                let candidatePath = Path.Join(projectRoot, "src", "main.atla")
+                Error $"project entrypoint not found: {candidatePath}"
+        | BuildPackageType.Lib
+        | BuildPackageType.Dll ->
+            match findMainModule () with
+            | Some _ -> Ok "main"
+            | None ->
+                match modules with
+                | firstModule :: _ -> Ok firstModule.moduleName
+                | [] ->
+                    let srcRoot = Path.Join(projectRoot, "src")
+                    Error $"no source modules were found: {srcRoot}"
 
-    /// プロジェクト配下の Atla ソースをモジュール名付きで列挙する。
+    /// Enumerate Atla source files under the project with their module names.
     let private collectModuleSources (projectRoot: string) : Result<Compiler.ModuleSource list, string> =
         let srcRoot = Path.Join(projectRoot, "src")
         if not (Directory.Exists srcRoot) then
@@ -128,16 +149,16 @@ module Console =
                             Console.Error.WriteLine("build plan was not produced")
                             1
                         | Some plan ->
-                            match resolveMainPath plan.projectRoot with
+                            match collectModuleSources plan.projectRoot with
                             | Error message ->
                                 Console.Error.WriteLine(message)
                                 1
-                            | Ok _ ->
-                                match collectModuleSources plan.projectRoot with
+                            | Ok modules ->
+                                match resolveEntryModuleName plan.projectRoot plan.packageType modules with
                                 | Error message ->
                                     Console.Error.WriteLine(message)
                                     1
-                                | Ok modules ->
+                                | Ok entryModuleName ->
                                     let outDir =
                                         match options.outDir with
                                         | Some value -> value
@@ -148,37 +169,66 @@ module Console =
                                         | _ -> plan.projectName
 
                                     Directory.CreateDirectory(outDir) |> ignore
+                                    let compileOutDir, shouldCleanupCompileOutDir =
+                                        match plan.packageType with
+                                        | BuildPackageType.Lib ->
+                                            let tempOutDir = Directory.CreateTempSubdirectory("atla-lib-build-").FullName
+                                            tempOutDir, true
+                                        | _ -> outDir, false
 
-                                    let compileResult =
-                                        Compiler.compileModules {
-                                            asmName = asmName
-                                            modules = modules
-                                            entryModuleName = "main"
-                                            outDir = outDir
-                                            dependencies = plan.dependencies
-                                        }
+                                    try
+                                        let compileResult =
+                                            Compiler.compileModules {
+                                                asmName = asmName
+                                                modules = modules
+                                                entryModuleName = entryModuleName
+                                                outDir = compileOutDir
+                                                dependencies = plan.dependencies
+                                            }
 
-                                    printDiagnostics compileResult.diagnostics
+                                        printDiagnostics compileResult.diagnostics
 
-                                    if compileResult.succeeded then
-                                        let dllPath = Path.Join(outDir, asmName + ".dll")
-                                        Console.WriteLine($"Generated: {dllPath}")
-
-                                        match BuildSystem.copyDependencies plan.dependencies outDir with
-                                        | Result.Error diagnostics ->
-                                            printDiagnostics diagnostics
-                                            1
-                                        | Ok copied ->
-                                            copied |> List.iter (fun path -> Console.WriteLine($"Copied: {path}"))
-                                            match BuildSystem.writeDepsFile plan.projectName plan.projectVersion asmName plan.dependencies outDir with
-                                            | Result.Error diagnostics ->
-                                                printDiagnostics diagnostics
-                                                1
-                                            | Ok depsPath ->
-                                                Console.WriteLine($"Generated: {depsPath}")
+                                        if compileResult.succeeded then
+                                            let dllPath = Path.Join(compileOutDir, asmName + ".dll")
+                                            match plan.packageType with
+                                            | BuildPackageType.Dll ->
+                                                Console.WriteLine($"Generated: {dllPath}")
                                                 0
-                                    else
-                                        1
+                                            | BuildPackageType.Lib ->
+                                                match BuildSystem.createAtlaLib plan.projectName plan.projectVersion asmName compileOutDir outDir plan.dependencies compileResult with
+                                                | Result.Error diagnostics ->
+                                                    printDiagnostics diagnostics
+                                                    1
+                                                | Ok atlaLibPath ->
+                                                    Console.WriteLine($"Generated: {atlaLibPath}")
+                                                    0
+                                            | BuildPackageType.Exe ->
+                                                Console.WriteLine($"Generated: {dllPath}")
+
+                                                match BuildSystem.copyDependencies plan.dependencies outDir with
+                                                | Result.Error diagnostics ->
+                                                    printDiagnostics diagnostics
+                                                    1
+                                                | Ok copied ->
+                                                    copied |> List.iter (fun path -> Console.WriteLine($"Copied: {path}"))
+                                                    match BuildSystem.writeDepsFile plan.projectName plan.projectVersion asmName plan.dependencies outDir with
+                                                    | Result.Error diagnostics ->
+                                                        printDiagnostics diagnostics
+                                                        1
+                                                    | Ok depsPath ->
+                                                        Console.WriteLine($"Generated: {depsPath}")
+                                                        0
+                                        else
+                                            1
+                                    finally
+                                        if shouldCleanupCompileOutDir && Directory.Exists(compileOutDir) then
+                                            try
+                                                Directory.Delete(compileOutDir, recursive = true)
+                                            with
+                                            | :? IOException as ioEx ->
+                                                Console.Error.WriteLine($"warning: failed to clean temporary build directory `{compileOutDir}`: {ioEx.Message}")
+                                            | :? UnauthorizedAccessException as authEx ->
+                                                Console.Error.WriteLine($"warning: failed to clean temporary build directory `{compileOutDir}`: {authEx.Message}")
         | command :: _ ->
             Console.Error.WriteLine($"unknown command: {command}")
             Console.Error.WriteLine(usage())

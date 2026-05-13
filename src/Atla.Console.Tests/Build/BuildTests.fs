@@ -22,6 +22,17 @@ package:
   version: "0.1.0"
 """.Trim())
 
+    /// package.type 付きの atla.yaml を書き込む。
+    let private writeManifestWithType (projectRoot: string) (name: string) (packageType: string) =
+        File.WriteAllText(
+            Path.Join(projectRoot, "atla.yaml"),
+            $"""
+package:
+  name: "{name}"
+  version: "0.1.0"
+  type: "{packageType}"
+""".Trim())
+
     /// カレントディレクトリから上位へ辿ってリポジトリルートを見つける。
     let private tryFindRepositoryRoot () : string option =
         let rec loop (dir: DirectoryInfo) =
@@ -80,6 +91,44 @@ fn main: () =
         Assert.Equal(0, code)
         Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.dll")))
         Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.deps.json")))
+
+    [<Fact>]
+    let ``build should emit only atlalib for lib package type without main`` () =
+        let projectRoot = createTempProjectDir ()
+        writeManifestWithType projectRoot "hello" "lib"
+
+        File.WriteAllText(
+            Path.Join(projectRoot, "src", "library.atla"),
+            """
+fn greet: () = ()
+""".Trim())
+
+        let outDir = Path.Join(projectRoot, "artifacts")
+        let code = Console.run [| "build"; projectRoot; "-o"; outDir; "--name"; "HelloConsole" |]
+
+        Assert.Equal(0, code)
+        Assert.True(File.Exists(Path.Join(outDir, "hello.atlalib")))
+        Assert.False(File.Exists(Path.Join(outDir, "HelloConsole.dll")))
+        Assert.False(File.Exists(Path.Join(outDir, "HelloConsole.deps.json")))
+
+    [<Fact>]
+    let ``build should emit only dll for dll package type without main`` () =
+        let projectRoot = createTempProjectDir ()
+        writeManifestWithType projectRoot "hello" "dll"
+
+        File.WriteAllText(
+            Path.Join(projectRoot, "src", "library.atla"),
+            """
+fn greet: () = ()
+""".Trim())
+
+        let outDir = Path.Join(projectRoot, "artifacts")
+        let code = Console.run [| "build"; projectRoot; "-o"; outDir; "--name"; "HelloConsole" |]
+
+        Assert.Equal(0, code)
+        Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.dll")))
+        Assert.False(File.Exists(Path.Join(outDir, "HelloConsole.deps.json")))
+        Assert.False(File.Exists(Path.Join(outDir, "hello.atlalib")))
 
     [<Fact>]
     let ``build should succeed for examples gui_hello`` () =
