@@ -62,6 +62,38 @@ package:
             Assert.Fail("expected build plan")
 
     [<Fact>]
+    let ``buildProject should parse package type`` () =
+        let projectRoot = createTempProjectDir ()
+
+        writeManifest projectRoot """
+package:
+  name: "hello"
+  version: "0.1.0"
+  type: "lib"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = projectRoot }
+
+        Assert.True(result.succeeded)
+        Assert.Empty(result.diagnostics)
+
+    [<Fact>]
+    let ``buildProject should fail for unsupported package type`` () =
+        let projectRoot = createTempProjectDir ()
+
+        writeManifest projectRoot """
+package:
+  name: "hello"
+  version: "0.1.0"
+  type: "tool"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = projectRoot }
+
+        Assert.False(result.succeeded)
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains("package.type"))
+
+    [<Fact>]
     let ``buildProject should resolve direct dependencies`` () =
         let rootProject = createTempProjectDir ()
         let depProject = createTempProjectDir ()

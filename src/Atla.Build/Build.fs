@@ -193,6 +193,19 @@ module BuildSystem =
         | Some valueNode -> tryGetRequiredScalarString $"package.{fieldName}" valueNode
         | None -> Result.Error [ error $"missing required field `package.{fieldName}`" ]
 
+    /// `package.type` を解釈する。未指定時は `exe` とする。
+    let private tryParsePackageType (package: YamlMappingNode) : Result<Resolver.PackageType, Diagnostic list> =
+        match tryFindMappingValue package "type" with
+        | None -> Ok Resolver.PackageType.Exe
+        | Some valueNode ->
+            match tryGetRequiredScalarString "package.type" valueNode with
+            | Ok value ->
+                match value.Trim().ToLowerInvariant() with
+                | "lib" -> Ok Resolver.PackageType.Lib
+                | "exe" -> Ok Resolver.PackageType.Exe
+                | _ -> Result.Error [ error "`package.type` must be either `lib` or `exe`" ]
+            | Result.Error diagnostics -> Result.Error diagnostics
+
     /// dependencies の単一エントリを Resolver 用仕様へ変換する。
     let private parseDependencyEntry (dependencyName: string) (valueNode: YamlNode) : Result<Resolver.DependencySpec, Diagnostic list> =
         match valueNode with
@@ -300,23 +313,39 @@ module BuildSystem =
                     match
                         tryGetRequiredPackageField packageMapping "name",
                         tryGetRequiredPackageField packageMapping "version",
+                        tryParsePackageType packageMapping,
                         parseDependencies root
                     with
-                    | Ok packageName, Ok packageVersion, Ok dependencies ->
+                    | Ok packageName, Ok packageVersion, Ok packageType, Ok dependencies ->
                         Ok {
                             name = packageName
                             version = packageVersion
+                            packageType = packageType
                             dependencies = dependencies
                         }
-                    | Result.Error nameErrors, Ok _, Ok _ -> Result.Error nameErrors
-                    | Ok _, Result.Error versionErrors, Ok _ -> Result.Error versionErrors
-                    | Ok _, Ok _, Result.Error dependencyErrors -> Result.Error dependencyErrors
-                    | Result.Error nameErrors, Result.Error versionErrors, Ok _ -> Result.Error(nameErrors @ versionErrors)
-                    | Result.Error nameErrors, Ok _, Result.Error dependencyErrors -> Result.Error(nameErrors @ dependencyErrors)
-                    | Ok _, Result.Error versionErrors, Result.Error dependencyErrors ->
+                    | Result.Error nameErrors, Ok _, Ok _, Ok _ -> Result.Error nameErrors
+                    | Ok _, Result.Error versionErrors, Ok _, Ok _ -> Result.Error versionErrors
+                    | Ok _, Ok _, Result.Error packageTypeErrors, Ok _ -> Result.Error packageTypeErrors
+                    | Ok _, Ok _, Ok _, Result.Error dependencyErrors -> Result.Error dependencyErrors
+                    | Result.Error nameErrors, Result.Error versionErrors, Ok _, Ok _ -> Result.Error(nameErrors @ versionErrors)
+                    | Result.Error nameErrors, Ok _, Result.Error packageTypeErrors, Ok _ -> Result.Error(nameErrors @ packageTypeErrors)
+                    | Result.Error nameErrors, Ok _, Ok _, Result.Error dependencyErrors -> Result.Error(nameErrors @ dependencyErrors)
+                    | Ok _, Result.Error versionErrors, Result.Error packageTypeErrors, Ok _ ->
+                        Result.Error(versionErrors @ packageTypeErrors)
+                    | Ok _, Result.Error versionErrors, Ok _, Result.Error dependencyErrors ->
                         Result.Error(versionErrors @ dependencyErrors)
-                    | Result.Error nameErrors, Result.Error versionErrors, Result.Error dependencyErrors ->
+                    | Ok _, Ok _, Result.Error packageTypeErrors, Result.Error dependencyErrors ->
+                        Result.Error(packageTypeErrors @ dependencyErrors)
+                    | Result.Error nameErrors, Result.Error versionErrors, Result.Error packageTypeErrors, Ok _ ->
+                        Result.Error(nameErrors @ versionErrors @ packageTypeErrors)
+                    | Result.Error nameErrors, Result.Error versionErrors, Ok _, Result.Error dependencyErrors ->
                         Result.Error(nameErrors @ versionErrors @ dependencyErrors)
+                    | Result.Error nameErrors, Ok _, Result.Error packageTypeErrors, Result.Error dependencyErrors ->
+                        Result.Error(nameErrors @ packageTypeErrors @ dependencyErrors)
+                    | Ok _, Result.Error versionErrors, Result.Error packageTypeErrors, Result.Error dependencyErrors ->
+                        Result.Error(versionErrors @ packageTypeErrors @ dependencyErrors)
+                    | Result.Error nameErrors, Result.Error versionErrors, Result.Error packageTypeErrors, Result.Error dependencyErrors ->
+                        Result.Error(nameErrors @ versionErrors @ packageTypeErrors @ dependencyErrors)
                 | Some _ ->
                     Result.Error [ error "`package` must be a mapping" ]
                 | None ->
