@@ -106,7 +106,6 @@ module Analyze =
                             resolvedDataDecl.decl.name
                             { typeSid = resolvedDataDecl.typeSid
                               baseType = None
-                              delegatedByFieldName = None
                               typeParams = resolvedDataDecl.typeParams
                               fields = resolvedFields
                               hiddenFields = []
@@ -226,7 +225,6 @@ module Analyze =
                             typeName
                             { typeSid = resolvedEnumDecl.typeSid
                               baseType = None
-                              delegatedByFieldName = None
                               typeParams = resolvedEnumDecl.typeParams
                               fields = []
                               hiddenFields = hiddenRootFields
@@ -341,7 +339,6 @@ module Analyze =
 
                                     { typeSid = typeSid
                                       baseType = None
-                                      delegatedByFieldName = None
                                       typeParams = []
                                       fields = resolvedFields
                                       hiddenFields = []
@@ -468,7 +465,6 @@ module Analyze =
 
                                     { typeSid = typeSid
                                       baseType = None
-                                      delegatedByFieldName = None
                                       typeParams = []
                                       fields = []
                                       hiddenFields = hiddenFields
@@ -480,7 +476,6 @@ module Analyze =
                                 | _ ->
                                     { typeSid = typeSid
                                       baseType = None
-                                      delegatedByFieldName = None
                                       typeParams = []
                                       fields = []
                                       hiddenFields = []
@@ -524,59 +519,25 @@ module Analyze =
                                                 methodMap, diagAcc @ [ Diagnostic.Error(sprintf "Imported method '%s' for type '%s' was not found in module exports" methodDecl.name fullTypePath, methodDecl.span) ])
                                         (Map.empty, [])
 
-                            // imported impl 宣言から `for`（基底型）と `by`（委譲先フィールド）を抽出し、
-                            // インスタンスメンバー解決が定義元モジュールと同じ情報で実行できるようにする。
-                            let importedBaseTypeOpt, importedDelegatedByFieldNameOpt, importedDelegationDiagnostics =
+                            // imported impl 宣言から `impl X as DotNetBase` の基底型を復元する。
+                            // モジュールエクスポートの "implBase:{TypeName}" キーを参照する。
+                            let importedBaseTypeOpt, importedImplBaseDiagnostics =
                                 let implDecls = availableDataTypeImplDecls |> Map.tryFind fullTypePath |> Option.defaultValue []
-
-                                // `impl X as DotNetBase` パターンを先にチェックする。
-                                // この場合、モジュールエクスポートの "implBase:{TypeName}" キーから .NET 基底型を復元する。
-                                // asTypeName.IsSome の有無のみを確認し、宣言の内容は不要なため Some _ でマッチする。
                                 let hasAsImpl = implDecls |> List.exists (fun implDecl -> implDecl.asTypeName.IsSome)
                                 if hasAsImpl then
                                     let baseTypeOpt =
                                         sourceModuleExports
                                         |> Map.tryFind $"implBase:{typeNameForLookup}"
                                         |> Option.map (fun exportInfo -> exportInfo.typ)
-                                    baseTypeOpt, None, []
+                                    baseTypeOpt, []
                                 else
-
-                                let preferredDelegatedImplOpt =
-                                    implDecls
-                                    |> List.tryFind (fun implDecl -> implDecl.byFieldName.IsSome && implDecl.forTypeName.IsSome)
-
-                                match preferredDelegatedImplOpt with
-                                | None -> None, None, []
-                                | Some delegatedImplDecl ->
-                                    let resolvedBaseTypeOpt =
-                                        match delegatedImplDecl.forTypeName with
-                                        | None -> None
-                                        | Some forTypeName ->
-                                            match resolvedModule.moduleScope.ResolveType(forTypeName) with
-                                            | Some(TypeId.Name baseTypeSid) -> Some (TypeId.Name baseTypeSid)
-                                            | _ ->
-                                                match sourceModuleExports |> Map.tryFind $"type:{forTypeName}" with
-                                                | Some exportInfo -> Some (TypeId.Name exportInfo.symbolId)
-                                                | None -> None
-
-                                    let delegatedByFieldNameOpt, delegationDiagnostics =
-                                        match delegatedImplDecl.byFieldName with
-                                        | None -> None, []
-                                        | Some byFieldName ->
-                                            let hasField = importedDef.fields |> List.exists (fun fieldDef -> fieldDef.name = byFieldName)
-                                            if hasField then
-                                                Some byFieldName, []
-                                            else
-                                                None, [ Diagnostic.Error(sprintf "Delegate field '%s' is not defined in imported data '%s'" byFieldName aliasName, delegatedImplDecl.span) ]
-
-                                    resolvedBaseTypeOpt, delegatedByFieldNameOpt, delegationDiagnostics
+                                    None, []
 
                             let importedDefWithMethods =
                                 { importedDef with
                                     baseType = importedBaseTypeOpt
-                                    delegatedByFieldName = importedDelegatedByFieldNameOpt
                                     methods = importedImplMethodMap }
-                            Map.add aliasName importedDefWithMethods defs, diagnostics @ importedImplDiagnostics @ importedDelegationDiagnostics)
+                            Map.add aliasName importedDefWithMethods defs, diagnostics @ importedImplDiagnostics @ importedImplBaseDiagnostics)
                     (Map.empty, [])
 
             let dataTypeDefs =
@@ -587,7 +548,7 @@ module Analyze =
             let dataTypeDefsWithMethods, implMethodDecls, implDiagnostics =
                 resolvedModule.implDecls
                 |> List.fold
-                    (fun (defs, methodDecls, diagnostics) (typeSid, baseTypeOpt, byFieldNameOpt, implDecl) ->
+                    (fun (defs, methodDecls, diagnostics) (typeSid, baseTypeOpt, implDecl) ->
                         // `impl X for Y` のとき Y がターゲットデータ型。`impl T` のときは T 自身。
                         let targetTypeName = implDecl.forTypeName |> Option.defaultValue implDecl.typeName
                         match defs |> Map.tryFind targetTypeName with
@@ -639,8 +600,7 @@ module Analyze =
                                     targetTypeName
                                     { dataTypeDef with
                                         methods = methodMap
-                                        baseType = baseTypeOpt
-                                        delegatedByFieldName = byFieldNameOpt }
+                                        baseType = baseTypeOpt }
                             updatedDefs, (List.rev declAcc) @ methodDecls, diagnostics @ diagAcc)
                     (dataTypeDefs, [], [])
 

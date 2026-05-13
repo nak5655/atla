@@ -321,7 +321,7 @@ module GenTests =
         let result = delObj.Invoke(7)
         Assert.Equal(7, result)
 
-    /// データ型に基底型（impl T for Base by field）が指定されている場合、
+    /// データ型に基底型（impl T as DotNetBase）が指定されている場合、
     /// デフォルトコンストラクタが Object ではなく基底型のコンストラクタを呼ぶことを検証する。
     /// これにより AvaloniaObject などの Dispatcher 初期化が正しく行われる。
     [<Fact>]

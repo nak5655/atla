@@ -28,7 +28,7 @@ module Resolve =
           dataDecls: ResolvedDataDecl list
           enumDecls: ResolvedEnumDecl list
           roleDecls: ResolvedRoleDecl list
-          implDecls: (SymbolId * TypeId option * string option * Ast.Decl.Impl) list }
+          implDecls: (SymbolId * TypeId option * Ast.Decl.Impl) list }
 
     let private tryResolveSystemType (classPath: string) : System.Type option =
         match System.Type.GetType(classPath) with
@@ -129,7 +129,7 @@ module Resolve =
         let dataDecls = ResizeArray<ResolvedDataDecl>()
         let enumDecls = ResizeArray<ResolvedEnumDecl>()
         let roleDecls = ResizeArray<ResolvedRoleDecl>()
-        let implDecls = ResizeArray<SymbolId * TypeId option * string option * Ast.Decl.Impl>()
+        let implDecls = ResizeArray<SymbolId * TypeId option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
         let importedTypeAliases = ResizeArray<string * string>()
         let diagnostics = ResizeArray<Diagnostic>()
@@ -258,31 +258,7 @@ module Resolve =
                                     None
                             | None, None -> None
 
-                        if implDecl.byFieldName.IsSome && implDecl.forTypeName.IsNone && implDecl.asTypeName.IsNone then
-                            diagnostics.Add(Diagnostic.Error("'impl ... by ...' requires an explicit 'for' base type", implDecl.span))
-
-                        let byFieldNameOpt =
-                            match implDecl.byFieldName with
-                            | None -> None
-                            | Some byFieldName ->
-                                let hasField =
-                                    dataDecls
-                                    |> Seq.tryFind (fun dataDecl -> dataDecl.typeSid.id = typeSid.id)
-                                    |> Option.map (fun dataDecl ->
-                                        dataDecl.decl.items
-                                        |> List.exists (fun dataItem ->
-                                            match dataItem with
-                                            | :? Ast.DataItem.Field as fieldDecl -> fieldDecl.name = byFieldName
-                                            | _ -> false))
-                                    |> Option.defaultValue false
-
-                                if hasField then
-                                    Some byFieldName
-                                else
-                                    diagnostics.Add(Diagnostic.Error(sprintf "Delegate field '%s' is not defined in data '%s'" byFieldName implDecl.typeName, implDecl.span))
-                                    None
-
-                        if implDecl.methods.IsEmpty && byFieldNameOpt.IsNone then
+                        if implDecl.methods.IsEmpty then
                             diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' must contain at least one method" implDecl.typeName, implDecl.span))
 
                         let duplicateMethodName =
@@ -322,7 +298,7 @@ module Resolve =
                                 false
                             else
                                 implDecls
-                                |> Seq.exists (fun (sid, existingBaseTypeOpt, _, _) ->
+                                |> Seq.exists (fun (sid, existingBaseTypeOpt, _) ->
                                     sid.id = targetTypeSid.id
                                     && existingBaseTypeOpt = resolvedBaseTypeOpt)
 
@@ -336,7 +312,7 @@ module Resolve =
                             | None, None ->
                                 diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has a default impl block" implDecl.typeName, implDecl.span))
                         elif hasResolvableRoleKey then
-                            implDecls.Add(targetTypeSid, resolvedBaseTypeOpt, byFieldNameOpt, implDecl)
+                            implDecls.Add(targetTypeSid, resolvedBaseTypeOpt, implDecl)
                 | Some _ ->
                     diagnostics.Add(Diagnostic.Error(sprintf "Unsupported impl target '%s'" implDecl.typeName, implDecl.span))
                 | None ->
@@ -352,7 +328,7 @@ module Resolve =
         // `TypeId.Native`（.NET 継承）は Atla 型チェーンに含まれないため除外する。
         let implBaseMap =
             implDecls
-            |> Seq.choose (fun (typeSid, baseTypeOpt, _, _) ->
+            |> Seq.choose (fun (typeSid, baseTypeOpt, _) ->
                 match baseTypeOpt with
                 | Some (TypeId.Name baseSid) -> Some (typeSid, baseSid)
                 | _ -> None)
@@ -368,7 +344,7 @@ module Resolve =
                     | None -> false
             loop Set.empty startSid
 
-        for (typeSid, _, _, implDecl) in implDecls do
+        for (typeSid, _, implDecl) in implDecls do
             if hasInheritanceCycle typeSid then
                 diagnostics.Add(Diagnostic.Error(sprintf "Cyclic subtype relation detected for '%s'" implDecl.typeName, implDecl.span))
 
