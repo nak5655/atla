@@ -39,6 +39,21 @@ fn main: () = do
   Console'ReadLine. Int32'Parse. f. Console'WriteLine.
 ```
 
+### 3. クラス合成（委譲）をサポート
+
+`impl ... for ... by ...` により、内部フィールドへ委譲する形でクラス継承を表現できます。
+
+```atla
+import System'DateTime
+
+data Clock = { dt: DateTime }
+
+impl DateTime for Clock by dt
+
+fn year (c: Clock): Int = c'Year
+```
+
+
 ## CLI インターフェイス
 
 ### build コマンド

@@ -176,7 +176,9 @@ module ExprAnalyze =
                         | None ->
                             match currentDef.baseType with
                             | Some (TypeId.Name baseSid) ->
-                                loop baseSid (visited |> Set.add currentSid.id) currentReceiverExpr
+                                match loop baseSid (visited |> Set.add currentSid.id) currentReceiverExpr with
+                                | Result.Ok resolved -> Result.Ok resolved
+                                | Result.Error _ -> tryResolveFromDelegatedField currentDef
                             | Some (TypeId.Native sysType) ->
                                 // `impl X as DotNetBase` のケース: .NET 継承チェーンのメンバーを直接探索する。
                                 // CIL 上は X が DotNetBase のサブクラスなので currentReceiverExpr をそのまま receiver として使用できる。
@@ -195,7 +197,7 @@ module ExprAnalyze =
                                         Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty(propertyInfo), Some currentReceiverExpr, resolvedMemberType, span))
                                     | _ ->
                                         Result.Error(sprintf "Unsupported member type for '%s'" memberName)
-                                | [] -> Result.Error(sprintf "Undefined member '%s' for data type" memberName)
+                                | [] -> tryResolveFromDelegatedField currentDef
                                 | members ->
                                     let methodInfos =
                                         members
@@ -207,7 +209,93 @@ module ExprAnalyze =
                                         Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some currentReceiverExpr, expectedType, span))
                                     else
                                         Result.Error(sprintf "Ambiguous member '%s' for type '%s'" memberName sysType.FullName)
-                            | _ -> Result.Error(sprintf "Undefined member '%s' for data type" memberName)
+                            | _ -> tryResolveFromDelegatedField currentDef
+
+        and tryResolveFromDelegatedField (currentDef: DataTypeDef) : Result<Hir.Expr, string> =
+            match currentDef.delegatedByFieldName with
+            | None -> Result.Error(sprintf "Undefined member '%s' for data type" memberName)
+            | Some delegateFieldName ->
+                match currentDef.fields |> List.tryFind (fun fieldDef -> fieldDef.name = delegateFieldName) with
+                | None ->
+                    Result.Error(sprintf "Delegate field '%s' not found on data type while resolving member" delegateFieldName)
+                | Some delegateFieldDef ->
+                    let delegatedReceiver =
+                        Hir.Expr.MemberAccess(Hir.Member.DataField(currentDef.typeSid, delegateFieldDef.sid), Some receiverExpr, delegateFieldDef.typ, span)
+
+                    match typeEnv.resolveType delegateFieldDef.typ with
+                    | TypeId.Name delegateTypeSid ->
+                        if bySid |> Map.containsKey delegateTypeSid then
+                            loop delegateTypeSid Set.empty delegatedReceiver
+                        else
+                            match nameEnv.resolveSym delegateTypeSid with
+                            | Some symInfo ->
+                                match symInfo.kind with
+                                | SymbolKind.External(ExternalBinding.SystemTypeRef systemType) when not (obj.ReferenceEquals(systemType, null)) ->
+                                    let memberInfos =
+                                        NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
+                                        |> Seq.filter (fun memberInfo -> memberInfo.Name = memberName)
+                                        |> Seq.toList
+
+                                    match NativeInterop.resolveNativeMember typeEnv memberInfos expectedType with
+                                    | [memberInfo, resolvedMemberType] ->
+                                        match memberInfo with
+                                        | :? MethodInfo as methodInfo ->
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod(methodInfo), Some delegatedReceiver, resolvedMemberType, span))
+                                        | :? FieldInfo as fieldInfo ->
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField(fieldInfo), Some delegatedReceiver, resolvedMemberType, span))
+                                        | :? PropertyInfo as propertyInfo ->
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty(propertyInfo), Some delegatedReceiver, resolvedMemberType, span))
+                                        | _ ->
+                                            Result.Error(sprintf "Unsupported delegated member type for '%s'" memberName)
+                                    | [] -> Result.Error(sprintf "Undefined member '%s' for delegated type '%s'" memberName systemType.FullName)
+                                    | members ->
+                                        let methodInfos =
+                                            members
+                                            |> List.choose (fun (memberInfo, _) ->
+                                                match memberInfo with
+                                                | :? MethodInfo as methodInfo -> Some methodInfo
+                                                | _ -> None)
+
+                                        if methodInfos.Length = members.Length then
+                                            Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some delegatedReceiver, expectedType, span))
+                                        else
+                                            Result.Error(sprintf "Ambiguous delegated member '%s' for type '%s'" memberName systemType.FullName)
+                                | _ ->
+                                    Result.Error(sprintf "Delegate field '%s' type does not support delegated member lookup" delegateFieldName)
+                            | None ->
+                                Result.Error(sprintf "Undefined delegate field type for '%s'" delegateFieldName)
+                    | TypeId.Native systemType ->
+                        let memberInfos =
+                            NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
+                            |> Seq.filter (fun memberInfo -> memberInfo.Name = memberName)
+                            |> Seq.toList
+
+                        match NativeInterop.resolveNativeMember typeEnv memberInfos expectedType with
+                        | [memberInfo, resolvedMemberType] ->
+                            match memberInfo with
+                            | :? MethodInfo as methodInfo ->
+                                Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod(methodInfo), Some delegatedReceiver, resolvedMemberType, span))
+                            | :? FieldInfo as fieldInfo ->
+                                Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField(fieldInfo), Some delegatedReceiver, resolvedMemberType, span))
+                            | :? PropertyInfo as propertyInfo ->
+                                Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty(propertyInfo), Some delegatedReceiver, resolvedMemberType, span))
+                            | _ ->
+                                Result.Error(sprintf "Unsupported delegated member type for '%s'" memberName)
+                        | [] -> Result.Error(sprintf "Undefined member '%s' for delegated type '%s'" memberName systemType.FullName)
+                        | members ->
+                            let methodInfos =
+                                members
+                                |> List.choose (fun (memberInfo, _) ->
+                                    match memberInfo with
+                                    | :? MethodInfo as methodInfo -> Some methodInfo
+                                    | _ -> None)
+
+                            if methodInfos.Length = members.Length then
+                                Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some delegatedReceiver, expectedType, span))
+                            else
+                                Result.Error(sprintf "Ambiguous delegated member '%s' for type '%s'" memberName systemType.FullName)
+                    | unsupportedType ->
+                        Result.Error(sprintf "Type '%s' does not support delegation lookup for member '%s'" (string unsupportedType) memberName)
 
         loop receiverTypeSid Set.empty receiverExpr
 

@@ -474,13 +474,14 @@ module Ast =
                 member this.span = span
 
         /// `impl TypeName as DotNetClass { methods }` — .NET クラスを継承する形式。
-        /// `asTypeName` が `Some` のとき `forTypeName` は常に `None`（パーサーが保証）。
-        type Impl(typeName: string, typeParams: string list, asTypeName: string option, forTypeName: string option, methods: Fn list, span: Span) =
+        /// `asTypeName` が `Some` のとき `forTypeName` と `byFieldName` は常に `None`（パーサーが保証）。
+        type Impl(typeName: string, typeParams: string list, asTypeName: string option, forTypeName: string option, byFieldName: string option, methods: Fn list, span: Span) =
             member this.typeName = typeName
             /// 型パラメータ名のリスト（例: `impl Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
             member this.typeParams = typeParams
             member this.asTypeName = asTypeName
             member this.forTypeName = forTypeName
+            member this.byFieldName = byFieldName
             member this.methods = methods
             member this.span = span
             interface Decl with

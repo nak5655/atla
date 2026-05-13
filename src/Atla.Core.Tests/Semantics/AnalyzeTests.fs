@@ -506,7 +506,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
         let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("self", span) :> Ast.Expr, "slope", span) :> Ast.Expr
         let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, span)
-        let implDecl = Ast.Decl.Impl("Line", [], None, None, [ evalFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
             Ast.Expr.DataInit(
@@ -546,7 +546,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
-        let implDecl = Ast.Decl.Impl("Line", [], None, None, [ oneFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
         let staticCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(Ast.Expr.Id("Line", span) :> Ast.Expr, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
         let mainDecl = Ast.Decl.Fn("main", [], intType, staticCall, span) :> Ast.Decl
 
@@ -577,7 +577,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 span) :> Ast.Decl
 
         let helperFn = Ast.Decl.Fn("helper", [], intType, Ast.Expr.Int(42, span) :> Ast.Expr, span)
-        let implDecl = Ast.Decl.Impl("Line", [], None, None, [ helperFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ helperFn ], span) :> Ast.Decl
 
         // main calls `helper` as a bare name — this was previously "Undefined variable 'helper'"
         let bareNameCall = Ast.Expr.Apply(Ast.Expr.Id("helper", span) :> Ast.Expr, [], span) :> Ast.Expr
@@ -605,7 +605,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
-        let implDecl = Ast.Decl.Impl("Line", [], None, None, [ oneFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
         let lineInit =
             Ast.Expr.DataInit(
                 "Line",
@@ -651,6 +651,74 @@ impl B for A
                     Assert.True(hasCycleDiagnostic, "Expected cyclic subtype relation diagnostic was not reported")
                 | _ ->
                     Assert.True(false, "Semantic analysis unexpectedly succeeded for cyclic subtype relation")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis resolves delegated native interface member via impl for by`` () =
+        let source = """
+import System'IDisposable
+data Box = { items: IDisposable }
+impl IDisposable for Box by items
+fn close (b: Box): () = b'Dispose.
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let closeMethod =
+                        hirModule.methods
+                        |> List.tryFind (fun methodDef ->
+                            match symbolTable.Get(methodDef.sym) with
+                            | Some symInfo -> symInfo.name = "close"
+                            | None -> false)
+                    Assert.True(closeMethod.IsSome, "Expected delegated-member consumer method 'close' to be analyzed successfully")
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun diagnostic -> diagnostic.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports error when impl for uses native class`` () =
+        let source = """
+import System'DateTime
+data Clock = { dt: DateTime }
+impl DateTime for Clock by dt
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let hasExpectedDiagnostic =
+                        diagnostics
+                        |> List.exists (fun diagnostic -> diagnostic.message.Contains("must be a .NET interface type"))
+                    Assert.True(hasExpectedDiagnostic, "Expected class-rejection diagnostic for impl for was not reported")
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for impl for with native class")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->

@@ -1083,6 +1083,37 @@ impl B for A
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses impl declaration with subtype for and by clause`` () =
+        let program = """
+data Wrapper =
+    { value: Int
+    , inner: Base
+    }
+impl Base for Wrapper by inner
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
+                    | _ -> None)
+
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.Equal("Base", parsedImplDecl.typeName)
+                Assert.True(parsedImplDecl.asTypeName.IsNone)
+                Assert.Equal(Some "Wrapper", parsedImplDecl.forTypeName)
+                Assert.Equal(Some "inner", parsedImplDecl.byFieldName)
+                Assert.Empty(parsedImplDecl.methods)
+            | None ->
+                Assert.True(false, "impl declaration with for/by clause was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses impl declaration with as clause`` () =
         let program = """
 data MyButton =
@@ -1106,6 +1137,7 @@ impl MyButton as Button
                 Assert.Equal("MyButton", parsedImplDecl.typeName)
                 Assert.Equal(Some "Button", parsedImplDecl.asTypeName)
                 Assert.True(parsedImplDecl.forTypeName.IsNone)
+                Assert.True(parsedImplDecl.byFieldName.IsNone)
                 Assert.Single(parsedImplDecl.methods) |> ignore
             | None ->
                 Assert.True(false, "impl declaration with as clause was not parsed")
@@ -1135,6 +1167,7 @@ impl Widget as Control
                 Assert.Equal("Widget", parsedImplDecl.typeName)
                 Assert.Equal(Some "Control", parsedImplDecl.asTypeName)
                 Assert.True(parsedImplDecl.forTypeName.IsNone)
+                Assert.True(parsedImplDecl.byFieldName.IsNone)
                 Assert.Empty(parsedImplDecl.methods)
             | None ->
                 Assert.True(false, "impl as declaration without methods was not parsed")

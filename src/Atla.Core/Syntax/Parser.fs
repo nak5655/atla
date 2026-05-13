@@ -643,13 +643,13 @@ module Parser =
                         Ast.Decl.RoleFn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), span))))
 
     and implDecl: PackratParser<Token, Ast.Decl> =
-        // `impl A as B` と `impl A [for Role]` は相互に排他的な構文。
-        // `as` を検出した場合は .NET 継承形式として処理し、`for` は禁止する。
+        // `impl A as B` と `impl A [for Role] [by field]` は相互に排他的な構文。
+        // `as` を検出した場合は .NET 継承形式として処理し、`for`/`by` は禁止する。
         // 型パラメータは型名の直後に空白区切りで列挙する（例: `impl Opt T`）。
         Delay (fun () ->
             block (asToken (keyword "impl"))
                 (Once
-                    ((   // 分岐1: impl A [T...] as B（for なし）
+                    ((   // 分岐1: impl A [T...] as B（for/by なし）
                          tid <&> Many tid <& keyword "as" <&> tid <&> Many (asFnDecl implMethodDecl) |>> fun (((typeId, typeParams), asTypeId), methodDecls) ->
                              let typeParamNames = typeParams |> List.map (fun t -> t.str)
                              let methods =
@@ -662,9 +662,9 @@ module Parser =
                                  match methods |> List.tryLast with
                                  | Some lastMethod -> lastMethod.span.right
                                  | None -> asTypeId.span.right
-                             Ast.Decl.Impl(typeId.str, typeParamNames, Some asTypeId.str, None, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl)
-                     <|> // 分岐2: impl A [T...] [for Role]
-                         (tid <&> Many tid <&> Optional (keyword "for" &> tid) <&> Many (asFnDecl implMethodDecl) |>> fun (((typeId, typeParams), forTypeIdOpt), methodDecls) ->
+                             Ast.Decl.Impl(typeId.str, typeParamNames, Some asTypeId.str, None, None, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl)
+                     <|> // 分岐2: 既存構文 impl A [T...] [for Role] [by field]
+                         (tid <&> Many tid <&> Optional (keyword "for" &> tid) <&> Optional (keyword "by" &> tid) <&> Many (asFnDecl implMethodDecl) |>> fun ((((typeId, typeParams), forTypeIdOpt), byFieldIdOpt), methodDecls) ->
                              let typeParamNames = typeParams |> List.map (fun t -> t.str)
                              let methods =
                                  methodDecls
@@ -677,7 +677,8 @@ module Parser =
                                  | Some lastMethod -> lastMethod.span.right
                                  | None -> typeId.span.right
                              let forTypeName = forTypeIdOpt |> Option.map (fun forTypeId -> forTypeId.str)
-                             Ast.Decl.Impl(typeId.str, typeParamNames, None, forTypeName, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl))
+                             let byFieldName = byFieldIdOpt |> Option.map (fun byFieldId -> byFieldId.str)
+                             Ast.Decl.Impl(typeId.str, typeParamNames, None, forTypeName, byFieldName, methods, { left = typeId.span.left; right = rightSpan }) :> Ast.Decl))
                     (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     and decl: PackratParser<Token, Ast.Decl> =
