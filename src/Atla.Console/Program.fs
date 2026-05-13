@@ -151,8 +151,7 @@ module Console =
                                     let compileOutDir, shouldCleanupCompileOutDir =
                                         match plan.packageType with
                                         | BuildPackageType.Lib ->
-                                            let tempOutDir = Path.Join(Path.GetTempPath(), $"atla-lib-build-{Guid.NewGuid():N}")
-                                            Directory.CreateDirectory(tempOutDir) |> ignore
+                                            let tempOutDir = Directory.CreateTempSubdirectory("atla-lib-build-").FullName
                                             tempOutDir, true
                                         | _ -> outDir, false
 
@@ -202,7 +201,13 @@ module Console =
                                             1
                                     finally
                                         if shouldCleanupCompileOutDir && Directory.Exists(compileOutDir) then
-                                            Directory.Delete(compileOutDir, recursive = true)
+                                            try
+                                                Directory.Delete(compileOutDir, recursive = true)
+                                            with
+                                            | :? IOException as ioEx ->
+                                                Console.Error.WriteLine($"warning: failed to clean temporary build directory `{compileOutDir}`: {ioEx.Message}")
+                                            | :? UnauthorizedAccessException as authEx ->
+                                                Console.Error.WriteLine($"warning: failed to clean temporary build directory `{compileOutDir}`: {authEx.Message}")
         | command :: _ ->
             Console.Error.WriteLine($"unknown command: {command}")
             Console.Error.WriteLine(usage())

@@ -40,6 +40,7 @@ module BuildSystem =
     let private targetFrameworkMoniker = ".NETCoreApp,Version=v10.0"
     let private atlaLibFormatVersion = "1.0"
     let private atlaLanguageAbi = "atla-abi-1"
+    let private atlaCompilerVersion = "0.1.0"
 
     /// Build 入力パスを絶対パスへ正規化する。
     let private normalizePath (path: string) : string =
@@ -462,13 +463,6 @@ module BuildSystem =
                     packageType = toBuildPackageType manifest.packageType
                     dependencies = dependencies
                 }
-    /// compiler.version として埋め込むアセンブリバージョン文字列を返す。
-    let private getCompilerVersion () : string =
-        typeof<BuildRequest>.Assembly.GetName().Version
-        |> Option.ofObj
-        |> Option.map (fun version -> version.ToString())
-        |> Option.defaultValue "0.0.0"
-
     /// 文字列を UTF-8 バイト列へ変換する。
     let private toUtf8Bytes (value: string) : byte[] =
         Encoding.UTF8.GetBytes(value)
@@ -504,18 +498,23 @@ module BuildSystem =
             let headText = typeIdToApiString symbolTable head
             let argsText = args |> List.map (typeIdToApiString symbolTable) |> String.concat ", "
             $"{headText}<{argsText}>"
-        | TypeId.Name sid ->
-            match symbolTable.Get(sid) with
-            | Some symbolInfo -> symbolInfo.name
-            | None -> $"Symbol#{sid.id}"
+        | TypeId.Name sid -> symbolNameOrFallback symbolTable sid
         | TypeId.Fn(args, ret) ->
             let argsText = args |> List.map (typeIdToApiString symbolTable) |> String.concat ", "
             $"({argsText}) -> {typeIdToApiString symbolTable ret}"
-        | TypeId.Meta(TypeMeta id) -> $"Meta#{id}"
+        | TypeId.Meta _ -> "_"
         | TypeId.Native systemType ->
-            if isNull systemType.FullName then systemType.Name else systemType.FullName
-        | TypeId.Error message -> $"Error({message})"
+            systemType.FullName
+            |> Option.ofObj
+            |> Option.defaultValue systemType.Name
+        | TypeId.Error _ -> "ErrorType"
         | TypeId.TypeVar name -> name
+
+    /// SymbolId を安定した名前文字列へ変換する（未登録時は `Symbol#<id>` を返す）。
+    and private symbolNameOrFallback (symbolTable: SymbolTable) (sid: SymbolId) : string =
+        match symbolTable.Get(sid) with
+        | Some symbolInfo -> symbolInfo.name
+        | None -> $"Symbol#{sid.id}"
 
     /// 型シグネチャの戻り値型を抽出する。
     let private getReturnType (signatureType: TypeId) : TypeId =
@@ -538,26 +537,17 @@ module BuildSystem =
 
             let functionsNode = JsonArray()
             modul.methods
-            |> List.sortBy (fun methodInfo ->
-                match symbolTable.Get(methodInfo.sym) with
-                | Some symbolInfo -> symbolInfo.name
-                | None -> $"Symbol#{methodInfo.sym.id}")
+            |> List.sortBy (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym)
             |> List.iter (fun methodInfo ->
                 let functionNode = JsonObject()
-                let symbolName =
-                    match symbolTable.Get(methodInfo.sym) with
-                    | Some symbolInfo -> symbolInfo.name
-                    | None -> $"Symbol#{methodInfo.sym.id}"
+                let symbolName = symbolNameOrFallback symbolTable methodInfo.sym
                 functionNode.Add("name", JsonValue.Create(symbolName))
 
                 let argsNode = JsonArray()
                 methodInfo.args
                 |> List.iter (fun (argSid, argType) ->
                     let argNode = JsonObject()
-                    let argName =
-                        match symbolTable.Get(argSid) with
-                        | Some symbolInfo -> symbolInfo.name
-                        | None -> $"Symbol#{argSid.id}"
+                    let argName = symbolNameOrFallback symbolTable argSid
                     argNode.Add("name", JsonValue.Create(argName))
                     argNode.Add("type", JsonValue.Create(typeIdToApiString symbolTable argType))
                     argsNode.Add(argNode))
@@ -568,34 +558,23 @@ module BuildSystem =
 
             let typesNode = JsonArray()
             modul.types
-            |> List.sortBy (fun hirType ->
-                match symbolTable.Get(hirType.sym) with
-                | Some symbolInfo -> symbolInfo.name
-                | None -> $"Symbol#{hirType.sym.id}")
+            |> List.sortBy (fun hirType -> symbolNameOrFallback symbolTable hirType.sym)
             |> List.iter (fun hirType ->
                 let typeNode = JsonObject()
-                let typeName =
-                    match symbolTable.Get(hirType.sym) with
-                    | Some symbolInfo -> symbolInfo.name
-                    | None -> $"Symbol#{hirType.sym.id}"
+                let typeName = symbolNameOrFallback symbolTable hirType.sym
                 typeNode.Add("name", JsonValue.Create(typeName))
                 typeNode.Add("kind", JsonValue.Create(if hirType.isInterface then "role" else "data"))
                 typeNode.Add("typeParameters", JsonSerializer.SerializeToNode(hirType.typeParams))
+                // v1 仕様では制約・属性は空配列を明示的に保持する。
                 typeNode.Add("typeParameterConstraints", JsonArray())
                 typeNode.Add("attributes", JsonArray())
 
                 let fieldsNode = JsonArray()
                 hirType.fields
-                |> List.sortBy (fun field ->
-                    match symbolTable.Get(field.sym) with
-                    | Some symbolInfo -> symbolInfo.name
-                    | None -> $"Symbol#{field.sym.id}")
+                |> List.sortBy (fun field -> symbolNameOrFallback symbolTable field.sym)
                 |> List.iter (fun field ->
                     let fieldNode = JsonObject()
-                    let fieldName =
-                        match symbolTable.Get(field.sym) with
-                        | Some symbolInfo -> symbolInfo.name
-                        | None -> $"Symbol#{field.sym.id}"
+                    let fieldName = symbolNameOrFallback symbolTable field.sym
                     fieldNode.Add("name", JsonValue.Create(fieldName))
                     fieldNode.Add("type", JsonValue.Create(typeIdToApiString symbolTable field.typ))
                     fieldsNode.Add(fieldNode))
@@ -603,16 +582,10 @@ module BuildSystem =
 
                 let methodsNode = JsonArray()
                 hirType.methods
-                |> List.sortBy (fun methodInfo ->
-                    match symbolTable.Get(methodInfo.sym) with
-                    | Some symbolInfo -> symbolInfo.name
-                    | None -> $"Symbol#{methodInfo.sym.id}")
+                |> List.sortBy (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym)
                 |> List.iter (fun methodInfo ->
                     let methodNode = JsonObject()
-                    let methodName =
-                        match symbolTable.Get(methodInfo.sym) with
-                        | Some symbolInfo -> symbolInfo.name
-                        | None -> $"Symbol#{methodInfo.sym.id}"
+                    let methodName = symbolNameOrFallback symbolTable methodInfo.sym
                     methodNode.Add("name", JsonValue.Create(methodName))
                     methodNode.Add("returnType", JsonValue.Create(typeIdToApiString symbolTable (getReturnType methodInfo.typ)))
                     methodsNode.Add(methodNode))
@@ -656,10 +629,12 @@ module BuildSystem =
             | Ok runtimeAssets, Ok nativeAssets ->
                 let orderedRuntimeAssets = runtimeAssets |> List.rev
                 let orderedNativeAssets = nativeAssets |> List.rev
+                // contentHash は `sha256:<asset-hash>|...` の連結をさらに SHA-256 した安定表現とする。
+                // SHA-256 文字列配列を JSON として直列化し、そのバイト列をハッシュして contentHash を作る。
                 let contentHashSeed =
                     (orderedRuntimeAssets @ orderedNativeAssets)
                     |> List.map snd
-                    |> String.concat "|"
+                    |> JsonSerializer.Serialize
                 let dependencyNode = JsonObject()
                 dependencyNode.Add("id", JsonValue.Create(dependency.name))
                 dependencyNode.Add("version", JsonValue.Create(dependency.version))
@@ -739,10 +714,10 @@ module BuildSystem =
                         let publicApiNode = createPublicApiNode hirAssembly symbolTable
 
                         let entryBytes = ResizeArray<string * byte[]>()
-                        entryBytes.Add("assemblies/" + $"{projectName}.dll", File.ReadAllBytes(assemblyPath))
+                        entryBytes.Add("assemblies/" + $"{asmName}.dll", File.ReadAllBytes(assemblyPath))
 
                         if File.Exists(pdbPath) then
-                            entryBytes.Add("assemblies/" + $"{projectName}.pdb", File.ReadAllBytes(pdbPath))
+                            entryBytes.Add("assemblies/" + $"{asmName}.pdb", File.ReadAllBytes(pdbPath))
 
                         let publicApiBytes = publicApiNode.ToJsonString(jsonOptions) |> toUtf8Bytes
                         entryBytes.Add("symbols/public.api.json", publicApiBytes)
@@ -757,12 +732,12 @@ module BuildSystem =
                             "compiler",
                             JsonSerializer.SerializeToNode(
                                 {| name = "atla"
-                                   version = getCompilerVersion()
+                                   version = atlaCompilerVersion
                                    targetFramework = "net10.0" |}))
                         atlaLibMetadataNode.Add(
                             "artifacts",
                             JsonSerializer.SerializeToNode(
-                                {| assembly = $"assemblies/{projectName}.dll"
+                                {| assembly = $"assemblies/{asmName}.dll"
                                    publicApi = "symbols/public.api.json"
                                    dependencyLock = "deps/manifest.lock.json" |}))
                         atlaLibMetadataNode.Add("compat", JsonSerializer.SerializeToNode({| languageAbi = atlaLanguageAbi |}))
@@ -773,6 +748,7 @@ module BuildSystem =
                         let hashLines =
                             entryBytes
                             |> Seq.sortBy fst
+                            // `sha256sum` 互換で `<sha256><space><space><path>` 形式を採用する。
                             |> Seq.map (fun (path, bytes) -> $"{computeSha256Hex bytes}  {path}")
                             |> String.concat Environment.NewLine
                         let hashBytes = toUtf8Bytes hashLines

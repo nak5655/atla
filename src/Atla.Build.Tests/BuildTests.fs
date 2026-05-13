@@ -141,10 +141,30 @@ package:
             use archive = ZipFile.OpenRead(atlaLibPath)
             let entryNames = archive.Entries |> Seq.map (fun entry -> entry.FullName) |> Set.ofSeq
             Assert.Contains("atlalib.json", entryNames)
-            Assert.Contains("assemblies/hello.dll", entryNames)
+            Assert.Contains("assemblies/HelloLibAsm.dll", entryNames)
             Assert.Contains("symbols/public.api.json", entryNames)
             Assert.Contains("deps/manifest.lock.json", entryNames)
             Assert.Contains("hashes/sha256sums.txt", entryNames)
+
+            let atlaLibMetadataEntry = archive.GetEntry("atlalib.json")
+            Assert.False(isNull atlaLibMetadataEntry)
+            use atlaLibMetadataStream = atlaLibMetadataEntry.Open()
+            use atlaLibMetadataJson = JsonDocument.Parse(atlaLibMetadataStream)
+            let metadataRoot = atlaLibMetadataJson.RootElement
+            Assert.Equal("1.0", metadataRoot.GetProperty("formatVersion").GetString())
+            Assert.Equal("hello", metadataRoot.GetProperty("package").GetProperty("name").GetString())
+            Assert.Equal("0.1.0", metadataRoot.GetProperty("package").GetProperty("version").GetString())
+            Assert.Equal("assemblies/HelloLibAsm.dll", metadataRoot.GetProperty("artifacts").GetProperty("assembly").GetString())
+            Assert.Equal("symbols/public.api.json", metadataRoot.GetProperty("artifacts").GetProperty("publicApi").GetString())
+            Assert.Equal("deps/manifest.lock.json", metadataRoot.GetProperty("artifacts").GetProperty("dependencyLock").GetString())
+
+            let publicApiEntry = archive.GetEntry("symbols/public.api.json")
+            Assert.False(isNull publicApiEntry)
+            use publicApiStream = publicApiEntry.Open()
+            use publicApiJson = JsonDocument.Parse(publicApiStream)
+            let publicApiRoot = publicApiJson.RootElement
+            let mutable modulesElement = Unchecked.defaultof<JsonElement>
+            Assert.True(publicApiRoot.TryGetProperty("modules", &modulesElement))
 
     [<Fact>]
     let ``buildProject should resolve direct dependencies`` () =
