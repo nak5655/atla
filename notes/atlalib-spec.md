@@ -193,9 +193,9 @@ v1 では次の文字列形式を使う。
 生成規則:
 
 - 宣言名はソース上の公開名をそのまま使う。
-- Compiler 内部の `SymbolId` や連番を埋め込まない。
+- compiler 内部の `SymbolId` や連番を埋め込まない。
 - JSON 出力順は `module-name`, `type-name`, `member-name` の辞書順で決定する。
-- hidden field のような import 復元専用要素を公開する場合は、`field:<module-name>:<type-name>:__hidden__:<field-name>` のように予約セグメントを含めて通常公開名と衝突しないようにする。
+- hidden field のような import 復元専用要素を公開する場合は、`field:<module-name>:<type-name>:__hidden__:<field-name>` のように **型名とフィールド名の間** に `__hidden__` セグメントを挿入し、通常公開フィールドと衝突しないようにする。
 - v1 で予約する内部セグメントは `__hidden__` のみとし、`__internal__` や `__private__` など他の接頭辞を暗黙予約してはならない。
 
 ### 5.5 値 export
