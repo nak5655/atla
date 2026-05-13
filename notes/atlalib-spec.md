@@ -128,7 +128,7 @@ v1 の必須エントリは以下とする。
 ### 4.3 解釈規則
 
 - `formatVersion` は **ZIP 内レイアウトとメタデータ構造** の互換性を表す。
-- `languageAbi` は **Atla 言語レベルの import / 呼び出し / 型互換性** を表す。
+- `languageAbi` は **Atla 言語レベルの import/呼び出し/型互換性** を表す。
 - `symbolSchemaVersion` は **`symbols/public.api.json` の JSON 形状** の互換性を表す。
 
 `formatVersion` と `symbolSchemaVersion` は別軸で管理する。
@@ -361,7 +361,7 @@ v1 では次のいずれかの URI 風表現を使う。
 4. 依存 `.atlalib` が export する Atla 型 `A.B`
 5. 依存 DLL 群から解決される .NET 型 `A.B`
 
-同一の完全名で Atla モジュールと Atla 型が衝突する場合、**本節で定義する優先順位に従って** モジュール import を優先する。
+同一の完全名で Atla モジュールと Atla 型が衝突する場合、**モジュール import を優先**する。
 
 理由:
 
