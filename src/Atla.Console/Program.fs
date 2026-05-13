@@ -65,9 +65,9 @@ module Console =
         |> List.iter (fun diagnostic ->
             Console.Error.WriteLine($"{diagnosticPrefix diagnostic.severity}: {diagnostic.toDisplayText()}"))
 
-    /// package.type と収集済みモジュール一覧からコンパイル時のエントリーモジュール名を決定する。
-    /// - exe: `main` を必須とする
-    /// - lib/dll: `main` があれば優先し、なければ先頭モジュールを採用する
+    /// Resolve the compile entry module name from package.type and discovered source modules.
+    /// - exe: `main` is required
+    /// - lib/dll: prefer `main` when present; otherwise use the first discovered module
     let private resolveEntryModuleName
         (projectRoot: string)
         (packageType: BuildPackageType)
@@ -94,7 +94,7 @@ module Console =
                     let srcRoot = Path.Join(projectRoot, "src")
                     Error $"no source modules were found: {srcRoot}"
 
-    /// プロジェクト配下の Atla ソースをモジュール名付きで列挙する。
+    /// Enumerate Atla source files under the project with their module names.
     let private collectModuleSources (projectRoot: string) : Result<Compiler.ModuleSource list, string> =
         let srcRoot = Path.Join(projectRoot, "src")
         if not (Directory.Exists srcRoot) then
