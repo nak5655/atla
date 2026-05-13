@@ -1282,7 +1282,9 @@ fn main: String = Prelude'greet.
             """
 import Std'Prelude'Opt
 
-fn main: String = Prelude'greet.
+fn consume (value: Opt): Int = 1
+
+fn main: Int = Opt'None consume.
 """
 
         let result =
