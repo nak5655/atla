@@ -96,13 +96,36 @@ module Compiler =
         if not (moduleAsts.ContainsKey stdPreludeModuleName) then
             moduleAsts
         else
+            let preludeTypeImportPaths =
+                match moduleAsts.TryFind stdPreludeModuleName with
+                | None -> []
+                | Some preludeModuleAst ->
+                    preludeModuleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some(stdPreludeImportPath @ [ dataDecl.name ])
+                        | :? Ast.Decl.Enum as enumDecl -> Some(stdPreludeImportPath @ [ enumDecl.name ])
+                        | :? Ast.Decl.Role as roleDecl -> Some(stdPreludeImportPath @ [ roleDecl.name ])
+                        | _ -> None)
+                    |> List.distinct
+
             moduleAsts
             |> Map.map (fun moduleName moduleAst ->
-                if moduleName = stdPreludeModuleName || hasImportDecl stdPreludeImportPath moduleAst then
+                if moduleName = stdPreludeModuleName then
                     moduleAst
                 else
-                    let preludeImport = Ast.Decl.Import(stdPreludeImportPath, Span.Empty) :> Ast.Decl
-                    Ast.Module(preludeImport :: moduleAst.decls))
+                    let preludeModuleImportDecls =
+                        if hasImportDecl stdPreludeImportPath moduleAst then
+                            []
+                        else
+                            [ Ast.Decl.Import(stdPreludeImportPath, Span.Empty) :> Ast.Decl ]
+
+                    let preludeTypeImportDecls =
+                        preludeTypeImportPaths
+                        |> List.filter (fun path -> not (hasImportDecl path moduleAst))
+                        |> List.map (fun path -> Ast.Decl.Import(path, Span.Empty) :> Ast.Decl)
+
+                    Ast.Module(preludeModuleImportDecls @ preludeTypeImportDecls @ moduleAst.decls))
 
     /// モジュール名の重複を検出する。
     let private findDuplicateModuleNames (modules: ModuleSource list) : string list =

@@ -1280,11 +1280,9 @@ fn main: String = Prelude'greet.
 
         let mainSource =
             """
-import Std'Prelude'Opt
-
-fn consume (value: Opt): Int = 1
-
-fn main: Int = Opt'None consume.
+fn main: Int = do
+    let value = Opt'None
+    1
 """
 
         let result =
