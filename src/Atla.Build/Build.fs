@@ -206,6 +206,16 @@ module BuildSystem =
                 | _ -> Result.Error [ error "`package.type` must be either `lib` or `exe`" ]
             | Result.Error diagnostics -> Result.Error diagnostics
 
+    /// 複数の診断結果を左から順に連結して返す。
+    let private collectErrors (errorResults: Diagnostic list list) : Diagnostic list =
+        errorResults |> List.collect id
+
+    /// Result から失敗診断のみを取り出す。
+    let private errorsOf (result: Result<'T, Diagnostic list>) : Diagnostic list =
+        match result with
+        | Ok _ -> []
+        | Result.Error diagnostics -> diagnostics
+
     /// dependencies の単一エントリを Resolver 用仕様へ変換する。
     let private parseDependencyEntry (dependencyName: string) (valueNode: YamlNode) : Result<Resolver.DependencySpec, Diagnostic list> =
         match valueNode with
@@ -310,42 +320,23 @@ module BuildSystem =
             | Ok root ->
                 match tryFindMappingValue root "package" with
                 | Some (:? YamlMappingNode as packageMapping) ->
-                    match
-                        tryGetRequiredPackageField packageMapping "name",
-                        tryGetRequiredPackageField packageMapping "version",
-                        tryParsePackageType packageMapping,
-                        parseDependencies root
-                    with
-                    | Ok packageName, Ok packageVersion, Ok packageType, Ok dependencies ->
+                    let nameResult = tryGetRequiredPackageField packageMapping "name"
+                    let versionResult = tryGetRequiredPackageField packageMapping "version"
+                    let packageTypeResult = tryParsePackageType packageMapping
+                    let dependenciesResult = parseDependencies root
+                    let diagnostics =
+                        collectErrors [ errorsOf nameResult; errorsOf versionResult; errorsOf packageTypeResult; errorsOf dependenciesResult ]
+
+                    match nameResult, versionResult, packageTypeResult, dependenciesResult with
+                    | Ok packageName, Ok packageVersion, Ok packageType, Ok dependencies when List.isEmpty diagnostics ->
                         Ok {
                             name = packageName
                             version = packageVersion
                             packageType = packageType
                             dependencies = dependencies
                         }
-                    | Result.Error nameErrors, Ok _, Ok _, Ok _ -> Result.Error nameErrors
-                    | Ok _, Result.Error versionErrors, Ok _, Ok _ -> Result.Error versionErrors
-                    | Ok _, Ok _, Result.Error packageTypeErrors, Ok _ -> Result.Error packageTypeErrors
-                    | Ok _, Ok _, Ok _, Result.Error dependencyErrors -> Result.Error dependencyErrors
-                    | Result.Error nameErrors, Result.Error versionErrors, Ok _, Ok _ -> Result.Error(nameErrors @ versionErrors)
-                    | Result.Error nameErrors, Ok _, Result.Error packageTypeErrors, Ok _ -> Result.Error(nameErrors @ packageTypeErrors)
-                    | Result.Error nameErrors, Ok _, Ok _, Result.Error dependencyErrors -> Result.Error(nameErrors @ dependencyErrors)
-                    | Ok _, Result.Error versionErrors, Result.Error packageTypeErrors, Ok _ ->
-                        Result.Error(versionErrors @ packageTypeErrors)
-                    | Ok _, Result.Error versionErrors, Ok _, Result.Error dependencyErrors ->
-                        Result.Error(versionErrors @ dependencyErrors)
-                    | Ok _, Ok _, Result.Error packageTypeErrors, Result.Error dependencyErrors ->
-                        Result.Error(packageTypeErrors @ dependencyErrors)
-                    | Result.Error nameErrors, Result.Error versionErrors, Result.Error packageTypeErrors, Ok _ ->
-                        Result.Error(nameErrors @ versionErrors @ packageTypeErrors)
-                    | Result.Error nameErrors, Result.Error versionErrors, Ok _, Result.Error dependencyErrors ->
-                        Result.Error(nameErrors @ versionErrors @ dependencyErrors)
-                    | Result.Error nameErrors, Ok _, Result.Error packageTypeErrors, Result.Error dependencyErrors ->
-                        Result.Error(nameErrors @ packageTypeErrors @ dependencyErrors)
-                    | Ok _, Result.Error versionErrors, Result.Error packageTypeErrors, Result.Error dependencyErrors ->
-                        Result.Error(versionErrors @ packageTypeErrors @ dependencyErrors)
-                    | Result.Error nameErrors, Result.Error versionErrors, Result.Error packageTypeErrors, Result.Error dependencyErrors ->
-                        Result.Error(nameErrors @ versionErrors @ packageTypeErrors @ dependencyErrors)
+                    | _ ->
+                        Result.Error diagnostics
                 | Some _ ->
                     Result.Error [ error "`package` must be a mapping" ]
                 | None ->
