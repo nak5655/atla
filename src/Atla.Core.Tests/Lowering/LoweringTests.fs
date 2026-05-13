@@ -1274,6 +1274,29 @@ fn main: String = Prelude'greet.
         Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
 
     [<Fact>]
+    let ``compileModules should reference bundled Std.Prelude Opt type when omitted from inputs`` () =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let mainSource =
+            """
+import Std'Prelude'Opt
+
+fn main: String = Prelude'greet.
+"""
+
+        let result =
+            Compiler.compileModules {
+                asmName = "BundledStdPreludeOpt"
+                modules = [ { moduleName = "main"; source = mainSource.Trim() } ]
+                entryModuleName = "main"
+                outDir = outDir
+                dependencies = []
+            }
+
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))
+
+    [<Fact>]
     let ``compileModules should report conflict for duplicate Std.Prelude modules`` () =
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
