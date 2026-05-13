@@ -10,10 +10,6 @@ open System.Collections.Generic
 open System.IO
 
 module Compiler =
-    let private stdPreludeModuleName = "Std.Prelude"
-    let private stdPreludeImportPath = [ "Std"; "Prelude" ]
-    let private bundledStdPreludeResourceName = "Atla.Core.Std.Prelude.atla"
-
     type ResolvedDependency =
         { name: string
           version: string
@@ -80,53 +76,6 @@ module Compiler =
             | Failure (reason, span) -> Result.Error [ Diagnostic.Error($"Parsing failed in module '{moduleName}': {reason}", span) ]
         | Failure (reason, span) ->
             Result.Error [ Diagnostic.Error($"Lexing failed in module '{moduleName}': {reason}", span) ]
-
-    /// import path が一致する import 宣言が含まれているかを判定する。
-    let private hasImportDecl (path: string list) (moduleAst: Ast.Module) : bool =
-        moduleAst.decls
-        |> List.exists (fun decl ->
-            match decl with
-            | :? Ast.Decl.Import as importDecl -> importDecl.path = path
-            | _ -> false)
-
-    /// `Std.Prelude` が入力に存在する場合、各モジュール先頭へ暗黙 import を注入する。
-    /// `Std.Prelude` 自身と、既に明示 import があるモジュールは対象外とする。
-    let private injectImplicitPreludeImports (moduleAsts: Map<string, Ast.Module>) : Map<string, Ast.Module> =
-        if not (moduleAsts.ContainsKey stdPreludeModuleName) then
-            moduleAsts
-        else
-            moduleAsts
-            |> Map.map (fun moduleName moduleAst ->
-                if moduleName = stdPreludeModuleName || hasImportDecl stdPreludeImportPath moduleAst then
-                    moduleAst
-                else
-                    let preludeImport = Ast.Decl.Import(stdPreludeImportPath, Span.Empty) :> Ast.Decl
-                    Ast.Module(preludeImport :: moduleAst.decls))
-
-    /// モジュール名の重複を検出する。
-    let private findDuplicateModuleNames (modules: ModuleSource list) : string list =
-        modules
-        |> List.groupBy (fun moduleSource -> moduleSource.moduleName)
-        |> List.choose (fun (moduleName, entries) -> if entries.Length >= 2 then Some moduleName else None)
-        |> List.sort
-
-    /// コンパイラに同梱された `Std.Prelude` ソースを取得する。
-    let private bundledStdPreludeSource: Lazy<string> =
-        lazy (
-            let asm = typeof<CompileModulesRequest>.Assembly
-            use stream = asm.GetManifestResourceStream(bundledStdPreludeResourceName)
-            if isNull stream then
-                invalidOp $"Bundled prelude resource was not found: {bundledStdPreludeResourceName}"
-            use reader = new StreamReader(stream)
-            reader.ReadToEnd()
-        )
-
-    /// コンパイル対象に `Std.Prelude` が存在しない場合、同梱 Prelude を追加する。
-    let private ensureStdPreludeModule (modules: ModuleSource list) : ModuleSource list =
-        if modules |> List.exists (fun moduleSource -> moduleSource.moduleName = stdPreludeModuleName) then
-            modules
-        else
-            modules @ [ { moduleName = stdPreludeModuleName; source = bundledStdPreludeSource.Value } ]
 
     /// import 依存グラフを DFS で辿り、エントリモジュールから必要なモジュールのトポロジカル順序を返す。
     let private topoSortModulesFromEntry
@@ -272,147 +221,134 @@ module Compiler =
         if List.isEmpty request.modules then
             failed [ Diagnostic.Error("No source modules were provided", Span.Empty) ] None None
         else
-            let modules = ensureStdPreludeModule request.modules
-            let duplicateModuleNames = findDuplicateModuleNames modules
-            if not duplicateModuleNames.IsEmpty then
-                let diagnostics =
-                    duplicateModuleNames
-                    |> List.map (fun moduleName ->
-                        if moduleName = stdPreludeModuleName then
-                            Diagnostic.Error($"Module name conflict: '{stdPreludeModuleName}' is reserved for the standard prelude module", Span.Empty)
-                        else
-                            Diagnostic.Error($"Duplicate module name '{moduleName}'", Span.Empty))
-                failed diagnostics None None
-            else
-                try
-                    let parsedModulesResult =
-                        modules
-                        |> List.fold
-                            (fun state moduleSource ->
-                                match state with
-                                | Result.Error diagnostics -> Result.Error diagnostics
-                                | Ok modules ->
-                                    match parseModuleSource moduleSource.moduleName moduleSource.source with
-                                    | Ok moduleAst -> Ok(Map.add moduleSource.moduleName moduleAst modules)
-                                    | Result.Error diagnostics -> Result.Error diagnostics)
-                            (Ok Map.empty)
+            try
+                let parsedModulesResult =
+                    request.modules
+                    |> List.fold
+                        (fun state moduleSource ->
+                            match state with
+                            | Result.Error diagnostics -> Result.Error diagnostics
+                            | Ok modules ->
+                                match parseModuleSource moduleSource.moduleName moduleSource.source with
+                                | Ok moduleAst -> Ok(Map.add moduleSource.moduleName moduleAst modules)
+                                | Result.Error diagnostics -> Result.Error diagnostics)
+                        (Ok Map.empty)
 
-                    match parsedModulesResult with
+                match parsedModulesResult with
+                | Result.Error diagnostics ->
+                    failed diagnostics None None
+                | Ok moduleAsts ->
+                    match topoSortModulesFromEntry request.entryModuleName moduleAsts with
                     | Result.Error diagnostics ->
                         failed diagnostics None None
-                    | Ok moduleAsts ->
-                        let moduleAsts = injectImplicitPreludeImports moduleAsts
-                        match topoSortModulesFromEntry request.entryModuleName moduleAsts with
-                        | Result.Error diagnostics ->
-                            failed diagnostics None None
-                        | Ok orderedModuleNames ->
-                            let dependencyInputs =
-                                request.dependencies
-                                |> List.map (fun dependency -> dependency.name, dependency.runtimeLoadPaths)
+                    | Ok orderedModuleNames ->
+                        let dependencyInputs =
+                            request.dependencies
+                            |> List.map (fun dependency -> dependency.name, dependency.runtimeLoadPaths)
 
-                            match DependencyLoader.loadDependencies dependencyInputs with
-                            | { succeeded = false; diagnostics = dependencyDiagnostics } ->
-                                failed dependencyDiagnostics None None
-                            | { loadContext = dependencyLoadContext } ->
-                                try
-                                    let symbolTable = SymbolTable()
-                                    let typeSubst = TypeSubst()
-                                    // typeMetaFactory を全モジュール間で共有し、メタ ID の衝突を防ぐ。
-                                    // 各モジュールごとに新しいファクトリを生成すると、先に解析したモジュールが
-                                    // typeSubst に書き込んだメタ束縛を後続モジュールが誤って参照してしまう。
-                                    let typeMetaFactory = TypeMetaFactory()
-                                    let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
-                                    let availableTypeFullNames =
-                                        moduleAsts
-                                        |> Map.toList
-                                        |> List.collect (fun (moduleName, moduleAst) ->
-                                            moduleAst.decls
-                                            |> List.choose (fun decl ->
-                                                match decl with
-                                                | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
-                                                | :? Ast.Decl.Enum as enumDecl -> Some $"{moduleName}.{enumDecl.name}"
-                                                | _ -> None))
-                                        |> Set.ofList
-                                    let availableTypeDecls =
-                                        moduleAsts
-                                        |> Map.toList
-                                        |> List.collect (fun (moduleName, moduleAst) ->
-                                            moduleAst.decls
-                                            |> List.choose (fun decl ->
-                                                match decl with
-                                                | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)
-                                                | :? Ast.Decl.Enum as enumDecl -> Some ($"{moduleName}.{enumDecl.name}", enumDecl :> Ast.Decl)
-                                                | _ -> None))
-                                        |> Map.ofList
-                                    let availableDataTypeImplDecls =
-                                        moduleAsts
-                                        |> Map.toList
-                                        |> List.collect (fun (moduleName, moduleAst) ->
-                                            moduleAst.decls
-                                            |> List.choose (fun decl ->
-                                                match decl with
-                                                | :? Ast.Decl.Impl as implDecl -> Some (moduleName, implDecl)
-                                                | _ -> None))
-                                        |> List.fold
-                                            (fun (acc: Map<string, Ast.Decl.Impl list>) (moduleName, implDecl) ->
-                                                let fullTypePath = $"{moduleName}.{implDecl.typeName}"
-                                                match Map.tryFind fullTypePath acc with
-                                                | Some impls -> Map.add fullTypePath (impls @ [ implDecl ]) acc
-                                                | None -> Map.add fullTypePath [ implDecl ] acc)
-                                            Map.empty
+                        match DependencyLoader.loadDependencies dependencyInputs with
+                        | { succeeded = false; diagnostics = dependencyDiagnostics } ->
+                            failed dependencyDiagnostics None None
+                        | { loadContext = dependencyLoadContext } ->
+                            try
+                                let symbolTable = SymbolTable()
+                                let typeSubst = TypeSubst()
+                                // typeMetaFactory を全モジュール間で共有し、メタ ID の衝突を防ぐ。
+                                // 各モジュールごとに新しいファクトリを生成すると、先に解析したモジュールが
+                                // typeSubst に書き込んだメタ束縛を後続モジュールが誤って参照してしまう。
+                                let typeMetaFactory = TypeMetaFactory()
+                                let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
+                                let availableTypeFullNames =
+                                    moduleAsts
+                                    |> Map.toList
+                                    |> List.collect (fun (moduleName, moduleAst) ->
+                                        moduleAst.decls
+                                        |> List.choose (fun decl ->
+                                            match decl with
+                                            | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
+                                            | :? Ast.Decl.Enum as enumDecl -> Some $"{moduleName}.{enumDecl.name}"
+                                            | _ -> None))
+                                    |> Set.ofList
+                                let availableTypeDecls =
+                                    moduleAsts
+                                    |> Map.toList
+                                    |> List.collect (fun (moduleName, moduleAst) ->
+                                        moduleAst.decls
+                                        |> List.choose (fun decl ->
+                                            match decl with
+                                            | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)
+                                            | :? Ast.Decl.Enum as enumDecl -> Some ($"{moduleName}.{enumDecl.name}", enumDecl :> Ast.Decl)
+                                            | _ -> None))
+                                    |> Map.ofList
+                                let availableDataTypeImplDecls =
+                                    moduleAsts
+                                    |> Map.toList
+                                    |> List.collect (fun (moduleName, moduleAst) ->
+                                        moduleAst.decls
+                                        |> List.choose (fun decl ->
+                                            match decl with
+                                            | :? Ast.Decl.Impl as implDecl -> Some (moduleName, implDecl)
+                                            | _ -> None))
+                                    |> List.fold
+                                        (fun (acc: Map<string, Ast.Decl.Impl list>) (moduleName, implDecl) ->
+                                            let fullTypePath = $"{moduleName}.{implDecl.typeName}"
+                                            match Map.tryFind fullTypePath acc with
+                                            | Some impls -> Map.add fullTypePath (impls @ [ implDecl ]) acc
+                                            | None -> Map.add fullTypePath [ implDecl ] acc)
+                                        Map.empty
 
-                                    let analyzeFolder (hirModules, moduleExports, diagnostics) moduleName =
-                                        let moduleAst = moduleAsts[moduleName]
-                                        let analyzeResult =
-                                            Analyze.analyzeModuleWithImports(
-                                                symbolTable,
-                                                typeSubst,
-                                                typeMetaFactory,
-                                                moduleName,
-                                                moduleAst,
-                                                availableModuleNames,
-                                                availableTypeFullNames,
-                                                availableTypeDecls,
-                                                availableDataTypeImplDecls,
-                                                moduleExports
-                                            )
+                                let analyzeFolder (hirModules, moduleExports, diagnostics) moduleName =
+                                    let moduleAst = moduleAsts[moduleName]
+                                    let analyzeResult =
+                                        Analyze.analyzeModuleWithImports(
+                                            symbolTable,
+                                            typeSubst,
+                                            typeMetaFactory,
+                                            moduleName,
+                                            moduleAst,
+                                            availableModuleNames,
+                                            availableTypeFullNames,
+                                            availableTypeDecls,
+                                            availableDataTypeImplDecls,
+                                            moduleExports
+                                        )
 
-                                        match analyzeResult.value with
-                                        | Some hirModule ->
-                                            let exports = collectModuleExports symbolTable hirModule
-                                            hirModules @ [ hirModule ], Map.add moduleName exports moduleExports, diagnostics @ analyzeResult.diagnostics
-                                        | None ->
-                                            hirModules, moduleExports, diagnostics @ analyzeResult.diagnostics
+                                    match analyzeResult.value with
+                                    | Some hirModule ->
+                                        let exports = collectModuleExports symbolTable hirModule
+                                        hirModules @ [ hirModule ], Map.add moduleName exports moduleExports, diagnostics @ analyzeResult.diagnostics
+                                    | None ->
+                                        hirModules, moduleExports, diagnostics @ analyzeResult.diagnostics
 
-                                    let hirModules, _, allDiagnostics =
-                                        orderedModuleNames
-                                        |> List.fold analyzeFolder ([], Map.empty, [])
+                                let hirModules, _, allDiagnostics =
+                                    orderedModuleNames
+                                    |> List.fold analyzeFolder ([], Map.empty, [])
 
-                                    let mergedModule = mergeHirModules request.entryModuleName hirModules
-                                    let hirAsm = Hir.Assembly(request.asmName, [ mergedModule ])
+                                let mergedModule = mergeHirModules request.entryModuleName hirModules
+                                let hirAsm = Hir.Assembly(request.asmName, [ mergedModule ])
 
-                                    if allDiagnostics |> List.exists (fun d -> d.isError) then
-                                        failed allDiagnostics (Some hirAsm) (Some symbolTable)
-                                    else
-                                        match ClosureConversion.preprocessAssembly(symbolTable, hirAsm) with
-                                        | { succeeded = false; diagnostics = closureDiagnostics } ->
-                                            failed (allDiagnostics @ closureDiagnostics) (Some hirAsm) (Some symbolTable)
-                                        | { value = Some closedAsm; diagnostics = closureDiagnostics } ->
-                                            match Layout.layoutAssembly(request.asmName, closedAsm) with
-                                            | { succeeded = false; diagnostics = layoutDiagnostics } ->
-                                                failed (allDiagnostics @ closureDiagnostics @ layoutDiagnostics) (Some hirAsm) (Some symbolTable)
-                                            | { value = Some mir; diagnostics = layoutDiagnostics } ->
-                                                let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
-                                                match Gen.genAssembly(mir, outPath, symbolTable) with
-                                                | { succeeded = false; diagnostics = genDiagnostics } ->
-                                                    failed (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
-                                                | { diagnostics = genDiagnostics } ->
-                                                    succeeded (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
-                                            | _ ->
-                                                failed (allDiagnostics @ closureDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
+                                if allDiagnostics |> List.exists (fun d -> d.isError) then
+                                    failed allDiagnostics (Some hirAsm) (Some symbolTable)
+                                else
+                                    match ClosureConversion.preprocessAssembly(symbolTable, hirAsm) with
+                                    | { succeeded = false; diagnostics = closureDiagnostics } ->
+                                        failed (allDiagnostics @ closureDiagnostics) (Some hirAsm) (Some symbolTable)
+                                    | { value = Some closedAsm; diagnostics = closureDiagnostics } ->
+                                        match Layout.layoutAssembly(request.asmName, closedAsm) with
+                                        | { succeeded = false; diagnostics = layoutDiagnostics } ->
+                                            failed (allDiagnostics @ closureDiagnostics @ layoutDiagnostics) (Some hirAsm) (Some symbolTable)
+                                        | { value = Some mir; diagnostics = layoutDiagnostics } ->
+                                            let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
+                                            match Gen.genAssembly(mir, outPath, symbolTable) with
+                                            | { succeeded = false; diagnostics = genDiagnostics } ->
+                                                failed (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
+                                            | { diagnostics = genDiagnostics } ->
+                                                succeeded (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
                                         | _ ->
-                                            failed (allDiagnostics @ [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
-                                finally
-                                    DependencyLoader.unloadDependencies dependencyLoadContext
-                with ex ->
-                    failed [ Diagnostic.Error($"Compilation failed: {ex.Message}", Span.Empty) ] None None
+                                            failed (allDiagnostics @ closureDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
+                                    | _ ->
+                                        failed (allDiagnostics @ [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
+                            finally
+                                DependencyLoader.unloadDependencies dependencyLoadContext
+            with ex ->
+                failed [ Diagnostic.Error($"Compilation failed: {ex.Message}", Span.Empty) ] None None
