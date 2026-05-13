@@ -1291,26 +1291,3 @@ fn main: String = Prelude'greet.
 
         Assert.False(result.succeeded)
         Assert.Contains(result.diagnostics, fun d -> d.message.Contains("Std.Prelude"))
-
-    [<Fact>]
-    let ``compileModules should include bundled Std nested modules when omitted from inputs`` () =
-        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
-        Directory.CreateDirectory(outDir) |> ignore
-
-        let mainSource =
-            """
-import Std'Utils'Text
-
-fn main: String = Text'banner.
-"""
-
-        let result =
-            Compiler.compileModules {
-                asmName = "BundledStdNestedModuleReference"
-                modules = [ { moduleName = "main"; source = mainSource.Trim() } ]
-                entryModuleName = "main"
-                outDir = outDir
-                dependencies = []
-            }
-
-        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun d -> d.message)))

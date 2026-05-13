@@ -43,7 +43,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="..\..\Std\**\*.atla" LogicalName="Atla.Core.Std.%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\Std\Prelude.atla" LogicalName="Atla.Core.Std.Prelude.atla" />
   </ItemGroup>
 
 </Project>
