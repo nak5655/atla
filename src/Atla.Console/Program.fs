@@ -65,13 +65,34 @@ module Console =
         |> List.iter (fun diagnostic ->
             Console.Error.WriteLine($"{diagnosticPrefix diagnostic.severity}: {diagnostic.toDisplayText()}"))
 
-    let private resolveMainPath (projectRoot: string) : Result<string, string> =
-        let candidatePath = Path.Join(projectRoot, "src", "main.atla")
+    /// package.type と収集済みモジュール一覧からコンパイル時のエントリーモジュール名を決定する。
+    /// - exe: `main` を必須とする
+    /// - lib/dll: `main` があれば優先し、なければ先頭モジュールを採用する
+    let private resolveEntryModuleName
+        (projectRoot: string)
+        (packageType: BuildPackageType)
+        (modules: Compiler.ModuleSource list)
+        : Result<string, string> =
+        let findMainModule () =
+            modules |> List.tryFind (fun modul -> modul.moduleName = "main")
 
-        if File.Exists candidatePath then
-            Ok candidatePath
-        else
-            Error $"project entrypoint not found: {candidatePath}"
+        match packageType with
+        | BuildPackageType.Exe ->
+            match findMainModule () with
+            | Some _ -> Ok "main"
+            | None ->
+                let candidatePath = Path.Join(projectRoot, "src", "main.atla")
+                Error $"project entrypoint not found: {candidatePath}"
+        | BuildPackageType.Lib
+        | BuildPackageType.Dll ->
+            match findMainModule () with
+            | Some _ -> Ok "main"
+            | None ->
+                match modules with
+                | firstModule :: _ -> Ok firstModule.moduleName
+                | [] ->
+                    let srcRoot = Path.Join(projectRoot, "src")
+                    Error $"no source modules were found: {srcRoot}"
 
     /// プロジェクト配下の Atla ソースをモジュール名付きで列挙する。
     let private collectModuleSources (projectRoot: string) : Result<Compiler.ModuleSource list, string> =
@@ -128,16 +149,16 @@ module Console =
                             Console.Error.WriteLine("build plan was not produced")
                             1
                         | Some plan ->
-                            match resolveMainPath plan.projectRoot with
+                            match collectModuleSources plan.projectRoot with
                             | Error message ->
                                 Console.Error.WriteLine(message)
                                 1
-                            | Ok _ ->
-                                match collectModuleSources plan.projectRoot with
+                            | Ok modules ->
+                                match resolveEntryModuleName plan.projectRoot plan.packageType modules with
                                 | Error message ->
                                     Console.Error.WriteLine(message)
                                     1
-                                | Ok modules ->
+                                | Ok entryModuleName ->
                                     let outDir =
                                         match options.outDir with
                                         | Some value -> value
@@ -160,7 +181,7 @@ module Console =
                                             Compiler.compileModules {
                                                 asmName = asmName
                                                 modules = modules
-                                                entryModuleName = "main"
+                                                entryModuleName = entryModuleName
                                                 outDir = compileOutDir
                                                 dependencies = plan.dependencies
                                             }

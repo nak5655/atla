@@ -93,14 +93,14 @@ fn main: () =
         Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.deps.json")))
 
     [<Fact>]
-    let ``build should emit only atlalib for lib package type`` () =
+    let ``build should emit only atlalib for lib package type without main`` () =
         let projectRoot = createTempProjectDir ()
         writeManifestWithType projectRoot "hello" "lib"
 
         File.WriteAllText(
-            Path.Join(projectRoot, "src", "main.atla"),
+            Path.Join(projectRoot, "src", "library.atla"),
             """
-fn main: () = ()
+fn greet: () = ()
 """.Trim())
 
         let outDir = Path.Join(projectRoot, "artifacts")
@@ -112,14 +112,14 @@ fn main: () = ()
         Assert.False(File.Exists(Path.Join(outDir, "HelloConsole.deps.json")))
 
     [<Fact>]
-    let ``build should emit only dll for dll package type`` () =
+    let ``build should emit only dll for dll package type without main`` () =
         let projectRoot = createTempProjectDir ()
         writeManifestWithType projectRoot "hello" "dll"
 
         File.WriteAllText(
-            Path.Join(projectRoot, "src", "main.atla"),
+            Path.Join(projectRoot, "src", "library.atla"),
             """
-fn main: () = ()
+fn greet: () = ()
 """.Trim())
 
         let outDir = Path.Join(projectRoot, "artifacts")
