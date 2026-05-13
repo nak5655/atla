@@ -193,9 +193,10 @@ v1 では次の文字列形式を使う。
 生成規則:
 
 - 宣言名はソース上の公開名をそのまま使う。
-- compiler 内部の `SymbolId` や連番を埋め込まない。
+- Compiler 内部の `SymbolId` や連番を埋め込まない。
 - JSON 出力順は `module-name`, `type-name`, `member-name` の辞書順で決定する。
 - hidden field のような import 復元専用要素を公開する場合は、`field:<module-name>:<type-name>:__hidden__:<field-name>` のように予約セグメントを含めて通常公開名と衝突しないようにする。
+- v1 で予約する内部セグメントは `__hidden__` のみとし、`__internal__` や `__private__` など他の接頭辞を暗黙予約してはならない。
 
 ### 5.5 値 export
 
@@ -381,6 +382,11 @@ v1 では次のいずれかの URI 風表現を使う。
 3. 依存 DLL 群から解決される .NET 型
 
 同一優先順位層の中で、同じ完全名 `A.B` に対して Atla モジュールと Atla 型が同時に見つかった場合、**優先して選ばず曖昧エラー** とする。
+
+推奨診断形式:
+
+- code: `E_IMPORT_AMBIGUOUS_NAME`
+- message: `import 'A.B' is ambiguous in dependency layer '<layer>': both module and type were found`
 
 理由:
 
