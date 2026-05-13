@@ -148,37 +148,61 @@ module Console =
                                         | _ -> plan.projectName
 
                                     Directory.CreateDirectory(outDir) |> ignore
+                                    let compileOutDir, shouldCleanupCompileOutDir =
+                                        match plan.packageType with
+                                        | BuildPackageType.Lib ->
+                                            let tempOutDir = Path.Join(Path.GetTempPath(), $"atla-lib-build-{Guid.NewGuid():N}")
+                                            Directory.CreateDirectory(tempOutDir) |> ignore
+                                            tempOutDir, true
+                                        | _ -> outDir, false
 
-                                    let compileResult =
-                                        Compiler.compileModules {
-                                            asmName = asmName
-                                            modules = modules
-                                            entryModuleName = "main"
-                                            outDir = outDir
-                                            dependencies = plan.dependencies
-                                        }
+                                    try
+                                        let compileResult =
+                                            Compiler.compileModules {
+                                                asmName = asmName
+                                                modules = modules
+                                                entryModuleName = "main"
+                                                outDir = compileOutDir
+                                                dependencies = plan.dependencies
+                                            }
 
-                                    printDiagnostics compileResult.diagnostics
+                                        printDiagnostics compileResult.diagnostics
 
-                                    if compileResult.succeeded then
-                                        let dllPath = Path.Join(outDir, asmName + ".dll")
-                                        Console.WriteLine($"Generated: {dllPath}")
-
-                                        match BuildSystem.copyDependencies plan.dependencies outDir with
-                                        | Result.Error diagnostics ->
-                                            printDiagnostics diagnostics
-                                            1
-                                        | Ok copied ->
-                                            copied |> List.iter (fun path -> Console.WriteLine($"Copied: {path}"))
-                                            match BuildSystem.writeDepsFile plan.projectName plan.projectVersion asmName plan.dependencies outDir with
-                                            | Result.Error diagnostics ->
-                                                printDiagnostics diagnostics
-                                                1
-                                            | Ok depsPath ->
-                                                Console.WriteLine($"Generated: {depsPath}")
+                                        if compileResult.succeeded then
+                                            let dllPath = Path.Join(compileOutDir, asmName + ".dll")
+                                            match plan.packageType with
+                                            | BuildPackageType.Dll ->
+                                                Console.WriteLine($"Generated: {dllPath}")
                                                 0
-                                    else
-                                        1
+                                            | BuildPackageType.Lib ->
+                                                match BuildSystem.createAtlaLib plan.projectName plan.projectVersion asmName compileOutDir outDir plan.dependencies compileResult with
+                                                | Result.Error diagnostics ->
+                                                    printDiagnostics diagnostics
+                                                    1
+                                                | Ok atlaLibPath ->
+                                                    Console.WriteLine($"Generated: {atlaLibPath}")
+                                                    0
+                                            | BuildPackageType.Exe ->
+                                                Console.WriteLine($"Generated: {dllPath}")
+
+                                                match BuildSystem.copyDependencies plan.dependencies outDir with
+                                                | Result.Error diagnostics ->
+                                                    printDiagnostics diagnostics
+                                                    1
+                                                | Ok copied ->
+                                                    copied |> List.iter (fun path -> Console.WriteLine($"Copied: {path}"))
+                                                    match BuildSystem.writeDepsFile plan.projectName plan.projectVersion asmName plan.dependencies outDir with
+                                                    | Result.Error diagnostics ->
+                                                        printDiagnostics diagnostics
+                                                        1
+                                                    | Ok depsPath ->
+                                                        Console.WriteLine($"Generated: {depsPath}")
+                                                        0
+                                        else
+                                            1
+                                    finally
+                                        if shouldCleanupCompileOutDir && Directory.Exists(compileOutDir) then
+                                            Directory.Delete(compileOutDir, recursive = true)
         | command :: _ ->
             Console.Error.WriteLine($"unknown command: {command}")
             Console.Error.WriteLine(usage())

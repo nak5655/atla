@@ -21,6 +21,7 @@ module internal Resolver =
     type PackageType =
         | Lib
         | Exe
+        | Dll
 
     (* Manifest で受け入れる依存指定の正規化表現。
        NuGetDependency は NuGet.Versioning の VersionRange で依存範囲を表現する。

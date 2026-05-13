@@ -2,6 +2,9 @@ namespace Atla.Build
 
 open System
 open System.IO
+open System.IO.Compression
+open System.Security.Cryptography
+open System.Text
 open System.Text.Json
 open System.Text.Json.Nodes
 open Atla.Core.Data
@@ -14,10 +17,16 @@ open YamlDotNet.RepresentationModel
 type BuildRequest =
     { projectRoot: string }
 
+type BuildPackageType =
+    | Exe
+    | Lib
+    | Dll
+
 type BuildPlan =
     { projectName: string
       projectVersion: string
       projectRoot: string
+      packageType: BuildPackageType
       dependencies: Compiler.ResolvedDependency list }
 
 type BuildResult =
@@ -29,6 +38,8 @@ module BuildSystem =
     (* Manifest ファイル関連の固定設定と、共通ユーティリティ。 *)
     let private manifestFileName = "atla.yaml"
     let private targetFrameworkMoniker = ".NETCoreApp,Version=v10.0"
+    let private atlaLibFormatVersion = "1.0"
+    let private atlaLanguageAbi = "atla-abi-1"
 
     /// Build 入力パスを絶対パスへ正規化する。
     let private normalizePath (path: string) : string =
@@ -203,7 +214,8 @@ module BuildSystem =
                 match value.Trim().ToLowerInvariant() with
                 | "lib" -> Ok Resolver.PackageType.Lib
                 | "exe" -> Ok Resolver.PackageType.Exe
-                | _ -> Result.Error [ error "`package.type` must be either `lib` or `exe`" ]
+                | "dll" -> Ok Resolver.PackageType.Dll
+                | _ -> Result.Error [ error "`package.type` must be one of `lib`, `exe`, `dll`" ]
             | Result.Error diagnostics -> Result.Error diagnostics
 
     /// 複数の診断結果を左から順に連結して返す。
@@ -414,11 +426,19 @@ module BuildSystem =
         else
             Result.Error errors
 
+    /// `Resolver.PackageType` を公開 Build 用の型へ変換する。
+    let private toBuildPackageType (packageType: Resolver.PackageType) : BuildPackageType =
+        match packageType with
+        | Resolver.PackageType.Exe -> BuildPackageType.Exe
+        | Resolver.PackageType.Lib -> BuildPackageType.Lib
+        | Resolver.PackageType.Dll -> BuildPackageType.Dll
+
     (* BuildRequest から最小の空 BuildPlan を組み立てる補助API。 *)
     let createEmptyPlan (request: BuildRequest) : BuildPlan =
         { projectName = ""
           projectVersion = ""
           projectRoot = request.projectRoot
+          packageType = BuildPackageType.Exe
           dependencies = [] }
 
     (* Build エントリポイント:
@@ -439,5 +459,327 @@ module BuildSystem =
                     projectName = manifest.name
                     projectVersion = manifest.version
                     projectRoot = projectRoot
+                    packageType = toBuildPackageType manifest.packageType
                     dependencies = dependencies
                 }
+    /// compiler.version として埋め込むアセンブリバージョン文字列を返す。
+    let private getCompilerVersion () : string =
+        typeof<BuildRequest>.Assembly.GetName().Version
+        |> Option.ofObj
+        |> Option.map (fun version -> version.ToString())
+        |> Option.defaultValue "0.0.0"
+
+    /// 文字列を UTF-8 バイト列へ変換する。
+    let private toUtf8Bytes (value: string) : byte[] =
+        Encoding.UTF8.GetBytes(value)
+
+    /// バイト列の SHA-256 ハッシュを16進小文字文字列で返す。
+    let private computeSha256Hex (bytes: byte[]) : string =
+        use sha = SHA256.Create()
+        let hashBytes = sha.ComputeHash(bytes)
+        hashBytes
+        |> Array.map (fun b -> b.ToString("x2"))
+        |> String.concat ""
+
+    /// 指定ファイルの SHA-256 ハッシュを計算する。
+    let private computeFileSha256Hex (path: string) : Result<string, Diagnostic list> =
+        try
+            if not (File.Exists(path)) then
+                Result.Error [ Diagnostic.Error($"file not found for hashing: `{path}`", Span.Empty) ]
+            else
+                let bytes = File.ReadAllBytes(path)
+                Ok(computeSha256Hex bytes)
+        with ex ->
+            Result.Error [ Diagnostic.Error($"failed to hash `{path}`: {ex.Message}", Span.Empty) ]
+
+    /// TypeId を deterministic な API 表現へ変換する。
+    let rec private typeIdToApiString (symbolTable: SymbolTable) (tid: TypeId) : string =
+        match tid with
+        | TypeId.Unit -> "Unit"
+        | TypeId.Bool -> "Bool"
+        | TypeId.Int -> "Int"
+        | TypeId.Float -> "Float"
+        | TypeId.String -> "String"
+        | TypeId.App(head, args) ->
+            let headText = typeIdToApiString symbolTable head
+            let argsText = args |> List.map (typeIdToApiString symbolTable) |> String.concat ", "
+            $"{headText}<{argsText}>"
+        | TypeId.Name sid ->
+            match symbolTable.Get(sid) with
+            | Some symbolInfo -> symbolInfo.name
+            | None -> $"Symbol#{sid.id}"
+        | TypeId.Fn(args, ret) ->
+            let argsText = args |> List.map (typeIdToApiString symbolTable) |> String.concat ", "
+            $"({argsText}) -> {typeIdToApiString symbolTable ret}"
+        | TypeId.Meta(TypeMeta id) -> $"Meta#{id}"
+        | TypeId.Native systemType ->
+            if isNull systemType.FullName then systemType.Name else systemType.FullName
+        | TypeId.Error message -> $"Error({message})"
+        | TypeId.TypeVar name -> name
+
+    /// 型シグネチャの戻り値型を抽出する。
+    let private getReturnType (signatureType: TypeId) : TypeId =
+        match signatureType with
+        | TypeId.Fn(_, ret) -> ret
+        | _ -> signatureType
+
+    /// HIR + SymbolTable から public.api.json ノードを構築する。
+    let private createPublicApiNode (hirAssembly: Hir.Assembly) (symbolTable: SymbolTable) : JsonObject =
+        let modulesNode = JsonArray()
+
+        let orderedModules =
+            hirAssembly.modules
+            |> List.sortBy (fun modul -> modul.name)
+
+        orderedModules
+        |> List.iter (fun modul ->
+            let moduleNode = JsonObject()
+            moduleNode.Add("name", JsonValue.Create(modul.name))
+
+            let functionsNode = JsonArray()
+            modul.methods
+            |> List.sortBy (fun methodInfo ->
+                match symbolTable.Get(methodInfo.sym) with
+                | Some symbolInfo -> symbolInfo.name
+                | None -> $"Symbol#{methodInfo.sym.id}")
+            |> List.iter (fun methodInfo ->
+                let functionNode = JsonObject()
+                let symbolName =
+                    match symbolTable.Get(methodInfo.sym) with
+                    | Some symbolInfo -> symbolInfo.name
+                    | None -> $"Symbol#{methodInfo.sym.id}"
+                functionNode.Add("name", JsonValue.Create(symbolName))
+
+                let argsNode = JsonArray()
+                methodInfo.args
+                |> List.iter (fun (argSid, argType) ->
+                    let argNode = JsonObject()
+                    let argName =
+                        match symbolTable.Get(argSid) with
+                        | Some symbolInfo -> symbolInfo.name
+                        | None -> $"Symbol#{argSid.id}"
+                    argNode.Add("name", JsonValue.Create(argName))
+                    argNode.Add("type", JsonValue.Create(typeIdToApiString symbolTable argType))
+                    argsNode.Add(argNode))
+                functionNode.Add("args", argsNode)
+                functionNode.Add("returnType", JsonValue.Create(typeIdToApiString symbolTable (getReturnType methodInfo.typ)))
+                functionsNode.Add(functionNode))
+            moduleNode.Add("functions", functionsNode)
+
+            let typesNode = JsonArray()
+            modul.types
+            |> List.sortBy (fun hirType ->
+                match symbolTable.Get(hirType.sym) with
+                | Some symbolInfo -> symbolInfo.name
+                | None -> $"Symbol#{hirType.sym.id}")
+            |> List.iter (fun hirType ->
+                let typeNode = JsonObject()
+                let typeName =
+                    match symbolTable.Get(hirType.sym) with
+                    | Some symbolInfo -> symbolInfo.name
+                    | None -> $"Symbol#{hirType.sym.id}"
+                typeNode.Add("name", JsonValue.Create(typeName))
+                typeNode.Add("kind", JsonValue.Create(if hirType.isInterface then "role" else "data"))
+                typeNode.Add("typeParameters", JsonSerializer.SerializeToNode(hirType.typeParams))
+                typeNode.Add("typeParameterConstraints", JsonArray())
+                typeNode.Add("attributes", JsonArray())
+
+                let fieldsNode = JsonArray()
+                hirType.fields
+                |> List.sortBy (fun field ->
+                    match symbolTable.Get(field.sym) with
+                    | Some symbolInfo -> symbolInfo.name
+                    | None -> $"Symbol#{field.sym.id}")
+                |> List.iter (fun field ->
+                    let fieldNode = JsonObject()
+                    let fieldName =
+                        match symbolTable.Get(field.sym) with
+                        | Some symbolInfo -> symbolInfo.name
+                        | None -> $"Symbol#{field.sym.id}"
+                    fieldNode.Add("name", JsonValue.Create(fieldName))
+                    fieldNode.Add("type", JsonValue.Create(typeIdToApiString symbolTable field.typ))
+                    fieldsNode.Add(fieldNode))
+                typeNode.Add("fields", fieldsNode)
+
+                let methodsNode = JsonArray()
+                hirType.methods
+                |> List.sortBy (fun methodInfo ->
+                    match symbolTable.Get(methodInfo.sym) with
+                    | Some symbolInfo -> symbolInfo.name
+                    | None -> $"Symbol#{methodInfo.sym.id}")
+                |> List.iter (fun methodInfo ->
+                    let methodNode = JsonObject()
+                    let methodName =
+                        match symbolTable.Get(methodInfo.sym) with
+                        | Some symbolInfo -> symbolInfo.name
+                        | None -> $"Symbol#{methodInfo.sym.id}"
+                    methodNode.Add("name", JsonValue.Create(methodName))
+                    methodNode.Add("returnType", JsonValue.Create(typeIdToApiString symbolTable (getReturnType methodInfo.typ)))
+                    methodsNode.Add(methodNode))
+                typeNode.Add("methods", methodsNode)
+                typesNode.Add(typeNode))
+            moduleNode.Add("types", typesNode)
+            modulesNode.Add(moduleNode))
+
+        let rootNode = JsonObject()
+        rootNode.Add("modules", modulesNode)
+        rootNode
+
+    /// 依存ごとの lock 情報ノードを構築する。
+    let private createDependencyLockNode (dependencies: Compiler.ResolvedDependency list) : Result<JsonObject, Diagnostic list> =
+        let appendAssetHash (acc: Result<(string * string) list, Diagnostic list>) (assetPath: string) =
+            match acc with
+            | Result.Error diagnostics -> Result.Error diagnostics
+            | Ok hashes ->
+                match computeFileSha256Hex assetPath with
+                | Result.Error diagnostics -> Result.Error diagnostics
+                | Ok hash ->
+                    Ok((normalizeDepsPath assetPath, $"sha256:{hash}") :: hashes)
+
+        let buildOneDependency (dependency: Compiler.ResolvedDependency) : Result<JsonObject, Diagnostic list> =
+            let runtimeAssetResult =
+                dependency.runtimeLoadPaths
+                |> List.sort
+                |> List.fold appendAssetHash (Ok [])
+
+            let nativeAssetResult =
+                dependency.nativeRuntimePaths
+                |> List.sort
+                |> List.fold appendAssetHash (Ok [])
+
+            match runtimeAssetResult, nativeAssetResult with
+            | Result.Error runtimeDiagnostics, Result.Error nativeDiagnostics ->
+                Result.Error(runtimeDiagnostics @ nativeDiagnostics)
+            | Result.Error diagnostics, _
+            | _, Result.Error diagnostics ->
+                Result.Error diagnostics
+            | Ok runtimeAssets, Ok nativeAssets ->
+                let orderedRuntimeAssets = runtimeAssets |> List.rev
+                let orderedNativeAssets = nativeAssets |> List.rev
+                let contentHashSeed =
+                    (orderedRuntimeAssets @ orderedNativeAssets)
+                    |> List.map snd
+                    |> String.concat "|"
+                let dependencyNode = JsonObject()
+                dependencyNode.Add("id", JsonValue.Create(dependency.name))
+                dependencyNode.Add("version", JsonValue.Create(dependency.version))
+                dependencyNode.Add("source", JsonValue.Create(dependency.source))
+                dependencyNode.Add("contentHash", JsonValue.Create($"sha256:{computeSha256Hex (toUtf8Bytes contentHashSeed)}"))
+                dependencyNode.Add("runtimeAssets", JsonSerializer.SerializeToNode(orderedRuntimeAssets))
+                dependencyNode.Add("nativeAssets", JsonSerializer.SerializeToNode(orderedNativeAssets))
+                Ok dependencyNode
+
+        let orderedDependencies =
+            dependencies
+            |> List.sortBy (fun dependency -> dependency.name.ToLowerInvariant())
+
+        let folder (state: Result<JsonArray, Diagnostic list>) (dependency: Compiler.ResolvedDependency) =
+            match state with
+            | Result.Error diagnostics -> Result.Error diagnostics
+            | Ok dependenciesNode ->
+                match buildOneDependency dependency with
+                | Result.Error diagnostics -> Result.Error diagnostics
+                | Ok dependencyNode ->
+                    dependenciesNode.Add(dependencyNode)
+                    Ok dependenciesNode
+
+        match orderedDependencies |> List.fold folder (Ok(JsonArray())) with
+        | Result.Error diagnostics -> Result.Error diagnostics
+        | Ok dependenciesNode ->
+            let rootNode = JsonObject()
+            rootNode.Add("dependencies", dependenciesNode)
+            Ok rootNode
+
+    /// in-memory エントリ群を .atlalib (ZIP) として書き出す。
+    let private writeAtlaLibZip (atlaLibPath: string) (entries: (string * byte[]) list) : Result<unit, Diagnostic list> =
+        try
+            if File.Exists(atlaLibPath) then
+                File.Delete(atlaLibPath)
+
+            use fileStream = File.Open(atlaLibPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)
+            use archive = new ZipArchive(fileStream, ZipArchiveMode.Create, leaveOpen = false)
+            entries
+            |> List.sortBy fst
+            |> List.iter (fun (entryPath, entryBytes) ->
+                let entry = archive.CreateEntry(entryPath, CompressionLevel.Optimal)
+                use stream = entry.Open()
+                stream.Write(entryBytes, 0, entryBytes.Length))
+
+            Ok()
+        with ex ->
+            Result.Error [ Diagnostic.Error($"Failed to write `.atlalib`: {ex.Message}", Span.Empty) ]
+
+    /// `compileModules` の成果物を .atlalib コンテナとして出力する。
+    let createAtlaLib
+        (projectName: string)
+        (projectVersion: string)
+        (asmName: string)
+        (compileOutDir: string)
+        (outDir: string)
+        (dependencies: Compiler.ResolvedDependency list)
+        (compileResult: Compiler.CompileResult)
+        : Result<string, Diagnostic list> =
+        try
+            let assemblyPath = Path.Join(compileOutDir, $"{asmName}.dll")
+            let pdbPath = Path.Join(compileOutDir, $"{asmName}.pdb")
+            let atlaLibPath = Path.Join(outDir, $"{projectName}.atlalib")
+
+            if not (File.Exists(assemblyPath)) then
+                Result.Error [ Diagnostic.Error($"assembly not found for .atlalib packaging: `{assemblyPath}`", Span.Empty) ]
+            else
+                match compileResult.hir, compileResult.symbolTable with
+                | None, _
+                | _, None ->
+                    Result.Error [ Diagnostic.Error("public API extraction requires successful semantic analysis result", Span.Empty) ]
+                | Some hirAssembly, Some symbolTable ->
+                    match createDependencyLockNode dependencies with
+                    | Result.Error diagnostics -> Result.Error diagnostics
+                    | Ok lockNode ->
+                        let jsonOptions = JsonSerializerOptions(WriteIndented = true)
+                        let publicApiNode = createPublicApiNode hirAssembly symbolTable
+
+                        let entryBytes = ResizeArray<string * byte[]>()
+                        entryBytes.Add("assemblies/" + $"{projectName}.dll", File.ReadAllBytes(assemblyPath))
+
+                        if File.Exists(pdbPath) then
+                            entryBytes.Add("assemblies/" + $"{projectName}.pdb", File.ReadAllBytes(pdbPath))
+
+                        let publicApiBytes = publicApiNode.ToJsonString(jsonOptions) |> toUtf8Bytes
+                        entryBytes.Add("symbols/public.api.json", publicApiBytes)
+
+                        let lockBytes = lockNode.ToJsonString(jsonOptions) |> toUtf8Bytes
+                        entryBytes.Add("deps/manifest.lock.json", lockBytes)
+
+                        let atlaLibMetadataNode = JsonObject()
+                        atlaLibMetadataNode.Add("formatVersion", JsonValue.Create(atlaLibFormatVersion))
+                        atlaLibMetadataNode.Add("package", JsonSerializer.SerializeToNode({| name = projectName; version = projectVersion |}))
+                        atlaLibMetadataNode.Add(
+                            "compiler",
+                            JsonSerializer.SerializeToNode(
+                                {| name = "atla"
+                                   version = getCompilerVersion()
+                                   targetFramework = "net10.0" |}))
+                        atlaLibMetadataNode.Add(
+                            "artifacts",
+                            JsonSerializer.SerializeToNode(
+                                {| assembly = $"assemblies/{projectName}.dll"
+                                   publicApi = "symbols/public.api.json"
+                                   dependencyLock = "deps/manifest.lock.json" |}))
+                        atlaLibMetadataNode.Add("compat", JsonSerializer.SerializeToNode({| languageAbi = atlaLanguageAbi |}))
+
+                        let metadataBytes = atlaLibMetadataNode.ToJsonString(jsonOptions) |> toUtf8Bytes
+                        entryBytes.Add("atlalib.json", metadataBytes)
+
+                        let hashLines =
+                            entryBytes
+                            |> Seq.sortBy fst
+                            |> Seq.map (fun (path, bytes) -> $"{computeSha256Hex bytes}  {path}")
+                            |> String.concat Environment.NewLine
+                        let hashBytes = toUtf8Bytes hashLines
+                        entryBytes.Add("hashes/sha256sums.txt", hashBytes)
+
+                        match writeAtlaLibZip atlaLibPath (entryBytes |> Seq.toList) with
+                        | Result.Error diagnostics -> Result.Error diagnostics
+                        | Ok () -> Ok atlaLibPath
+        with ex ->
+            Result.Error [ Diagnostic.Error($"Failed to package `.atlalib`: {ex.Message}", Span.Empty) ]
