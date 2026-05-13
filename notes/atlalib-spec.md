@@ -295,7 +295,21 @@ role は通常の data と区別できなければならない。
 - `runtimeAssets`
 - `nativeAssets`
 
-### 6.2 推奨構造
+### 6.2 `source` の表現
+
+`source` は自由文字列にしてはならない。
+
+v1 では次のいずれかの URI 風表現を使う。
+
+- `nuget:<feed-url>#<package-id>`
+- `path:<normalized-absolute-or-project-relative-path>`
+
+例:
+
+- `nuget:https://api.nuget.org/v3/index.json#Some.Package`
+- `path:../local-packages/Some.Package`
+
+### 6.3 推奨構造
 
 ```json
 {
@@ -303,7 +317,7 @@ role は通常の data と区別できなければならない。
     {
       "id": "Some.Package",
       "version": "1.2.3",
-      "source": "/path/or/source",
+      "source": "nuget:https://api.nuget.org/v3/index.json#Some.Package",
       "contentHash": "sha256:...",
       "runtimeAssets": [
         ["lib/net10.0/Some.Package.dll", "sha256:..."]
@@ -314,7 +328,7 @@ role は通常の data と区別できなければならない。
 }
 ```
 
-### 6.3 解釈規則
+### 6.4 解釈規則
 
 - `.atlalib` は依存パッケージの DLL 全体を必ずしも内包しない。
 - import 側は `manifest.lock.json` を使って依存を復元または検証し、実際のロード対象 DLL 群を確定する。
@@ -348,6 +362,12 @@ role は通常の data と区別できなければならない。
 5. 依存 DLL 群から解決される .NET 型 `A.B`
 
 同一の完全名で Atla モジュールと Atla 型が衝突する場合、**モジュール import を優先**する。
+
+理由:
+
+- `import A'B` をまず名前空間 / モジュール参照として解釈した方が利用者の予測と一致しやすい。
+- モジュール import を優先すると、同名型が後から追加されても既存の `A'B'member` 形式を壊しにくい。
+- 型 import はモジュール不在時のフォールバックに限定した方が曖昧性を制御しやすい。
 
 ### 8.2 import 側の必須処理
 
