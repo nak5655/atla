@@ -36,9 +36,13 @@ module Compiler =
           /// 意味解析が成功した場合に得られる HIR アセンブリ。
           /// パイプラインの後続フェーズが失敗した場合でも返される（IntelliSense 用）。
           hir: Hir.Assembly option
+          /// パッケージング用に保持する、モジュールごとの HIR 一覧。
+          hirModules: Hir.Module list option
           /// 意味解析が成功した場合に得られるシンボルテーブル。
           /// パイプラインの後続フェーズが失敗した場合でも返される（IntelliSense 用）。
-          symbolTable: SymbolTable option }
+          symbolTable: SymbolTable option
+          /// パッケージング用に保持する、モジュール名→AST の対応表。
+          moduleAsts: Map<string, Ast.Module> option }
 
         member this.hasErrors = this.diagnostics |> List.exists (fun diagnostic -> diagnostic.isError)
 
@@ -46,23 +50,31 @@ module Compiler =
     let private failed
         (diagnostics: Diagnostic list)
         (hir: Hir.Assembly option)
+        (hirModules: Hir.Module list option)
         (symbolTable: SymbolTable option)
+        (moduleAsts: Map<string, Ast.Module> option)
         : CompileResult =
         { succeeded   = false
           diagnostics = diagnostics
           hir         = hir
-          symbolTable = symbolTable }
+          hirModules  = hirModules
+          symbolTable = symbolTable
+          moduleAsts  = moduleAsts }
 
     /// コンパイル成功の結果を構築する。
     let private succeeded
         (diagnostics: Diagnostic list)
         (hir: Hir.Assembly option)
+        (hirModules: Hir.Module list option)
         (symbolTable: SymbolTable option)
+        (moduleAsts: Map<string, Ast.Module> option)
         : CompileResult =
         { succeeded   = true
           diagnostics = diagnostics
           hir         = hir
-          symbolTable = symbolTable }
+          hirModules  = hirModules
+          symbolTable = symbolTable
+          moduleAsts  = moduleAsts }
 
     /// 1 モジュール分のソース文字列を AST へ解析する。
     let private parseModuleSource (moduleName: string) (source: string) : Result<Ast.Module, Diagnostic list> =
@@ -219,7 +231,7 @@ module Compiler =
     /// 依存解決・意味解析・lowering を含む実コンパイルを実行する（複数モジュール入力対応）。
     let compileModules (request: CompileModulesRequest) : CompileResult =
         if List.isEmpty request.modules then
-            failed [ Diagnostic.Error("No source modules were provided", Span.Empty) ] None None
+            failed [ Diagnostic.Error("No source modules were provided", Span.Empty) ] None None None None
         else
             try
                 let parsedModulesResult =
@@ -236,11 +248,11 @@ module Compiler =
 
                 match parsedModulesResult with
                 | Result.Error diagnostics ->
-                    failed diagnostics None None
+                    failed diagnostics None None None None
                 | Ok moduleAsts ->
                     match topoSortModulesFromEntry request.entryModuleName moduleAsts with
                     | Result.Error diagnostics ->
-                        failed diagnostics None None
+                        failed diagnostics None None None (Some moduleAsts)
                     | Ok orderedModuleNames ->
                         let dependencyInputs =
                             request.dependencies
@@ -248,7 +260,7 @@ module Compiler =
 
                         match DependencyLoader.loadDependencies dependencyInputs with
                         | { succeeded = false; diagnostics = dependencyDiagnostics } ->
-                            failed dependencyDiagnostics None None
+                            failed dependencyDiagnostics None None None (Some moduleAsts)
                         | { loadContext = dependencyLoadContext } ->
                             try
                                 let symbolTable = SymbolTable()
@@ -257,8 +269,8 @@ module Compiler =
                                 // 各モジュールごとに新しいファクトリを生成すると、先に解析したモジュールが
                                 // typeSubst に書き込んだメタ束縛を後続モジュールが誤って参照してしまう。
                                 let typeMetaFactory = TypeMetaFactory()
-                                let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
-                                let availableTypeFullNames =
+                                let sourceModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
+                                let sourceTypeFullNames =
                                     moduleAsts
                                     |> Map.toList
                                     |> List.collect (fun (moduleName, moduleAst) ->
@@ -296,6 +308,10 @@ module Compiler =
                                             | Some impls -> Map.add fullTypePath (impls @ [ implDecl ]) acc
                                             | None -> Map.add fullTypePath [ implDecl ] acc)
                                         Map.empty
+                                let dependencyIndex =
+                                    request.dependencies
+                                    |> List.map (fun dependency -> dependency.source)
+                                    |> AtlaLib.loadDependencyIndex symbolTable
 
                                 let analyzeFolder (hirModules, moduleExports, diagnostics) moduleName =
                                     let moduleAst = moduleAsts[moduleName]
@@ -306,11 +322,14 @@ module Compiler =
                                             typeMetaFactory,
                                             moduleName,
                                             moduleAst,
-                                            availableModuleNames,
-                                            availableTypeFullNames,
+                                            sourceModuleNames,
+                                            sourceTypeFullNames,
+                                            dependencyIndex.moduleNames,
+                                            dependencyIndex.typeFullNames,
                                             availableTypeDecls,
                                             availableDataTypeImplDecls,
-                                            moduleExports
+                                            Map.fold (fun acc key value -> Map.add key value acc) dependencyIndex.moduleExports moduleExports,
+                                            dependencyIndex.typeDefsByFullName
                                         )
 
                                     match analyzeResult.value with
@@ -322,33 +341,63 @@ module Compiler =
 
                                 let hirModules, _, allDiagnostics =
                                     orderedModuleNames
-                                    |> List.fold analyzeFolder ([], Map.empty, [])
+                                    |> List.fold analyzeFolder ([], dependencyIndex.moduleExports, dependencyIndex.diagnostics)
 
                                 let mergedModule = mergeHirModules request.entryModuleName hirModules
                                 let hirAsm = Hir.Assembly(request.asmName, [ mergedModule ])
 
                                 if allDiagnostics |> List.exists (fun d -> d.isError) then
-                                    failed allDiagnostics (Some hirAsm) (Some symbolTable)
+                                    failed allDiagnostics (Some hirAsm) (Some hirModules) (Some symbolTable) (Some moduleAsts)
                                 else
                                     match ClosureConversion.preprocessAssembly(symbolTable, hirAsm) with
                                     | { succeeded = false; diagnostics = closureDiagnostics } ->
-                                        failed (allDiagnostics @ closureDiagnostics) (Some hirAsm) (Some symbolTable)
+                                        failed
+                                            (allDiagnostics @ closureDiagnostics)
+                                            (Some hirAsm)
+                                            (Some hirModules)
+                                            (Some symbolTable)
+                                            (Some moduleAsts)
                                     | { value = Some closedAsm; diagnostics = closureDiagnostics } ->
                                         match Layout.layoutAssembly(request.asmName, closedAsm) with
                                         | { succeeded = false; diagnostics = layoutDiagnostics } ->
-                                            failed (allDiagnostics @ closureDiagnostics @ layoutDiagnostics) (Some hirAsm) (Some symbolTable)
+                                            failed
+                                                (allDiagnostics @ closureDiagnostics @ layoutDiagnostics)
+                                                (Some hirAsm)
+                                                (Some hirModules)
+                                                (Some symbolTable)
+                                                (Some moduleAsts)
                                         | { value = Some mir; diagnostics = layoutDiagnostics } ->
                                             let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
                                             match Gen.genAssembly(mir, outPath, symbolTable) with
                                             | { succeeded = false; diagnostics = genDiagnostics } ->
-                                                failed (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
+                                                failed
+                                                    (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics)
+                                                    (Some hirAsm)
+                                                    (Some hirModules)
+                                                    (Some symbolTable)
+                                                    (Some moduleAsts)
                                             | { diagnostics = genDiagnostics } ->
-                                                succeeded (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics) (Some hirAsm) (Some symbolTable)
+                                                succeeded
+                                                    (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics)
+                                                    (Some hirAsm)
+                                                    (Some hirModules)
+                                                    (Some symbolTable)
+                                                    (Some moduleAsts)
                                         | _ ->
-                                            failed (allDiagnostics @ closureDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
+                                            failed
+                                                (allDiagnostics @ closureDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ])
+                                                (Some hirAsm)
+                                                (Some hirModules)
+                                                (Some symbolTable)
+                                                (Some moduleAsts)
                                     | _ ->
-                                        failed (allDiagnostics @ [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ]) (Some hirAsm) (Some symbolTable)
+                                        failed
+                                            (allDiagnostics @ [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ])
+                                            (Some hirAsm)
+                                            (Some hirModules)
+                                            (Some symbolTable)
+                                            (Some moduleAsts)
                             finally
                                 DependencyLoader.unloadDependencies dependencyLoadContext
             with ex ->
-                failed [ Diagnostic.Error($"Compilation failed: {ex.Message}", Span.Empty) ] None None
+                failed [ Diagnostic.Error($"Compilation failed: {ex.Message}", Span.Empty) ] None None None None

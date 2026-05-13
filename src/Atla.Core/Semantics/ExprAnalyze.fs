@@ -1237,8 +1237,7 @@ module ExprAnalyze =
                             | None ->
                                 let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                                 let receiverType = typeEnv.resolveType receiver.typ
-                                match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverType with
-                                | Some systemType ->
+                                let tryResolveNativeInstance (systemType: System.Type) =
                                     let memberInfos =
                                         NativeInterop.getPublicInstanceMembersIncludingInterfaces systemType
                                         |> Seq.filter (fun m -> m.Name = memberAccessExpr.memberName)
@@ -1275,16 +1274,23 @@ module ExprAnalyze =
                                             Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some receiver, tid, memberAccessExpr.span))
                                         else
                                             Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
-                                | None ->
-                                    match typeEnv.resolveType receiver.typ with
-                                    | TypeId.Name receiverTypeSid ->
-                                        match tryResolveDataInstanceMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
-                                        | Result.Ok resolvedMember -> Result.Ok resolvedMember
-                                        | Result.Error _ ->
+
+                                match receiverType with
+                                | TypeId.Name receiverTypeSid ->
+                                    match tryResolveDataInstanceMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
+                                    | Result.Ok resolvedMember ->
+                                        Result.Ok resolvedMember
+                                    | Result.Error _ ->
+                                        match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverType with
+                                        | Some systemType -> tryResolveNativeInstance systemType
+                                        | None ->
                                             match resolveTyp nameEnv typeEnv receiver.typ with
                                             | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                                             | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
-                                    | _ ->
+                                | _ ->
+                                    match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverType with
+                                    | Some systemType -> tryResolveNativeInstance systemType
+                                    | None ->
                                         match resolveTyp nameEnv typeEnv receiver.typ with
                                         | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                                         | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))

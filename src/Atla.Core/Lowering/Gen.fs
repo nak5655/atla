@@ -50,10 +50,10 @@ module Gen =
     // Genモジュール内で共有する生成コンテキスト
     type Env =
         { typeBuilders: Dictionary<SymbolId, TypeBuilder>
-          // env-class のデフォルトコンストラクタ（typeSid -> ConstructorBuilder）。
-          typeCtors: Dictionary<SymbolId, ConstructorBuilder>
-          // env-class フィールドビルダー（fieldSid -> FieldBuilder）。
-          fieldBuilders: Dictionary<SymbolId, FieldBuilder>
+          // env-class / 外部型のデフォルトコンストラクタ（typeSid -> ConstructorInfo）。
+          typeCtors: Dictionary<SymbolId, ConstructorInfo>
+          // env-class / 外部型のフィールド情報（fieldSid -> FieldInfo）。
+          fieldBuilders: Dictionary<SymbolId, FieldInfo>
           methodBuilders: Dictionary<SymbolId, MethodInfo>
           // インポート型（TypeId.Name sid）を System.Type へ解決するためのシンボルテーブル。
           symbolTable: SymbolTable
@@ -95,6 +95,31 @@ module Gen =
             | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" tid
             | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
             | _ -> failwithf "Unsupported type for CIL generation: %A" tid
+
+    /// 外部メソッドグループから引数個数に一致する候補を選択する。
+    let private tryResolveExternalMethod (sid: SymbolId) (argCount: int) (symbolTable: SymbolTable) : MethodInfo option =
+        match symbolTable.Get(sid) with
+        | Some { kind = SymbolKind.External(ExternalBinding.NativeMethodGroup methods) } ->
+            methods
+            |> List.tryFind (fun methodInfo ->
+                let expectedCount =
+                    if methodInfo.IsStatic then
+                        methodInfo.GetParameters().Length
+                    else
+                        methodInfo.GetParameters().Length + 1
+                expectedCount = argCount)
+            |> Option.orElse (methods |> List.tryHead)
+        | _ ->
+            None
+
+    /// シンボル表から CIL メソッド名を決定する。
+    let private getMethodClrName (symbolTable: SymbolTable) (sid: SymbolId) (defaultName: string) (preserveQualifiedName: bool) : string =
+        match symbolTable.Get(sid) with
+        | Some symbolInfo when preserveQualifiedName -> symbolInfo.name
+        | Some symbolInfo ->
+            let lastDot = symbolInfo.name.LastIndexOf('.')
+            if lastDot < 0 then symbolInfo.name else symbolInfo.name.Substring(lastDot + 1)
+        | None -> defaultName
 
     // MIRの値をILスタックへ積む
     let rec private genValue (env: Env) (gen: ILGenerator) (value: Mir.Value) =
@@ -297,7 +322,10 @@ module Gen =
                 genValue env gen arg
             match env.methodBuilders.TryGetValue(sid) with
             | true, methodInfo -> gen.Emit(OpCodes.Call, methodInfo)
-            | false, _ -> failwithf "Unknown method symbol: %A" sid
+            | false, _ ->
+                match tryResolveExternalMethod sid args.Length env.symbolTable with
+                | Some methodInfo -> emitMethodCall methodInfo
+                | None -> failwithf "Unknown method symbol: %A" sid
         | Mir.Ins.CallAssign (dst, method, args) ->
             emitMethodArgs method args
             emitMethodCall method
@@ -309,7 +337,10 @@ module Gen =
                 genValue env gen arg
             match env.methodBuilders.TryGetValue(sid) with
             | true, methodInfo -> emitMethodCall methodInfo
-            | false, _ -> failwithf "Unknown method symbol: %A" sid
+            | false, _ ->
+                match tryResolveExternalMethod sid args.Length env.symbolTable with
+                | Some methodInfo -> emitMethodCall methodInfo
+                | None -> failwithf "Unknown method symbol: %A" sid
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
@@ -381,25 +412,43 @@ module Gen =
         | Mir.Ins.NewEnv (dst, typeSid) ->
             // env-class の新規インスタンスを生成する（デフォルトコンストラクタ使用）。
             match env.typeCtors.TryGetValue(typeSid) with
-            | true, ctorBuilder ->
-                gen.Emit(OpCodes.Newobj, ctorBuilder :> ConstructorInfo)
+            | true, ctorInfo ->
+                gen.Emit(OpCodes.Newobj, ctorInfo)
                 match dst with
                 | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
                 | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
-            | false, _ -> failwithf "No default constructor registered for env type: %A" typeSid
+            | false, _ ->
+                match env.symbolTable.Get(typeSid) with
+                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
+                    match sysType.GetConstructor([||]) with
+                    | null -> failwithf "No default constructor registered for env type: %A" typeSid
+                    | ctorInfo ->
+                        gen.Emit(OpCodes.Newobj, ctorInfo)
+                        match dst with
+                        | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+                        | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+                | _ -> failwithf "No default constructor registered for env type: %A" typeSid
         | Mir.Ins.StoreEnvField (inst, _, fieldSid, value) ->
             // env インスタンスをスタックへ積み、値をスタックへ積んでから stfld を発行する。
             genValue env gen (Mir.Value.RegVal inst)
             genValue env gen value
             match env.fieldBuilders.TryGetValue(fieldSid) with
-            | true, fb -> gen.Emit(OpCodes.Stfld, fb :> FieldInfo)
-            | false, _ -> failwithf "Unknown env field symbol for StoreEnvField: %A" fieldSid
+            | true, fieldInfo -> gen.Emit(OpCodes.Stfld, fieldInfo)
+            | false, _ ->
+                match env.symbolTable.Get(fieldSid) with
+                | Some { kind = SymbolKind.External(ExternalBinding.SystemFieldRef fieldInfo) } ->
+                    gen.Emit(OpCodes.Stfld, fieldInfo)
+                | _ -> failwithf "Unknown env field symbol for StoreEnvField: %A" fieldSid
         | Mir.Ins.LoadEnvField (dst, inst, _, fieldSid) ->
             // env インスタンスをスタックへ積んでから ldfld を発行し、結果をレジスタへ格納する。
             genValue env gen (Mir.Value.RegVal inst)
             match env.fieldBuilders.TryGetValue(fieldSid) with
-            | true, fb -> gen.Emit(OpCodes.Ldfld, fb :> FieldInfo)
-            | false, _ -> failwithf "Unknown env field symbol for LoadEnvField: %A" fieldSid
+            | true, fieldInfo -> gen.Emit(OpCodes.Ldfld, fieldInfo)
+            | false, _ ->
+                match env.symbolTable.Get(fieldSid) with
+                | Some { kind = SymbolKind.External(ExternalBinding.SystemFieldRef fieldInfo) } ->
+                    gen.Emit(OpCodes.Ldfld, fieldInfo)
+                | _ -> failwithf "Unknown env field symbol for LoadEnvField: %A" fieldSid
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
@@ -484,7 +533,7 @@ module Gen =
                 let methodRetType = resolveMethodReturnType method.ret
                 method.builder <-
                     typ.builder.DefineMethod(
-                        method.name,
+                        getMethodClrName env.symbolTable method.sym method.name false,
                         MethodAttributes.Public ||| MethodAttributes.Abstract ||| MethodAttributes.Virtual ||| MethodAttributes.HideBySig,
                         methodRetType,
                         explicitArgTypes)
@@ -493,7 +542,14 @@ module Gen =
             // フィールド定義
             for field in typ.fields do
                 let fieldType = resolveType env field.typ
-                field.builder <- typ.builder.DefineField(sprintf "field_%d" field.sym.id, fieldType, FieldAttributes.Public)
+                let fieldName =
+                    match env.symbolTable.Get(field.sym) with
+                    | Some symbolInfo ->
+                        let lastDot = symbolInfo.name.LastIndexOf('.')
+                        if lastDot < 0 then symbolInfo.name else symbolInfo.name.Substring(lastDot + 1)
+                    | None ->
+                        sprintf "field_%d" field.sym.id
+                field.builder <- typ.builder.DefineField(fieldName, fieldType, FieldAttributes.Public)
                 // env-class フィールドを fieldBuilders へ登録する（GenIns での LoadEnvField/StoreEnvField 解決に使用）。
                 env.fieldBuilders.[field.sym] <- field.builder
 
@@ -533,7 +589,8 @@ module Gen =
             for method in typ.methods do
                 let explicitArgTypes = method.args |> List.map (resolveType env) |> List.toArray
                 let methodRetType = resolveMethodReturnType method.ret
-                method.builder <- typ.builder.DefineMethod(method.name, MethodAttributes.Public, methodRetType, explicitArgTypes)
+                method.builder <-
+                    typ.builder.DefineMethod(getMethodClrName env.symbolTable method.sym method.name false, MethodAttributes.Public, methodRetType, explicitArgTypes)
                 env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
 
     /// 型の明示コンストラクタ本体と invoke メソッド本体を生成し、型を確定（CreateType）する。
@@ -570,8 +627,8 @@ module Gen =
         // モジュール内型解決テーブルを初期化
         let env =
             { typeBuilders = Dictionary<SymbolId, TypeBuilder>()
-              typeCtors = Dictionary<SymbolId, ConstructorBuilder>()
-              fieldBuilders = Dictionary<SymbolId, FieldBuilder>()
+              typeCtors = Dictionary<SymbolId, ConstructorInfo>()
+              fieldBuilders = Dictionary<SymbolId, FieldInfo>()
               methodBuilders = Dictionary<SymbolId, MethodInfo>()
               symbolTable = symbolTable
               // 型パラメータビルダーは型処理フェーズで逐次設定・クリアする可変テーブル。
@@ -650,7 +707,12 @@ module Gen =
         for method in modul.methods do
             let methodArgTypes = method.args |> List.map (resolveType env) |> List.toArray
             let methodRetType = resolveMethodReturnType env method.ret
-            method.builder <- globalsTypeBuilder.DefineMethod(method.name, MethodAttributes.Public ||| MethodAttributes.Static, methodRetType, methodArgTypes)
+            method.builder <-
+                globalsTypeBuilder.DefineMethod(
+                    getMethodClrName env.symbolTable method.sym method.name true,
+                    MethodAttributes.Public ||| MethodAttributes.Static,
+                    methodRetType,
+                    methodArgTypes)
             env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
 
         // フェーズ 4: 全型の本体 IL を生成して型を確定（CreateType）する。

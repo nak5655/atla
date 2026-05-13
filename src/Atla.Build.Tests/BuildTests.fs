@@ -1,6 +1,7 @@
 namespace Atla.Build.Tests
 
 open System
+open System.Diagnostics
 open System.IO
 open System.IO.Compression
 open System.Reflection
@@ -27,6 +28,23 @@ module BuildTests =
     /// YAML の文字列として解釈可能なように、Windows 区切り文字を POSIX 形式へ正規化する。
     let private toYamlPath (path: string) =
         path.Replace("\\", "/")
+
+    /// 生成 DLL を `dotnet` で実行し、標準出力を返す。
+    let private runDll (dllPath: string) =
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+        proc.ExitCode, stdout.Trim(), stderr.Trim()
 
     [<Fact>]
     let ``createEmptyPlan keeps projectRoot and no dependencies`` () =
@@ -157,14 +175,18 @@ package:
             Assert.Equal("assemblies/HelloLibAsm.dll", metadataRoot.GetProperty("artifacts").GetProperty("assembly").GetString())
             Assert.Equal("symbols/public.api.json", metadataRoot.GetProperty("artifacts").GetProperty("publicApi").GetString())
             Assert.Equal("deps/manifest.lock.json", metadataRoot.GetProperty("artifacts").GetProperty("dependencyLock").GetString())
+            Assert.Equal("1.0", metadataRoot.GetProperty("compat").GetProperty("symbolSchemaVersion").GetString())
 
             let publicApiEntry = archive.GetEntry("symbols/public.api.json")
             Assert.False(isNull publicApiEntry)
             use publicApiStream = publicApiEntry.Open()
             use publicApiJson = JsonDocument.Parse(publicApiStream)
             let publicApiRoot = publicApiJson.RootElement
+            Assert.Equal("1.0", publicApiRoot.GetProperty("schemaVersion").GetString())
             let mutable modulesElement = Unchecked.defaultof<JsonElement>
             Assert.True(publicApiRoot.TryGetProperty("modules", &modulesElement))
+            let mutable valuesElement = Unchecked.defaultof<JsonElement>
+            Assert.True(modulesElement.[0].GetProperty("exports").TryGetProperty("values", &valuesElement))
 
     [<Fact>]
     let ``buildProject should resolve direct dependencies`` () =
@@ -201,6 +223,127 @@ dependencies:
             Assert.Equal(Path.GetFullPath(depProject), dependency.source)
         | None ->
             Assert.Fail("expected build plan")
+
+    [<Fact>]
+    let ``buildProject should resolve path dependency pointing to atlalib`` () =
+        let libCompileOutDir = createTempProjectDir ()
+        let libOutDir = createTempProjectDir ()
+        let rootProject = createTempProjectDir ()
+
+        let compileResult =
+            Compiler.compileModules {
+                asmName = "PeopleLibAsm"
+                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = "data Person = { name: String }\nfn greet (p: Person): String = p'name" } ]
+                entryModuleName = "people"
+                outDir = libCompileOutDir
+                dependencies = []
+            }
+
+        Assert.True(compileResult.succeeded)
+
+        let atlaLibPath =
+            match BuildSystem.createAtlaLib "peoplelib" "0.1.0" "PeopleLibAsm" libCompileOutDir libOutDir [] compileResult with
+            | Ok path -> path
+            | Result.Error diagnostics ->
+                Assert.Fail(String.concat Environment.NewLine (diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+                ""
+
+        writeManifest rootProject $"""
+package:
+  name: "app"
+  version: "0.1.0"
+dependencies:
+  people:
+    path: "{toYamlPath (Path.GetRelativePath(rootProject, atlaLibPath))}"
+"""
+
+        let result = BuildSystem.buildProject { projectRoot = rootProject }
+        Assert.True(result.succeeded, String.concat Environment.NewLine (result.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+
+        match result.plan with
+        | Some plan ->
+            let dependency = Assert.Single(plan.dependencies)
+            Assert.Equal(Path.GetFullPath(atlaLibPath), dependency.source)
+            Assert.Empty(dependency.compileReferencePaths)
+            Assert.True(dependency.runtimeLoadPaths |> List.exists File.Exists)
+        | None ->
+            Assert.Fail("expected build plan")
+
+    [<Fact>]
+    let ``compileModules should import data and methods from atlalib dependency`` () =
+        let libCompileOutDir = createTempProjectDir ()
+        let libOutDir = createTempProjectDir ()
+        let appOutDir = createTempProjectDir ()
+
+        let librarySource = """
+data Person = { name: String }
+impl Person
+    fn greet self: String = self'name
+"""
+
+        let libraryResult =
+            Compiler.compileModules {
+                asmName = "PeopleLibAsm"
+                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = librarySource.Trim() } ]
+                entryModuleName = "people"
+                outDir = libCompileOutDir
+                dependencies = []
+            }
+
+        Assert.True(libraryResult.succeeded, String.concat Environment.NewLine (libraryResult.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+
+        let atlaLibPath =
+            match BuildSystem.createAtlaLib "peoplelib" "0.1.0" "PeopleLibAsm" libCompileOutDir libOutDir [] libraryResult with
+            | Ok path -> path
+            | Result.Error diagnostics ->
+                Assert.Fail(String.concat Environment.NewLine (diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+                ""
+
+        let dependency =
+            match AtlaLib.resolveRuntimeAssets atlaLibPath with
+            | Ok runtimeAssets ->
+                let resolvedDependency: Compiler.ResolvedDependency =
+                    { name = runtimeAssets.packageName
+                      version = runtimeAssets.packageVersion
+                      source = atlaLibPath
+                      compileReferencePaths = []
+                      runtimeLoadPaths = runtimeAssets.runtimeLoadPaths
+                      nativeRuntimePaths = runtimeAssets.nativeRuntimePaths }
+                resolvedDependency
+            | Result.Error diagnostics ->
+                Assert.Fail(String.concat Environment.NewLine (diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+                Unchecked.defaultof<Compiler.ResolvedDependency>
+
+        let appSource = """
+import System'Console
+import people'Person
+
+fn main: () = do
+    let p = Person { name = "alice" }
+    let message = p'greet.
+    message Console'WriteLine.
+"""
+
+        let appResult =
+            Compiler.compileModules {
+                asmName = "PeopleApp"
+                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = appSource.Trim() } ]
+                entryModuleName = "main"
+                outDir = appOutDir
+                dependencies = [ dependency ]
+            }
+
+        Assert.True(appResult.succeeded, String.concat Environment.NewLine (appResult.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+
+        match BuildSystem.copyDependencies [ dependency ] appOutDir with
+        | Result.Error diagnostics ->
+            Assert.Fail(String.concat Environment.NewLine (diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+        | Ok _ -> ()
+
+        let exitCode, stdout, stderr = runDll (Path.Join(appOutDir, "PeopleApp.dll"))
+        Assert.Equal(0, exitCode)
+        Assert.True(String.IsNullOrWhiteSpace(stderr), stderr)
+        Assert.Equal("alice", stdout)
 
     [<Fact>]
     let ``buildProject should fail when atla.yaml is missing`` () =

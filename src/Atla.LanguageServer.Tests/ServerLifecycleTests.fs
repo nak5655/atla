@@ -94,6 +94,7 @@ module ServerLifecycleTests =
                         projectName = "app"
                         projectVersion = "0.1.0"
                         projectRoot = tempRoot
+                        packageType = BuildPackageType.Exe
                         dependencies =
                             [ { name = "Sample"
                                 version = "1.0.0"
@@ -106,7 +107,12 @@ module ServerLifecycleTests =
 
             let compile (request: Compiler.CompileModulesRequest) : Compiler.CompileResult =
                 capturedRequests.Add(request)
-                { succeeded = true; diagnostics = []; hir = None; symbolTable = None }
+                { succeeded = true
+                  diagnostics = []
+                  hir = None
+                  hirModules = None
+                  symbolTable = None
+                  moduleAsts = None }
 
             let server =
                 Server(
@@ -209,7 +215,9 @@ module ServerLifecycleTests =
             { succeeded = false
               diagnostics = diagnostics
               hir = None
-              symbolTable = None }
+              hirModules = None
+              symbolTable = None
+              moduleAsts = None }
 
         let server =
             Server(
@@ -297,6 +305,7 @@ module ServerLifecycleTests =
                     projectName = "app"
                     projectVersion = "0.1.0"
                     projectRoot = tempRoot
+                    packageType = BuildPackageType.Exe
                     dependencies =
                         [ { name = "Sample.Dependency"
                             version = "1.0.0"
@@ -312,7 +321,9 @@ module ServerLifecycleTests =
             { succeeded = true
               diagnostics = []
               hir = None
-              symbolTable = None }
+              hirModules = None
+              symbolTable = None
+              moduleAsts = None }
 
         let server =
             Server(
@@ -348,12 +359,17 @@ module ServerLifecycleTests =
 
         let buildProject (_: BuildRequest) : BuildResult =
             { succeeded = true
-              plan = Some { projectName = "gui_calc"; projectVersion = "0.1.0"; projectRoot = tempRoot; dependencies = [] }
+              plan = Some { projectName = "gui_calc"; projectVersion = "0.1.0"; projectRoot = tempRoot; packageType = BuildPackageType.Exe; dependencies = [] }
               diagnostics = [] }
 
         let compile (request: Compiler.CompileModulesRequest) : Compiler.CompileResult =
             capturedRequests.Add(request)
-            { succeeded = true; diagnostics = []; hir = None; symbolTable = None }
+            { succeeded = true
+              diagnostics = []
+              hir = None
+              hirModules = None
+              symbolTable = None
+              moduleAsts = None }
 
         let server = Server((fun _ _ -> ()), buildProjectFn = buildProject, compileFn = compile)
 
@@ -401,7 +417,9 @@ module ServerLifecycleTests =
             { succeeded = true
               diagnostics = []
               hir = None
-              symbolTable = None }
+              hirModules = None
+              symbolTable = None
+              moduleAsts = None }
 
         let server =
             Server(

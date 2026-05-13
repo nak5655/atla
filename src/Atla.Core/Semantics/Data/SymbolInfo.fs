@@ -8,6 +8,7 @@ type ExternalBinding =
     | NativeMethodGroup of MethodInfo list
     | ConstructorGroup of ConstructorInfo list
     | SystemTypeRef of System.Type
+    | SystemFieldRef of FieldInfo
 
 type SymbolKind =
     | Arg of unit

@@ -754,7 +754,7 @@ fn main: () = do
 
 
     [<Fact>]
-    let ``compileModules should prefer module import when module and type path collide`` () =
+    let ``compileModules should report ambiguous import when module and type path collide`` () =
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
@@ -774,8 +774,7 @@ fn main: () = do
                 dependencies = []
             }
 
-        Assert.Contains(result.diagnostics, fun d -> d.message.Contains("Undefined type 'unknown'"))
-        Assert.DoesNotContain(result.diagnostics, fun d -> d.message.Contains("Undefined data type 'Bar'"))
+        Assert.Contains(result.diagnostics, fun d -> d.message.Contains("ambiguous"))
 
     [<Fact>]
     let ``compileModules should fallback to type import when module is absent`` () =

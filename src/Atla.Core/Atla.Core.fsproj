@@ -37,6 +37,7 @@
     <Compile Include="Lowering\ClosureConversion.fs" />
     <Compile Include="Lowering\Layout.fs" />
     <Compile Include="Lowering\Gen.fs" />
+    <Compile Include="AtlaLib.fs" />
     <Compile Include="DependencyLoader.fs" />
     <Compile Include="Compile.fs" />
 
