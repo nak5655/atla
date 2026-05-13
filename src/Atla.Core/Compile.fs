@@ -12,7 +12,8 @@ open System.IO
 module Compiler =
     let private stdPreludeModuleName = "Std.Prelude"
     let private stdPreludeImportPath = [ "Std"; "Prelude" ]
-    let private bundledStdPreludeResourceName = "Atla.Core.Std.Prelude.atla"
+    let private stdResourcePrefix = "Atla.Core.Std."
+    let private stdResourceSuffix = ".atla"
 
     type ResolvedDependency =
         { name: string
@@ -110,23 +111,53 @@ module Compiler =
         |> List.choose (fun (moduleName, entries) -> if entries.Length >= 2 then Some moduleName else None)
         |> List.sort
 
-    /// コンパイラに同梱された `Std.Prelude` ソースを取得する。
-    let private bundledStdPreludeSource: Lazy<string> =
+    /// 埋め込みリソース名から Std モジュール名を復元する。
+    let private tryStdModuleNameFromResourceName (resourceName: string) : string option =
+        if resourceName.StartsWith(stdResourcePrefix) && resourceName.EndsWith(stdResourceSuffix) then
+            let rawBody = resourceName.Substring(stdResourcePrefix.Length, resourceName.Length - stdResourcePrefix.Length - stdResourceSuffix.Length)
+            let normalizedBody = rawBody.Replace("\\", ".").Replace("/", ".").Trim([| "."[0] |])
+            if System.String.IsNullOrWhiteSpace normalizedBody then None else Some($"Std.{normalizedBody}")
+        else
+            None
+
+    /// コンパイラ同梱の Std モジュール一覧を読み込む。
+    let private bundledStdModules: Lazy<Map<string, string>> =
         lazy (
             let asm = typeof<CompileModulesRequest>.Assembly
-            use stream = asm.GetManifestResourceStream(bundledStdPreludeResourceName)
-            if isNull stream then
-                invalidOp $"Bundled prelude resource was not found: {bundledStdPreludeResourceName}"
-            use reader = new StreamReader(stream)
-            reader.ReadToEnd()
+
+            let readResource (resourceName: string) : string =
+                use stream = asm.GetManifestResourceStream(resourceName)
+                if isNull stream then
+                    invalidOp $"Bundled std resource was not found: {resourceName}"
+                use reader = new StreamReader(stream)
+                reader.ReadToEnd()
+
+            asm.GetManifestResourceNames()
+            |> Array.choose (fun resourceName ->
+                tryStdModuleNameFromResourceName resourceName
+                |> Option.map (fun moduleName -> moduleName, readResource resourceName))
+            |> Array.groupBy fst
+            |> Array.map (fun (moduleName, entries) ->
+                if entries.Length = 1 then
+                    moduleName, snd entries[0]
+                else
+                    invalidOp $"Bundled std resource names conflict for module: {moduleName}")
+            |> Map.ofArray
         )
 
-    /// コンパイル対象に `Std.Prelude` が存在しない場合、同梱 Prelude を追加する。
-    let private ensureStdPreludeModule (modules: ModuleSource list) : ModuleSource list =
-        if modules |> List.exists (fun moduleSource -> moduleSource.moduleName = stdPreludeModuleName) then
-            modules
-        else
-            modules @ [ { moduleName = stdPreludeModuleName; source = bundledStdPreludeSource.Value } ]
+    /// コンパイル対象に不足している同梱 Std モジュールを追加する。
+    let private ensureBundledStdModules (modules: ModuleSource list) : ModuleSource list =
+        let existingModuleNames = modules |> List.map (fun moduleSource -> moduleSource.moduleName) |> Set.ofList
+
+        let bundledModulesToAdd =
+            bundledStdModules.Value
+            |> Map.toList
+            |> List.sortBy fst
+            |> List.choose (fun (moduleName, source) ->
+                if existingModuleNames.Contains moduleName then None
+                else Some { moduleName = moduleName; source = source })
+
+        modules @ bundledModulesToAdd
 
     /// import 依存グラフを DFS で辿り、エントリモジュールから必要なモジュールのトポロジカル順序を返す。
     let private topoSortModulesFromEntry
@@ -272,7 +303,7 @@ module Compiler =
         if List.isEmpty request.modules then
             failed [ Diagnostic.Error("No source modules were provided", Span.Empty) ] None None
         else
-            let modules = ensureStdPreludeModule request.modules
+            let modules = ensureBundledStdModules request.modules
             let duplicateModuleNames = findDuplicateModuleNames modules
             if not duplicateModuleNames.IsEmpty then
                 let diagnostics =
