@@ -96,8 +96,8 @@ module Compiler =
         if not (moduleAsts.ContainsKey stdPreludeModuleName) then
             moduleAsts
         else
-            // Std.Prelude 内で宣言された nominal type（data/enum/role）を抽出し、
-            // 各モジュールへ自動注入する型 import パス一覧を構築する。
+            // Extract nominal types (data/enum/role) declared in Std.Prelude
+            // and build import paths to inject into other modules automatically.
             let preludeTypeImportPaths =
                 match moduleAsts.TryFind stdPreludeModuleName with
                 | None -> []
@@ -124,15 +124,15 @@ module Compiler =
                             | _ -> None)
                         |> Set.ofList
 
-                    // `Std'Prelude` モジュール自体の import を不足時のみ注入する。
+                    // Inject the `Std'Prelude` module import only when missing.
                     let preludeModuleImportDecls =
                         if Set.contains stdPreludeImportPath existingImportPaths then
                             []
                         else
                             [ Ast.Decl.Import(stdPreludeImportPath, Span.Empty) :> Ast.Decl ]
 
-                    // Prelude 内の nominal type import を不足分のみ注入し、
-                    // import 文を明示しないモジュールからも標準型を直接参照可能にする。
+                    // Inject missing nominal-type imports from Prelude so modules
+                    // can reference standard types without explicit import statements.
                     let preludeTypeImportDecls =
                         preludeTypeImportPaths
                         |> List.filter (fun path -> not (Set.contains path existingImportPaths))
