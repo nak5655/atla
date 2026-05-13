@@ -18,6 +18,10 @@ open NuGet.Protocol.Core.Types
 open NuGet.Versioning
 
 module internal Resolver =
+    type PackageType =
+        | Lib
+        | Exe
+
     (* Manifest で受け入れる依存指定の正規化表現。
        NuGetDependency は NuGet.Versioning の VersionRange で依存範囲を表現する。
        - manifest 指定: VersionRange(NuGetVersion.Parse(ver), true) → [ver, ∞)
@@ -29,6 +33,7 @@ module internal Resolver =
     type Manifest =
         { name: string
           version: string
+          packageType: PackageType
           dependencies: DependencySpec list }
 
     type private ResolveState =
