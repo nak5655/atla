@@ -3,8 +3,8 @@ namespace Atla.Build
 open System
 open System.IO
 open Atla.Compiler
+open Atla.Core.Data
 open Atla.Core.Semantics.Data
-open Atla.Core.Syntax.Data
 
 module InstallSystem =
     /// install 処理用の Diagnostic.Error を作成する。
@@ -42,7 +42,7 @@ module InstallSystem =
 
     /// Unix ランチャースクリプトへ実行権限を付与する。
     let private trySetUnixExecutable (path: string) : unit =
-        if not OperatingSystem.IsWindows() then
+        if not (OperatingSystem.IsWindows()) then
             try
                 let mode =
                     UnixFileMode.UserRead
@@ -115,7 +115,7 @@ module InstallSystem =
                     let windowsLauncherContent =
                         String.concat Environment.NewLine [
                             "@echo off"
-                            $"dotnet \"{installedDllPath}\" %*"
+                            $"dotnet \"{installedDllPath}\" %%*"
                             ""
                         ]
 
