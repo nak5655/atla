@@ -23,8 +23,11 @@ module InstallSystem =
             Path.GetFullPath(value)
 
     /// ランチャーへ安全に埋め込める識別子かを検証する。
+    let private launcherNameRegex = Regex("^[A-Za-z0-9._-]+$", RegexOptions.Compiled)
+
+    /// ランチャーへ安全に埋め込める識別子かを検証する。
     let private isSafeLauncherName (value: string) : bool =
-        Regex.IsMatch(value, "^[A-Za-z0-9._-]+$")
+        launcherNameRegex.IsMatch(value)
 
     /// ディレクトリを再帰コピーする（既存宛先は上書きする）。
     let private copyDirectoryRecursive (srcDir: string) (dstDir: string) : unit =
@@ -110,11 +113,12 @@ module InstallSystem =
                 copyDirectoryRecursive outDir payloadDir
 
                 if not (File.Exists(installedDllPath)) then
-                    Result.Error [ error $"installed exe assembly not found: `{installedDllPath}`" ]
+                    Result.Error [ error $"executable assembly not found after copy: `{installedDllPath}`" ]
                 else
                     let unixLauncherContent =
                         String.concat Environment.NewLine [
                             "#!/bin/sh"
+                            "# CDPATH の影響で意図しないディレクトリへ移動しないよう、局所的に CDPATH を無効化する。"
                             "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)"
                             $"DLL_PATH=\"$SCRIPT_DIR/{projectName}/{projectName}.dll\""
                             "if [ ! -f \"$DLL_PATH\" ]; then"

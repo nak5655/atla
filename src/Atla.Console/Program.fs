@@ -166,10 +166,10 @@ module Console =
                 withoutExtension.Replace(Path.DirectorySeparatorChar, '.').Replace(Path.AltDirectorySeparatorChar, '.')
 
             files
-             |> List.map (fun path ->
-                 ({ moduleName = toModuleName path
-                    source = File.ReadAllText(path) }: Compiler.ModuleSource))
-             |> Ok
+            |> List.map (fun path ->
+                ({ moduleName = toModuleName path
+                   source = File.ReadAllText(path) }: Compiler.ModuleSource))
+            |> Ok
 
     /// package.type に応じて compile 出力先を決定する。
     let private resolveCompileOutDir (plan: BuildPlan) (outDir: string) : string * bool =
