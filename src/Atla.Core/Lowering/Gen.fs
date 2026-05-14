@@ -69,7 +69,7 @@ module Gen =
             | false, _ ->
                 // ユーザー定義型に見つからない場合、インポートされた外部型として SymbolTable を参照する。
                 match env.symbolTable.Get(sid) with
-                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
+                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (isNull sysType) ->
                     Some sysType
                 | _ -> None
 
@@ -108,6 +108,8 @@ module Gen =
                     else
                         methodInfo.GetParameters().Length + 1
                 expectedCount = argCount)
+            // NativeMethodGroup は意味解析で候補が絞られている前提のため、
+            // 引数個数が一致しない場合は最後の保険として先頭候補を使う。
             |> Option.orElse (methods |> List.tryHead)
         | _ ->
             None
@@ -419,7 +421,7 @@ module Gen =
                 | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
             | false, _ ->
                 match env.symbolTable.Get(typeSid) with
-                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
+                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (isNull sysType) ->
                     match sysType.GetConstructor([||]) with
                     | null -> failwithf "No default constructor registered for env type: %A" typeSid
                     | ctorInfo ->

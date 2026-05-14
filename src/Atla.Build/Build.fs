@@ -58,6 +58,8 @@ module BuildSystem =
 
     /// nativeRuntimePaths のコピー先パスを返す（copyDependencies と同一規則）。
     let private getNativeDestinationPath (outDir: string) (dep: Compiler.ResolvedDependency) (srcPath: string) : string =
+        // `.atlalib` のような単一ファイル依存は dep.source がディレクトリではないため、
+        // ネイティブアセットもフラット配置へフォールバックする。
         if String.IsNullOrWhiteSpace dep.source || File.Exists(dep.source) then
             Path.Join(outDir, Path.GetFileName(srcPath))
         else
@@ -731,26 +733,23 @@ module BuildSystem =
                             caseNode.Add("name", JsonValue.Create(enumCase.name))
                             caseNode.Add("exportId", JsonValue.Create(buildExportId "enumCase" [ hirModule.name; typeName; enumCase.name ]))
                             caseNode.Add("tag", JsonValue.Create(tag))
+                            let payloadTypeName = $"{typeName}.__enum_payload_{enumCase.name}_type"
+                            let payloadTypeOpt = hirTypesByName |> Map.tryFind payloadTypeName
                             let payloadFieldsNode = JsonArray()
                             enumCase.fields
-                            |> List.iter (fun fieldDecl ->
+                            |> List.iteri (fun index fieldDecl ->
                                 let payloadFieldNode = JsonObject()
                                 payloadFieldNode.Add("name", JsonValue.Create(fieldDecl.name))
-                                payloadFieldNode.Add(
-                                    "type",
-                                    typeIdToApiNode typeOwners symbolTable (hirModule.types |> ignore; TypeId.Error "payload type will be resolved from AST"))
+                                let payloadFieldType =
+                                    match payloadTypeOpt with
+                                    | Some payloadType when index < payloadType.fields.Length ->
+                                        payloadType.fields[index].typ
+                                    | _ ->
+                                        TypeId.Unit
+                                payloadFieldNode.Add("type", typeIdToApiNode typeOwners symbolTable payloadFieldType)
                                 payloadFieldsNode.Add(payloadFieldNode))
-                            let payloadTypeName = $"{typeName}.__enum_payload_{enumCase.name}_type"
                             if not enumCase.fields.IsEmpty then
                                 caseNode.Add("payloadTypeName", JsonValue.Create(payloadTypeName))
-                            let payloadTypeOpt = hirTypesByName |> Map.tryFind payloadTypeName
-                            match payloadTypeOpt with
-                            | Some payloadType ->
-                                payloadType.fields
-                                |> List.iteri (fun index field ->
-                                    let payloadFieldNode = payloadFieldsNode[index] :?> JsonObject
-                                    payloadFieldNode["type"] <- typeIdToApiNode typeOwners symbolTable field.typ)
-                            | None -> ()
                             caseNode.Add("payloadFields", payloadFieldsNode)
                             casesNode.Add(caseNode)
                         | _ -> ())
