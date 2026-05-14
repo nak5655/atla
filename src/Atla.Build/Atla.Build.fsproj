@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="Resolver.fs" />
     <Compile Include="Build.fs" />
+    <Compile Include="Install.fs" />
   </ItemGroup>
 
   <ItemGroup>
