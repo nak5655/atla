@@ -105,7 +105,8 @@ module Console =
         |> List.iter (fun diagnostic ->
             Console.Error.WriteLine($"{diagnosticPrefix diagnostic.severity}: {diagnostic.toDisplayText()}"))
 
-    /// BuildSystem.buildProject を実行して BuildPlan を取り出す。
+    /// BuildSystem.buildProject を実行して BuildPlan を抽出する。
+    /// 成功時は BuildPreparation を返し、失敗時は diagnostics 出力後に終了コード 1 を返す。
     let private prepareBuild (normalizedProjectRoot: string) : Result<BuildPreparation, int> =
         let buildResult = BuildSystem.buildProject { projectRoot = normalizedProjectRoot }
         printDiagnostics buildResult.diagnostics
@@ -180,7 +181,8 @@ module Console =
         | _ ->
             outDir, false
 
-    /// ビルド前段（ソース収集・エントリ解決・compile 実行・一時ディレクトリ後始末）を共通実行し、成功時に後段コールバックを呼び出す。
+    /// build/install 共通の compile パイプラインを実行し、成功時に `onSucceeded` を呼び出す。
+    /// 本関数は compile 用一時ディレクトリの後始末まで責務を持つ。
     let private withCompiledProject
         (plan: BuildPlan)
         (outDir: string)
@@ -226,7 +228,7 @@ module Console =
                         | :? UnauthorizedAccessException as authEx ->
                             Console.Error.WriteLine($"warning: failed to clean temporary build directory `{compileOutDir}`: {authEx.Message}")
 
-    /// `atla build` コマンドの後段処理を実行する。
+    /// `atla build` の BuildPlan 取得後フェーズ（compile と成果物生成）を実行する。
     let private runBuildWithPlan (plan: BuildPlan) (options: BuildOptions) : int =
         let outDir =
             match options.outDir with
@@ -270,7 +272,7 @@ module Console =
                         Console.WriteLine($"Generated: {depsPath}")
                         0)
 
-    /// `atla install` コマンドの後段処理を実行する。
+    /// `atla install` の BuildPlan 取得後フェーズ（compile とインストール）を実行する。
     let private runInstallWithPlan (plan: BuildPlan) (options: InstallOptions) : int =
         let atlaHome =
             match options.atlaHome with

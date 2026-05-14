@@ -118,7 +118,7 @@ module InstallSystem =
                     let unixLauncherContent =
                         String.concat Environment.NewLine [
                             "#!/bin/sh"
-                            "# CDPATH の影響で意図しないディレクトリへ移動しないよう、局所的に CDPATH を無効化する。"
+                            "# Disable CDPATH locally to avoid unintended directory resolution."
                             "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)"
                             $"DLL_PATH=\"$SCRIPT_DIR/{projectName}/{projectName}.dll\""
                             "if [ ! -f \"$DLL_PATH\" ]; then"
