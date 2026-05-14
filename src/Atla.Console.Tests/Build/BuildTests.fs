@@ -33,6 +33,10 @@ package:
   type: "{packageType}"
 """.Trim())
 
+    /// install 検証用の一時 atla home ディレクトリを作成する。
+    let private createTempAtlaHomeDir () =
+        Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+
     /// カレントディレクトリから上位へ辿ってリポジトリルートを見つける。
     let private tryFindRepositoryRoot () : string option =
         let rec loop (dir: DirectoryInfo) =
@@ -61,6 +65,13 @@ package:
         let projectRoot = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
 
         let code = Console.run [| "build"; projectRoot |]
+        Assert.Equal(1, code)
+
+    [<Fact>]
+    let ``install should fail when project root does not exist`` () =
+        let projectRoot = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+
+        let code = Console.run [| "install"; projectRoot |]
         Assert.Equal(1, code)
 
     [<Fact>]
@@ -129,6 +140,82 @@ fn greet: () = ()
         Assert.True(File.Exists(Path.Join(outDir, "HelloConsole.dll")))
         Assert.False(File.Exists(Path.Join(outDir, "HelloConsole.deps.json")))
         Assert.False(File.Exists(Path.Join(outDir, "hello.atlalib")))
+
+    [<Fact>]
+    let ``install should place atlalib for lib package type`` () =
+        let projectRoot = createTempProjectDir ()
+        writeManifestWithType projectRoot "hello" "lib"
+
+        File.WriteAllText(
+            Path.Join(projectRoot, "src", "library.atla"),
+            """
+fn greet: () = ()
+""".Trim())
+
+        let atlaHome = createTempAtlaHomeDir ()
+        let code = Console.run [| "install"; projectRoot; "--atla-home"; atlaHome |]
+
+        Assert.Equal(0, code)
+        Assert.True(File.Exists(Path.Join(atlaHome, "packages", "hello", "0.1.0", "hello.atlalib")))
+
+    [<Fact>]
+    let ``install should place atlalib for dll package type`` () =
+        let projectRoot = createTempProjectDir ()
+        writeManifestWithType projectRoot "hello" "dll"
+
+        File.WriteAllText(
+            Path.Join(projectRoot, "src", "library.atla"),
+            """
+fn greet: () = ()
+""".Trim())
+
+        let atlaHome = createTempAtlaHomeDir ()
+        let code = Console.run [| "install"; projectRoot; "--atla-home"; atlaHome |]
+
+        Assert.Equal(0, code)
+        Assert.True(File.Exists(Path.Join(atlaHome, "packages", "hello", "0.1.0", "hello.atlalib")))
+
+    [<Fact>]
+    let ``install should place executable payload and launchers for exe package type`` () =
+        let projectRoot = createTempProjectDir ()
+        writeManifestWithType projectRoot "hello" "exe"
+
+        File.WriteAllText(
+            Path.Join(projectRoot, "src", "main.atla"),
+            """
+import System'Console
+
+fn main: () =
+    "Hello, World!" Console'WriteLine.
+""".Trim())
+
+        let atlaHome = createTempAtlaHomeDir ()
+        let code = Console.run [| "install"; projectRoot; "--atla-home"; atlaHome |]
+
+        Assert.Equal(0, code)
+        Assert.True(File.Exists(Path.Join(atlaHome, "bin", "hello", "hello.dll")))
+        Assert.True(File.Exists(Path.Join(atlaHome, "bin", "hello", "hello.deps.json")))
+        Assert.True(File.Exists(Path.Join(atlaHome, "bin", "hello.sh")))
+        Assert.True(File.Exists(Path.Join(atlaHome, "bin", "hello.bat")))
+
+    [<Fact>]
+    let ``install should fail for unsafe project name when generating launchers`` () =
+        let projectRoot = createTempProjectDir ()
+        writeManifestWithType projectRoot "hello$world" "exe"
+
+        File.WriteAllText(
+            Path.Join(projectRoot, "src", "main.atla"),
+            """
+import System'Console
+
+fn main: () =
+    "Hello, World!" Console'WriteLine.
+""".Trim())
+
+        let atlaHome = createTempAtlaHomeDir ()
+        let code = Console.run [| "install"; projectRoot; "--atla-home"; atlaHome |]
+
+        Assert.Equal(1, code)
 
     [<Fact>]
     let ``build should succeed for examples gui_hello`` () =
