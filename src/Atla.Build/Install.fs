@@ -54,7 +54,10 @@ module InstallSystem =
                     ||| UnixFileMode.OtherExecute
 
                 File.SetUnixFileMode(path, mode)
-            with _ ->
+            with
+            | :? IOException
+            | :? UnauthorizedAccessException
+            | :? PlatformNotSupportedException ->
                 ()
 
     /// `.atlalib` を `~/.atla/packages/<name>/<version>/` 配下へインストールする。
@@ -106,7 +109,12 @@ module InstallSystem =
                         String.concat Environment.NewLine [
                             "#!/bin/sh"
                             "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)"
-                            $"exec dotnet \"$SCRIPT_DIR/{projectName}/{projectName}.dll\" \"$@\""
+                            $"DLL_PATH=\"$SCRIPT_DIR/{projectName}/{projectName}.dll\""
+                            "if [ ! -f \"$DLL_PATH\" ]; then"
+                            "  echo \"atla launcher error: executable payload not found: $DLL_PATH\" >&2"
+                            "  exit 1"
+                            "fi"
+                            "exec dotnet \"$DLL_PATH\" \"$@\""
                             ""
                         ]
 
@@ -117,7 +125,12 @@ module InstallSystem =
                         String.concat Environment.NewLine [
                             "@echo off"
                             "set SCRIPT_DIR=%~dp0"
-                            $"dotnet \"%%SCRIPT_DIR%%{projectName}\\{projectName}.dll\" %%*"
+                            $"set DLL_PATH=%%SCRIPT_DIR%%{projectName}\\{projectName}.dll"
+                            "if not exist \"%DLL_PATH%\" ("
+                            "  >&2 echo atla launcher error: executable payload not found: %DLL_PATH%"
+                            "  exit /b 1"
+                            ")"
+                            "dotnet \"%DLL_PATH%\" %*"
                             ""
                         ]
 
