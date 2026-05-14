@@ -105,7 +105,8 @@ module InstallSystem =
                     let unixLauncherContent =
                         String.concat Environment.NewLine [
                             "#!/bin/sh"
-                            $"exec dotnet \"{installedDllPath}\" \"$@\""
+                            "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)"
+                            $"exec dotnet \"$SCRIPT_DIR/{projectName}/{projectName}.dll\" \"$@\""
                             ""
                         ]
 
@@ -115,7 +116,8 @@ module InstallSystem =
                     let windowsLauncherContent =
                         String.concat Environment.NewLine [
                             "@echo off"
-                            $"dotnet \"{installedDllPath}\" %%*"
+                            "set SCRIPT_DIR=%~dp0"
+                            $"dotnet \"%%SCRIPT_DIR%%{projectName}\\{projectName}.dll\" %%*"
                             ""
                         ]
 

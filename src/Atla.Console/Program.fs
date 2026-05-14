@@ -325,7 +325,6 @@ module Console =
                                 printDiagnostics diagnostics
                                 1
                             | Ok installedPaths ->
-                                Console.WriteLine($"Installed: {depsPath}")
                                 installedPaths |> List.iter (fun path -> Console.WriteLine($"Installed: {path}"))
                                 0)
         finally
