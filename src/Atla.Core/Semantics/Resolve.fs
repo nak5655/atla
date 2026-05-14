@@ -78,41 +78,74 @@ module Resolve =
     let private resolveImport
         (symbolTable: SymbolTable)
         (scope: Scope)
-        (availableModuleNames: Set<string>)
-        (availableTypeFullNames: Set<string>)
+        (sourceModuleNames: Set<string>)
+        (sourceTypeFullNames: Set<string>)
+        (dependencyModuleNames: Set<string>)
+        (dependencyTypeFullNames: Set<string>)
         (importedModules: ResizeArray<string * string>)
         (importedTypeAliases: ResizeArray<string * string>)
         (importDecl: Ast.Decl.Import)
         : Diagnostic list =
         let classPath = String.concat "." importDecl.path
         let shortName = Array.last (classPath.Split('.'))
-        if availableModuleNames.Contains(classPath) then
-            importedModules.Add(shortName, classPath)
-            []
-        elif availableTypeFullNames.Contains(classPath) then
-            // 型 import: Analyze で実体 data 宣言へ接続するため、ここでは alias 情報のみ保持する。
-            importedTypeAliases.Add(shortName, classPath)
+        let resolveAtlaImport (layerName: string) (moduleNames: Set<string>) (typeNames: Set<string>) =
+            let hasModule = moduleNames.Contains(classPath)
+            let hasType = typeNames.Contains(classPath)
+
+            match hasModule, hasType with
+            | true, true ->
+                [ Diagnostic.Error(
+                      $"import '{classPath}' is ambiguous in dependency layer '{layerName}': both module and type were found",
+                      importDecl.span) ]
+            | true, false ->
+                importedModules.Add(shortName, classPath)
+                []
+            | false, true ->
+                importedTypeAliases.Add(shortName, classPath)
+                []
+            | false, false ->
+                []
+
+        let sourceDiagnostics = resolveAtlaImport "source" sourceModuleNames sourceTypeFullNames
+
+        if sourceDiagnostics.IsEmpty && (sourceModuleNames.Contains(classPath) || sourceTypeFullNames.Contains(classPath)) then
             []
         else
-            // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
-            match scope.ResolveType(shortName) with
-            | Some _ -> []
-            | None ->
-                let sid = declareSystemType symbolTable scope classPath
+            let dependencyDiagnostics = resolveAtlaImport "dependency" dependencyModuleNames dependencyTypeFullNames
+            if dependencyDiagnostics.IsEmpty && (dependencyModuleNames.Contains(classPath) || dependencyTypeFullNames.Contains(classPath)) then
+                []
+            elif not dependencyDiagnostics.IsEmpty then
+                dependencyDiagnostics
+            elif not sourceDiagnostics.IsEmpty then
+                sourceDiagnostics
+            else
+                // TODO: 今はSystem.Typeのみをサポートしているが、将来的にはユーザー定義型やモジュールもサポートする必要がある
+                match scope.ResolveType(shortName) with
+                | Some _ -> []
+                | None ->
+                    let sid = declareSystemType symbolTable scope classPath
 
-                // declareSystemType が型を解決できたか確認する。
-                // 解決できなかった場合（sysType が null）は依存関係の設定不備を示す Warning を返す。
-                match symbolTable.Get(sid) with
-                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when isNull sysType ->
-                    [ Diagnostic.Warning(
-                          sprintf
-                              "import '%s': type could not be resolved from loaded assemblies. Ensure the dependency providing this type is listed in atla.yaml and has been restored."
-                              classPath,
-                          importDecl.span) ]
-                | _ -> []
+                    // declareSystemType が型を解決できたか確認する。
+                    // 解決できなかった場合（sysType が null）は依存関係の設定不備を示す Warning を返す。
+                    match symbolTable.Get(sid) with
+                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when isNull sysType ->
+                        [ Diagnostic.Warning(
+                              sprintf
+                                  "import '%s': type could not be resolved from loaded assemblies. Ensure the dependency providing this type is listed in atla.yaml and has been restored."
+                                  classPath,
+                              importDecl.span) ]
+                    | _ -> []
 
     let resolveModuleWithImports
-        (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module, availableModuleNames: Set<string>, availableTypeFullNames: Set<string>)
+        (
+            symbolTable: SymbolTable,
+            moduleName: string,
+            moduleAst: Ast.Module,
+            sourceModuleNames: Set<string>,
+            sourceTypeFullNames: Set<string>,
+            dependencyModuleNames: Set<string>,
+            dependencyTypeFullNames: Set<string>
+        )
         : PhaseResult<ResolvedModule> =
         let moduleScope = Scope(None)
         moduleScope.DeclareType("Unit", TypeId.Unit)
@@ -171,7 +204,16 @@ module Resolve =
             match decl with
             | :? Ast.Decl.Import as importDecl ->
                 let importDiagnostics =
-                    resolveImport symbolTable moduleScope availableModuleNames availableTypeFullNames importedModules importedTypeAliases importDecl
+                    resolveImport
+                        symbolTable
+                        moduleScope
+                        sourceModuleNames
+                        sourceTypeFullNames
+                        dependencyModuleNames
+                        dependencyTypeFullNames
+                        importedModules
+                        importedTypeAliases
+                        importDecl
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
                 ()
@@ -391,4 +433,4 @@ module Resolve =
 
     /// 既存呼び出し向け互換 API。Atla モジュール import 判定は行わない。
     let resolveModule (symbolTable: SymbolTable, moduleName: string, moduleAst: Ast.Module) : PhaseResult<ResolvedModule> =
-        resolveModuleWithImports (symbolTable, moduleName, moduleAst, Set.empty, Set.empty)
+        resolveModuleWithImports (symbolTable, moduleName, moduleAst, Set.empty, Set.empty, Set.empty, Set.empty)

@@ -8,6 +8,7 @@ open System.Text
 open System.Text.Json
 open System.Text.Json.Nodes
 open Atla.Core.Data
+open Atla.Core.Syntax.Data
 open Atla.Core.Semantics.Data
 open Atla.Compiler
 open NuGet.Versioning
@@ -38,8 +39,9 @@ module BuildSystem =
     (* Manifest ファイル関連の固定設定と、共通ユーティリティ。 *)
     let private manifestFileName = "atla.yaml"
     let private targetFrameworkMoniker = ".NETCoreApp,Version=v10.0"
-    let private atlaLibFormatVersion = "1.0"
-    let private atlaLanguageAbi = "atla-abi-1"
+    let private atlaLibFormatVersion = AtlaLib.formatVersion
+    let private atlaLanguageAbi = AtlaLib.languageAbi
+    let private atlaLibSymbolSchemaVersion = AtlaLib.symbolSchemaVersion
     let private atlaCompilerVersion = "0.1.0"
 
     /// Build 入力パスを絶対パスへ正規化する。
@@ -56,7 +58,9 @@ module BuildSystem =
 
     /// nativeRuntimePaths のコピー先パスを返す（copyDependencies と同一規則）。
     let private getNativeDestinationPath (outDir: string) (dep: Compiler.ResolvedDependency) (srcPath: string) : string =
-        if String.IsNullOrWhiteSpace dep.source then
+        // `.atlalib` のような単一ファイル依存は dep.source がディレクトリではないため、
+        // ネイティブアセットもフラット配置へフォールバックする。
+        if String.IsNullOrWhiteSpace dep.source || File.Exists(dep.source) then
             Path.Join(outDir, Path.GetFileName(srcPath))
         else
             let normalizedSource = Path.GetFullPath(dep.source)
@@ -397,7 +401,7 @@ module BuildSystem =
                 dep.nativeRuntimePaths
                 |> List.map (fun srcPath ->
                     let dstPath =
-                        if String.IsNullOrWhiteSpace dep.source then
+                        if String.IsNullOrWhiteSpace dep.source || File.Exists(dep.source) then
                             Path.Join(outDir, Path.GetFileName(srcPath))
                         else
                             let normalizedSource = Path.GetFullPath(dep.source)
@@ -486,115 +490,294 @@ module BuildSystem =
         with ex ->
             Result.Error [ Diagnostic.Error($"failed to hash `{path}`: {ex.Message}", Span.Empty) ]
 
-    /// TypeId を deterministic な API 表現へ変換する。
-    let rec private typeIdToApiString (symbolTable: SymbolTable) (tid: TypeId) : string =
-        match tid with
-        | TypeId.Unit -> "Unit"
-        | TypeId.Bool -> "Bool"
-        | TypeId.Int -> "Int"
-        | TypeId.Float -> "Float"
-        | TypeId.String -> "String"
-        | TypeId.App(head, args) ->
-            let headText = typeIdToApiString symbolTable head
-            let argsText = args |> List.map (typeIdToApiString symbolTable) |> String.concat ", "
-            $"{headText}<{argsText}>"
-        | TypeId.Name sid -> symbolNameOrFallback symbolTable sid
-        | TypeId.Fn(args, ret) ->
-            let argsText = args |> List.map (typeIdToApiString symbolTable) |> String.concat ", "
-            $"({argsText}) -> {typeIdToApiString symbolTable ret}"
-        | TypeId.Meta _ -> "_"
-        | TypeId.Native systemType ->
-            systemType.FullName
-            |> Option.ofObj
-            |> Option.defaultValue systemType.Name
-        | TypeId.Error _ -> "ErrorType"
-        | TypeId.TypeVar name -> name
+    /// `A.B.c` 形式のシンボル名から末尾セグメントのみを取り出す。
+    let private lastNameSegment (value: string) : string =
+        let lastDot = value.LastIndexOf('.')
+        if lastDot < 0 then value else value.Substring(lastDot + 1)
 
     /// SymbolId を安定した名前文字列へ変換する（未登録時は `Symbol#<id>` を返す）。
-    and private symbolNameOrFallback (symbolTable: SymbolTable) (sid: SymbolId) : string =
+    let private symbolNameOrFallback (symbolTable: SymbolTable) (sid: SymbolId) : string =
         match symbolTable.Get(sid) with
         | Some symbolInfo -> symbolInfo.name
         | None -> $"Symbol#{sid.id}"
 
-    /// 型シグネチャの戻り値型を抽出する。
-    let private getReturnType (signatureType: TypeId) : TypeId =
-        match signatureType with
-        | TypeId.Fn(_, ret) -> ret
-        | _ -> signatureType
+    /// TypeId を `.atlalib` 用の構造化 JSON ノードへ変換する。
+    let rec private typeIdToApiNode (typeOwners: Map<int, string * string>) (symbolTable: SymbolTable) (tid: TypeId) : JsonNode =
+        match tid with
+        | TypeId.Unit -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Unit" |})
+        | TypeId.Bool -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Bool" |})
+        | TypeId.Int -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Int" |})
+        | TypeId.Float -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Float" |})
+        | TypeId.String -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "String" |})
+        | TypeId.Native systemType ->
+            JsonSerializer.SerializeToNode(
+                {| kind = "nativeType"
+                   fullName =
+                       systemType.FullName
+                       |> Option.ofObj
+                       |> Option.defaultValue systemType.Name |})
+        | TypeId.TypeVar name -> JsonSerializer.SerializeToNode({| kind = "typeVar"; name = name |})
+        | TypeId.Name sid ->
+            let node = JsonObject()
+            node.Add("kind", JsonValue.Create("packageType"))
+            match typeOwners.TryFind sid.id with
+            | Some (moduleName, typeName) ->
+                node.Add("module", JsonValue.Create(moduleName))
+                node.Add("name", JsonValue.Create(typeName))
+            | None ->
+                node.Add("module", JsonValue.Create(""))
+                node.Add("name", JsonValue.Create(symbolNameOrFallback symbolTable sid))
+            node
+        | TypeId.Fn(args, ret) ->
+            let node = JsonObject()
+            node.Add("kind", JsonValue.Create("function"))
+            let argsNode = JsonArray()
+            args |> List.iter (fun argType -> argsNode.Add(typeIdToApiNode typeOwners symbolTable argType))
+            node.Add("args", argsNode)
+            node.Add("return", typeIdToApiNode typeOwners symbolTable ret)
+            node
+        | TypeId.App(head, args) ->
+            let node = JsonObject()
+            node.Add("kind", JsonValue.Create("apply"))
+            node.Add("head", typeIdToApiNode typeOwners symbolTable head)
+            let argsNode = JsonArray()
+            args |> List.iter (fun argType -> argsNode.Add(typeIdToApiNode typeOwners symbolTable argType))
+            node.Add("args", argsNode)
+            node
+        | TypeId.Meta _ ->
+            JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Unit" |})
+        | TypeId.Error message ->
+            JsonSerializer.SerializeToNode({| kind = "nativeType"; fullName = $"error:{message}" |})
 
-    /// HIR + SymbolTable から public.api.json ノードを構築する。
-    let private createPublicApiNode (hirAssembly: Hir.Assembly) (symbolTable: SymbolTable) : JsonObject =
+    /// Export ID を仕様どおりに構築する。
+    let private buildExportId (kind: string) (segments: string list) : string =
+        String.concat ":" (kind :: segments)
+
+    /// field export に hidden 予約接頭辞を適用する。
+    let private buildFieldExportId (moduleName: string) (typeName: string) (fieldName: string) (isHidden: bool) : string =
+        let exportFieldName = if isHidden then $"__hidden__{fieldName}" else fieldName
+        buildExportId "field" [ moduleName; typeName; exportFieldName ]
+
+    /// 関数シグネチャ JSON を構築する。
+    let private createSignatureNode
+        (typeOwners: Map<int, string * string>)
+        (symbolTable: SymbolTable)
+        (argDefs: (string * TypeId) list)
+        (retType: TypeId)
+        : JsonObject =
+        let signatureNode = JsonObject()
+        let argsNode = JsonArray()
+        argDefs
+        |> List.iter (fun (argName, argType) ->
+            let argNode = JsonObject()
+            argNode.Add("name", JsonValue.Create(argName))
+            argNode.Add("type", typeIdToApiNode typeOwners symbolTable argType)
+            argsNode.Add(argNode))
+        signatureNode.Add("args", argsNode)
+        signatureNode.Add("return", typeIdToApiNode typeOwners symbolTable retType)
+        signatureNode
+
+    /// `self` レシーバーを持つメソッドかを判定する。
+    let private isInstanceMethod (methodDecl: Ast.Decl.Fn) : bool =
+        match methodDecl.args with
+        | (:? Ast.FnArg.Inferred as inferredArg) :: _ -> inferredArg.name = "self"
+        | _ -> false
+
+    /// モジュール別 HIR からトップレベル型所有者マップを構築する。
+    let private collectTypeOwners (hirModules: Hir.Module list) (symbolTable: SymbolTable) : Map<int, string * string> =
+        hirModules
+        |> List.collect (fun hirModule ->
+            hirModule.types
+            |> List.map (fun hirType ->
+                let typeName = symbolNameOrFallback symbolTable hirType.sym
+                hirType.sym.id, (hirModule.name, typeName)))
+        |> Map.ofList
+
+    /// モジュール別 HIR + AST から public.api.json ノードを構築する。
+    let private createPublicApiNode
+        (hirModules: Hir.Module list)
+        (moduleAsts: Map<string, Ast.Module>)
+        (symbolTable: SymbolTable)
+        : JsonObject =
+        let typeOwners = collectTypeOwners hirModules symbolTable
         let modulesNode = JsonArray()
 
-        let orderedModules =
-            hirAssembly.modules
-            |> List.sortBy (fun modul -> modul.name)
-
-        orderedModules
-        |> List.iter (fun modul ->
+        hirModules
+        |> List.sortBy (fun hirModule -> hirModule.name)
+        |> List.iter (fun hirModule ->
             let moduleNode = JsonObject()
-            moduleNode.Add("name", JsonValue.Create(modul.name))
-
-            let functionsNode = JsonArray()
-            modul.methods
-            |> List.sortBy (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym)
-            |> List.iter (fun methodInfo ->
-                let functionNode = JsonObject()
-                let symbolName = symbolNameOrFallback symbolTable methodInfo.sym
-                functionNode.Add("name", JsonValue.Create(symbolName))
-
-                let argsNode = JsonArray()
-                methodInfo.args
-                |> List.iter (fun (argSid, argType) ->
-                    let argNode = JsonObject()
-                    let argName = symbolNameOrFallback symbolTable argSid
-                    argNode.Add("name", JsonValue.Create(argName))
-                    argNode.Add("type", JsonValue.Create(typeIdToApiString symbolTable argType))
-                    argsNode.Add(argNode))
-                functionNode.Add("args", argsNode)
-                functionNode.Add("returnType", JsonValue.Create(typeIdToApiString symbolTable (getReturnType methodInfo.typ)))
-                functionsNode.Add(functionNode))
-            moduleNode.Add("functions", functionsNode)
-
+            moduleNode.Add("name", JsonValue.Create(hirModule.name))
+            let exportsNode = JsonObject()
+            let valuesNode = JsonArray()
             let typesNode = JsonArray()
-            modul.types
-            |> List.sortBy (fun hirType -> symbolNameOrFallback symbolTable hirType.sym)
-            |> List.iter (fun hirType ->
+            let moduleAst = moduleAsts[hirModule.name]
+
+            moduleAst.decls
+            |> List.choose (fun decl ->
+                match decl with
+                | :? Ast.Decl.Fn as fnDecl -> Some fnDecl
+                | _ -> None)
+            |> List.sortBy (fun fnDecl -> fnDecl.name)
+            |> List.iter (fun fnDecl ->
+                let hirMethod =
+                    hirModule.methods
+                    |> List.find (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym = fnDecl.name)
+                let valueNode = JsonObject()
+                valueNode.Add("name", JsonValue.Create(fnDecl.name))
+                valueNode.Add("exportId", JsonValue.Create(buildExportId "value" [ hirModule.name; fnDecl.name ]))
+                valueNode.Add("kind", JsonValue.Create("function"))
+                let argDefs =
+                    hirMethod.args
+                    |> List.map (fun (argSid, argType) -> lastNameSegment (symbolNameOrFallback symbolTable argSid), argType)
+                valueNode.Add(
+                    "signature",
+                    createSignatureNode typeOwners symbolTable argDefs (match hirMethod.typ with | TypeId.Fn(_, ret) -> ret | _ -> hirMethod.typ))
+                valuesNode.Add(valueNode))
+
+            let hirTypesByName =
+                hirModule.types
+                |> List.map (fun hirType -> symbolNameOrFallback symbolTable hirType.sym, hirType)
+                |> Map.ofList
+
+            moduleAst.decls
+            |> List.choose (fun decl ->
+                match decl with
+                | :? Ast.Decl.Data as dataDecl -> Some(dataDecl.name, "data", dataDecl.typeParams, Some dataDecl, None, None)
+                | :? Ast.Decl.Enum as enumDecl -> Some(enumDecl.name, "enum", enumDecl.typeParams, None, Some enumDecl, None)
+                | :? Ast.Decl.Role as roleDecl -> Some(roleDecl.name, "role", [], None, None, Some roleDecl)
+                | _ -> None)
+            |> List.sortBy (fun (typeName, _, _, _, _, _) -> typeName)
+            |> List.iter (fun (typeName, kind, typeParams, dataDeclOpt, enumDeclOpt, roleDeclOpt) ->
+                let hirType = hirTypesByName[typeName]
                 let typeNode = JsonObject()
-                let typeName = symbolNameOrFallback symbolTable hirType.sym
                 typeNode.Add("name", JsonValue.Create(typeName))
-                typeNode.Add("kind", JsonValue.Create(if hirType.isInterface then "role" else "data"))
-                typeNode.Add("typeParameters", JsonSerializer.SerializeToNode(hirType.typeParams))
-                // v1 仕様では制約・属性は空配列を明示的に保持する。
-                typeNode.Add("typeParameterConstraints", JsonArray())
-                typeNode.Add("attributes", JsonArray())
+                typeNode.Add("exportId", JsonValue.Create(buildExportId "type" [ hirModule.name; typeName ]))
+                typeNode.Add("kind", JsonValue.Create(kind))
+                typeNode.Add("typeParameters", JsonSerializer.SerializeToNode(typeParams))
 
                 let fieldsNode = JsonArray()
-                hirType.fields
-                |> List.sortBy (fun field -> symbolNameOrFallback symbolTable field.sym)
-                |> List.iter (fun field ->
-                    let fieldNode = JsonObject()
-                    let fieldName = symbolNameOrFallback symbolTable field.sym
-                    fieldNode.Add("name", JsonValue.Create(fieldName))
-                    fieldNode.Add("type", JsonValue.Create(typeIdToApiString symbolTable field.typ))
-                    fieldsNode.Add(fieldNode))
-                typeNode.Add("fields", fieldsNode)
-
                 let methodsNode = JsonArray()
-                hirType.methods
-                |> List.sortBy (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym)
-                |> List.iter (fun methodInfo ->
+
+                let addFieldNode (fieldSid: SymbolId) (fieldType: TypeId) (isHidden: bool) =
+                    let fieldName = lastNameSegment (symbolNameOrFallback symbolTable fieldSid)
+                    let fieldNode = JsonObject()
+                    fieldNode.Add("name", JsonValue.Create(fieldName))
+                    fieldNode.Add("exportId", JsonValue.Create(buildFieldExportId hirModule.name typeName fieldName isHidden))
+                    fieldNode.Add("type", typeIdToApiNode typeOwners symbolTable fieldType)
+                    fieldNode.Add("isHidden", JsonValue.Create(isHidden))
+                    fieldsNode.Add(fieldNode)
+
+                let addMethodNode (methodDecl: Ast.Decl.Fn) (methodSym: SymbolId) =
+                    let methodInfo =
+                        hirModule.methods
+                        |> List.find (fun methodInfo -> methodInfo.sym.id = methodSym.id)
+                    let isStatic = not (isInstanceMethod methodDecl)
                     let methodNode = JsonObject()
-                    let methodName = symbolNameOrFallback symbolTable methodInfo.sym
-                    methodNode.Add("name", JsonValue.Create(methodName))
-                    methodNode.Add("returnType", JsonValue.Create(typeIdToApiString symbolTable (getReturnType methodInfo.typ)))
-                    methodsNode.Add(methodNode))
+                    methodNode.Add("name", JsonValue.Create(methodDecl.name))
+                    methodNode.Add(
+                        "exportId",
+                        JsonValue.Create(buildExportId "method" [ hirModule.name; typeName; methodDecl.name; if isStatic then "static" else "instance" ]))
+                    methodNode.Add("isStatic", JsonValue.Create(isStatic))
+                    let argDefs =
+                        methodInfo.args
+                        |> List.map (fun (argSid, argType) -> lastNameSegment (symbolNameOrFallback symbolTable argSid), argType)
+                    methodNode.Add(
+                        "signature",
+                        createSignatureNode typeOwners symbolTable argDefs (match methodInfo.typ with | TypeId.Fn(_, ret) -> ret | _ -> methodInfo.typ))
+                    methodsNode.Add(methodNode)
+
+                match dataDeclOpt with
+                | Some dataDecl ->
+                    hirType.fields
+                    |> List.sortBy (fun field -> lastNameSegment (symbolNameOrFallback symbolTable field.sym))
+                    |> List.iter (fun field -> addFieldNode field.sym field.typ false)
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Impl as implDecl when (implDecl.forTypeName |> Option.defaultValue implDecl.typeName) = typeName ->
+                            Some implDecl
+                        | _ -> None)
+                    |> List.collect (fun implDecl -> implDecl.methods)
+                    |> List.sortBy (fun methodDecl -> methodDecl.name)
+                    |> List.iter (fun methodDecl ->
+                        let methodSym =
+                            hirModule.methods
+                            |> List.find (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym = $"{typeName}.{methodDecl.name}")
+                            |> fun methodInfo -> methodInfo.sym
+                        addMethodNode methodDecl methodSym)
+                | None -> ()
+
+                match roleDeclOpt with
+                | Some roleDecl ->
+                    roleDecl.methods
+                    |> List.sortBy (fun methodDecl -> methodDecl.name)
+                    |> List.iter (fun methodDecl ->
+                        let methodSym =
+                            hirType.methods
+                            |> List.find (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym = $"{typeName}.{methodDecl.name}")
+                            |> fun methodInfo -> methodInfo.sym
+                        addMethodNode (Ast.Decl.Fn(methodDecl.name, methodDecl.args, methodDecl.ret, Ast.Expr.Unit(Span.Empty), methodDecl.span)) methodSym)
+                | None -> ()
+
+                match enumDeclOpt with
+                | Some enumDecl ->
+                    hirType.fields
+                    |> List.iter (fun field -> addFieldNode field.sym field.typ true)
+                    let casesNode = JsonArray()
+                    enumDecl.cases
+                    |> List.mapi (fun tag caseDecl -> tag, caseDecl)
+                    |> List.iter (fun (tag, caseDecl) ->
+                        match caseDecl with
+                        | :? Ast.EnumCase.Case as enumCase ->
+                            let caseNode = JsonObject()
+                            caseNode.Add("name", JsonValue.Create(enumCase.name))
+                            caseNode.Add("exportId", JsonValue.Create(buildExportId "enumCase" [ hirModule.name; typeName; enumCase.name ]))
+                            caseNode.Add("tag", JsonValue.Create(tag))
+                            let payloadTypeName = $"{typeName}.__enum_payload_{enumCase.name}_type"
+                            let payloadTypeOpt = hirTypesByName |> Map.tryFind payloadTypeName
+                            let payloadFieldsNode = JsonArray()
+                            enumCase.fields
+                            |> List.iteri (fun index fieldDecl ->
+                                let payloadFieldNode = JsonObject()
+                                payloadFieldNode.Add("name", JsonValue.Create(fieldDecl.name))
+                                let payloadFieldType =
+                                    match payloadTypeOpt with
+                                    | Some payloadType when index < payloadType.fields.Length ->
+                                        payloadType.fields[index].typ
+                                    | _ ->
+                                        TypeId.Unit
+                                payloadFieldNode.Add("type", typeIdToApiNode typeOwners symbolTable payloadFieldType)
+                                payloadFieldsNode.Add(payloadFieldNode))
+                            if not enumCase.fields.IsEmpty then
+                                caseNode.Add("payloadTypeName", JsonValue.Create(payloadTypeName))
+                            caseNode.Add("payloadFields", payloadFieldsNode)
+                            casesNode.Add(caseNode)
+                        | _ -> ())
+                    typeNode.Add("cases", casesNode)
+                | None -> ()
+
+                typeNode.Add("fields", fieldsNode)
                 typeNode.Add("methods", methodsNode)
+                match hirType.baseType with
+                | Some baseType -> typeNode.Add("baseType", typeIdToApiNode typeOwners symbolTable baseType)
+                | None -> ()
+                moduleAst.decls
+                |> List.choose (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as implDecl when (implDecl.forTypeName |> Option.defaultValue implDecl.typeName) = typeName && implDecl.byFieldName.IsSome ->
+                        implDecl.byFieldName
+                    | _ -> None)
+                |> List.tryHead
+                |> Option.iter (fun delegatedFieldName -> typeNode.Add("delegatedByFieldName", JsonValue.Create(delegatedFieldName)))
                 typesNode.Add(typeNode))
-            moduleNode.Add("types", typesNode)
+
+            exportsNode.Add("values", valuesNode)
+            exportsNode.Add("types", typesNode)
+            moduleNode.Add("exports", exportsNode)
             modulesNode.Add(moduleNode))
 
         let rootNode = JsonObject()
+        rootNode.Add("schemaVersion", JsonValue.Create(atlaLibSymbolSchemaVersion))
         rootNode.Add("modules", modulesNode)
         rootNode
 
@@ -702,16 +885,17 @@ module BuildSystem =
             if not (File.Exists(assemblyPath)) then
                 Result.Error [ Diagnostic.Error($"assembly not found for .atlalib packaging: `{assemblyPath}`", Span.Empty) ]
             else
-                match compileResult.hir, compileResult.symbolTable with
-                | None, _
-                | _, None ->
+                match compileResult.hirModules, compileResult.moduleAsts, compileResult.symbolTable with
+                | None, _, _
+                | _, None, _
+                | _, _, None ->
                     Result.Error [ Diagnostic.Error("public API extraction requires successful semantic analysis result", Span.Empty) ]
-                | Some hirAssembly, Some symbolTable ->
+                | Some hirModules, Some moduleAsts, Some symbolTable ->
                     match createDependencyLockNode dependencies with
                     | Result.Error diagnostics -> Result.Error diagnostics
                     | Ok lockNode ->
                         let jsonOptions = JsonSerializerOptions(WriteIndented = true)
-                        let publicApiNode = createPublicApiNode hirAssembly symbolTable
+                        let publicApiNode = createPublicApiNode hirModules moduleAsts symbolTable
 
                         let entryBytes = ResizeArray<string * byte[]>()
                         entryBytes.Add("assemblies/" + $"{asmName}.dll", File.ReadAllBytes(assemblyPath))
@@ -740,7 +924,11 @@ module BuildSystem =
                                 {| assembly = $"assemblies/{asmName}.dll"
                                    publicApi = "symbols/public.api.json"
                                    dependencyLock = "deps/manifest.lock.json" |}))
-                        atlaLibMetadataNode.Add("compat", JsonSerializer.SerializeToNode({| languageAbi = atlaLanguageAbi |}))
+                        atlaLibMetadataNode.Add(
+                            "compat",
+                            JsonSerializer.SerializeToNode(
+                                {| languageAbi = atlaLanguageAbi
+                                   symbolSchemaVersion = atlaLibSymbolSchemaVersion |}))
 
                         let metadataBytes = atlaLibMetadataNode.ToJsonString(jsonOptions) |> toUtf8Bytes
                         entryBytes.Add("atlalib.json", metadataBytes)

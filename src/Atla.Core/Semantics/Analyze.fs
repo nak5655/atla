@@ -23,14 +23,27 @@ module Analyze =
             typeMetaFactory: TypeMetaFactory,
             moduleName: string,
             moduleAst: Ast.Module,
-            availableModuleNames: Set<string>,
-            availableTypeFullNames: Set<string>,
+            sourceModuleNames: Set<string>,
+            sourceTypeFullNames: Set<string>,
+            dependencyModuleNames: Set<string>,
+            dependencyTypeFullNames: Set<string>,
             availableTypeDecls: Map<string, Ast.Decl>,
             availableDataTypeImplDecls: Map<string, Ast.Decl.Impl list>,
-            importedModuleExports: Map<string, Map<string, ModuleExport>>
+            importedModuleExports: Map<string, Map<string, ModuleExport>>,
+            importedDependencyTypeDefs: Map<string, DataTypeDef>
         )
         : PhaseResult<Hir.Module> =
-        match Resolve.resolveModuleWithImports (symbolTable, moduleName, moduleAst, availableModuleNames, availableTypeFullNames) with
+        match
+            Resolve.resolveModuleWithImports (
+                symbolTable,
+                moduleName,
+                moduleAst,
+                sourceModuleNames,
+                sourceTypeFullNames,
+                dependencyModuleNames,
+                dependencyTypeFullNames
+            )
+        with
         | { succeeded = false; diagnostics = diagnostics } -> PhaseResult.failed diagnostics
         | { value = Some resolvedModule } ->
             let moduleExportView =
@@ -286,6 +299,10 @@ module Analyze =
                 |> List.fold
                     (fun (defs, diagnostics) (aliasName, fullTypePath) ->
                         match availableTypeDecls.TryFind(fullTypePath) with
+                        | None when importedDependencyTypeDefs.ContainsKey(fullTypePath) ->
+                            let importedDef = importedDependencyTypeDefs[fullTypePath]
+                            resolvedModule.moduleScope.DeclareType(aliasName, TypeId.Name importedDef.typeSid)
+                            Map.add aliasName importedDef defs, diagnostics
                         | None ->
                             defs, diagnostics @ [ Diagnostic.Error(sprintf "Imported type '%s' was not found" fullTypePath, Atla.Core.Data.Span.Empty) ]
                         | Some typeDecl ->
@@ -694,4 +711,18 @@ module Analyze =
 
     /// 既存呼び出し向け互換 API。Atla モジュール import は外部から供給しない。
     let analyzeModule (symbolTable: SymbolTable, typeSubst: TypeSubst, moduleName: string, moduleAst: Ast.Module) : PhaseResult<Hir.Module> =
-        analyzeModuleWithImports (symbolTable, typeSubst, TypeMetaFactory(), moduleName, moduleAst, Set.empty, Set.empty, Map.empty, Map.empty, Map.empty)
+        analyzeModuleWithImports (
+            symbolTable,
+            typeSubst,
+            TypeMetaFactory(),
+            moduleName,
+            moduleAst,
+            Set.empty,
+            Set.empty,
+            Set.empty,
+            Set.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty
+        )

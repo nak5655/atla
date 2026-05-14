@@ -521,6 +521,19 @@ module internal Resolver =
                     let cyclePath = state.stack @ [ dependencyRoot ]
                     let cycleDescription = cyclePath |> List.map Path.GetFileName |> String.concat " -> "
                     { state with diagnostics = state.diagnostics @ [ error $"cyclic dependency detected: {cycleDescription}" ] }
+                elif File.Exists dependencyRoot && dependencyRoot.EndsWith(".atlalib", StringComparison.OrdinalIgnoreCase) then
+                    match AtlaLib.resolveRuntimeAssets dependencyRoot with
+                    | Result.Error diagnostics ->
+                        { state with diagnostics = state.diagnostics @ diagnostics }
+                    | Ok resolvedAssets ->
+                        let resolved : Compiler.ResolvedDependency =
+                            { name = resolvedAssets.packageName
+                              version = resolvedAssets.packageVersion
+                              source = dependencyRoot
+                              compileReferencePaths = []
+                              runtimeLoadPaths = resolvedAssets.runtimeLoadPaths
+                              nativeRuntimePaths = resolvedAssets.nativeRuntimePaths }
+                        mergeResolvedDependency state resolved
                 elif not (Directory.Exists dependencyRoot) then
                     { state with diagnostics = state.diagnostics @ [ error $"dependency path not found: {name} -> {dependencyRoot}" ] }
                 elif state.visitedByPath.ContainsKey(dependencyRoot) then
