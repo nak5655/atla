@@ -68,6 +68,13 @@ package:
         Assert.Equal(1, code)
 
     [<Fact>]
+    let ``install should fail when project root does not exist`` () =
+        let projectRoot = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+
+        let code = Console.run [| "install"; projectRoot |]
+        Assert.Equal(1, code)
+
+    [<Fact>]
     let ``build should fail when src main is missing`` () =
         let projectRoot = createTempProjectDir ()
         writeManifest projectRoot "hello"
@@ -190,6 +197,25 @@ fn main: () =
         Assert.True(File.Exists(Path.Join(atlaHome, "bin", "hello", "hello.deps.json")))
         Assert.True(File.Exists(Path.Join(atlaHome, "bin", "hello.sh")))
         Assert.True(File.Exists(Path.Join(atlaHome, "bin", "hello.bat")))
+
+    [<Fact>]
+    let ``install should fail for unsafe project name when generating launchers`` () =
+        let projectRoot = createTempProjectDir ()
+        writeManifestWithType projectRoot "hello$world" "exe"
+
+        File.WriteAllText(
+            Path.Join(projectRoot, "src", "main.atla"),
+            """
+import System'Console
+
+fn main: () =
+    "Hello, World!" Console'WriteLine.
+""".Trim())
+
+        let atlaHome = createTempAtlaHomeDir ()
+        let code = Console.run [| "install"; projectRoot; "--atla-home"; atlaHome |]
+
+        Assert.Equal(1, code)
 
     [<Fact>]
     let ``build should succeed for examples gui_hello`` () =
