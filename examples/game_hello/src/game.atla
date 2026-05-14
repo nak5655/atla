@@ -1,17 +1,18 @@
 import Stride'Engine'Game
+import Stride'Graphics'SpriteBatch
 import Stride'Games'GameTime
 
 data FlappyGame =
-    { _shouldUpdate: Bool }
+    { _spriteBatch: Opt SpriteBatch }
 
 impl FlappyGame as Game
     fn new: FlappyGame =
-        FlappyGame { _shouldUpdate = True }
+        FlappyGame { _spriteBatch = Opt'None }
 
     fn Initialize self: () =
         base'Initialize.
 
+        self'_spriteBatch = base'GraphicsDevice SpriteBatch. Opt'Some.
+
     fn Update self (gameTime: GameTime): () =
-        if | self'_shouldUpdate =>
-                gameTime base'Update.
-            | else => ()
+        gameTime base'Update.

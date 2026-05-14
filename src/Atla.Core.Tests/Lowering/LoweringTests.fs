@@ -1180,3 +1180,105 @@ impl Color
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("255", stdout.Trim())
+
+    [<Fact>]
+    let ``generic enum Opt'None unifies with Opt<T> field type`` () =
+        // 回帰テスト: Opt'None を Opt<具体型> フィールドに代入するとき
+        // "Cannot unify types: Opt and Opt<SomeType>" エラーが発生していたバグの検出用。
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let source = """
+import System'Console
+
+data Box =
+    { _value: Opt Int }
+
+impl Box
+    fn new: Box =
+        Box { _value = Opt'None }
+
+    fn get self: Int =
+        match self'_value
+            | Opt'None -> -1
+            | Opt'Some { value } -> value
+
+fn main: () = do
+    let b = Box'new.
+    b'get. Console'WriteLine.
+"""
+
+        let res = compileSingle { asmName = "OptNoneUnify"; source = source.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "OptNoneUnify.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("-1", stdout.Trim())
+
+    [<Fact>]
+    let ``generic enum Opt'Some pipeline constructor unifies with Opt<T> field type`` () =
+        // 回帰テスト: "arg Type'Case." パイプライン構文で enum case コンストラクターを呼び出すとき
+        // "Enum case 'Some' requires a payload initializer" エラーが発生していたバグの検出用。
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let source = """
+import System'Console
+
+data Box =
+    { _value: Opt Int }
+
+impl Box
+    fn new (n: Int): Box =
+        Box { _value = n Opt'Some. }
+
+    fn get self: Int =
+        match self'_value
+            | Opt'None -> -1
+            | Opt'Some { value } -> value
+
+fn main: () = do
+    let b = 42 Box'new.
+    b'get. Console'WriteLine.
+"""
+
+        let res = compileSingle { asmName = "OptSomePipeline"; source = source.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "OptSomePipeline.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("42", stdout.Trim())

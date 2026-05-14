@@ -55,10 +55,29 @@ module Analyze =
                     |> Option.map (fun exports -> alias, exports))
                 |> Map.ofList
 
+            // Std.Prelude は組み込み標準ライブラリの識別名。Compile.fs の同名定数と一致させること。
+            let stdPreludeModuleName = "Std.Prelude"
             let bootstrapNameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, Map.empty, moduleExportView)
             // typeMetaFactory は複数モジュールをまたいで共有されるため、
             // 各モジュールで新しいファクトリを生成すると TypeSubst 上のメタ ID が衝突する。
             let typeEnv = TypeEnv(typeSubst, typeMetaFactory)
+
+            // ─── Prelude 型の早期スコープ注入 ──────────────────────────────────────────────
+            // data/enum 宣言のフィールド型解析（下記 dataTypeDefs）が Prelude 型（例: Opt<T>）を
+            // 正しく解決できるよう、dataTypeDefs 構築前に Prelude 型をスコープへ宣言する。
+            // Scope.DeclareType は冪等であるため、後続の importedTypeDefs 処理で重複登録しても安全。
+            // ──────────────────────────────────────────────────────────────────────────────
+            if moduleName <> stdPreludeModuleName then
+                match importedModuleExports |> Map.tryFind stdPreludeModuleName with
+                | None -> ()
+                | Some preludeExports ->
+                    preludeExports
+                    |> Map.iter (fun key exportInfo ->
+                        if key.StartsWith("type:") then
+                            let typeName = key.Substring(5)
+                            // 内部ペイロード型（ドットを含む名前）と明示的インポート済み型は除外する。
+                            if not (typeName.Contains('.')) && not (resolvedModule.importedTypeAliases.ContainsKey(typeName)) then
+                                resolvedModule.moduleScope.DeclareType(typeName, TypeId.Name exportInfo.symbolId))
 
             let fields = List<Hir.Field>()
             let methods = List<Hir.Method>()
@@ -293,8 +312,35 @@ module Analyze =
                         Hir.Method(methodSid, argSids, Hir.Expr.Unit(roleSpan), methodType, roleSpan))
                 types.Add(Hir.Type(resolvedRoleDecl.typeSid, true, None, [], [], hirMethods))
 
+            // Std.Prelude に含まれるジェネリック enum 等を暗黙インポートとして解決する。
+            // Std.Prelude 自体のコンパイル中と、既に明示的に同名型をインポートしているモジュールは除外する。
+            let allImportedTypeAliases =
+                if moduleName = stdPreludeModuleName then
+                    resolvedModule.importedTypeAliases
+                else
+                    match importedModuleExports |> Map.tryFind stdPreludeModuleName with
+                    | None -> resolvedModule.importedTypeAliases
+                    | Some preludeExports ->
+                        // Prelude がエクスポートする型（"type:{Name}"）のうち、
+                        // 内部ペイロード型（ドットを含む名前）を除いた公開型名を収集する。
+                        preludeExports
+                        |> Map.toList
+                        |> List.choose (fun (key, _) ->
+                            if key.StartsWith("type:") then
+                                let typeName = key.Substring(5)
+                                if not (typeName.Contains('.')) then
+                                    // 明示的インポートがない Prelude 型はすべて自動注入する。
+                                    // スコープへの早期注入済みでも importedTypeDefs のメタデータ構築は必要。
+                                    let notExplicit = not (resolvedModule.importedTypeAliases.ContainsKey(typeName))
+                                    if notExplicit then
+                                        Some (typeName, $"{stdPreludeModuleName}.{typeName}")
+                                    else None
+                                else None
+                            else None)
+                        |> List.fold (fun aliases (name, fullPath) -> Map.add name fullPath aliases) resolvedModule.importedTypeAliases
+
             let importedTypeDefs, importedTypeDiagnostics =
-                resolvedModule.importedTypeAliases
+                allImportedTypeAliases
                 |> Map.toList
                 |> List.fold
                     (fun (defs, diagnostics) (aliasName, fullTypePath) ->

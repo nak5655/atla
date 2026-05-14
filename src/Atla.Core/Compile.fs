@@ -10,6 +10,19 @@ open System.Collections.Generic
 open System.IO
 
 module Compiler =
+    /// 組み込み標準ライブラリ Prelude のモジュール名。全ユーザーモジュールで暗黙インポートされる。
+    [<Literal>]
+    let stdPreludeModuleName = "Std.Prelude"
+
+    /// 埋め込みリソースから Std.Prelude のソースを読み込む。
+    let private loadStdPreludeSource () : string option =
+        let asm = System.Reflection.Assembly.GetExecutingAssembly()
+        let resourceName = "Atla.Core.Std.Prelude.atla"
+        use stream = asm.GetManifestResourceStream(resourceName)
+        if isNull stream then None
+        else
+            use reader = new System.IO.StreamReader(stream)
+            Some (reader.ReadToEnd())
     type ResolvedDependency =
         { name: string
           version: string
@@ -234,8 +247,17 @@ module Compiler =
             failed [ Diagnostic.Error("No source modules were provided", Span.Empty) ] None None None None
         else
             try
+                // ユーザーが Std.Prelude を指定していない場合は組み込みソースを先頭に注入する。
+                let allModuleSources =
+                    if request.modules |> List.exists (fun m -> m.moduleName = stdPreludeModuleName) then
+                        request.modules
+                    else
+                        match loadStdPreludeSource() with
+                        | Some preludeSource -> { moduleName = stdPreludeModuleName; source = preludeSource } :: request.modules
+                        | None -> request.modules
+
                 let parsedModulesResult =
-                    request.modules
+                    allModuleSources
                     |> List.fold
                         (fun state moduleSource ->
                             match state with
@@ -254,6 +276,13 @@ module Compiler =
                     | Result.Error diagnostics ->
                         failed diagnostics None None None (Some moduleAsts)
                     | Ok orderedModuleNames ->
+                        // Std.Prelude をユーザーモジュールより先に解析するため、先頭に挿入する。
+                        // topoSort はユーザーモジュールの依存順を解決するが、暗黙 Prelude は含まない。
+                        let orderedModuleNames =
+                            if moduleAsts.ContainsKey(stdPreludeModuleName) && not (List.contains stdPreludeModuleName orderedModuleNames) then
+                                stdPreludeModuleName :: orderedModuleNames
+                            else
+                                orderedModuleNames
                         let dependencyInputs =
                             request.dependencies
                             |> List.map (fun dependency -> dependency.name, dependency.runtimeLoadPaths)
@@ -343,60 +372,68 @@ module Compiler =
                                     orderedModuleNames
                                     |> List.fold analyzeFolder ([], dependencyIndex.moduleExports, dependencyIndex.diagnostics)
 
-                                let mergedModule = mergeHirModules request.entryModuleName hirModules
-                                let hirAsm = Hir.Assembly(request.asmName, [ mergedModule ])
+                                // ユーザーモジュールのみを CompileResult に公開する。
+                                // Std.Prelude はコンパイル内部でのみ使用し、外部 API や PositionIndex に含めない。
+                                let userHirModules = hirModules |> List.filter (fun m -> m.name <> stdPreludeModuleName)
+                                let userMergedModule = mergeHirModules request.entryModuleName userHirModules
+                                let userHirAsm = Hir.Assembly(request.asmName, [ userMergedModule ])
+                                let userModuleAsts = moduleAsts |> Map.filter (fun name _ -> name <> stdPreludeModuleName)
+
+                                // CIL 生成には Prelude 型を含む完全マージ HIR を使用する。
+                                let fullMergedModule = mergeHirModules request.entryModuleName hirModules
+                                let hirAsm = Hir.Assembly(request.asmName, [ fullMergedModule ])
 
                                 if allDiagnostics |> List.exists (fun d -> d.isError) then
-                                    failed allDiagnostics (Some hirAsm) (Some hirModules) (Some symbolTable) (Some moduleAsts)
+                                    failed allDiagnostics (Some userHirAsm) (Some userHirModules) (Some symbolTable) (Some userModuleAsts)
                                 else
                                     match ClosureConversion.preprocessAssembly(symbolTable, hirAsm) with
                                     | { succeeded = false; diagnostics = closureDiagnostics } ->
                                         failed
                                             (allDiagnostics @ closureDiagnostics)
-                                            (Some hirAsm)
-                                            (Some hirModules)
+                                            (Some userHirAsm)
+                                            (Some userHirModules)
                                             (Some symbolTable)
-                                            (Some moduleAsts)
+                                            (Some userModuleAsts)
                                     | { value = Some closedAsm; diagnostics = closureDiagnostics } ->
                                         match Layout.layoutAssembly(request.asmName, closedAsm) with
                                         | { succeeded = false; diagnostics = layoutDiagnostics } ->
                                             failed
                                                 (allDiagnostics @ closureDiagnostics @ layoutDiagnostics)
-                                                (Some hirAsm)
-                                                (Some hirModules)
+                                                (Some userHirAsm)
+                                                (Some userHirModules)
                                                 (Some symbolTable)
-                                                (Some moduleAsts)
+                                                (Some userModuleAsts)
                                         | { value = Some mir; diagnostics = layoutDiagnostics } ->
                                             let outPath = Path.Join(request.outDir, sprintf "%s.dll" request.asmName)
                                             match Gen.genAssembly(mir, outPath, symbolTable) with
                                             | { succeeded = false; diagnostics = genDiagnostics } ->
                                                 failed
                                                     (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics)
-                                                    (Some hirAsm)
-                                                    (Some hirModules)
+                                                    (Some userHirAsm)
+                                                    (Some userHirModules)
                                                     (Some symbolTable)
-                                                    (Some moduleAsts)
+                                                    (Some userModuleAsts)
                                             | { diagnostics = genDiagnostics } ->
                                                 succeeded
                                                     (allDiagnostics @ closureDiagnostics @ layoutDiagnostics @ genDiagnostics)
-                                                    (Some hirAsm)
-                                                    (Some hirModules)
+                                                    (Some userHirAsm)
+                                                    (Some userHirModules)
                                                     (Some symbolTable)
-                                                    (Some moduleAsts)
+                                                    (Some userModuleAsts)
                                         | _ ->
                                             failed
                                                 (allDiagnostics @ closureDiagnostics @ [ Diagnostic.Error("Lowering failed with unknown state", Span.Empty) ])
-                                                (Some hirAsm)
-                                                (Some hirModules)
+                                                (Some userHirAsm)
+                                                (Some userHirModules)
                                                 (Some symbolTable)
-                                                (Some moduleAsts)
+                                                (Some userModuleAsts)
                                     | _ ->
                                         failed
                                             (allDiagnostics @ [ Diagnostic.Error("Closure conversion failed with unknown state", Span.Empty) ])
-                                            (Some hirAsm)
-                                            (Some hirModules)
+                                            (Some userHirAsm)
+                                            (Some userHirModules)
                                             (Some symbolTable)
-                                            (Some moduleAsts)
+                                            (Some userModuleAsts)
                             finally
                                 DependencyLoader.unloadDependencies dependencyLoadContext
             with ex ->

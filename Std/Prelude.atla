@@ -1,0 +1,3 @@
+enum Opt T
+    | None
+    | Some { value: T }
