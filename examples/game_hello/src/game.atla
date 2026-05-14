@@ -2,15 +2,16 @@ import Stride'Engine'Game
 import Stride'Games'GameTime
 
 data FlappyGame =
-    { _initialized: Bool }
+    { _shouldUpdate: Bool }
 
 impl FlappyGame as Game
     fn new: FlappyGame =
-        FlappyGame { _initialized = False }
+        FlappyGame { _shouldUpdate = True }
 
     fn Initialize self: () =
         base'Initialize.
-        self'_initialized = True
 
     fn Update self (gameTime: GameTime): () =
-        gameTime base'Update.
+        if | self'_shouldUpdate =>
+                gameTime base'Update.
+            | else => ()
