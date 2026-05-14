@@ -2,6 +2,7 @@ namespace Atla.Build
 
 open System
 open System.IO
+open System.Text.RegularExpressions
 open Atla.Compiler
 open Atla.Core.Data
 open Atla.Core.Semantics.Data
@@ -11,7 +12,7 @@ module InstallSystem =
     let private error (message: string) : Diagnostic =
         Diagnostic.Error(message, Span.Empty)
 
-    /// `ATLA_HOME` 環境変数、または `~/.atla` をインストール先ルートとして解決する。
+    /// `ATLA_HOME` 環境変数を優先し、未設定時は `~/.atla` をインストール先ルートとして解決する。
     let resolveAtlaHome () : string =
         match Environment.GetEnvironmentVariable("ATLA_HOME") with
         | null
@@ -20,6 +21,10 @@ module InstallSystem =
             Path.Join(userHome, ".atla")
         | value ->
             Path.GetFullPath(value)
+
+    /// ランチャーへ安全に埋め込める識別子かを検証する。
+    let private isSafeLauncherName (value: string) : bool =
+        Regex.IsMatch(value, "^[A-Za-z0-9._-]+$")
 
     /// ディレクトリを再帰コピーする（既存宛先は上書きする）。
     let private copyDirectoryRecursive (srcDir: string) (dstDir: string) : unit =
@@ -88,6 +93,8 @@ module InstallSystem =
         try
             if not (Directory.Exists(outDir)) then
                 Result.Error [ error $"build output directory not found: `{outDir}`" ]
+            elif not (isSafeLauncherName projectName) then
+                Result.Error [ error $"project name contains unsupported characters for launcher generation: `{projectName}`" ]
             else
                 let binRoot = Path.Join(atlaHome, "bin")
                 let payloadDir = Path.Join(binRoot, projectName)

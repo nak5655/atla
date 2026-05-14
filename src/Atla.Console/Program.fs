@@ -180,7 +180,7 @@ module Console =
         | _ ->
             outDir, false
 
-    /// ビルド前段（ソース収集・エントリ解決・compile 実行・一時ディレクトリ後始末）を共通実行する。
+    /// ビルド前段（ソース収集・エントリ解決・compile 実行・一時ディレクトリ後始末）を共通実行し、成功時に後段コールバックを呼び出す。
     let private withCompiledProject
         (plan: BuildPlan)
         (outDir: string)
