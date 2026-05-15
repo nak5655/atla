@@ -81,9 +81,24 @@ module Gen =
             | false, _ -> failwithf "Unresolved type parameter '%s' in CIL generation" name
         | _ ->
 
+        // 先に通常の解決を試す（Native/App/配列/関数など）。
         match TypeId.tryResolveToSystemType resolveName tid with
         | Some resolvedType -> resolvedType
         | None ->
+            // Atla の data/enum ジェネリックは現状 CIL 側では実体を非ジェネリック型として出力する。
+            // そのため App(Name sid, args) が来ても、ヘッド型が非ジェネリックとして解決できる場合は
+            // 型引数を消去してヘッド型へフォールバックする。
+            let erasedAppType =
+                match tid with
+                | TypeId.App(TypeId.Name sid, _) ->
+                    match resolveName sid with
+                    | Some headType when not headType.IsGenericTypeDefinition -> Some headType
+                    | _ -> None
+                | _ -> None
+
+            match erasedAppType with
+            | Some erasedType -> erasedType
+            | None ->
             match tid with
             // CILメンバーシグネチャに載せられない型は明示的に失敗
             | TypeId.Name sid -> failwithf "Unknown type symbol: %A" sid
@@ -94,6 +109,9 @@ module Gen =
                 | None -> failwithf "Cannot map function type to delegate: %A" tid
             | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" tid
             | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
+            // ここに到達する App は、現状の CIL 生成で具体型へ解決できない高レベル型引数付き表現。
+            // ランタイム表現は型引数を保持しない（消去的）ため、最終フォールバックとして object を使う。
+            | TypeId.App _ -> typeof<obj>
             | _ -> failwithf "Unsupported type for CIL generation: %A" tid
 
     /// 外部メソッドグループから引数個数に一致する候補を選択する。
