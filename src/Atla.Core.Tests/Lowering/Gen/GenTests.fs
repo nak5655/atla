@@ -427,14 +427,15 @@ module GenTests =
 
     /// ジェネリック型（typeParams が非空の Mir.Type）に対して
     /// DefineGenericParameters が正しく呼ばれ、GenericTypeParameterBuilder が
-    /// フィールド型として使用されることを検証する。
+    /// Atla の data/enum ジェネリクスは型消去で CIL 非ジェネリック型としてコンパイルされることを検証する。
+    /// typeParams が非空であっても CIL 型はジェネリックにならず、TypeVar フィールドは obj として出力される。
     [<Fact>]
-    let ``GenAssembly generates generic type when typeParams is non-empty`` () =
+    let ``GenAssembly erases typeParams to non-generic CIL type with obj fields`` () =
         let typeSym = SymbolId 900
         let fieldSym = SymbolId 901
         let mainSym = SymbolId 902
 
-        // フィールド value: T（TypeId.TypeVar "T"）を持つジェネリック型 Wrapper<T>。
+        // フィールド value: T（TypeId.TypeVar "T"）を持つ型消去対象型 Wrapper。
         let mirField = Mir.Field(fieldSym, TypeId.TypeVar "T")
         let mirType = Mir.Type("Wrapper", typeSym, false, None, ["T"], [ mirField ], [], [])
 
@@ -442,12 +443,12 @@ module GenTests =
             Mir.Method("main", mainSym, [], TypeId.Unit, [ Mir.Ins.Ret ], Mir.Frame.empty)
 
         let assembly =
-            Mir.Assembly("GenGenericType", [ Mir.Module("MainModule", [ mirType ], [ mainMethod ]) ])
+            Mir.Assembly("GenErasedType", [ Mir.Module("MainModule", [ mirType ], [ mainMethod ]) ])
 
         let outputDir = Path.Join(Path.GetTempPath(), "atla-tests")
         Directory.CreateDirectory(outputDir) |> ignore
 
-        let asmPath = Path.Join(outputDir, "gen-generic-type.dll")
+        let asmPath = Path.Join(outputDir, "gen-erased-type.dll")
         match Gen.genAssembly(assembly, asmPath, SymbolTable()) with
         | { succeeded = true } -> ()
         | { diagnostics = diagnostics } ->
@@ -455,16 +456,11 @@ module GenTests =
             failwith $"Gen.genAssembly failed: {message}"
 
         let loaded = Assembly.LoadFile(Path.GetFullPath(asmPath))
-        // PersistedAssemblyBuilder が生成するジェネリック型の Name は "Wrapper"（arity サフィックスなし）。
-        // IsGenericTypeDefinition と Name で正確に絞り込む。
-        let wrapperType =
-            loaded.GetTypes()
-            |> Array.tryFind (fun t -> t.IsGenericTypeDefinition && t.Name = "Wrapper")
-        Assert.True(wrapperType.IsSome, "Expected 'Wrapper<T>' generic type in assembly")
+        // 型消去: Wrapper は非ジェネリック CIL 型として生成される。
+        let wrapperType = loaded.GetTypes() |> Array.tryFind (fun t -> t.Name = "Wrapper")
+        Assert.True(wrapperType.IsSome, "Expected 'Wrapper' type in assembly")
         let wt = wrapperType.Value
-        let gargs = wt.GetGenericArguments()
-        Assert.Equal(1, gargs.Length)
-        Assert.Equal("T", gargs.[0].Name)
-        // フィールドが汎用型パラメータ T を持つことを確認する。
-        let valueField = wt.GetFields(BindingFlags.Public ||| BindingFlags.Instance) |> Array.tryFind (fun f -> f.FieldType.IsGenericParameter && f.FieldType.Name = "T")
-        Assert.True(valueField.IsSome, "Expected a field of type T in Wrapper<T>")
+        Assert.False(wt.IsGenericTypeDefinition, "Wrapper should be non-generic (type erasure)")
+        // TypeVar フィールドは obj として宣言される。
+        let valueField = wt.GetFields(BindingFlags.Public ||| BindingFlags.Instance) |> Array.tryFind (fun f -> f.FieldType = typeof<obj>)
+        Assert.True(valueField.IsSome, "Expected a field of type obj in Wrapper (erased TypeVar)")

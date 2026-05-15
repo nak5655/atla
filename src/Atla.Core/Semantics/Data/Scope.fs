@@ -40,8 +40,9 @@ type Scope(parent: Scope option) =
             | Some parentScope -> parentScope.ResolveVar(name)
             | None -> []
 
+    /// 型をスコープへ登録する。同名型が既に登録済みの場合は上書きする（冪等）。
     member this.DeclareType(name: string, tid: TypeId) =
-        _types.Add(name, tid)
+        _types[name] <- tid
 
     member this.ResolveType(id: string) : TypeId option =
         let mutable tid = Unchecked.defaultof<TypeId>

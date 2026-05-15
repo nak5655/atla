@@ -41,6 +41,8 @@
     <Compile Include="DependencyLoader.fs" />
     <Compile Include="Compile.fs" />
 
+    <EmbeddedResource Include="..\..\Std\Prelude.atla" LogicalName="Atla.Core.Std.Prelude.atla" />
+
   </ItemGroup>
 
 </Project>

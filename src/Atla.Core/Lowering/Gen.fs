@@ -78,12 +78,27 @@ module Gen =
         | TypeId.TypeVar name ->
             match env.typeParamBuilders.TryGetValue(name) with
             | true, builder -> builder
-            | false, _ -> failwithf "Unresolved type parameter '%s' in CIL generation" name
+            | false, _ -> typeof<obj> // 型消去：ジェネリクスコンテキスト外では obj にフォールバック
         | _ ->
 
+        // 先に通常の解決を試す（Native/App/配列/関数など）。
         match TypeId.tryResolveToSystemType resolveName tid with
         | Some resolvedType -> resolvedType
         | None ->
+            // Atla の data/enum ジェネリックは現状 CIL 側では実体を非ジェネリック型として出力する。
+            // そのため App(Name sid, args) が来ても、ヘッド型が非ジェネリックとして解決できる場合は
+            // 型引数を消去してヘッド型へフォールバックする。
+            let erasedAppType =
+                match tid with
+                | TypeId.App(TypeId.Name sid, _) ->
+                    match resolveName sid with
+                    | Some headType when not headType.IsGenericTypeDefinition -> Some headType
+                    | _ -> None
+                | _ -> None
+
+            match erasedAppType with
+            | Some erasedType -> erasedType
+            | None ->
             match tid with
             // CILメンバーシグネチャに載せられない型は明示的に失敗
             | TypeId.Name sid -> failwithf "Unknown type symbol: %A" sid
@@ -94,6 +109,9 @@ module Gen =
                 | None -> failwithf "Cannot map function type to delegate: %A" tid
             | TypeId.Meta _ -> failwithf "Unresolved meta type is not supported in Gen: %A" tid
             | TypeId.Error message -> failwithf "Cannot generate CIL for error type: %s" message
+            // ここに到達する App は、現状の CIL 生成で具体型へ解決できない高レベル型引数付き表現。
+            // ランタイム表現は型引数を保持しない（消去的）ため、最終フォールバックとして object を使う。
+            | TypeId.App _ -> typeof<obj>
             | _ -> failwithf "Unsupported type for CIL generation: %A" tid
 
     /// 外部メソッドグループから引数個数に一致する候補を選択する。
@@ -170,6 +188,17 @@ module Gen =
                 gen.Emit(OpCodes.Newobj, ctor)
             | false, _ ->
                 failwithf "Unknown method symbol for delegate creation: %A" sid
+
+    /// レジスタの CIL 型を返す。locs/args を逆引きして locTypes/argTypes を参照し、resolveType で解決する。
+    let private getRegCilType (env: Env) (frame: Mir.Frame) (reg: Mir.Reg) : Type option =
+        let findSid (regMap: Map<SymbolId, Mir.Reg>) =
+            regMap |> Map.tryFindKey (fun _ r -> r = reg)
+        let sidOpt = findSid frame.locs |> Option.orElseWith (fun () -> findSid frame.args)
+        sidOpt
+        |> Option.bind (fun sid ->
+            frame.locTypes |> Map.tryFind sid
+            |> Option.orElseWith (fun () -> frame.argTypes |> Map.tryFind sid))
+        |> Option.map (resolveType env)
 
     /// MIR 値が genValue によって CIL スタックへ積まれるときの .NET 型を返す。
     /// RegVal はフレームの argTypes / locTypes から逆引きする。型を確定できない場合は None を返す。
@@ -434,6 +463,14 @@ module Gen =
             // env インスタンスをスタックへ積み、値をスタックへ積んでから stfld を発行する。
             genValue env gen (Mir.Value.RegVal inst)
             genValue env gen value
+            // TypeVar フィールド（型消去により obj）に値型を格納する場合はボックス化する。
+            let storeFieldTypId = env.symbolTable.Get(fieldSid) |> Option.map (fun s -> s.typ)
+            match storeFieldTypId with
+            | Some (TypeId.TypeVar _) ->
+                match getValueStackType frame value with
+                | Some t when t.IsValueType -> gen.Emit(OpCodes.Box, t)
+                | _ -> ()
+            | _ -> ()
             match env.fieldBuilders.TryGetValue(fieldSid) with
             | true, fieldInfo -> gen.Emit(OpCodes.Stfld, fieldInfo)
             | false, _ ->
@@ -451,6 +488,16 @@ module Gen =
                 | Some { kind = SymbolKind.External(ExternalBinding.SystemFieldRef fieldInfo) } ->
                     gen.Emit(OpCodes.Ldfld, fieldInfo)
                 | _ -> failwithf "Unknown env field symbol for LoadEnvField: %A" fieldSid
+            // TypeVar フィールド（型消去により obj として宣言）をロードした場合、
+            // 格納先レジスタの期待型が obj 以外であればキャスト／アンボックスを挿入する。
+            let fieldTypId = env.symbolTable.Get(fieldSid) |> Option.map (fun s -> s.typ)
+            match fieldTypId with
+            | Some (TypeId.TypeVar _) ->
+                match getRegCilType env frame dst with
+                | Some expectedCilType when expectedCilType <> typeof<obj> ->
+                    gen.Emit(OpCodes.Unbox_Any, expectedCilType)
+                | _ -> ()
+            | _ -> ()
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
@@ -661,13 +708,9 @@ module Gen =
                             // TypeId.Name（role）や None の場合は Phase 1b で AddInterfaceImplementation を使用する。
                             typeof<obj>
                     moduleBuilder.DefineType(typ.name, TypeAttributes.Public, resolvedBaseType)
-            // ジェネリック型パラメータを定義し、名前→GenericTypeParameterBuilder のマップを構築する。
-            if not typ.typeParams.IsEmpty then
-                let gpBuilders = typeBuilder.DefineGenericParameters(typ.typeParams |> List.toArray)
-                let paramMap = Dictionary<string, Type>()
-                for (i, paramName) in List.indexed typ.typeParams do
-                    paramMap.[paramName] <- gpBuilders.[i] :> Type
-                genericParamBuildersByType.[typ.sym] <- paramMap
+            // Atla の data/enum 型はジェネリクスを型消去でコンパイルする。
+            // DefineGenericParameters を呼ばず、TypeVar フィールドは obj として CIL に出力する。
+            // （genericParamBuildersByType は使用しない）
             typ.builder <- typeBuilder
             env.typeBuilders.Add(typ.sym, typeBuilder)
 

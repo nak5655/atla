@@ -338,15 +338,79 @@ module ExprAnalyze =
         |> Seq.tryPick (fun (_, def) ->
             if def.typeSid.id = typeSid.id then Some def else None)
 
-    /// enum case コンストラクターを既存の DataConstructor 呼び出しへ lower する。
+    /// ジェネリック enum ルート型を期待型 tid から具体化する。
+    /// tid = App(Name enumRootSid, concreteArgs) の場合はその型を返す。
+    /// それ以外は typeParams 数分の新規メタを割り当てた App 型を返す。
+    /// 型パラメータが空の場合は裸の Name 型を返す。
+    let private instantiateEnumRootType (typeEnv: TypeEnv) (enumRootDef: DataTypeDef) (tid: TypeId) : TypeId =
+        match typeEnv.resolveType tid with
+        | TypeId.App(TypeId.Name sid, concreteArgs) when sid.id = enumRootDef.typeSid.id ->
+            TypeId.App(TypeId.Name enumRootDef.typeSid, concreteArgs)
+        | _ when List.isEmpty enumRootDef.typeParams ->
+            TypeId.Name enumRootDef.typeSid
+        | _ ->
+            let metaArgs = enumRootDef.typeParams |> List.map (fun _ -> typeEnv.freshMeta())
+            TypeId.App(TypeId.Name enumRootDef.typeSid, metaArgs)
+
+    /// 型パラメータ名 → 具体型の置換マップを使い、型中の TypeVar を再帰的に置換する。
+    let rec private substituteTypeVars (subst: Map<string, TypeId>) (tid: TypeId) : TypeId =
+        match tid with
+        | TypeId.TypeVar name -> subst |> Map.tryFind name |> Option.defaultValue tid
+        | TypeId.App(head, args) -> TypeId.App(substituteTypeVars subst head, args |> List.map (substituteTypeVars subst))
+        | TypeId.Fn(args, ret) -> TypeId.Fn(args |> List.map (substituteTypeVars subst), substituteTypeVars subst ret)
+        | _ -> tid
+
+    /// ジェネリック enum の rootType から型パラメータ → 具体型の置換マップを構築する。
+    /// rootType = App(Name enumRootSid, concreteArgs) のとき typeParams[i] -> concreteArgs[i] を構築する。
+    let private buildTypeVarSubst (typeEnv: TypeEnv) (enumRootDef: DataTypeDef) (rootType: TypeId) : Map<string, TypeId> =
+        /// フィールド型に現れる型変数名を出現順で収集する。
+        let rec collectTypeVars (tid: TypeId) (acc: string list) : string list =
+            match tid with
+            | TypeId.TypeVar name when not (List.contains name acc) -> acc @ [ name ]
+            | TypeId.App(head, args) ->
+                let withHead = collectTypeVars head acc
+                args |> List.fold (fun s arg -> collectTypeVars arg s) withHead
+            | TypeId.Fn(args, ret) ->
+                let withArgs = args |> List.fold (fun s arg -> collectTypeVars arg s) acc
+                collectTypeVars ret withArgs
+            | _ -> acc
+
+        match typeEnv.resolveType rootType with
+        | TypeId.App(_, concreteArgs) when concreteArgs.Length = enumRootDef.typeParams.Length ->
+            List.zip enumRootDef.typeParams concreteArgs |> Map.ofList
+        | TypeId.App(_, concreteArgs) when enumRootDef.typeParams.IsEmpty ->
+            // インポート時に typeParams が欠落している場合でも、enum case フィールドの TypeVar 名から
+            // 最小限の置換マップを構築して具体型を伝播させる。
+            let inferredParams =
+                enumRootDef.enumInfo
+                |> Option.map (fun enumDef ->
+                    enumDef.cases
+                    |> List.collect (fun caseDef -> caseDef.fields |> List.collect (fun fieldDef -> collectTypeVars fieldDef.typ [])))
+                |> Option.defaultValue []
+                |> List.distinct
+            if inferredParams.Length = concreteArgs.Length then
+                List.zip inferredParams concreteArgs |> Map.ofList
+            else
+                Map.empty
+        | _ -> Map.empty
+
+    /// 型 ID から enum のルート型 SID を取得する。Name と App(Name, args) の両方を受け入れる。
+    let private tryGetRootTypeSid (typeEnv: TypeEnv) (tid: TypeId) : SymbolId option =
+        match typeEnv.resolveType tid with
+        | TypeId.Name sid -> Some sid
+        | TypeId.App(TypeId.Name sid, _) -> Some sid
+        | _ -> None
+
+    /// enum case コンストラクターを DataConstructor 呼び出しへ lower する。
+    /// rootType には呼び出しコンテキストで具体化された enum 型（例: Opt<SpriteBatch>）を渡す。
     let private lowerEnumCaseConstructor
         (enumRootDef: DataTypeDef)
         (enumDef: EnumTypeDef)
         (caseDef: EnumCaseDef)
+        (rootType: TypeId)
         (payloadArgs: Hir.Expr list)
         (span: Atla.Core.Data.Span)
         : Hir.Expr =
-        let rootType = TypeId.Name enumRootDef.typeSid
         let tagExpr = Hir.Expr.Int(caseDef.tag, span)
 
         match caseDef.payloadTypeSid, caseDef.payloadFieldSid, caseDef.fields with
@@ -579,11 +643,15 @@ module ExprAnalyze =
                                 | None ->
                                     match caseDef.payloadTypeSid, caseDef.payloadFieldSid, caseDef.fields with
                                     | None, None, [] ->
-                                        let enumType = TypeId.Name enumRootDef.typeSid
+                                        // ペイロードなし case: 期待型から具体化した rootType を使い型統一する。
+                                        let enumType = instantiateEnumRootType typeEnv enumRootDef tid
                                         match unifyOrError nameEnv typeEnv tid enumType enumInitExpr.span with
                                         | Result.Error exprErr -> exprErr
-                                        | Result.Ok _ -> lowerEnumCaseConstructor enumRootDef enumDef caseDef [] enumInitExpr.span
+                                        | Result.Ok _ -> lowerEnumCaseConstructor enumRootDef enumDef caseDef enumType [] enumInitExpr.span
                                     | Some _, Some _, caseFields ->
+                                        // ペイロードあり case: 期待型から型パラメータ置換マップを構築してフィールド型を解決する。
+                                        let enumType = instantiateEnumRootType typeEnv enumRootDef tid
+                                        let typeVarSubst = buildTypeVarSubst typeEnv enumRootDef enumType
                                         let initFieldMap =
                                             initFields
                                             |> List.map (fun field -> field.name, field.value)
@@ -600,7 +668,9 @@ module ExprAnalyze =
                                                         | None ->
                                                             Result.Error(Hir.Expr.ExprError(sprintf "Missing required field '%s' for enum case '%s'" fieldDef.name enumInitExpr.caseName, tid, enumInitExpr.span))
                                                         | Some valueExpr ->
-                                                            let typedExpr = analyzeExpr nameEnv typeEnv valueExpr fieldDef.typ
+                                                            // 型パラメータ（TypeVar）を具体型で置換してフィールドの期待型を確定する。
+                                                            let expectedFieldType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                            let typedExpr = analyzeExpr nameEnv typeEnv valueExpr expectedFieldType
                                                             match typedExpr with
                                                             | Hir.Expr.ExprError _ as errExpr -> Result.Error errExpr
                                                             | _ -> Result.Ok (typedArgs @ [ typedExpr ]))
@@ -609,10 +679,9 @@ module ExprAnalyze =
                                         match typedArgsResult with
                                         | Result.Error exprErr -> exprErr
                                         | Result.Ok typedArgs ->
-                                            let enumType = TypeId.Name enumRootDef.typeSid
                                             match unifyOrError nameEnv typeEnv tid enumType enumInitExpr.span with
                                             | Result.Error exprErr -> exprErr
-                                            | Result.Ok _ -> lowerEnumCaseConstructor enumRootDef enumDef caseDef typedArgs enumInitExpr.span
+                                            | Result.Ok _ -> lowerEnumCaseConstructor enumRootDef enumDef caseDef enumType typedArgs enumInitExpr.span
                                     | _ ->
                                         Hir.Expr.ExprError(sprintf "Enum case '%s' has inconsistent payload metadata" enumInitExpr.caseName, tid, enumInitExpr.span)
         | :? Ast.Expr.Id as idExpr ->
@@ -723,6 +792,57 @@ module ExprAnalyze =
                 let unitExpr = Hir.Expr.Unit ({ left = blockExpr.span.right; right = blockExpr.span.right })
                 Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
+            // 列挙型ケースコンストラクター呼び出し検出:
+            //   arg1 ... argN Type'Case. を Type'Case { field1 = arg1, ..., fieldN = argN } として扱う。
+            // レシーバーが型名識別子で、メンバー名が enum case であり、
+            // 引数数がフィールド数と一致するときに適用される。
+            let enumCaseCtorOpt =
+                match applyExpr.func with
+                | :? Ast.Expr.MemberAccess as ma ->
+                    match ma.receiver with
+                    | :? Ast.Expr.Id as receiverId when receiverId.name <> "base" ->
+                        match nameEnv.scope.ResolveType(receiverId.name) with
+                        | Some (TypeId.Name typeSid) ->
+                            match tryFindTypeDefBySid nameEnv typeSid with
+                            | Some typeDef ->
+                                typeDef.enumInfo
+                                |> Option.bind (fun enumDef ->
+                                    enumDef.cases
+                                    |> List.tryFind (fun c -> c.name = ma.memberName)
+                                    |> Option.filter (fun c -> c.fields.Length = applyExpr.args.Length)
+                                    |> Option.map (fun c -> typeDef, enumDef, c))
+                            | None -> None
+                        | _ -> None
+                    | _ -> None
+                | _ -> None
+
+            match enumCaseCtorOpt with
+            | Some (typeDef, enumDef, caseDef) ->
+                // ペイロードあり/なし enum case コンストラクター: 引数列をフィールドへ順に対応させる。
+                let rootType = instantiateEnumRootType typeEnv typeDef tid
+                let typeVarSubst = buildTypeVarSubst typeEnv typeDef rootType
+                let typedArgsResult =
+                    List.zip caseDef.fields applyExpr.args
+                    |> List.fold
+                        (fun acc (fieldDef, argExpr) ->
+                            match acc with
+                            | Result.Error e -> Result.Error e
+                            | Result.Ok typedArgs ->
+                                let expectedFieldType = substituteTypeVars typeVarSubst fieldDef.typ
+                                let typedExpr = analyzeExpr nameEnv typeEnv argExpr expectedFieldType
+                                match typedExpr with
+                                | Hir.Expr.ExprError _ -> Result.Error typedExpr
+                                | _ -> Result.Ok (typedArgs @ [ typedExpr ]))
+                        (Result.Ok [])
+                match typedArgsResult with
+                | Result.Error errExpr -> errExpr
+                | Result.Ok typedArgs ->
+                    match unifyOrError nameEnv typeEnv tid rootType applyExpr.span with
+                    | Result.Error exprErr -> exprErr
+                    | Result.Ok _ -> lowerEnumCaseConstructor typeDef enumDef caseDef rootType typedArgs applyExpr.span
+            | None ->
+
+            // 通常の関数呼び出しパス。
             let analyzedArgs = applyExpr.args |> List.map (fun arg -> analyzeExpr nameEnv typeEnv arg (typeEnv.freshMeta()))
             let callRetType = typeEnv.freshMeta()
             let funcType = analyzedArgs |> List.map (fun arg -> arg.typ) |> fun argTypes -> TypeId.Fn(argTypes, callRetType)
@@ -1117,7 +1237,8 @@ module ExprAnalyze =
                 | Some typeDef ->
                     match typeDef.enumInfo |> Option.bind (fun enumDef -> enumDef.cases |> List.tryFind (fun caseDef -> caseDef.name = memberAccessExpr.memberName) |> Option.map (fun caseDef -> enumDef, caseDef)) with
                     | Some (enumDef, caseDef) when caseDef.fields.IsEmpty ->
-                        Result.Ok(lowerEnumCaseConstructor typeDef enumDef caseDef [] memberAccessExpr.span)
+                        let rootType = instantiateEnumRootType typeEnv typeDef tid
+                        Result.Ok(lowerEnumCaseConstructor typeDef enumDef caseDef rootType [] memberAccessExpr.span)
                     | Some (_, caseDef) ->
                         Result.Error(sprintf "Enum case '%s' requires a payload initializer" caseDef.name)
                     | None ->
@@ -1437,8 +1558,8 @@ module ExprAnalyze =
             analyzeIfBranches ifExpr.branches
         | :? Ast.Expr.Match as matchExpr ->
             let analyzedScrutinee = analyzeExpr nameEnv typeEnv matchExpr.scrutinee (typeEnv.freshMeta ())
-            match typeEnv.resolveType analyzedScrutinee.typ with
-            | TypeId.Name scrutineeTypeSid ->
+            match tryGetRootTypeSid typeEnv analyzedScrutinee.typ with
+            | Some scrutineeTypeSid ->
                 match tryFindTypeDefBySid nameEnv scrutineeTypeSid with
                 | None ->
                     Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
@@ -1512,6 +1633,10 @@ module ExprAnalyze =
                                                         Result.Error(Hir.Expr.ExprError(sprintf "Missing pattern field '%s' for enum case '%s'" fieldDef.name caseDef.name, tid, matchArm.span))
                                                     | None ->
                                                         let armNameEnv = matchNameEnv.sub()
+                                                        // スクラッチニー型が App(Name enumSid, concreteArgs) のとき、
+                                                        // enum の型パラメータを具体型へ置換してパターン束縛型を確定する。
+                                                        let scrutineeRootType = instantiateEnumRootType typeEnv scrutineeTypeDef analyzedScrutinee.typ
+                                                        let typeVarSubst = buildTypeVarSubst typeEnv scrutineeTypeDef scrutineeRootType
                                                         let bindingStmts =
                                                             match caseDef.payloadTypeSid, caseDef.payloadFieldSid with
                                                             | Some payloadTypeSid, Some payloadFieldSid ->
@@ -1522,9 +1647,10 @@ module ExprAnalyze =
                                                                     caseFieldMap
                                                                     |> Map.tryFind fieldName
                                                                     |> Option.map (fun fieldDef ->
-                                                                        let sid = armNameEnv.declareLocal fieldName fieldDef.typ
+                                                                        let boundType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                                        let sid = armNameEnv.declareLocal fieldName boundType
                                                                         let valueExpr =
-                                                                            Hir.Expr.MemberAccess(Hir.Member.DataField(payloadTypeSid, fieldDef.sid), Some payloadExpr, fieldDef.typ, matchArm.span)
+                                                                            Hir.Expr.MemberAccess(Hir.Member.DataField(payloadTypeSid, fieldDef.sid), Some payloadExpr, boundType, matchArm.span)
                                                                         Hir.Stmt.Let(sid, false, valueExpr, matchArm.span)))
                                                             | _ -> []
 
@@ -1589,7 +1715,7 @@ module ExprAnalyze =
                                                 Hir.Expr.If(condExpr, thenExpr, elseExpr, tid, matchExpr.span))
                                             (analyzedArms |> List.last |> snd)
                                     Hir.Expr.Block([ Hir.Stmt.Let(scrutineeSid, false, analyzedScrutinee, matchExpr.scrutinee.span) ], ifChain, tid, matchExpr.span)
-            | _ ->
+            | None ->
                 Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
         | :? Ast.Expr.Lambda as lambdaExpr ->
             // ラムダ本体専用のスコープを作成し、引数束縛を外側と分離する。
