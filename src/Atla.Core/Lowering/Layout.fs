@@ -70,8 +70,13 @@ module Layout =
         | ClosedHir.Expr.Int (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) })
         | ClosedHir.Expr.Float (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) })
         | ClosedHir.Expr.String (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) })
-        // null リテラル: 参照型のオプショナル引数デフォルト値として使用する
-        | ClosedHir.Expr.Null _ -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Null)) })
+        // null リテラル: 参照型は ldnull、Nullable<T> 値型は initobj+ldloc シーケンスで発行する。
+        | ClosedHir.Expr.Null (tid, _) ->
+            let imm =
+                match tid with
+                | TypeId.Native t when t.IsValueType -> Mir.Imm.NullableDefault t
+                | _ -> Mir.Imm.Null
+            Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(imm)) })
         | ClosedHir.Expr.Id (sid, tid, _) ->
             match Mir.Frame.get sid state.frame with
             | Some reg -> Ok (state, { ins = []; res = Some(Mir.Value.RegVal reg) })

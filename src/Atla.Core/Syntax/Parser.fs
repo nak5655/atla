@@ -213,21 +213,28 @@ module Parser =
 
     and enumPattern: PackratParser<Token, Ast.Pattern> =
         Delay (fun () ->
-            tid <& delim '\'' <&> tid <&> Optional (delim '{' &> enumPatternFieldList <&> delim '}')
+            tid <& delim '\'' <&> tid <&> (
+                // `{ field1, field2, .. }` 形式（named fields）
+                (delim '{' &> enumPatternFieldList <&> delim '}'
+                 |>> fun ((fields, hasRest), closeBrace) ->
+                     Some(fields, hasRest, closeBrace.span.right))
+                // `identifier` 形式（positional binding）: `| Type'Case varName ->`
+                <|> (tid
+                     |>> fun idToken ->
+                         Some([Ast.PatternField.Positional(idToken.str, idToken.span) :> Ast.PatternField], false, idToken.span.right))
+                // フィールドなし
+                <|> (Delay (fun () -> fun _ pos -> Success(None, pos))))
             |>> fun ((typeId, caseId), fieldSpecOpt) ->
-                let fields, hasRest =
-                    fieldSpecOpt
-                    |> Option.map fst
-                    |> Option.defaultValue ([], false)
-                let rightSpan =
+                let fields, hasRest, rightSpanRight =
                     match fieldSpecOpt with
-                    | Some (_, closeBrace) -> closeBrace.span.right
-                    | None -> caseId.span.right
-                Ast.Pattern.Enum(typeId.str, caseId.str, fields, hasRest, { left = typeId.span.left; right = rightSpan }) :> Ast.Pattern)
+                    | Some (fields, hasRest, right) -> fields, hasRest, right
+                    | None -> [], false, caseId.span.right
+                Ast.Pattern.Enum(typeId.str, caseId.str, fields, hasRest, { left = typeId.span.left; right = rightSpanRight }) :> Ast.Pattern)
 
     and matchArm: PackratParser<Token, Ast.MatchArm> =
         Delay (fun () ->
-            blockAtOpener (asToken (symbol "|")) (enumPattern <& keyword "->" <&> expr
+            blockAtOpener (asToken (symbol "|")) (enumPattern <& keyword "->" <&>
+                (Once (Many1 stmt |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr))
             |>> fun (pattern, body) ->
                 Ast.MatchArm.Arm(pattern, body, { left = pattern.span.left; right = body.span.right }) :> Ast.MatchArm))
 

@@ -1588,6 +1588,13 @@ module ExprAnalyze =
                                         | None ->
                                             Result.Error(Hir.Expr.ExprError(sprintf "Unknown enum case '%s' for type '%s'" enumPattern.caseName enumPattern.typeName, tid, matchArm.span))
                                         | Some caseDef ->
+                                            let positionalFields =
+                                                enumPattern.fields
+                                                |> List.choose (fun field ->
+                                                    match field with
+                                                    | :? Ast.PatternField.Positional as pf -> Some pf
+                                                    | _ -> None)
+
                                             let duplicateFieldName =
                                                 enumPattern.fields
                                                 |> List.choose (fun field ->
@@ -1622,12 +1629,18 @@ module ExprAnalyze =
                                                 | Some unknownField ->
                                                     Result.Error(Hir.Expr.ExprError(sprintf "Unknown pattern field '%s' for enum case '%s'" unknownField caseDef.name, tid, matchArm.span))
                                                 | None ->
+                                                    // Named フィールドで未カバーかつ positional バインディングでも未カバーのフィールドを検出する。
+                                                    // i 番目の positional バインディングはケースの i 番目のフィールドをカバーする。
                                                     let missingField =
                                                         if enumPattern.hasRest then
                                                             None
                                                         else
                                                             caseDef.fields
-                                                            |> List.tryFind (fun fieldDef -> not (patternFieldNames |> List.contains fieldDef.name))
+                                                            |> List.mapi (fun i fieldDef -> i, fieldDef)
+                                                            |> List.tryFind (fun (i, fieldDef) ->
+                                                                not (patternFieldNames |> List.contains fieldDef.name)
+                                                                && i >= positionalFields.Length)
+                                                            |> Option.map snd
                                                     match missingField with
                                                     | Some fieldDef ->
                                                         Result.Error(Hir.Expr.ExprError(sprintf "Missing pattern field '%s' for enum case '%s'" fieldDef.name caseDef.name, tid, matchArm.span))
@@ -1642,16 +1655,33 @@ module ExprAnalyze =
                                                             | Some payloadTypeSid, Some payloadFieldSid ->
                                                                 let payloadExpr =
                                                                     Hir.Expr.MemberAccess(Hir.Member.DataField(scrutineeTypeDef.typeSid, payloadFieldSid), Some scrutineeRef, TypeId.Name payloadTypeSid, matchArm.span)
-                                                                patternFieldNames
-                                                                |> List.choose (fun fieldName ->
-                                                                    caseFieldMap
-                                                                    |> Map.tryFind fieldName
-                                                                    |> Option.map (fun fieldDef ->
-                                                                        let boundType = substituteTypeVars typeVarSubst fieldDef.typ
-                                                                        let sid = armNameEnv.declareLocal fieldName boundType
-                                                                        let valueExpr =
-                                                                            Hir.Expr.MemberAccess(Hir.Member.DataField(payloadTypeSid, fieldDef.sid), Some payloadExpr, boundType, matchArm.span)
-                                                                        Hir.Stmt.Let(sid, false, valueExpr, matchArm.span)))
+                                                                // Named フィールドのバインディング
+                                                                let namedBindings =
+                                                                    patternFieldNames
+                                                                    |> List.choose (fun fieldName ->
+                                                                        caseFieldMap
+                                                                        |> Map.tryFind fieldName
+                                                                        |> Option.map (fun fieldDef ->
+                                                                            let boundType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                                            let sid = armNameEnv.declareLocal fieldName boundType
+                                                                            let valueExpr =
+                                                                                Hir.Expr.MemberAccess(Hir.Member.DataField(payloadTypeSid, fieldDef.sid), Some payloadExpr, boundType, matchArm.span)
+                                                                            Hir.Stmt.Let(sid, false, valueExpr, matchArm.span)))
+                                                                // Positional フィールドのバインディング:
+                                                                // i 番目の Positional はケースの i 番目のフィールドを varName に束縛する。
+                                                                let positionalBindings =
+                                                                    positionalFields
+                                                                    |> List.mapi (fun i pf ->
+                                                                        caseDef.fields
+                                                                        |> List.tryItem i
+                                                                        |> Option.map (fun fieldDef ->
+                                                                            let boundType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                                            let sid = armNameEnv.declareLocal pf.varName boundType
+                                                                            let valueExpr =
+                                                                                Hir.Expr.MemberAccess(Hir.Member.DataField(payloadTypeSid, fieldDef.sid), Some payloadExpr, boundType, matchArm.span)
+                                                                            Hir.Stmt.Let(sid, false, valueExpr, matchArm.span)))
+                                                                    |> List.choose id
+                                                                namedBindings @ positionalBindings
                                                             | _ -> []
 
                                                         let bodyExpr = analyzeExpr armNameEnv typeEnv matchArm.body tid
