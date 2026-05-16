@@ -1,23 +1,39 @@
-import Stride'Engine'Game
-import Stride'Graphics'SpriteBatch
-import Stride'Graphics'DepthStencilClearOptions
-import Stride'Games'GameTime
 import Stride'Core'Mathematics'Color
+import Stride'Core'Mathematics'Vector2
+import Stride'Engine'Game
+import Stride'Games'GameTime
+import Stride'Graphics'DepthStencilClearOptions
+import Stride'Graphics'SpriteBatch
+import Stride'Graphics'Texture
+import Stride'Graphics'PixelFormat
 
 data FlappyGame =
-    { _spriteBatch: Opt SpriteBatch }
+    { _spriteBatch: Opt SpriteBatch
+    , _whiteTexture: Opt Texture
+    , _birdPos: Vector2
+    , _birdSize: Int }
 
 impl FlappyGame as Game
     fn new: FlappyGame =
-        FlappyGame { _spriteBatch = Opt'None }
+        FlappyGame
+            { _spriteBatch = Opt'None
+            , _whiteTexture = Opt'None
+            , _birdPos = 200 300 Vector2.
+            , _birdSize = 32 }
 
     fn Initialize self: () =
         base'Initialize.
 
-        self'_spriteBatch = base'GraphicsDevice SpriteBatch. Opt'Some.
+        self'_spriteBatch = self'GraphicsDevice SpriteBatch. Opt'Some.
+
+        self'_whiteTexture = self'GraphicsDevice 1 1 PixelFormat'R8G8B8A8_UNorm Texture'New2D. Opt'Some.
+        self'GraphicsContext'CommandList (Color'White array.) self'_whiteTexture'SetData.
 
     fn Update self (gameTime: GameTime): () =
         gameTime base'Update.
+
+    fn Draw self (gameTime: GameTime): () =
+        gameTime base'Draw.
 
         self'GraphicsDevice'Presenter'BackBuffer Color'CornflowerBlue self'GraphicsContext'CommandList'Clear.
         self'GraphicsDevice'Presenter'DepthStencilBuffer DepthStencilClearOptions'DepthBuffer self'GraphicsContext'CommandList'Clear.
@@ -26,5 +42,8 @@ impl FlappyGame as Game
         match self'_spriteBatch
             | Opt'Some spriteBatch ->
                 self'GraphicsContext spriteBatch'Begin.
+
+
+
                 spriteBatch'End.
             | Opt'None -> ()
