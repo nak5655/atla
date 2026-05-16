@@ -14,13 +14,15 @@ type SymbolKind =
     | Arg of unit
     | Local of unit
     | BuiltinOperator of Builtins.Operators
+    | BuiltinFn of Builtins.BuiltinFunctions
     | External of ExternalBinding
 
-    override this.ToString (): string = 
+    override this.ToString (): string =
         match this with
         | Arg () -> "Arg"
         | Local fi -> sprintf "Local(%A)" fi
         | BuiltinOperator bm -> sprintf "BuiltinOperator(%A)" bm
+        | BuiltinFn fn -> sprintf "BuiltinFn(%A)" fn
         | External ext -> sprintf "External(%A)" ext
 
 type SymbolInfo =
@@ -43,6 +45,19 @@ type SymbolTable() =
         let sid = SymbolId(_table.Count)
         _table.Add(sid, { name = name; typ = tid; kind = SymbolKind.External(ExternalBinding.NativeMethodGroup methods) })
         sid
+
+    let addBuiltinFn (name: string) (fn: Builtins.BuiltinFunctions) (typ: TypeId) : SymbolId =
+        let sid = SymbolId(_table.Count)
+        _table.Add(sid, { name = name; typ = typ; kind = SymbolKind.BuiltinFn fn })
+        sid
+
+    let builtinFunctions : (string * SymbolId) list =
+        [ ("array",
+           addBuiltinFn "array" Builtins.BuiltinFunctions.Array
+               (TypeId.VarargFn(
+                   [],
+                   TypeId.TypeVar "T",
+                   TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.TypeVar "T" ])))) ]
 
     let builtinOperators : (string * SymbolId) list =
         let strEq = typeof<string>.GetMethod("op_Equality", [| typeof<string>; typeof<string> |])
@@ -70,6 +85,7 @@ type SymbolTable() =
           ("||", addBuiltinOperator "||" (TypeId.Fn([ TypeId.Bool; TypeId.Bool ], TypeId.Bool)) Builtins.Operators.OpOr) ]
 
     member this.BuiltinOperators = builtinOperators
+    member this.BuiltinFunctions = builtinFunctions
 
     member this.NextId(): SymbolId =
         SymbolId(_table.Count)

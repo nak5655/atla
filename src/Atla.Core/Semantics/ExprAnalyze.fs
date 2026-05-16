@@ -59,6 +59,12 @@ module ExprAnalyze =
         | TypeId.Error _ -> "<error>"
         // 型パラメータ（TypeVar）は型パラメータ名をそのまま表示する。
         | TypeId.TypeVar name -> name
+        | TypeId.VarargFn(fixedArgs, elemType, ret) ->
+            let fixedStr = fixedArgs |> List.map (formatTypeForDisplay nameEnv typeEnv) |> String.concat " -> "
+            let prefix = if fixedArgs.IsEmpty then "" else fixedStr + " -> "
+            sprintf "(%s%s... -> %s)" prefix
+                (formatTypeForDisplay nameEnv typeEnv elemType)
+                (formatTypeForDisplay nameEnv typeEnv ret)
 
     // UnifyError を人間が読みやすいメッセージへ変換する。
     // formatTypeForDisplay を使い、型変数（Meta）を "unknown" に、既知の型を短い名前で表示する。
@@ -461,6 +467,24 @@ module ExprAnalyze =
             sprintf "No overload of '%s' constructor accepts %d argument(s). Available overloads:\n%s" typeName argCount overloads
         | _ -> sprintf "No overload matched argument count %d" argCount
 
+    let private instantiateTypeScheme (typeEnv: TypeEnv) (typ: TypeId) : TypeId =
+        let varMap = System.Collections.Generic.Dictionary<string, TypeId>()
+        let rec go t =
+            match t with
+            | TypeId.TypeVar name ->
+                match varMap.TryGetValue(name) with
+                | true, meta -> meta
+                | false, _ ->
+                    let meta = typeEnv.freshMeta()
+                    varMap[name] <- meta
+                    meta
+            | TypeId.VarargFn(fixedArgs, e, r) ->
+                TypeId.VarargFn(fixedArgs |> List.map go, go e, go r)
+            | TypeId.App(head, args) -> TypeId.App(go head, args |> List.map go)
+            | TypeId.Fn(args, ret) -> TypeId.Fn(args |> List.map go, go ret)
+            | _ -> t
+        go typ
+
     let rec private exprAsCallable (nameEnv: NameEnv) (typeEnv: TypeEnv) (expr: Hir.Expr): Hir.Callable option =
         match expr with
         | Hir.Expr.Id (sid, _, _) ->
@@ -470,6 +494,7 @@ module ExprAnalyze =
                 | SymbolKind.External(ExternalBinding.NativeMethodGroup methodInfos) -> Some (Hir.Callable.NativeMethodGroup methodInfos)
                 | SymbolKind.External(ExternalBinding.ConstructorGroup ctorInfos) -> Some (Hir.Callable.NativeConstructorGroup ctorInfos)
                 | SymbolKind.BuiltinOperator op -> Some (Hir.Callable.BuiltinOperator op)
+                | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.Array -> Some (Hir.Callable.BuiltinArray)
                 | SymbolKind.Local ()
                 | SymbolKind.Arg () ->
                     match typeEnv.resolveType symInfo.typ with
@@ -693,6 +718,11 @@ module ExprAnalyze =
                     | SymbolKind.External(ExternalBinding.NativeMethodGroup _)
                     | SymbolKind.External(ExternalBinding.ConstructorGroup _) ->
                         Hir.Expr.Id(sid, tid, idExpr.span)
+                    | SymbolKind.BuiltinFn _ ->
+                        let instantiated = instantiateTypeScheme typeEnv symInfo.typ
+                        match unifyOrError nameEnv typeEnv tid instantiated idExpr.span with
+                        | Result.Ok _ -> Hir.Expr.Id(sid, tid, idExpr.span)
+                        | Result.Error exprErr -> exprErr
                     | _ ->
                         match unifyOrError nameEnv typeEnv tid symInfo.typ idExpr.span with
                         | Result.Ok _ -> Hir.Expr.Id(sid, symInfo.typ, idExpr.span)
@@ -756,6 +786,12 @@ module ExprAnalyze =
                     match NativeInterop.closeGenericMethod genericArgTypes methodInfo with
                     | Some closedMethodInfo -> buildGenericMemberExpr instanceOpt closedMethodInfo
                     | None -> Hir.Expr.ExprError(sprintf "Generic method arity mismatch for '%s'" methodInfo.Name, tid, genericApplyExpr.span)
+                | Hir.Expr.MemberAccess (Hir.Member.NativeMethodGroup methodInfos, instanceOpt, _, _) ->
+                    let matchedMethods = methodInfos |> List.choose (NativeInterop.closeGenericMethod genericArgTypes)
+                    match matchedMethods with
+                    | [closedMethodInfo] -> buildGenericMemberExpr instanceOpt closedMethodInfo
+                    | [] -> Hir.Expr.ExprError(sprintf "No generic overload of '%s' matched the given type arguments" (methodInfos |> List.tryHead |> Option.map (fun m -> m.Name) |> Option.defaultValue "?"), tid, genericApplyExpr.span)
+                    | _ -> Hir.Expr.ExprError(sprintf "Ambiguous generic overloads matched for '%s'" (methodInfos |> List.tryHead |> Option.map (fun m -> m.Name) |> Option.defaultValue "?"), tid, genericApplyExpr.span)
                 | Hir.Expr.Id (sid, _, _) ->
                     match nameEnv.resolveSym sid with
                     | Some symInfo ->
@@ -1110,6 +1146,8 @@ module ExprAnalyze =
                                 Some (resolvedCallable, callRetType)
                             else
                                 None
+                    | Hir.Callable.BuiltinArray ->
+                        Some (Hir.Callable.BuiltinArray, typeEnv.resolveType callRetType)
                     | _ -> Some (resolvedCallable, typeEnv.resolveType callRetType)
 
                 match resolvedCall with
@@ -1382,7 +1420,14 @@ module ExprAnalyze =
                                             else
                                                 Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
                                         | [] ->
-                                            Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                                            // Fall back to generic method definitions (to be closed via GenericApply)
+                                            let genericMethods =
+                                                memberInfos
+                                                |> List.choose (fun m -> match m with :? MethodInfo as mi when mi.IsGenericMethodDefinition -> Some mi | _ -> None)
+                                            if not genericMethods.IsEmpty then
+                                                Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup genericMethods, Some receiver, tid, memberAccessExpr.span))
+                                            else
+                                                Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                         | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                                     | members ->
                                         let methodInfos =
@@ -1445,7 +1490,14 @@ module ExprAnalyze =
                                 else
                                     Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethod convertMethod, Some receiver, TypeId.Fn([TypeId.fromSystemType systemType], TypeId.String), memberAccessExpr.span))
                             | [] ->
-                                Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
+                                // Fall back to generic method definitions (to be closed via GenericApply)
+                                let genericMethods =
+                                    memberInfos
+                                    |> List.choose (fun m -> match m with :? MethodInfo as mi when mi.IsGenericMethodDefinition -> Some mi | _ -> None)
+                                if not genericMethods.IsEmpty then
+                                    Result.Ok (Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup genericMethods, Some receiver, tid, memberAccessExpr.span))
+                                else
+                                    Result.Error (sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                             | _ -> Result.Error (sprintf "Ambiguous extension member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                         | members ->
                             let methodInfos =

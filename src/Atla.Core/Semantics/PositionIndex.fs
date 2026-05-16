@@ -33,6 +33,11 @@ let rec formatType (resolve: SymbolId -> string) (tid: TypeId) : string =
     | TypeId.Error msg -> sprintf "error(%s)" msg
     // 型パラメータ（TypeVar）は型パラメータ名をそのまま表示する。
     | TypeId.TypeVar name -> name
+    | TypeId.VarargFn(fixedArgs, elemType, ret) ->
+        let prefix =
+            if fixedArgs.IsEmpty then ""
+            else (fixedArgs |> List.map (formatType resolve) |> String.concat " -> ") + " -> "
+        sprintf "(%s%s... -> %s)" prefix (formatType resolve elemType) (formatType resolve ret)
 
 /// SymbolTable を使って TypeId をフォーマットする。
 let formatTypeWithTable (symbolTable: SymbolTable) (tid: TypeId) : string =

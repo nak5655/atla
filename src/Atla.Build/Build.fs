@@ -548,6 +548,8 @@ module BuildSystem =
             JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Unit" |})
         | TypeId.Error message ->
             JsonSerializer.SerializeToNode({| kind = "nativeType"; fullName = $"error:{message}" |})
+        | TypeId.VarargFn _ ->
+            JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Unit" |})
 
     /// Export ID を仕様どおりに構築する。
     let private buildExportId (kind: string) (segments: string list) : string =

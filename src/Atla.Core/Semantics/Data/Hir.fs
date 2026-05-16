@@ -14,6 +14,7 @@ module Hir =
         | Fn of SymbolId
         | DataConstructor of typeSid: SymbolId * fieldSids: SymbolId list
         | BuiltinOperator of Builtins.Operators
+        | BuiltinArray
         | NativeMethod of MethodInfo
         | NativeMethodGroup of MethodInfo list
         | NativeConstructor of ConstructorInfo

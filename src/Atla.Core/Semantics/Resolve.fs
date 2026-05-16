@@ -158,6 +158,9 @@ module Resolve =
         symbolTable.BuiltinOperators
         |> List.iter (fun (name, sid) -> moduleScope.DeclareVar(name, sid))
 
+        symbolTable.BuiltinFunctions
+        |> List.iter (fun (name, sid) -> moduleScope.DeclareVar(name, sid))
+
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
         let enumDecls = ResizeArray<ResolvedEnumDecl>()
