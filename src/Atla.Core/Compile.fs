@@ -437,4 +437,4 @@ module Compiler =
                             finally
                                 DependencyLoader.unloadDependencies dependencyLoadContext
             with ex ->
-                failed [ Diagnostic.Error($"Compilation failed: {ex.Message}", Span.Empty) ] None None None None
+                failed [ Diagnostic.Error($"Compilation failed: [{ex.GetType().Name}] {ex.Message}\n{ex.StackTrace}", Span.Empty) ] None None None None

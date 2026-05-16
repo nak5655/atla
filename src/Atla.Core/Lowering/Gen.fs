@@ -623,7 +623,11 @@ module Gen =
                         if isNull resolvedBase || resolvedBase.IsInterface then
                             typeof<obj>.GetConstructor([||])
                         else
-                            let baseCtor = resolvedBase.GetConstructor([||])
+                            let flags =
+                                System.Reflection.BindingFlags.Public |||
+                                System.Reflection.BindingFlags.NonPublic |||
+                                System.Reflection.BindingFlags.Instance
+                            let baseCtor = resolvedBase.GetConstructor(flags, null, [||], null)
                             if isNull baseCtor then typeof<obj>.GetConstructor([||])
                             else baseCtor
                     | None -> typeof<obj>.GetConstructor([||])
