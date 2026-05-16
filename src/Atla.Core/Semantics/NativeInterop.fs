@@ -210,8 +210,22 @@ module NativeInterop =
                 Some(Hir.Expr.Int((if unbox<bool> defaultValue then 1 else 0), span))
             elif parameterType = typeof<float> then
                 Some(Hir.Expr.Float(unbox<float> defaultValue, span))
+            elif parameterType = typeof<float32> then
+                Some(Hir.Expr.Float(float (unbox<float32> defaultValue), span))
+            elif parameterType = typeof<byte> then
+                Some(Hir.Expr.Int(int (unbox<byte> defaultValue), span))
+            elif parameterType = typeof<sbyte> then
+                Some(Hir.Expr.Int(int (unbox<sbyte> defaultValue), span))
+            elif parameterType = typeof<int16> then
+                Some(Hir.Expr.Int(int (unbox<int16> defaultValue), span))
+            elif parameterType = typeof<uint16> then
+                Some(Hir.Expr.Int(int (unbox<uint16> defaultValue), span))
             elif parameterType = typeof<string> then
                 Some(Hir.Expr.String((if obj.ReferenceEquals(defaultValue, null) then "" else unbox<string> defaultValue), span))
+            elif not (obj.ReferenceEquals(System.Nullable.GetUnderlyingType(parameterType), null)) then
+                // Nullable<T> パラメータのデフォルト値（null nullable）。
+                // CIL では initobj + ldloc のシーケンスで発行される。
+                Some(Hir.Expr.Null(TypeId.fromSystemType parameterType, span))
             elif not parameterType.IsValueType && obj.ReferenceEquals(defaultValue, null) then
                 // null デフォルト値を持つ参照型パラメータ（Action などのデリゲート型が該当）は
                 // HIR の Null リテラルとして表現し、CIL 生成時に ldnull を発行する。

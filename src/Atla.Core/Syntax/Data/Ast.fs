@@ -383,6 +383,16 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        /// `| Type'Case varName ->` 形式の位置引数バインディング。
+        /// ケースの n 番目のフィールドを varName に束縛する。
+        type Positional(varName: string, span: Span) =
+            member this.varName = varName
+            member this.span = span
+            interface PatternField with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
     module Pattern =
         /// `TypeName'CaseName` または `TypeName'CaseName { x, .. }` 形式の enum pattern。
         type Enum(typeName: string, caseName: string, fields: PatternField list, hasRest: bool, span: Span) =

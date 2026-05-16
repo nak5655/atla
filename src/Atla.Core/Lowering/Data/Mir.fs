@@ -16,6 +16,9 @@ module Mir =
         | Float of float
         | String of string
         | Null
+        /// Nullable<T> 型のパラメータに対するデフォルト値（null nullable）。
+        /// CIL では initobj + ldloc のシーケンスで発行される。
+        | NullableDefault of System.Type
         override this.ToString() =
             match this with
             | Bool v -> sprintf "Bool(%b)" v
@@ -23,6 +26,7 @@ module Mir =
             | Float v -> sprintf "Float(%f)" v
             | String s -> sprintf "String(%s)" s
             | Null -> "Null"
+            | NullableDefault t -> sprintf "NullableDefault(%s)" t.FullName
 
     type Reg =
         | Loc of int

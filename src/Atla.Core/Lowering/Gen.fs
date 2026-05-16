@@ -153,6 +153,12 @@ module Gen =
             | Mir.Imm.String s -> gen.Emit(OpCodes.Ldstr, s)
             // null リテラル: 参照型のオプショナル引数デフォルト値として CIL の ldnull を発行する
             | Mir.Imm.Null -> gen.Emit(OpCodes.Ldnull)
+            // Nullable<T> デフォルト値: ローカル変数を zero-initialize して値をロードする
+            | Mir.Imm.NullableDefault t ->
+                let local = gen.DeclareLocal(t)
+                gen.Emit(OpCodes.Ldloca_S, local)
+                gen.Emit(OpCodes.Initobj, t)
+                gen.Emit(OpCodes.Ldloc, local)
         // レジスタ値のロード
         | Mir.Value.RegVal reg ->
             match reg with
@@ -212,7 +218,8 @@ module Gen =
             | Mir.Imm.Int _    -> Some typeof<int32>
             | Mir.Imm.Float _  -> Some typeof<float>
             | Mir.Imm.String _ -> Some typeof<string>
-            | Mir.Imm.Null     -> None
+            | Mir.Imm.Null           -> None
+            | Mir.Imm.NullableDefault t -> Some t
         | Mir.Value.RegVal reg ->
             // SymbolId → Reg のマップを Reg → SymbolId へ逆引きしてから型を取得する。
             let findSid (regMap: Map<SymbolId, Mir.Reg>) =
