@@ -1,6 +1,8 @@
 import Stride'Engine'Game
 import Stride'Graphics'SpriteBatch
+import Stride'Graphics'DepthStencilClearOptions
 import Stride'Games'GameTime
+import Stride'Core'Mathematics'Color
 
 data FlappyGame =
     { _spriteBatch: Opt SpriteBatch }
@@ -16,3 +18,13 @@ impl FlappyGame as Game
 
     fn Update self (gameTime: GameTime): () =
         gameTime base'Update.
+
+        self'GraphicsDevice'Presenter'BackBuffer Color'CornflowerBlue self'GraphicsContext'CommandList'Clear.
+        self'GraphicsDevice'Presenter'DepthStencilBuffer DepthStencilClearOptions'DepthBuffer self'GraphicsContext'CommandList'Clear.
+        self'GraphicsDevice'Presenter'DepthStencilBuffer self'GraphicsDevice'Presenter'BackBuffer self'GraphicsContext'CommandList'SetRenderTargetAndViewport.
+
+        match self'_spriteBatch
+            | Opt'Some spriteBatch ->
+                self'GraphicsContext spriteBatch'Begin.
+                spriteBatch'End.
+            | Opt'None -> ()
