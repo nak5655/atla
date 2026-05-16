@@ -107,7 +107,16 @@ module NativeInterop =
                 true
             else
                 match TypeId.tryToRuntimeSystemType (typeEnv.resolveType expectedArg) with
-                | Some actualSysType -> nativeParamType.IsAssignableFrom(actualSysType)
+                | Some actualSysType ->
+                    nativeParamType.IsAssignableFrom(actualSysType)
+                    || actualSysType.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
+                       |> Array.exists (fun m ->
+                           m.Name = "op_Implicit" && m.ReturnType = nativeParamType
+                           && m.GetParameters().Length = 1 && m.GetParameters().[0].ParameterType = actualSysType)
+                    || nativeParamType.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
+                       |> Array.exists (fun m ->
+                           m.Name = "op_Implicit" && m.ReturnType = nativeParamType
+                           && m.GetParameters().Length = 1 && m.GetParameters().[0].ParameterType = actualSysType)
                 | None -> false
 
         let exactResult = List<MemberInfo * TypeId>()
@@ -258,11 +267,13 @@ module NativeInterop =
             |> Seq.collect (fun typ ->
                 typ.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
                 |> Seq.filter (fun methodInfo ->
-                    let parameters = methodInfo.GetParameters()
-                    methodInfo.Name = memberName
-                    && isExtensionMethod methodInfo
-                    && parameters.Length > 0
-                    && parameters.[0].ParameterType.IsAssignableFrom(receiverType))))
+                    try
+                        let parameters = methodInfo.GetParameters()
+                        methodInfo.Name = memberName
+                        && isExtensionMethod methodInfo
+                        && parameters.Length > 0
+                        && parameters.[0].ParameterType.IsAssignableFrom(receiverType)
+                    with _ -> false)))
         |> Seq.sortBy (fun methodInfo ->
             let parameterCount = methodInfo.GetParameters().Length
             let assemblyName = methodInfo.DeclaringType.Assembly.FullName

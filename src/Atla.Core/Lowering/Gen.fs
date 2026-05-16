@@ -257,7 +257,22 @@ module Gen =
             // float64 → float32: Atla の Float は float64 だが、ネイティブ API が float32 を
             // 要求する場合は精度を落として変換する（CIL の型検証を通すために必要）。
             | t, e when t = typeof<float>   && e = typeof<float32> -> gen.Emit(OpCodes.Conv_R4)
-            | _ -> ()
+            | _ ->
+                // .NET の暗黙的変換演算子（op_Implicit）を探して発行する。
+                // fromType か toType のどちらかに op_Implicit が定義されている場合に対応する。
+                let implicitOp =
+                    t.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
+                    |> Array.tryFind (fun m ->
+                        m.Name = "op_Implicit" && m.ReturnType = expectedType
+                        && m.GetParameters().Length = 1 && m.GetParameters().[0].ParameterType = t)
+                    |> Option.orElseWith (fun () ->
+                        expectedType.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
+                        |> Array.tryFind (fun m ->
+                            m.Name = "op_Implicit" && m.ReturnType = expectedType
+                            && m.GetParameters().Length = 1 && m.GetParameters().[0].ParameterType = t))
+                match implicitOp with
+                | Some opMethod -> gen.Emit(OpCodes.Call, opMethod)
+                | None -> ()
 
     // MIR命令をIL命令列へ変換する。
     // ilLabels/ilOffsets はメソッドごとに作成したラベル解決状態を受け取る。
