@@ -1140,6 +1140,7 @@ type Server
                                     | SymbolKind.External(ExternalBinding.ConstructorGroup _) -> Some CompletionItemKind.Class
                                     | SymbolKind.External(ExternalBinding.SystemFieldRef _) -> Some CompletionItemKind.Field
                                     | SymbolKind.External(ExternalBinding.SystemTypeRef _) -> Some CompletionItemKind.Class
+                                    | SymbolKind.BuiltinFn _ -> Some CompletionItemKind.Function
                                 let detail = PositionIndex.formatTypeWithTable symbolTable symInfo.typ
                                 Some(name, CompletionItem(name, ?kind = kind, detail = detail)))
 
