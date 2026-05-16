@@ -12,3 +12,6 @@ module Builtins =
         | OpAnd
         | OpOr
         | OpNeg
+
+    type BuiltinFunctions =
+        | Array

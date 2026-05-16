@@ -131,6 +131,7 @@ module Mir =
         | CallAssign of dst: Reg * method: MethodInfo * args: Value list
         | CallAssignSym of dst: Reg * sid: SymbolId * args: Value list
         | New of dst: Reg * ctor: ConstructorInfo * args: Value list
+        | NewArr of dst: Reg * elemType: System.Type * values: Value list
         // env-class インスタンスを新規生成する（デフォルトコンストラクタ使用。typeSid で型を SymbolId 解決する）。
         | NewEnv of dst: Reg * typeSid: SymbolId
         // env-class インスタンスのフィールドへ値を書き込む（typeSid・fieldSid で解決）。
@@ -154,6 +155,7 @@ module Mir =
             | CallAssign(dst, method, args) -> sprintf "%A = %A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssignSym(dst, sid, args) -> sprintf "%A = sid:%d(%s)" dst sid.id (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | New(dst, ctor, args) -> sprintf "%A = %A(%s)" dst ctor (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | NewArr(dst, elemType, values) -> sprintf "%A = new %s[]{%s}" dst elemType.Name (String.Join(", ", values |> List.map (fun v -> v.ToString())))
             | NewEnv(dst, typeSid) -> sprintf "%A = new_env(typeSid=%d)" dst typeSid.id
             | StoreEnvField(inst, typeSid, fieldSid, value) -> sprintf "%A.field_%d(typeSid=%d) = %s" inst fieldSid.id typeSid.id (value.ToString())
             | LoadEnvField(dst, inst, typeSid, fieldSid) -> sprintf "%A = %A.field_%d(typeSid=%d)" dst inst fieldSid.id typeSid.id

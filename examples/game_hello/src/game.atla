@@ -26,8 +26,9 @@ impl FlappyGame as Game
 
         self'_spriteBatch = self'GraphicsDevice SpriteBatch. Opt'Some.
 
-        self'_whiteTexture = self'GraphicsDevice 1 1 PixelFormat'R8G8B8A8_UNorm Texture'New2D. Opt'Some.
-        self'GraphicsContext'CommandList (Color'White array.) self'_whiteTexture'SetData.
+        let whiteTexture = self'GraphicsDevice 1 1 PixelFormat'R8G8B8A8_UNorm Texture'New2D.
+        self'_whiteTexture = whiteTexture Opt'Some.
+        self'GraphicsContext'CommandList (Color'White array.) whiteTexture'SetData[Color].
 
     fn Update self (gameTime: GameTime): () =
         gameTime base'Update.

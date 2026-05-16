@@ -255,6 +255,18 @@ module Layout =
                                         Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.TAC(dst, lhs, opcode, rhs) ]; res = Some(Mir.Value.RegVal dst) })
                                     | None, _ -> Result.Error (Diagnostic.Error("Missing lhs operand for builtin operator", callSpan))
                                     | _, None -> Result.Error (Diagnostic.Error("Missing rhs operand for builtin operator", callSpan))
+                            | Hir.Callable.BuiltinArray ->
+                                let elemSysTypeOpt =
+                                    match tid with
+                                    | TypeId.App(TypeId.Native arrT, [elemTid]) when arrT = typeof<System.Array> ->
+                                        TypeId.tryToRuntimeSystemType elemTid
+                                    | _ -> None
+                                match elemSysTypeOpt with
+                                | None ->
+                                    Result.Error(Diagnostic.Error("Cannot resolve element type for 'array' builtin", callSpan))
+                                | Some elemSysType ->
+                                    let dst, state3 = declareTemp state2 tid
+                                    Ok (state3, { ins = argIns @ [ Mir.Ins.NewArr(dst, elemSysType, argValues) ]; res = Some(Mir.Value.RegVal dst) })
                             | Hir.Callable.Fn sid ->
                                 match Mir.Frame.get sid state2.frame with
                                 | Some delegateReg ->

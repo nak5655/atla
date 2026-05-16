@@ -408,6 +408,17 @@ module Gen =
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        | Mir.Ins.NewArr (dst, elemType, values) ->
+            gen.Emit(OpCodes.Ldc_I4, values.Length)
+            gen.Emit(OpCodes.Newarr, elemType)
+            values |> List.iteri (fun i value ->
+                gen.Emit(OpCodes.Dup)
+                gen.Emit(OpCodes.Ldc_I4, i)
+                genValue env gen value
+                gen.Emit(OpCodes.Stelem, elemType))
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         // ラベル定義とジャンプ
         | Mir.Ins.MarkLabel labelId ->
             // labelId に対応する ILLabel を取得または新規定義し、現在の ILOffset を記録する。

@@ -29,6 +29,9 @@ type TypeId =
     /// ジェネリック型定義のスコープ内で使われる型パラメータ（例: `enum Opt T` の `T`）。
     /// この TypeId は型検査・HIR/MIR を経て Gen.fs で GenericTypeParameterBuilder へ解決される。
     | TypeVar of name: string
+    /// 可変長引数関数型: a1 -> ... -> an -> b... -> r
+    /// fixedArgs: 先頭の固定引数型リスト, elemType: 可変長部分の要素型, ret: 戻り値型
+    | VarargFn of fixedArgs: TypeId list * elemType: TypeId * ret: TypeId
 
 module TypeId =
     let rec fromSystemType (t: System.Type) : TypeId =
@@ -101,6 +104,7 @@ module TypeId =
         | Native t -> Some t
         // TypeId.Fn は対応するデリゲート型（Func<>/Action<>）へ変換する。
         | Fn (args, ret) -> tryFnToDelegateSystemType args ret
+        | VarargFn _ -> None
         | _ -> None
 
     let tryResolveToSystemType (resolveName: SymbolId -> System.Type option) (tid: TypeId) : System.Type option =
@@ -126,6 +130,8 @@ module Type =
             | false, _ -> false
         | App (head, args) -> occurs subst m head || (args |> List.exists (occurs subst m))
         | Fn (args, ret) -> List.exists (occurs subst m) args || occurs subst m ret
+        | VarargFn(fixedArgs, e, r) ->
+            (fixedArgs |> List.exists (occurs subst m)) || occurs subst m e || occurs subst m r
         | _ -> false
 
     let rec canUnify (subst: TypeSubst) (tid1: TypeId) (tid2: TypeId) : bool =
@@ -166,6 +172,18 @@ module Type =
         | Native t, Fn _ when TypeId.isDelegateType t -> canUnify subst tid2 tid1
         // 同名の型パラメータは互換とみなす。
         | TypeVar n1, TypeVar n2 -> n1 = n2
+        | VarargFn(fixed1, e1, r1), VarargFn(fixed2, e2, r2)
+            when List.length fixed1 = List.length fixed2 ->
+            (List.zip fixed1 fixed2 |> List.forall (fun (a, b) -> canUnify subst a b))
+            && canUnify subst e1 e2
+            && canUnify subst r1 r2
+        | VarargFn(fixedArgs, elemType, ret), Fn(allArgs, retType)
+            when allArgs.Length >= fixedArgs.Length ->
+            let leadingArgs, variadicArgs = List.splitAt fixedArgs.Length allArgs
+            (List.zip fixedArgs leadingArgs |> List.forall (fun (a, b) -> canUnify subst a b))
+            && (variadicArgs |> List.forall (canUnify subst elemType))
+            && canUnify subst ret retType
+        | Fn _, VarargFn _ -> canUnify subst tid2 tid1
         | Meta m, tid ->
             match subst.TryGetValue(m) with
             | true, resolvedTid -> canUnify subst resolvedTid tid
@@ -181,6 +199,8 @@ module Type =
             | false, _ -> tid
         | App (head, args) -> App (resolve subst head, args |> List.map (resolve subst))
         | Fn (args, ret) -> Fn (List.map (resolve subst) args, resolve subst ret)
+        | VarargFn(fixedArgs, e, r) ->
+            VarargFn(fixedArgs |> List.map (resolve subst), resolve subst e, resolve subst r)
         | _ -> tid
 
     // 単一化
@@ -264,6 +284,35 @@ module Type =
             | Result.Error e -> Result.Error e
         // 同名の型パラメータは同一型として単一化する。
         | TypeVar n1, TypeVar n2 when n1 = n2 -> Result.Ok (TypeVar n1)
+        | VarargFn(fixed1, e1, r1), VarargFn(fixed2, e2, r2)
+            when List.length fixed1 = List.length fixed2 ->
+            let fixedResults = List.zip fixed1 fixed2 |> List.map (fun (a, b) -> unify subst a b)
+            let firstFixedErr = fixedResults |> List.tryPick (function Result.Error e -> Some e | _ -> None)
+            match firstFixedErr with
+            | Some err -> Result.Error err
+            | None ->
+                match unify subst e1 e2 with
+                | Result.Error err -> Result.Error err
+                | Result.Ok _ ->
+                    unify subst r1 r2 |> Result.map (fun _ -> VarargFn(fixed1, e1, r1))
+        | VarargFn(fixedArgs, elemType, ret), Fn(allArgs, retType)
+            when allArgs.Length >= fixedArgs.Length ->
+            let leadingArgs, variadicArgs = List.splitAt fixedArgs.Length allArgs
+            let fixedResults = List.zip fixedArgs leadingArgs |> List.map (fun (a, b) -> unify subst a b)
+            let firstFixedErr = fixedResults |> List.tryPick (function Result.Error e -> Some e | _ -> None)
+            match firstFixedErr with
+            | Some err -> Result.Error err
+            | None ->
+                let variadicResults = variadicArgs |> List.map (fun arg -> unify subst arg elemType)
+                let firstVarErr = variadicResults |> List.tryPick (function Result.Error e -> Some e | _ -> None)
+                match firstVarErr with
+                | Some err -> Result.Error err
+                | None ->
+                    unify subst ret retType |> Result.map (fun _ -> VarargFn(fixedArgs, elemType, ret))
+        | Fn _, VarargFn _ ->
+            match unify subst tid2 tid1 with
+            | Result.Ok _ -> Result.Ok tid1
+            | Result.Error err -> Result.Error err
         | Meta m, tid
         | tid, Meta m ->
             let resolvedTid = resolve subst tid
@@ -282,6 +331,8 @@ module Type =
         | Error _ -> true
         | App (head, args) -> hasError subst head || (args |> List.exists (hasError subst))
         | Fn (args, ret) -> List.exists (hasError subst) args || hasError subst ret
+        | VarargFn(fixedArgs, e, r) ->
+            (fixedArgs |> List.exists (hasError subst)) || hasError subst e || hasError subst r
         | Meta m ->
             match subst.TryGetValue(m) with
             | true, t' -> hasError subst t'
