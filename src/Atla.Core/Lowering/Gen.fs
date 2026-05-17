@@ -204,7 +204,10 @@ module Gen =
         |> Option.bind (fun sid ->
             frame.locTypes |> Map.tryFind sid
             |> Option.orElseWith (fun () -> frame.argTypes |> Map.tryFind sid))
-        |> Option.map (resolveType env)
+        |> Option.bind (fun tid ->
+            match tid with
+            | TypeId.Meta _ -> None  // Meta 型は解決不可能；呼び出し元は None をアンボックス不要として扱う
+            | _ -> Some (resolveType env tid))
 
     /// MIR 値が genValue によって CIL スタックへ積まれるときの .NET 型を返す。
     /// RegVal はフレームの argTypes / locTypes から逆引きする。型を確定できない場合は None を返す。

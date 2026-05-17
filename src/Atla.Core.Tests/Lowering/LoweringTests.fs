@@ -1290,3 +1290,63 @@ fn main: () = do
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("42", stdout.Trim())
+
+    [<Fact>]
+    let ``generic impl Opt T with wildcard pattern compiles`` () =
+        // 回帰テスト: impl Opt T のメソッドが wildcard パターン（Opt'Some _）を使っても
+        // CIL 生成エラー "Unresolved meta type is not supported in Gen" が
+        // 発生しないことを確認する。
+        // 根本原因: impl Opt T の self が型消去後の TypeId.Name optSid を持ち、
+        // instantiateEnumRootType が fresh meta を生成し、typeVarSubst = {T -> Meta(m)} となり
+        // Positional("_") の boundType が Meta(m) になって CIL 生成でクラッシュしていた。
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let source = """
+enum Opt T
+    | None
+    | Some { value: T }
+
+impl Opt T
+    fn count self: Int =
+        match self
+            | Opt'None -> 0
+            | Opt'Some _ -> 1
+
+fn main: () = ()
+"""
+
+        let res = compileSingle { asmName = "GenericImplWildcard"; source = source.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "GenericImplWildcard.dll")
+        Assert.True(File.Exists dllPath)
+
+    [<Fact>]
+    let ``generic impl Opt T with named field binding compiles`` () =
+        // 回帰テスト: impl Opt T のメソッドが named field binding（Opt'Some { value }）を使っても
+        // TypeVar として正しく扱われ CIL 生成が成功することを確認する。
+        // Fix 1 により typeVarSubst = {T -> TypeVar "T"} となり boundType = TypeVar "T" → typeof<obj>
+        // として型消去され正しく動作する。
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let source = """
+enum Opt T
+    | None
+    | Some { value: T }
+
+impl Opt T
+    fn hasPayload self: Int =
+        match self
+            | Opt'None -> 0
+            | Opt'Some { value } -> 1
+
+fn main: () = ()
+"""
+
+        let res = compileSingle { asmName = "GenericImplNamedField"; source = source.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "GenericImplNamedField.dll")
+        Assert.True(File.Exists dllPath)
