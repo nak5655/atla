@@ -207,16 +207,30 @@ module ClosureConversion =
     /// CaptureMap のキーは Lambda ノードの Span（ソース中で一意）。
     /// 戻り値の int list は型情報が解決できなかった捕捉変数 sid（エラー報告用）。
     let private buildCaptureMap
+        (symbolTable: SymbolTable)
         (globalSymbols: Set<int>)
         (method: Hir.Method) : Map<Atla.Core.Data.Span, CapturedVarMetadata list * int list> =
 
         // 外側スコープの bindings から捕捉変数の型情報を解決し、CaptureMap エントリを構築する。
         let buildCaptureEntries (outerBindings: Map<int, bool * TypeId>) (freeVars: Set<int>) : CapturedVarMetadata list * int list =
+            let resolveCapturedType (sid: int) (bindingType: TypeId) : TypeId =
+                match bindingType with
+                | TypeId.Meta _ ->
+                    match symbolTable.Get(SymbolId sid) with
+                    | Some symbolInfo ->
+                        match symbolInfo.typ with
+                        | TypeId.Meta _ -> bindingType
+                        | resolved -> resolved
+                    | None -> bindingType
+                | _ -> bindingType
+
             let pairs =
                 freeVars |> Set.toList |> List.sort
                 |> List.map (fun sid ->
                     match outerBindings.TryFind sid with
-                    | Some(isMut, typ) -> Some { sid = sid; isMutable = isMut; typ = typ }, None
+                    | Some(isMut, typ) ->
+                        let resolvedType = resolveCapturedType sid typ
+                        Some { sid = sid; isMutable = isMut; typ = resolvedType }, None
                     | None -> None, Some sid)
             List.choose fst pairs, List.choose snd pairs
 
@@ -482,7 +496,7 @@ module ClosureConversion =
             hirModule.methods
             |> List.fold (fun (accMethods, state) methodInfo ->
                 // Phase 1: メソッド本体の全ラムダについて捕捉変数を解析し CaptureMap を構築する。
-                let captureMap = buildCaptureMap globalSymbols methodInfo
+                let captureMap = buildCaptureMap symbolTable globalSymbols methodInfo
                 // Phase 2: CaptureMap を参照してラムダを lambda lifting / env-class へ変換する。
                 let rewrittenBody, bodyState = rewriteExpr symbolTable methodInfo captureMap methodInfo.body state
                 let rewrittenMethod = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.span)
