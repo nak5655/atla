@@ -354,6 +354,11 @@ module ExprAnalyze =
             TypeId.App(TypeId.Name enumRootDef.typeSid, concreteArgs)
         | _ when List.isEmpty enumRootDef.typeParams ->
             TypeId.Name enumRootDef.typeSid
+        | TypeId.Name sid when sid.id = enumRootDef.typeSid.id ->
+            // 型消去後の non-App 型（impl Opt T の self など）に対しては fresh meta の代わりに
+            // TypeVar を使い、Meta が CIL 生成フェーズまで伝播しないようにする。
+            let typeVarArgs = enumRootDef.typeParams |> List.map TypeId.TypeVar
+            TypeId.App(TypeId.Name enumRootDef.typeSid, typeVarArgs)
         | _ ->
             let metaArgs = enumRootDef.typeParams |> List.map (fun _ -> typeEnv.freshMeta())
             TypeId.App(TypeId.Name enumRootDef.typeSid, metaArgs)
@@ -1733,6 +1738,9 @@ module ExprAnalyze =
                                                                 let positionalBindings =
                                                                     positionalFields
                                                                     |> List.mapi (fun i pf ->
+                                                                        if pf.varName = "_" then
+                                                                            None  // "_" はワイルドカード；フィールドアクセスを生成しない
+                                                                        else
                                                                         caseDef.fields
                                                                         |> List.tryItem i
                                                                         |> Option.map (fun fieldDef ->
