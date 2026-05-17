@@ -506,8 +506,41 @@ module Parser =
                     Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, afterForPos)
             | Failure (reason, span) -> Failure (reason, span))
 
+    and ifStmt: PackratParser<Token, Ast.Stmt> =
+        Delay (fun () -> fun input pos ->
+            match (keyword "if") input pos with
+            | Failure (reason, span) -> Failure (reason, span)
+            | Success (ifKw, afterIfPos) ->
+                let bodyInput = BlockInput(input, ifKw.span.left) :> Input<Token>
+                let condInput = LineInput(bodyInput, ifKw.span.left.Line) :> Input<Token>
+                match expr condInput afterIfPos with
+                | Failure (msg, span) -> Failure (msg, span)
+                | Success (condExpr, afterCondPos) ->
+                    let thenStartPos =
+                        match (keyword "=>") bodyInput afterCondPos with
+                        | Success (_, p) -> p
+                        | Failure _ -> afterCondPos
+                    match Many1 stmt bodyInput thenStartPos with
+                    | Failure (msg, span) -> Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, thenStartPos)
+                    | Success (thenStmts, afterThenPos) ->
+                        let elseStmts, nextPos =
+                            match (keyword "else") input afterThenPos with
+                            | Failure _ -> [], afterThenPos
+                            | Success (_, afterElseKwPos) ->
+                                let elseBodyStart =
+                                    match (keyword "=>") bodyInput afterElseKwPos with
+                                    | Success (_, p) -> p
+                                    | Failure _ -> afterElseKwPos
+                                match Many1 stmt bodyInput elseBodyStart with
+                                | Success (elseStmts, p) -> elseStmts, p
+                                | Failure (msg, span) ->
+                                    [ Ast.Stmt.Error(msg, span) :> Ast.Stmt ], elseBodyStart
+                        let lastStmt = if elseStmts.IsEmpty then List.last thenStmts else List.last elseStmts
+                        let ifSpan = { left = ifKw.span.left; right = lastStmt.span.right }
+                        Success (Ast.Stmt.If(condExpr, thenStmts, elseStmts, ifSpan) :> Ast.Stmt, nextPos))
+
     and stmt: PackratParser<Token, Ast.Stmt> =
-        Delay (fun () -> letStmt <|> varStmt <|> returnStmt <|> forStmt <|> assignStmt <|> exprStmt)
+        Delay (fun () -> letStmt <|> varStmt <|> returnStmt <|> forStmt <|> ifStmt <|> assignStmt <|> exprStmt)
 
     and typeExprUnit: PackratParser<Token, Ast.TypeExpr> =
         Delay (fun () ->

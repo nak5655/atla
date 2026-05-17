@@ -218,6 +218,7 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
                 | Hir.Stmt.StoreField (_, _, _, _, bodySpan)
                 | Hir.Stmt.ExprStmt (_, bodySpan)
                 | Hir.Stmt.For (_, _, _, _, bodySpan)
+                | Hir.Stmt.If (_, _, _, bodySpan)
                 | Hir.Stmt.ErrorStmt (_, bodySpan) -> bodySpan)
             |> Option.defaultValue span
         let state1 =
@@ -227,6 +228,10 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
             |> addVarType sid iterable.typ
             |> walkExpr scopeSpan iterable
         body |> List.fold (fun s stmt -> walkStmt forScope stmt s) state1
+    | Hir.Stmt.If(cond, thenBody, elseBody, _) ->
+        let state1 = walkExpr scopeSpan cond state
+        let state2 = thenBody |> List.fold (fun s stmt -> walkStmt scopeSpan stmt s) state1
+        elseBody |> List.fold (fun s stmt -> walkStmt scopeSpan stmt s) state2
     | Hir.Stmt.ErrorStmt _ -> state
 
 /// 単一モジュールを走査してアキュムレータを更新する。

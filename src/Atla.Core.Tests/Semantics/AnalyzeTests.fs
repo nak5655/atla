@@ -21,6 +21,10 @@ module AnalyzeTests =
                 exprContainsLambda predicate instanceExpr || exprContainsLambda predicate valueExpr
             | Hir.Stmt.For (_, _, iterableExpr, bodyStmts, _) ->
                 exprContainsLambda predicate iterableExpr || (bodyStmts |> List.exists stmtContainsLambda)
+            | Hir.Stmt.If (condExpr, thenStmts, elseStmts, _) ->
+                exprContainsLambda predicate condExpr
+                || (thenStmts |> List.exists stmtContainsLambda)
+                || (elseStmts |> List.exists stmtContainsLambda)
             | Hir.Stmt.ErrorStmt _ -> false
 
         let isMatch = match expr with | Hir.Expr.Lambda _ -> predicate expr | _ -> false

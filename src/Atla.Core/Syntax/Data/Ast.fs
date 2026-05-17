@@ -292,6 +292,16 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        type If(cond: Expr, thenBody: Stmt list, elseBody: Stmt list, span: Span) =
+            member this.cond = cond
+            member this.thenBody = thenBody
+            member this.elseBody = elseBody
+            member this.span = span
+            interface Stmt with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type Error(message: string, span: Span) =
             member this.message = message
             member this.span = span
@@ -299,7 +309,7 @@ module Ast =
                 member this.span = span
             interface HasSpan with
                 member this.span = span
-                
+
     module TypeExpr =
         type Unit(span: Span) =
             member this.span = span

@@ -2106,6 +2106,11 @@ module ExprAnalyze =
                     Hir.Stmt.For(loopVarSid, itemType, resolvedIteratorExpr, bodyStmts, forStmt.span)
                 | None ->
                     Hir.Stmt.ErrorStmt(sprintf "Type '%s' does not define MoveNext/Current or GetEnumerator()" iterableSystemType.FullName, forStmt.span)
+        | :? Ast.Stmt.If as ifStmt ->
+            let cond = analyzeExpr nameEnv typeEnv ifStmt.cond TypeId.Bool
+            let thenBody = ifStmt.thenBody |> List.map (analyzeStmt nameEnv typeEnv)
+            let elseBody = ifStmt.elseBody |> List.map (analyzeStmt nameEnv typeEnv)
+            Hir.Stmt.If(cond, thenBody, elseBody, ifStmt.span)
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
     let analyzeMethodCore (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) : Hir.Method =
