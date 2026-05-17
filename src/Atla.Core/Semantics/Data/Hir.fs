@@ -104,6 +104,7 @@ module Hir =
         | StoreField of instanceExpr: Expr * typeSid: SymbolId * fieldSid: SymbolId * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
         | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
+        | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
         | ErrorStmt of message: string * span: Span
 
         member this.hasError =
@@ -118,6 +119,10 @@ module Hir =
             | StoreField (instanceExpr, _, _, value, _) -> instanceExpr.getDiagnostics @ value.getDiagnostics
             | For (_, _, iterable, body, _) ->
                 iterable.getDiagnostics @ (body |> List.collect (fun stmt -> stmt.getDiagnostics))
+            | If (cond, thenBody, elseBody, _) ->
+                cond.getDiagnostics
+                @ (thenBody |> List.collect (fun stmt -> stmt.getDiagnostics))
+                @ (elseBody |> List.collect (fun stmt -> stmt.getDiagnostics))
 
     type Field(sid: SymbolId, tid: TypeId, body: Expr, span: Span) =
         member this.sym = sid
@@ -201,8 +206,8 @@ module Hir =
                 MemberAccess(mem, instance |> Option.map (mapExpr f), tid, span)
             | Block (stmts, body, tid, span) ->
                 Block(stmts |> List.map (mapStmt f), mapExpr f body, tid, span)
-            | If (cond, thenBranch, elseBranch, tid, span) ->
-                If(mapExpr f cond, mapExpr f thenBranch, mapExpr f elseBranch, tid, span)
+            | Expr.If (cond, thenBranch, elseBranch, tid, span) ->
+                Expr.If(mapExpr f cond, mapExpr f thenBranch, mapExpr f elseBranch, tid, span)
         f mapped
 
     /// `Stmt` に含まれる全 `Expr` を bottom-up で変換する。
@@ -215,6 +220,8 @@ module Hir =
         | ExprStmt (expr, span) -> ExprStmt(mapExpr f expr, span)
         | For (sid, tid, iterable, body, span) ->
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
+        | Stmt.If (cond, thenBody, elseBody, span) ->
+            Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
         | ErrorStmt _ -> stmt
 
     /// `Expr` ツリー全体を pre-order（トップダウン）で畳み込む。
@@ -239,7 +246,7 @@ module Hir =
         | Block (stmts, body, _, _) ->
             let acc'' = stmts |> List.fold (foldStmt f) acc'
             foldExpr f acc'' body
-        | If (cond, thenBranch, elseBranch, _, _) ->
+        | Expr.If (cond, thenBranch, elseBranch, _, _) ->
             let acc'' = foldExpr f acc' cond
             let acc''' = foldExpr f acc'' thenBranch
             foldExpr f acc''' elseBranch
@@ -255,6 +262,10 @@ module Hir =
         | For (_, _, iterable, body, _) ->
             let acc' = foldExpr f acc iterable
             body |> List.fold (foldStmt f) acc'
+        | Stmt.If (cond, thenBody, elseBody, _) ->
+            let acc' = foldExpr f acc cond
+            let acc'' = thenBody |> List.fold (foldStmt f) acc'
+            elseBody |> List.fold (foldStmt f) acc''
         | ErrorStmt _ -> acc
 
     // ─────────────────────────────────────────────
@@ -311,7 +322,7 @@ module Hir =
                     (zero, ctx')
             let bodyAcc = foldExprWithCtx descend afterStmt leaf merge zero ctxAfterStmts body
             merge stmtsAcc bodyAcc
-        | If (cond, thenBranch, elseBranch, _, _) ->
+        | Expr.If (cond, thenBranch, elseBranch, _, _) ->
             [ cond; thenBranch; elseBranch ]
             |> List.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
             |> List.fold merge zero
@@ -347,4 +358,21 @@ module Hir =
                     (zero, innerCtx)
                 |> fst
             merge iterAcc bodyAcc
+        | Stmt.If (cond, thenBody, elseBody, _) ->
+            let condAcc = foldExprWithCtx descend afterStmt leaf merge zero ctx cond
+            let thenAcc =
+                thenBody
+                |> List.fold
+                    (fun (acc, c) s ->
+                        merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s)
+                    (zero, ctx)
+                |> fst
+            let elseAcc =
+                elseBody
+                |> List.fold
+                    (fun (acc, c) s ->
+                        merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s)
+                    (zero, ctx)
+                |> fst
+            merge condAcc (merge thenAcc elseAcc)
         | ErrorStmt _ -> zero

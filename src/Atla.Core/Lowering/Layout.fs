@@ -499,6 +499,26 @@ module Layout =
                                     @ [ Mir.Ins.Jump loopStartId
                                         Mir.Ins.MarkLabel loopEndId ]
                                 ))
+        | ClosedHir.Stmt.If (cond, thenBody, elseBody, _) ->
+            match layoutExpr state cond with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, condKn) ->
+                match mapFoldResult layoutStmt state1 thenBody with
+                | Result.Error e -> Result.Error e
+                | Ok (state2, thenInsList) ->
+                    match mapFoldResult layoutStmt state2 elseBody with
+                    | Result.Error e -> Result.Error e
+                    | Ok (state3, elseInsList) ->
+                        let thenLabelId, state4 = freshLabel state3
+                        let elseLabelId, state5 = freshLabel state4
+                        let endLabelId, state6 = freshLabel state5
+                        Ok (state6,
+                            condKn.ins
+                            @ [ Mir.Ins.JumpTrue(condKn.res.Value, thenLabelId)
+                                Mir.Ins.JumpFalse(condKn.res.Value, elseLabelId) ]
+                            @ [ Mir.Ins.MarkLabel thenLabelId ] @ List.concat thenInsList @ [ Mir.Ins.Jump endLabelId ]
+                            @ [ Mir.Ins.MarkLabel elseLabelId ] @ List.concat elseInsList @ [ Mir.Ins.Jump endLabelId ]
+                            @ [ Mir.Ins.MarkLabel endLabelId ])
         | ClosedHir.Stmt.ErrorStmt (message, span) ->
             Result.Error (Diagnostic.Error($"Cannot lower erroneous statement: {message}", span))
 
@@ -703,6 +723,10 @@ module Layout =
             hasLambdaExpr instanceExpr || hasLambdaExpr value
         | ClosedHir.Stmt.For (_, _, iterable, body, _) ->
             hasLambdaExpr iterable || (body |> List.exists hasLambdaStmt)
+        | ClosedHir.Stmt.If (cond, thenBody, elseBody, _) ->
+            hasLambdaExpr cond
+            || (thenBody |> List.exists hasLambdaStmt)
+            || (elseBody |> List.exists hasLambdaStmt)
         | ClosedHir.Stmt.ErrorStmt _ -> false
 
     /// クロージャー変換済み `ClosedHir.Assembly` を受け取り、MIR へ変換する。

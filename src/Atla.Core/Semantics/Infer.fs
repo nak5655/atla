@@ -53,6 +53,11 @@ module Infer =
             let inferredIterable = inferExpr typeSubst iterable
             let inferredBody = body |> List.map (inferStmt typeSubst)
             Hir.Stmt.For(sid, inferredTid, inferredIterable, inferredBody, span)
+        | Hir.Stmt.If (cond, thenBody, elseBody, span) ->
+            let inferredCond = inferExpr typeSubst cond
+            let inferredThen = thenBody |> List.map (inferStmt typeSubst)
+            let inferredElse = elseBody |> List.map (inferStmt typeSubst)
+            Hir.Stmt.If(inferredCond, inferredThen, inferredElse, span)
         | Hir.Stmt.ErrorStmt _ -> stmt
 
     let inferModule (typeSubst: TypeSubst, hirModule: Hir.Module) : Result<Hir.Module, Diagnostic list> =

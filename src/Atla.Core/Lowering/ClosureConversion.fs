@@ -71,6 +71,8 @@ module ClosureConversion =
         | Hir.Stmt.ExprStmt (expr, span) -> ClosedHir.Stmt.ExprStmt(convertHirExpr expr, span)
         | Hir.Stmt.For (sid, tid, iterable, body, span) ->
             ClosedHir.Stmt.For(sid, tid, convertHirExpr iterable, body |> List.map convertHirStmt, span)
+        | Hir.Stmt.If (cond, thenBody, elseBody, span) ->
+            ClosedHir.Stmt.If(convertHirExpr cond, thenBody |> List.map convertHirStmt, elseBody |> List.map convertHirStmt, span)
         | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span)
 
     // ─────────────────────────────────────────────
@@ -269,6 +271,10 @@ module ClosureConversion =
                 body
                 |> List.fold (fun (m, c) s -> traverseStmt c m s, afterStmtCtx c s) (m', innerCtx)
                 |> fst
+            | Hir.Stmt.If (cond, thenBody, elseBody, _) ->
+                let m' = traverseExpr ctx captureMap cond
+                let m'' = thenBody |> List.fold (fun m s -> traverseStmt ctx m s) m'
+                elseBody |> List.fold (fun m s -> traverseStmt ctx m s) m''
             | Hir.Stmt.ErrorStmt _ -> captureMap
 
         and afterStmtCtx (ctx: AnalysisCtx) (stmt: Hir.Stmt) : AnalysisCtx =
@@ -440,6 +446,11 @@ module ClosureConversion =
             // for 反復変数 sid はボディ内で束縛済みとして扱い、ラムダからの捕捉候補となる（C#互換: 反復ごと新規束縛）。
             let rewrittenBody, bodyState = rewriteStmts symbolTable ownerMethod captureMap body iterableState
             ClosedHir.Stmt.For(sid, tid, rewrittenIterable, rewrittenBody, span), bodyState
+        | Hir.Stmt.If (cond, thenBody, elseBody, span) ->
+            let rewrittenCond, state1 = rewriteExpr symbolTable ownerMethod captureMap cond state
+            let rewrittenThen, state2 = rewriteStmts symbolTable ownerMethod captureMap thenBody state1
+            let rewrittenElse, state3 = rewriteStmts symbolTable ownerMethod captureMap elseBody state2
+            ClosedHir.Stmt.If(rewrittenCond, rewrittenThen, rewrittenElse, span), state3
         | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span), state
 
     /// Phase 2: 文列を逐次変換し、最終 state を返す。

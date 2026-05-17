@@ -1336,3 +1336,85 @@ impl Opt T
                 Assert.True(false, "impl declaration not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses if statement without else`` () =
+        let program = """
+fn main (): Int =
+    if True =>
+        return 1
+    2
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let ifStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.If as ifStmt -> Some ifStmt
+                            | _ -> None)
+                    match ifStmt with
+                    | Some stmt ->
+                        Assert.Equal(1, stmt.thenBody.Length)
+                        Assert.Equal(0, stmt.elseBody.Length)
+                    | None ->
+                        Assert.True(false, "if statement was not parsed into Ast.Stmt.If")
+                | _ ->
+                    Assert.True(false, "function body was not parsed into a block expression")
+            | None ->
+                Assert.True(false, "function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses if-else statement`` () =
+        let program = """
+fn main (): Int =
+    if True =>
+        return 1
+    else =>
+        return 0
+    2
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "main" -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let ifStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.If as ifStmt -> Some ifStmt
+                            | _ -> None)
+                    match ifStmt with
+                    | Some stmt ->
+                        Assert.Equal(1, stmt.thenBody.Length)
+                        Assert.Equal(1, stmt.elseBody.Length)
+                    | None ->
+                        Assert.True(false, "if-else statement was not parsed into Ast.Stmt.If")
+                | _ ->
+                    Assert.True(false, "function body was not parsed into a block expression")
+            | None ->
+                Assert.True(false, "function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
