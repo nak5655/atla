@@ -407,6 +407,13 @@ module ExprAnalyze =
         | TypeId.App(TypeId.Name sid, _) -> Some sid
         | _ -> None
 
+    /// ResolveType の結果からルート型 SID を抽出する（Name / App(Name, _) を許容）。
+    let private tryGetTypeSidFromResolvedType (resolvedType: TypeId) : SymbolId option =
+        match resolvedType with
+        | TypeId.Name sid -> Some sid
+        | TypeId.App(TypeId.Name sid, _) -> Some sid
+        | _ -> None
+
     /// enum case コンストラクターを DataConstructor 呼び出しへ lower する。
     /// rootType には呼び出しコンテキストで具体化された enum 型（例: Opt<SpriteBatch>）を渡す。
     let private lowerEnumCaseConstructor
@@ -733,8 +740,8 @@ module ExprAnalyze =
                 // 変数として未登録だが型スペースに存在する場合、import されたが未解決の型である可能性がある。
                 // その場合は依存関係の設定を促す具体的なメッセージを返す。
                 let errorMessage =
-                    match nameEnv.scope.ResolveType(idExpr.name) with
-                    | Some (TypeId.Name sid) ->
+                    match nameEnv.scope.ResolveType(idExpr.name) |> Option.bind tryGetTypeSidFromResolvedType with
+                    | Some sid ->
                         match nameEnv.resolveSym sid with
                         | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when isNull sysType ->
                             sprintf
@@ -837,8 +844,8 @@ module ExprAnalyze =
                 | :? Ast.Expr.MemberAccess as ma ->
                     match ma.receiver with
                     | :? Ast.Expr.Id as receiverId when receiverId.name <> "base" ->
-                        match nameEnv.scope.ResolveType(receiverId.name) with
-                        | Some (TypeId.Name typeSid) ->
+                        match nameEnv.scope.ResolveType(receiverId.name) |> Option.bind tryGetTypeSidFromResolvedType with
+                        | Some typeSid ->
                             match tryFindTypeDefBySid nameEnv typeSid with
                             | Some typeDef ->
                                 typeDef.enumInfo
@@ -1384,15 +1391,17 @@ module ExprAnalyze =
                             Result.Ok(Hir.Expr.Id(moduleMember.symbolId, moduleMember.typ, memberAccessExpr.span))
                         | None ->
                             match nameEnv.scope.ResolveType(receiverId.name) with
-                            | Some (TypeId.Name sid) ->
-                                resolveMemberFromTypeName sid receiverId.name
-                            // Float, Int, Bool, String などのビルトイン型を静的メンバーアクセスのレシーバとして使う場合、
-                            // 対応する .NET ランタイム型へ変換して静的メンバーを探索する。
-                            // 例: `Float'Parse` → `System.Double.Parse`
-                            | Some builtinType ->
-                                match TypeId.tryToRuntimeSystemType builtinType with
-                                | Some sysType -> resolveMemberFromSystemTypeResult sysType
-                                | None -> Result.Error (sprintf "Builtin type '%s' cannot be mapped to a .NET runtime type for static member access" receiverId.name)
+                            | Some resolvedType ->
+                                match tryGetTypeSidFromResolvedType resolvedType with
+                                | Some sid ->
+                                    resolveMemberFromTypeName sid receiverId.name
+                                // Float, Int, Bool, String などのビルトイン型を静的メンバーアクセスのレシーバとして使う場合、
+                                // 対応する .NET ランタイム型へ変換して静的メンバーを探索する。
+                                // 例: `Float'Parse` → `System.Double.Parse`
+                                | None ->
+                                    match TypeId.tryToRuntimeSystemType resolvedType with
+                                    | Some sysType -> resolveMemberFromSystemTypeResult sysType
+                                    | None -> Result.Error (sprintf "Builtin type '%s' cannot be mapped to a .NET runtime type for static member access" receiverId.name)
                             | None ->
                                 let receiver = analyzeExpr nameEnv typeEnv memberAccessExpr.receiver (typeEnv.freshMeta())
                                 let receiverType = typeEnv.resolveType receiver.typ
@@ -1441,8 +1450,8 @@ module ExprAnalyze =
                                         else
                                             Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
 
-                                match receiverType with
-                                | TypeId.Name receiverTypeSid ->
+                                match tryGetTypeSidFromResolvedType receiverType with
+                                | Some receiverTypeSid ->
                                     match tryResolveDataInstanceMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
                                     | Result.Ok resolvedMember ->
                                         Result.Ok resolvedMember
@@ -1453,7 +1462,7 @@ module ExprAnalyze =
                                             match resolveTyp nameEnv typeEnv receiver.typ with
                                             | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                                             | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
-                                | _ ->
+                                | None ->
                                     match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverType with
                                     | Some systemType -> tryResolveNativeInstance systemType
                                     | None ->
@@ -1511,15 +1520,15 @@ module ExprAnalyze =
                             else
                                 Result.Error (sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName systemType.FullName)
                     | None ->
-                        match typeEnv.resolveType receiver.typ with
-                        | TypeId.Name receiverTypeSid ->
+                        match typeEnv.resolveType receiver.typ |> tryGetTypeSidFromResolvedType with
+                        | Some receiverTypeSid ->
                             match tryResolveDataInstanceMember nameEnv typeEnv tid receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span receiver with
                             | Result.Ok resolvedMember -> Result.Ok resolvedMember
                             | Result.Error _ ->
                                 match resolveTyp nameEnv typeEnv receiver.typ with
                                 | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                                 | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
-                        | _ ->
+                        | None ->
                             match resolveTyp nameEnv typeEnv receiver.typ with
                             | Some symInfo -> resolveFromSymInfo symInfo.name symInfo
                             | None -> Result.Error (sprintf "Undefined type '%s'" (formatTypeForDisplay nameEnv typeEnv receiver.typ))
