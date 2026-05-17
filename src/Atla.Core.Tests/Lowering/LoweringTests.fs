@@ -1191,6 +1191,10 @@ impl Color
         let source = """
 import System'Console
 
+enum Opt T
+    | None
+    | Some { value: T }
+
 data Box =
     { _value: Opt Int }
 
@@ -1241,6 +1245,10 @@ fn main: () = do
 
         let source = """
 import System'Console
+
+enum Opt T
+    | None
+    | Some { value: T }
 
 data Box =
     { _value: Opt Int }
