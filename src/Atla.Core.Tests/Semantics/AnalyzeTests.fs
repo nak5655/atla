@@ -3391,6 +3391,11 @@ impl Opt T
         match self
             | Opt'None -> False
             | Opt'Some { value } -> True
+
+    fn isNone self: Bool =
+        match self
+            | Opt'None -> True
+            | Opt'Some { value } -> False
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
