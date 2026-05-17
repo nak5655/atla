@@ -1,1 +1,1 @@
-import Std'Opt
+public import Opt

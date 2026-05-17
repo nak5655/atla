@@ -123,6 +123,29 @@ fn greet: () = ()
         Assert.False(File.Exists(Path.Join(outDir, "HelloConsole.deps.json")))
 
     [<Fact>]
+    let ``build should succeed for lib package with public import`` () =
+        let libRoot = createTempProjectDir ()
+        writeManifestWithType libRoot "mylib" "lib"
+
+        File.WriteAllText(
+            Path.Join(libRoot, "src", "Inner.atla"),
+            """
+fn value: Int = 42
+""".Trim())
+
+        File.WriteAllText(
+            Path.Join(libRoot, "src", "Outer.atla"),
+            """
+public import Inner
+""".Trim())
+
+        let outDir = Path.Join(libRoot, "artifacts")
+        let code = Console.run [| "build"; libRoot; "-o"; outDir; "--name"; "MyLib" |]
+
+        Assert.Equal(0, code)
+        Assert.True(File.Exists(Path.Join(outDir, "mylib.atlalib")))
+
+    [<Fact>]
     let ``build should emit only dll for dll package type without main`` () =
         let projectRoot = createTempProjectDir ()
         writeManifestWithType projectRoot "hello" "dll"

@@ -74,7 +74,7 @@ module AnalyzeTests =
     [<Fact>]
     let ``ast to hir should not keep error nodes`` () =
         let span = Span.Empty
-        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], false, span) :> Ast.Decl
         let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
         let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
         let helloArg = Ast.Expr.String("Hello, World!", span) :> Ast.Expr
@@ -1045,7 +1045,7 @@ fn main (): Int = ping.
     [<Fact>]
     let ``void call should not be used as value`` () =
         let span = Span.Empty
-        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], false, span) :> Ast.Decl
         let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
         let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
         let helloArg = Ast.Expr.String("Hello, World!", span) :> Ast.Expr
@@ -1248,8 +1248,8 @@ fn main: () =
     [<Fact>]
     let ``void call should not be passed as argument value`` () =
         let span = Span.Empty
-        let importConsole = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
-        let importInt32 = Ast.Decl.Import([ "System"; "Int32" ], span) :> Ast.Decl
+        let importConsole = Ast.Decl.Import([ "System"; "Console" ], false, span) :> Ast.Decl
+        let importInt32 = Ast.Decl.Import([ "System"; "Int32" ], false, span) :> Ast.Decl
         let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
 
         let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
@@ -1273,7 +1273,7 @@ fn main: () =
     [<Fact>]
     let ``void call should be allowed in expression statement`` () =
         let span = Span.Empty
-        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], false, span) :> Ast.Decl
         let retType = Ast.TypeExpr.Unit(span) :> Ast.TypeExpr
         let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
         let callExpr = Ast.Expr.Apply(writeLineExpr, [ Ast.Expr.String("ok", span) :> Ast.Expr ], span) :> Ast.Expr
@@ -2215,7 +2215,7 @@ fn bad (): Int = do
     [<Fact>]
     let ``Resolve.resolveModule registers imported type in module scope`` () =
         let span = Span.Empty
-        let importDecl = Ast.Decl.Import([ "System"; "Console" ], span) :> Ast.Decl
+        let importDecl = Ast.Decl.Import([ "System"; "Console" ], false, span) :> Ast.Decl
         let astModule = Ast.Module([ importDecl ])
         let symbolTable = SymbolTable()
 
@@ -2312,7 +2312,7 @@ fn bad (): Int = do
     [<Fact>]
     let ``Resolve.resolveModule reports ambiguity when module and type share same source path`` () =
         let span = Span.Empty
-        let importDecl = Ast.Decl.Import([ "Foo"; "Bar" ], span) :> Ast.Decl
+        let importDecl = Ast.Decl.Import([ "Foo"; "Bar" ], false, span) :> Ast.Decl
         let astModule = Ast.Module([ importDecl ])
         let symbolTable = SymbolTable()
 
@@ -2329,7 +2329,7 @@ fn bad (): Int = do
     [<Fact>]
     let ``Resolve.resolveModule falls back to type import when module does not exist`` () =
         let span = Span.Empty
-        let importDecl = Ast.Decl.Import([ "Foo"; "Bar" ], span) :> Ast.Decl
+        let importDecl = Ast.Decl.Import([ "Foo"; "Bar" ], false, span) :> Ast.Decl
         let astModule = Ast.Module([ importDecl ])
         let symbolTable = SymbolTable()
 
@@ -2351,7 +2351,7 @@ fn bad (): Int = do
     let ``import of unresolvable type emits a Warning diagnostic`` () =
         // "Non.Existent.Type" はどのアセンブリにも存在しない型。
         let span = Span.Empty
-        let importDecl = Ast.Decl.Import([ "Non"; "Existent"; "Type" ], span) :> Ast.Decl
+        let importDecl = Ast.Decl.Import([ "Non"; "Existent"; "Type" ], false, span) :> Ast.Decl
         let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let fnDecl = Ast.Decl.Fn("main", [], retType, Ast.Expr.Int(0, span) :> Ast.Expr, span) :> Ast.Decl
         let astModule = Ast.Module([ importDecl; fnDecl ])
