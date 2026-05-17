@@ -452,8 +452,9 @@ module Ast =
                 member this.span = span
 
     module Decl =
-        type Import(path: string list, span: Span) =
+        type Import(path: string list, isPublic: bool, span: Span) =
             member this.path = path
+            member this.isPublic = isPublic
             member this.span = span
             interface Decl with
                 member this.span = span

@@ -276,13 +276,19 @@ module Compiler =
                     | Result.Error diagnostics ->
                         failed diagnostics None None None (Some moduleAsts)
                     | Ok orderedModuleNames ->
-                        // Std.Prelude をユーザーモジュールより先に解析するため、先頭に挿入する。
-                        // topoSort はユーザーモジュールの依存順を解決するが、暗黙 Prelude は含まない。
+                        // Std.Prelude をユーザーモジュールより先に解析するため挿入する。
+                        // Prelude 自身が import を持つ場合（public import Opt など）は
+                        // topo sort で正しい順序（Opt → Std.Prelude）を得る。
                         let orderedModuleNames =
-                            if moduleAsts.ContainsKey(stdPreludeModuleName) && not (List.contains stdPreludeModuleName orderedModuleNames) then
-                                stdPreludeModuleName :: orderedModuleNames
-                            else
+                            if not (moduleAsts.ContainsKey(stdPreludeModuleName)) || List.contains stdPreludeModuleName orderedModuleNames then
                                 orderedModuleNames
+                            else
+                                match topoSortModulesFromEntry stdPreludeModuleName moduleAsts with
+                                | Ok preludeOrder ->
+                                    let remaining = orderedModuleNames |> List.filter (fun m -> not (List.contains m preludeOrder))
+                                    preludeOrder @ remaining
+                                | Result.Error _ ->
+                                    stdPreludeModuleName :: orderedModuleNames
                         let dependencyInputs =
                             request.dependencies
                             |> List.map (fun dependency -> dependency.name, dependency.runtimeLoadPaths)
@@ -363,8 +369,23 @@ module Compiler =
 
                                     match analyzeResult.value with
                                     | Some hirModule ->
-                                        let exports = collectModuleExports symbolTable hirModule
-                                        hirModules @ [ hirModule ], Map.add moduleName exports moduleExports, diagnostics @ analyzeResult.diagnostics
+                                        let ownExports = collectModuleExports symbolTable hirModule
+                                        let allAvailable =
+                                            Map.fold (fun acc k v -> Map.add k v acc) dependencyIndex.moduleExports moduleExports
+                                        let reExportedTypes =
+                                            moduleAst.decls
+                                            |> List.choose (fun decl ->
+                                                match decl with
+                                                | :? Ast.Decl.Import as importDecl when importDecl.isPublic ->
+                                                    let fullModuleName = String.concat "." importDecl.path
+                                                    allAvailable |> Map.tryFind fullModuleName
+                                                | _ -> None)
+                                            |> List.collect (fun exports ->
+                                                exports |> Map.toList |> List.filter (fun (key, _) -> key.StartsWith("type:")))
+                                            |> Map.ofList
+                                        let finalExports =
+                                            Map.fold (fun acc k v -> Map.add k v acc) ownExports reExportedTypes
+                                        hirModules @ [ hirModule ], Map.add moduleName finalExports moduleExports, diagnostics @ analyzeResult.diagnostics
                                     | None ->
                                         hirModules, moduleExports, diagnostics @ analyzeResult.diagnostics
 

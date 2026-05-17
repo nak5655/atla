@@ -628,10 +628,13 @@ module Parser =
                          Ast.Decl.Enum(id.str, typeParamNames, cases, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
                     (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
-    // インポート宣言
+    // インポート宣言（`public import Foo` または `import Foo`）
     and importDecl: PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            block (asToken (keyword "import")) (Once (SepBy1 tid (delim '\'') |>> fun ids -> Ast.Decl.Import (ids |> List.map (fun id -> id.str), { left = ids.Head.span.left; right = (List.last ids).span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
+            Optional (asToken (keyword "public"))
+            >>= fun publicTokenOpt ->
+                let isPublic = Option.isSome publicTokenOpt
+                block (asToken (keyword "import")) (Once (SepBy1 tid (delim '\'') |>> fun ids -> Ast.Decl.Import (ids |> List.map (fun id -> id.str), isPublic, { left = ids.Head.span.left; right = (List.last ids).span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     // 関数宣言
     and fnArgNamed: PackratParser<Token, Ast.FnArg> =
