@@ -31,11 +31,11 @@ fn main (): Int = 1 2 3 add3.
 import System'Console
 
 fn main: () = do
-  let f = fn (x: Int): String -> if
-      | i % 15 == 0 => "FizzBuzz"
-      | i % 5 == 0 => "Buzz"
-      | i % 3 == 0 => "Fizz"
-      | else => i'ToString.
+  let f = fn (x: Int): String ->
+      |? x % 15 == 0 => "FizzBuzz"
+      |: x % 5 == 0 => "Buzz"
+      |: x % 3 == 0 => "Fizz"
+      |: else => x'ToString.
   Console'ReadLine. Int32'Parse. f. Console'WriteLine.
 ```
 

@@ -6,9 +6,9 @@ fn fizzbuzz (n: Int): () =
     for i in 1 n Enumerable'Range.
         let s =
             |? i % 15 == 0 => "FizzBuzz"
-            |? i % 5 == 0 => "Buzz"
-            |? i % 3 == 0 => "Fizz"
-            |? else => i'ToString.
+            |: i % 5 == 0 => "Buzz"
+            |: i % 3 == 0 => "Fizz"
+            |: else => i'ToString.
         s Console'WriteLine.
 
 fn main: () =

@@ -100,7 +100,7 @@ impl CalculatorWindow as Window
 
             |? self'_display'Text == "0" && digit'ToString. != "." =>
                 self'_display'Text = digit'ToString.
-            |? else =>
+            |: else =>
                 self'_display'Text += digit'ToString.
 
     fn addOperatorButton self (operator: String) (row: Int) (column: Int): () =
@@ -113,7 +113,7 @@ impl CalculatorWindow as Window
             |? self'_pendingOperator != "" =>
                 self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
                 self'_display'Text = self'_currentValue'ToString.
-            |? else =>
+            |: else =>
                 self'_currentValue = value
             
             self'_pendingOperator = operator
@@ -121,10 +121,10 @@ impl CalculatorWindow as Window
 
     fn applyOperator self (left: Float) (right: Float) (operator: String): Float =
         |? operator == "+" => left + right
-        |? operator == "-" => left - right
-        |? operator == "*" => left * right
-        |? operator == "/" => left / right
-        |? else => right
+        |: operator == "-" => left - right
+        |: operator == "*" => left * right
+        |: operator == "/" => left / right
+        |: else => right
 
     fn onEquals self: () -> () =
         fn () ->
@@ -132,7 +132,7 @@ impl CalculatorWindow as Window
 
             |? self'_pendingOperator == "" =>
                 ()
-            |? else =>
+            |: else =>
                 self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
                 self'_display'Text = self'_currentValue'ToString.
                 self'_pendingOperator = ""
@@ -149,11 +149,11 @@ impl CalculatorWindow as Window
         fn () ->
             |? self'_clearOnNextDigit =>
                 ()
-            |? else =>
+            |: else =>
                 let text = self'_display'Text
                 |? text'Length == 1 =>
                     self'_display'Text = "0"
-                |? else =>
+                |: else =>
                     self'_display'Text = 0 (text'Length - 1) text'Substring.
 
     fn onToggleSign self: () -> () =

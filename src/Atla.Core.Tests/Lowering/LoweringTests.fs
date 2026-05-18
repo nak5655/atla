@@ -124,9 +124,9 @@ fn fizzbuzz (n: Int): () =
     for i in 1 n Enumerable'Range.
         let s =
             |? i % 15 == 0 => "FizzBuzz"
-            |? i % 5 == 0 => "Buzz"
-            |? i % 3 == 0 => "Fizz"
-            |? else => i'ToString.
+            |: i % 5 == 0 => "Buzz"
+            |: i % 3 == 0 => "Fizz"
+            |: else => i'ToString.
         s Console'WriteLine.
 
 
@@ -177,9 +177,9 @@ import System'Console
 
 fn fibonacci (n: Int): Int =
     |? n == 0 => 0
-    |? n == 1 => 1
-    |? n == 2 => 1
-    |? else => (n - 2) fibonacci. + (n - 1) fibonacci.
+    |: n == 1 => 1
+    |: n == 2 => 1
+    |: else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
 fn main: () = do
     let n = Console'ReadLine. Int32'Parse.

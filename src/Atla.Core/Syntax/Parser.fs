@@ -105,6 +105,7 @@ module Parser =
 
     // `|` / `|?` は if ブランチ区切り専用で二項中置演算子ではない。`!!` はインデックスアクセス専用。
     // いずれも infixOp から除外する。
+    // `|:` の `:` は opSign でないため Token.Symbol として出現しない（2トークン: | と :）ので除外不要。
     let infixOp prec : PackratParser<Token, Token.Symbol> =
         AcceptMatch (fun t ->
             match t with
@@ -121,7 +122,19 @@ module Parser =
     let keyword kw: PackratParser<Token, Token.Keyword> = AcceptMatch (fun t -> match t with :? Token.Keyword as st when st.str = kw -> Some(st) | _ -> None)
     let delim d: PackratParser<Token, Token.Delim> = AcceptMatch (fun t -> match t with :? Token.Delim as st when st.char = d -> Some(st) | _ -> None)
     let symbol sym: PackratParser<Token, Token.Symbol> = AcceptMatch (fun t -> match t with :? Token.Symbol as st when st.str = sym -> Some(st) | _ -> None)
-    
+
+    // `:` は opSign でないため `|:` は2トークン（Token.Symbol "|" + Token.Delim ':'）になる。
+    // blockAtOpener に渡す opener として、| を照合した後 : も消費し、
+    // | トークン（オフサイド列の基準）を返す合成パーサー。
+    let ifContOpener : PackratParser<Token, Token> =
+        fun input pos ->
+            match (symbol "|") input pos with
+            | Success (pipeToken, afterPipePos) ->
+                match (delim ':') input afterPipePos with
+                | Success (_, nextPos) -> Success (pipeToken :> Token, nextPos)
+                | Failure (reason, span) -> Failure (reason, span)
+            | Failure (reason, span) -> Failure (reason, span)
+
     // 式
     let id =
         valueIdent
@@ -163,21 +176,28 @@ module Parser =
         Delay (fun () ->
             block (asToken (keyword "do")) (Once ((Many1 stmt |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right })) <& Eoi) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)))
 
-    // if式 / if文共通ブランチパーサー（|? 構文）
+    // if式 / if文共通ブランチパーサー
+    // 先頭ブランチ: |? condition => body
     and ifThen: PackratParser<Token, Ast.IfBranch> =
         Delay (fun () ->
             blockAtOpener (asToken (symbol "|?")) (expr <& keyword "=>" <&> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (cond, body) -> Ast.IfBranch.Then(cond, body, { left = cond.span.left; right = body.span.right })))
 
-    and ifElse: PackratParser<Token, Ast.IfBranch> =
+    // 継続 then ブランチ: |: condition => body
+    and ifThenCont: PackratParser<Token, Ast.IfBranch> =
         Delay (fun () ->
-            blockAtOpener (asToken (symbol "|?")) (keyword "else" &> keyword "=>" &> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (body) -> Ast.IfBranch.Else(body, body.span)))
+            blockAtOpener ifContOpener (expr <& keyword "=>" <&> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (cond, body) -> Ast.IfBranch.Then(cond, body, { left = cond.span.left; right = body.span.right })))
+
+    // else ブランチ: |: else => body
+    and ifElseCont: PackratParser<Token, Ast.IfBranch> =
+        Delay (fun () ->
+            blockAtOpener ifContOpener (keyword "else" &> keyword "=>" &> (Once (Many1 stmt |>> fun (stmts) -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span))) |>> fun (body) -> Ast.IfBranch.Else(body, body.span)))
 
     // if式: else 必須・インライン不可
     and ifExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            Many1 ifThen <&> ifElse
-            |>> fun (branches, elseBranch) ->
-                Ast.Expr.If(branches @ [elseBranch], { left = branches.Head.span.left; right = elseBranch.span.right }) :> Ast.Expr)
+            (ifThen <&> Many ifThenCont) <&> ifElseCont
+            |>> fun ((firstBranch, contBranches), elseBranch) ->
+                Ast.Expr.If([firstBranch] @ contBranches @ [elseBranch], { left = firstBranch.span.left; right = elseBranch.span.right }) :> Ast.Expr)
 
     // 項
     and dataInitField: PackratParser<Token, Ast.DataInitField> =
@@ -507,13 +527,13 @@ module Parser =
                     Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, afterForPos)
             | Failure (reason, span) -> Failure (reason, span))
 
-    // if文: |? 構文・else オプション
+    // if文: else オプション
     and ifStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () ->
-            Many1 ifThen <&> Optional ifElse
-            |>> fun (branches, elseBranchOpt) ->
-                let allBranches = match elseBranchOpt with Some e -> branches @ [e] | None -> branches
-                let span = { left = allBranches.Head.span.left; right = (List.last allBranches).span.right }
+            (ifThen <&> Many ifThenCont) <&> Optional ifElseCont
+            |>> fun ((firstBranch, contBranches), elseBranchOpt) ->
+                let allBranches = [firstBranch] @ contBranches @ (match elseBranchOpt with Some e -> [e] | None -> [])
+                let span = { left = firstBranch.span.left; right = (List.last allBranches).span.right }
                 Ast.Stmt.If(allBranches, span) :> Ast.Stmt)
 
     // else あり |? はまず exprStmt (ifExpr) として試みる。else なしの場合のみ ifStmt にフォールバック。
