@@ -1,5 +1,5 @@
 package:
-  name: game_hello
+  name: flappybird
   version: "0.1.0"
   
 dependencies:
