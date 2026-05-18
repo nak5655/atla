@@ -37,7 +37,11 @@ module ParserTests =
 
     [<Fact>]
     let ``fileModule parses if expression`` () =
-        let program = "fn main (): Int = if | 1 == 1 => 1 | else => 0"
+        let program = """
+fn main (): Int =
+    |? 1 == 1 => 1
+    |? else => 0
+"""
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -46,24 +50,13 @@ module ParserTests =
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses inline multi-branch if without error nodes`` () =
-        // インライン形式（`if  | cond => body` が同一行に `if` と `|` を含む）で
-        // ブランチが 3 つ以上あるとき "unexpected input" エラーが発生しないリグレッションテスト。
-        //
-        // 構造的原因: block コンビネーターが「行の最左トークン（`if`）」の列をオフサイド基準に
-        // していたため、ifThen/ifElse のボディスコープが `|` の列まで及ばず、後続ブランチの
-        // `|` が BlockInput から不可視にならなかった。
-        // 修正: blockAtOpener は opener トークン自身の列をオフサイド基準とする。これにより
-        // ifThen ボディ内で後続行の同列 `|` が隠れ、infixOp が届かなくなる。
-        //
-        // 安全網: `|` は二項演算子ではないため infixOp からも除外している
-        // （全ブランチが同一行に並ぶ場合は BlockInput が同行を隠せないため必要）。
+    let ``fileModule parses multi-branch if without error nodes`` () =
         let program = """
 fn applyOp (op: String): Int =
-    if  | op == "+" => 1
-        | op == "-" => 2
-        | op == "*" => 3
-        | else => 0
+    |? op == "+" => 1
+    |? op == "-" => 2
+    |? op == "*" => 3
+    |? else => 0
 """
 
         let rec hasErrorNode (expr: Ast.Expr) =
@@ -164,11 +157,10 @@ fn main: () =
         let program = """
 fn fizzbuzz (n: Int): () =
     for i in n
-        if
-            | i % 15 == 0 => "FizzBuzz"
-            | i % 5 == 0 => "Buzz"
-            | i % 3 == 0 => "Fizz"
-            | else => i
+        |? i % 15 == 0 => "FizzBuzz"
+        |? i % 5 == 0 => "Buzz"
+        |? i % 3 == 0 => "Fizz"
+        |? else => i
 
 fn main: () =
     let n = 10
@@ -1341,7 +1333,7 @@ impl Opt T
     let ``fileModule parses if statement without else`` () =
         let program = """
 fn main (): Int =
-    if True =>
+    |? True =>
         return 1
     2
 """
@@ -1366,8 +1358,8 @@ fn main (): Int =
                             | _ -> None)
                     match ifStmt with
                     | Some stmt ->
-                        Assert.Equal(1, stmt.thenBody.Length)
-                        Assert.Equal(0, stmt.elseBody.Length)
+                        Assert.Equal(1, stmt.branches.Length)
+                        Assert.True(stmt.branches.[0] :? Ast.IfBranch.Then, "branch should be Then")
                     | None ->
                         Assert.True(false, "if statement was not parsed into Ast.Stmt.If")
                 | _ ->
@@ -1379,11 +1371,12 @@ fn main (): Int =
 
     [<Fact>]
     let ``fileModule parses if-else statement`` () =
+        // else ありの |? ブロックは exprStmt (ifExpr) として解析される
         let program = """
 fn main (): Int =
-    if True =>
+    |? True =>
         return 1
-    else =>
+    |? else =>
         return 0
     2
 """
@@ -1400,18 +1393,22 @@ fn main (): Int =
             | Some fn ->
                 match fn.body with
                 | :? Ast.Expr.Block as blockExpr ->
-                    let ifStmt =
+                    let ifExpr =
                         blockExpr.stmts
                         |> List.tryPick (fun stmt ->
                             match stmt with
-                            | :? Ast.Stmt.If as ifStmt -> Some ifStmt
+                            | :? Ast.Stmt.ExprStmt as es ->
+                                match es.expr with
+                                | :? Ast.Expr.If as ifExpr -> Some ifExpr
+                                | _ -> None
                             | _ -> None)
-                    match ifStmt with
-                    | Some stmt ->
-                        Assert.Equal(1, stmt.thenBody.Length)
-                        Assert.Equal(1, stmt.elseBody.Length)
+                    match ifExpr with
+                    | Some ifExpr ->
+                        Assert.Equal(2, ifExpr.branches.Length)
+                        Assert.True(ifExpr.branches.[0] :? Ast.IfBranch.Then, "first branch should be Then")
+                        Assert.True(ifExpr.branches.[1] :? Ast.IfBranch.Else, "second branch should be Else")
                     | None ->
-                        Assert.True(false, "if-else statement was not parsed into Ast.Stmt.If")
+                        Assert.True(false, "if-else expression was not found in function body")
                 | _ ->
                     Assert.True(false, "function body was not parsed into a block expression")
             | None ->

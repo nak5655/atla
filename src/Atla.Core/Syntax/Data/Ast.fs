@@ -292,10 +292,8 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type If(cond: Expr, thenBody: Stmt list, elseBody: Stmt list, span: Span) =
-            member this.cond = cond
-            member this.thenBody = thenBody
-            member this.elseBody = elseBody
+        type If(branches: IfBranch list, span: Span) =
+            member this.branches = branches
             member this.span = span
             interface Stmt with
                 member this.span = span

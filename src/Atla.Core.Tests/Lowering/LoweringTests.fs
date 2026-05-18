@@ -122,11 +122,12 @@ import System'Console
 import System'Linq'Enumerable
 fn fizzbuzz (n: Int): () =
     for i in 1 n Enumerable'Range.
-        (if
-            | i % 15 == 0 => "FizzBuzz"
-            | i % 5 == 0 => "Buzz"
-            | i % 3 == 0 => "Fizz"
-            | else => i'ToString.) Console'WriteLine.
+        let s =
+            |? i % 15 == 0 => "FizzBuzz"
+            |? i % 5 == 0 => "Buzz"
+            |? i % 3 == 0 => "Fizz"
+            |? else => i'ToString.
+        s Console'WriteLine.
 
 
 fn main: () = do
@@ -174,11 +175,11 @@ fn main: () = do
 import System'Int32
 import System'Console
 
-fn fibonacci (n: Int): Int = if 
-    | n == 0 => 0
-    | n == 1 => 1
-    | n == 2 => 1
-    | else => (n - 2) fibonacci. + (n - 1) fibonacci.
+fn fibonacci (n: Int): Int =
+    |? n == 0 => 0
+    |? n == 1 => 1
+    |? n == 2 => 1
+    |? else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
 fn main: () = do
     let n = Console'ReadLine. Int32'Parse.
