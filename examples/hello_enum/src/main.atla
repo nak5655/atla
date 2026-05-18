@@ -9,10 +9,10 @@ enum Color
 impl Color
     fn red self: Int =
         |@ self
-            |: Color'Black => 0
-            |: Color'White => 255
-            |: Color'Rgb { r, .. } => r
-            |: Color'Hsv { h, s, v } => (h * s * v) / 10000
+        |: Color'Black => 0
+        |: Color'White => 255
+        |: Color'Rgb { r, .. } => r
+        |: Color'Hsv { h, s, v } => (h * s * v) / 10000
 
 fn main: () =
     let color = Color'Rgb { r = 255, g = 0, b = 0 }
