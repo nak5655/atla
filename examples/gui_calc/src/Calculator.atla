@@ -94,15 +94,14 @@ impl CalculatorWindow as Window
 
     fn onDigit self (digit: Int): () -> () =
         fn () ->
-            if  | self'_clearOnNextDigit =>
-                    self'_display'Text = "0"
-                    self'_clearOnNextDigit = False
-                | else => ()
+            |? self'_clearOnNextDigit =>
+                self'_display'Text = "0"
+                self'_clearOnNextDigit = False
 
-            if  | self'_display'Text == "0" && digit'ToString. != "." =>
-                    self'_display'Text = digit'ToString.
-                | else =>
-                    self'_display'Text += digit'ToString.
+            |? self'_display'Text == "0" && digit'ToString. != "." =>
+                self'_display'Text = digit'ToString.
+            |? else =>
+                self'_display'Text += digit'ToString.
 
     fn addOperatorButton self (operator: String) (row: Int) (column: Int): () =
         operator row column (operator self'onOperator.) self'addButton.
@@ -111,32 +110,33 @@ impl CalculatorWindow as Window
         fn () ->
             let value = self'_display'Text Float'Parse.
 
-            if  | self'_pendingOperator != "" =>
-                    self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
-                    self'_display'Text = self'_currentValue'ToString.
-                | else =>
-                    self'_currentValue = value
+            |? self'_pendingOperator != "" =>
+                self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
+                self'_display'Text = self'_currentValue'ToString.
+            |? else =>
+                self'_currentValue = value
             
             self'_pendingOperator = operator
             self'_clearOnNextDigit = True
 
     fn applyOperator self (left: Float) (right: Float) (operator: String): Float =
-        if  | operator == "+" => left + right
-            | operator == "-" => left - right
-            | operator == "*" => left * right
-            | operator == "/" => left / right
-            | else => right
+        |? operator == "+" => left + right
+        |? operator == "-" => left - right
+        |? operator == "*" => left * right
+        |? operator == "/" => left / right
+        |? else => right
 
     fn onEquals self: () -> () =
         fn () ->
             let value = self'_display'Text Float'Parse.
 
-            if  | self'_pendingOperator == "" => ()
-                | else =>
-                    self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
-                    self'_display'Text = self'_currentValue'ToString.
-                    self'_pendingOperator = ""
-                    self'_clearOnNextDigit = True
+            |? self'_pendingOperator == "" =>
+                ()
+            |? else =>
+                self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
+                self'_display'Text = self'_currentValue'ToString.
+                self'_pendingOperator = ""
+                self'_clearOnNextDigit = True
 
     fn onClear self: () -> () =
         fn () ->
@@ -147,13 +147,14 @@ impl CalculatorWindow as Window
 
     fn onBackspace self: () -> () =
         fn () ->
-            if  | self'_clearOnNextDigit => ()
-                | else =>
-                    let text = self'_display'Text
-                    if  | text'Length == 1 =>
-                            self'_display'Text = "0"
-                        | else =>
-                            self'_display'Text = 0 (text'Length - 1) text'Substring.
+            |? self'_clearOnNextDigit =>
+                ()
+            |? else =>
+                let text = self'_display'Text
+                |? text'Length == 1 =>
+                    self'_display'Text = "0"
+                |? else =>
+                    self'_display'Text = 0 (text'Length - 1) text'Substring.
 
     fn onToggleSign self: () -> () =
         fn () ->

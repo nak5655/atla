@@ -2124,10 +2124,26 @@ module ExprAnalyze =
                 | None ->
                     Hir.Stmt.ErrorStmt(sprintf "Type '%s' does not define MoveNext/Current or GetEnumerator()" iterableSystemType.FullName, forStmt.span)
         | :? Ast.Stmt.If as ifStmt ->
-            let cond = analyzeExpr nameEnv typeEnv ifStmt.cond TypeId.Bool
-            let thenBody = ifStmt.thenBody |> List.map (analyzeStmt nameEnv typeEnv)
-            let elseBody = ifStmt.elseBody |> List.map (analyzeStmt nameEnv typeEnv)
-            Hir.Stmt.If(cond, thenBody, elseBody, ifStmt.span)
+            let rec analyzeIfStmtBranches (branches: Ast.IfBranch list) : Hir.Stmt list =
+                match branches with
+                | [] -> []
+                | branch :: rest ->
+                    match branch with
+                    | :? Ast.IfBranch.Then as thenBranch ->
+                        let cond = analyzeExpr nameEnv typeEnv thenBranch.cond TypeId.Bool
+                        let thenStmts =
+                            match thenBranch.body with
+                            | :? Ast.Expr.Block as block -> block.stmts |> List.map (analyzeStmt nameEnv typeEnv)
+                            | body -> [analyzeStmt nameEnv typeEnv (Ast.Stmt.ExprStmt(body, body.span) :> Ast.Stmt)]
+                        [Hir.Stmt.If(cond, thenStmts, analyzeIfStmtBranches rest, thenBranch.span)]
+                    | :? Ast.IfBranch.Else as elseBranch ->
+                        match elseBranch.body with
+                        | :? Ast.Expr.Block as block -> block.stmts |> List.map (analyzeStmt nameEnv typeEnv)
+                        | body -> [analyzeStmt nameEnv typeEnv (Ast.Stmt.ExprStmt(body, body.span) :> Ast.Stmt)]
+                    | _ -> []
+            match analyzeIfStmtBranches ifStmt.branches with
+            | [stmt] -> stmt
+            | stmts -> Hir.Stmt.ErrorStmt(sprintf "Unexpected if stmt branch count: %d" stmts.Length, ifStmt.span)
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
     let analyzeMethodCore (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) : Hir.Method =
