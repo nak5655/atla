@@ -40,7 +40,7 @@ module ParserTests =
         let program = """
 fn main (): Int =
     |? 1 == 1 => 1
-    |? else => 0
+    |: else => 0
 """
 
         match parseModule program with
@@ -54,9 +54,9 @@ fn main (): Int =
         let program = """
 fn applyOp (op: String): Int =
     |? op == "+" => 1
-    |? op == "-" => 2
-    |? op == "*" => 3
-    |? else => 0
+    |: op == "-" => 2
+    |: op == "*" => 3
+    |: else => 0
 """
 
         let rec hasErrorNode (expr: Ast.Expr) =
@@ -158,9 +158,9 @@ fn main: () =
 fn fizzbuzz (n: Int): () =
     for i in n
         |? i % 15 == 0 => "FizzBuzz"
-        |? i % 5 == 0 => "Buzz"
-        |? i % 3 == 0 => "Fizz"
-        |? else => i
+        |: i % 5 == 0 => "Buzz"
+        |: i % 3 == 0 => "Fizz"
+        |: else => i
 
 fn main: () =
     let n = 10
@@ -1376,7 +1376,7 @@ fn main (): Int =
 fn main (): Int =
     |? True =>
         return 1
-    |? else =>
+    |: else =>
         return 0
     2
 """
