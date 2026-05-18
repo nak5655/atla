@@ -156,9 +156,9 @@ enum Color
     | Rgb { r: Int, g: Int, b: Int }
 
 fn red (color: Color): Int =
-    match color
-        | Color'Black -> 0
-        | Color'Rgb { r, .. } -> r
+    |@ color
+        |: Color'Black => 0
+        |: Color'Rgb { r, .. } => r
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -230,8 +230,8 @@ enum Color
     | White
 
 fn main (color: Color): Int =
-    match color
-        | Color'Black -> 0
+    |@ color
+        |: Color'Black => 0
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -260,9 +260,9 @@ enum Color
     | Black
 
 fn main (color: Color): Int =
-    match color
-        | Color'Black -> 0
-        | Color'Black -> 1
+    |@ color
+        |: Color'Black => 0
+        |: Color'Black => 1
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -3388,14 +3388,14 @@ enum Opt T
 
 impl Opt T
     fn isSome self: Bool =
-        match self
-            | Opt'None -> False
-            | Opt'Some { value } -> True
+        |@ self
+            |: Opt'None => False
+            |: Opt'Some { value } => True
 
     fn isNone self: Bool =
-        match self
-            | Opt'None -> True
-            | Opt'Some { value } -> False
+        |@ self
+            |: Opt'None => True
+            |: Opt'Some { value } => False
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with

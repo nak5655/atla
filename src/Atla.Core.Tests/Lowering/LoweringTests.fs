@@ -1082,11 +1082,11 @@ enum Color
 
 impl Color
     fn red self: Int =
-        match self
-            | Color'Black -> 0
-            | Color'White -> 255
-            | Color'Rgb { r, .. } -> r
-            | Color'Hsv { h, s, v } -> (h * s * v) / 10000
+        |@ self
+            |: Color'Black => 0
+            |: Color'White => 255
+            |: Color'Rgb { r, .. } => r
+            |: Color'Hsv { h, s, v } => (h * s * v) / 10000
 
 fn main: () =
     let color = Color'Rgb { r = 255, g = 0, b = 0 }
@@ -1143,9 +1143,9 @@ enum Color
 
 impl Color
     fn red self: Int =
-        match self
-            | Color'Black -> 0
-            | Color'Rgb { r, .. } -> r
+        |@ self
+            |: Color'Black => 0
+            |: Color'Rgb { r, .. } => r
 """
 
         let result =
@@ -1204,9 +1204,9 @@ impl Box
         Box { _value = Opt'None }
 
     fn get self: Int =
-        match self'_value
-            | Opt'None -> -1
-            | Opt'Some { value } -> value
+        |@ self'_value
+            |: Opt'None => -1
+            |: Opt'Some { value } => value
 
 fn main: () = do
     let b = Box'new.
@@ -1259,9 +1259,9 @@ impl Box
         Box { _value = n Opt'Some. }
 
     fn get self: Int =
-        match self'_value
-            | Opt'None -> -1
-            | Opt'Some { value } -> value
+        |@ self'_value
+            |: Opt'None => -1
+            |: Opt'Some { value } => value
 
 fn main: () = do
     let b = 42 Box'new.
@@ -1310,9 +1310,9 @@ enum Opt T
 
 impl Opt T
     fn count self: Int =
-        match self
-            | Opt'None -> 0
-            | Opt'Some _ -> 1
+        |@ self
+            |: Opt'None => 0
+            |: Opt'Some _ => 1
 
 fn main: () = ()
 """
@@ -1339,9 +1339,9 @@ enum Opt T
 
 impl Opt T
     fn hasPayload self: Int =
-        match self
-            | Opt'None -> 0
-            | Opt'Some { value } -> 1
+        |@ self
+            |: Opt'None => 0
+            |: Opt'Some { value } => 1
 
 fn main: () = ()
 """

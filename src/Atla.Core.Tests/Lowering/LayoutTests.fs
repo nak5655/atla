@@ -142,9 +142,9 @@ enum Color
     | Rgb { r: Int, g: Int, b: Int }
 
 fn red (color: Color): Int =
-    match color
-        | Color'Black -> 0
-        | Color'Rgb { r, .. } -> r
+    |@ color
+        |: Color'Black => 0
+        |: Color'Rgb { r, .. } => r
 """
 
         let input: Input<SourceChar> = StringInput program

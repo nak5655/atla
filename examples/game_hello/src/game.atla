@@ -40,11 +40,11 @@ impl FlappyGame as Game
         self'GraphicsDevice'Presenter'DepthStencilBuffer DepthStencilClearOptions'DepthBuffer self'GraphicsContext'CommandList'Clear.
         self'GraphicsDevice'Presenter'DepthStencilBuffer self'GraphicsDevice'Presenter'BackBuffer self'GraphicsContext'CommandList'SetRenderTargetAndViewport.
 
-        match self'_spriteBatch
-            | Opt'Some spriteBatch ->
+        |@ self'_spriteBatch
+            |: Opt'Some spriteBatch =>
                 self'GraphicsContext spriteBatch'Begin.
 
 
 
                 spriteBatch'End.
-            | Opt'None -> ()
+            |: Opt'None => ()

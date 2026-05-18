@@ -34,7 +34,7 @@ module Lexer =
         // declarations
         "let"; "var"; "fn"; "mod"; "def"; "use"; "import"; "public"; "data"; "enum"; "self"; "role"; "impl"; "as";
         // control flows
-        "for"; "by"; "in"; "if"; "else"; "match"; "do"; "while";
+        "for"; "by"; "in"; "if"; "else"; "do"; "while";
         // block
         "return"; "continue"; "break";
         // boolean
@@ -43,7 +43,7 @@ module Lexer =
         "->"; "=>";
     ]
     let delims = ['''; '"'; '`'; ','; ';'; ':'; '('; ')'; '['; ']'; '{'; '}']
-    let opSigns = ['+'; '-'; '*'; '/'; '%'; '<'; '>'; '='; '!'; '^'; '&'; '|'; '?'; '.']
+    let opSigns = ['+'; '-'; '*'; '/'; '%'; '<'; '>'; '='; '!'; '^'; '&'; '|'; '?'; '.'; '@']
     
     let ws = AcceptIf (fun c -> System.Char.IsWhiteSpace(c.char))
     /// Parse a single-line comment that starts with '#' and ends at newline or EOF.
