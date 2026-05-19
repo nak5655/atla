@@ -401,8 +401,8 @@ import opt'Opt
 
 fn unwrapOr (o: Opt Int): Int =
     |@ o
-        |: Opt'None => -1
-        |: Opt'Some { value } => value
+    |: Opt'None => -1
+    |: Opt'Some { value } => value
 
 fn main: () = do
     let a = Opt'Some { value = 99 }
