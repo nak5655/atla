@@ -118,7 +118,8 @@ module ServerLifecycleTests =
                 Server(
                     (fun _ _ -> ()),
                     buildProjectFn = buildProject,
-                    compileFn = compile)
+                    compileFn = compile,
+                    resolveImplicitStdFn = fun () -> None)
 
             server.IsAvailablePublishDiagnostics <- true
 
@@ -335,7 +336,8 @@ module ServerLifecycleTests =
                         |> Option.defaultValue ""
                     published.Add(uri, diagnostics.Length, source)),
                 buildProjectFn = buildProject,
-                compileFn = compile
+                compileFn = compile,
+                resolveImplicitStdFn = fun () -> None
             )
 
         server.IsAvailablePublishDiagnostics <- true

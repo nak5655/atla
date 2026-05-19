@@ -385,6 +385,7 @@ type Server
         ?assemblyLocationResolver: unit -> string,
         ?buildProjectFn: BuildRequest -> BuildResult,
         ?compileFn: Compiler.CompileModulesRequest -> Compiler.CompileResult,
+        ?resolveImplicitStdFn: unit -> Compiler.ResolvedDependency option,
         ?debounceDelayMs: int
     ) =
 
@@ -411,6 +412,7 @@ type Server
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
     let buildProject = defaultArg buildProjectFn BuildSystem.buildProject
     let compile = defaultArg compileFn Compiler.compileModules
+    let resolveImplicitStd = defaultArg resolveImplicitStdFn InstallSystem.tryResolveImplicitStdDependency
     let debounceMs = defaultArg debounceDelayMs 300
 
     let collectModuleSourcesForProject (projectRoot: string) (normalizedUri: string) (text: string) : Compiler.ModuleSource list =
@@ -492,10 +494,20 @@ type Server
             | Some projectRoot ->
                 let buildResult = buildProject { projectRoot = projectRoot }
                 if buildResult.succeeded then
-                    buildResult.plan
-                    |> Option.map (fun plan -> plan.dependencies)
-                    |> Option.defaultValue []
-                    |> Ok
+                    let deps =
+                        buildResult.plan
+                        |> Option.map (fun plan -> plan.dependencies)
+                        |> Option.defaultValue []
+                    let planName =
+                        buildResult.plan |> Option.map (fun plan -> plan.projectName) |> Option.defaultValue ""
+                    let depsWithStd =
+                        if planName = "Std" then deps
+                        elif deps |> List.exists (fun d -> d.name = "Std") then deps
+                        else
+                            match resolveImplicitStd () with
+                            | None -> deps
+                            | Some stdDep -> deps @ [ stdDep ]
+                    Ok depsWithStd
                 else
                     Result.Error buildResult.diagnostics
 
