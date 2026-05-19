@@ -1643,11 +1643,27 @@ module ExprAnalyze =
                             | :? Ast.MatchArm.Arm as matchArm ->
                                 match matchArm.pattern with
                                 | :? Ast.Pattern.Enum as enumPattern ->
-                                    let scrutineeTypeName =
-                                        nameEnv.resolveSym scrutineeTypeDef.typeSid
-                                        |> Option.map (fun symInfo -> symInfo.name)
-                                        |> Option.defaultValue enumPattern.typeName
-                                    if enumPattern.typeName <> scrutineeTypeName then
+                                    // パターン型名とスクルティニー型を SymbolId で比較する。
+                                    // atlalib からインポートした型は symInfo.name が "module.Type" の
+                                    // 形式（修飾名）になるため、名前文字列での比較では一致しない。
+                                    let patternTypeSidOpt =
+                                        nameEnv.dataTypeDefs
+                                        |> Map.tryFind enumPattern.typeName
+                                        |> Option.map (fun def -> def.typeSid)
+                                    let typesMismatch =
+                                        match patternTypeSidOpt with
+                                        | Some patternTypeSid -> patternTypeSid.id <> scrutineeTypeDef.typeSid.id
+                                        | None ->
+                                            let scrutineeTypeName =
+                                                nameEnv.resolveSym scrutineeTypeDef.typeSid
+                                                |> Option.map (fun symInfo -> symInfo.name)
+                                                |> Option.defaultValue enumPattern.typeName
+                                            enumPattern.typeName <> scrutineeTypeName
+                                    if typesMismatch then
+                                        let scrutineeTypeName =
+                                            nameEnv.resolveSym scrutineeTypeDef.typeSid
+                                            |> Option.map (fun symInfo -> symInfo.name)
+                                            |> Option.defaultValue enumPattern.typeName
                                         Result.Error(Hir.Expr.ExprError(sprintf "Pattern type '%s' does not match enum type '%s'" enumPattern.typeName scrutineeTypeName, tid, matchArm.span))
                                     else
                                         match enumDef.cases |> List.tryFind (fun caseDef -> caseDef.name = enumPattern.caseName) with

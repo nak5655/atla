@@ -346,6 +346,95 @@ fn main: () = do
         Assert.Equal("alice", stdout)
 
     [<Fact>]
+    let ``compileModules should import generic enum from atlalib and pattern match on it`` () =
+        // ジェネリック enum を atlalib にコンパイルし、import してインスタンス化した変数を
+        // match 式でパターンマッチできることを確認する結合テスト。
+        let libCompileOutDir = createTempProjectDir ()
+        let libOutDir = createTempProjectDir ()
+        let appOutDir = createTempProjectDir ()
+
+        // ライブラリ: ジェネリック enum Opt T を定義する。
+        let librarySource = """
+enum Opt T
+    | None
+    | Some { value: T }
+"""
+
+        let libraryResult =
+            Compiler.compileModules {
+                asmName = "OptLibAsm"
+                modules = [ { Compiler.ModuleSource.moduleName = "opt"; source = librarySource.Trim() } ]
+                entryModuleName = "opt"
+                outDir = libCompileOutDir
+                dependencies = []
+            }
+
+        Assert.True(libraryResult.succeeded, String.concat Environment.NewLine (libraryResult.diagnostics |> List.map (fun d -> d.message)))
+
+        let atlaLibPath =
+            match BuildSystem.createAtlaLib "optlib" "0.1.0" "OptLibAsm" libCompileOutDir libOutDir [] libraryResult with
+            | Ok path -> path
+            | Result.Error diagnostics ->
+                Assert.Fail(String.concat Environment.NewLine (diagnostics |> List.map (fun d -> d.message)))
+                ""
+
+        let dependency =
+            match AtlaLib.resolveRuntimeAssets atlaLibPath with
+            | Ok runtimeAssets ->
+                let resolvedDependency: Compiler.ResolvedDependency =
+                    { name = runtimeAssets.packageName
+                      version = runtimeAssets.packageVersion
+                      source = atlaLibPath
+                      compileReferencePaths = []
+                      runtimeLoadPaths = runtimeAssets.runtimeLoadPaths
+                      nativeRuntimePaths = runtimeAssets.nativeRuntimePaths }
+                resolvedDependency
+            | Result.Error diagnostics ->
+                Assert.Fail(String.concat Environment.NewLine (diagnostics |> List.map (fun d -> d.message)))
+                Unchecked.defaultof<Compiler.ResolvedDependency>
+
+        // アプリ: import した Opt T をインスタンス化して match 式でパターンマッチする。
+        // Some { value } ブランチは値をそのまま返し、None ブランチは -1 を返す。
+        let appSource = """
+import System'Console
+import opt'Opt
+
+fn unwrapOr (o: Opt Int): Int =
+    |@ o
+    |: Opt'None => -1
+    |: Opt'Some { value } => value
+
+fn main: () = do
+    let a = Opt'Some { value = 99 }
+    let b = Opt'None
+    let ra = a unwrapOr.
+    let rb = b unwrapOr.
+    ra Console'WriteLine.
+    rb Console'WriteLine.
+"""
+
+        let appResult =
+            Compiler.compileModules {
+                asmName = "OptApp"
+                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = appSource.Trim() } ]
+                entryModuleName = "main"
+                outDir = appOutDir
+                dependencies = [ dependency ]
+            }
+
+        Assert.True(appResult.succeeded, String.concat Environment.NewLine (appResult.diagnostics |> List.map (fun d -> d.message)))
+
+        match BuildSystem.copyDependencies [ dependency ] appOutDir with
+        | Result.Error diagnostics ->
+            Assert.Fail(String.concat Environment.NewLine (diagnostics |> List.map (fun d -> d.message)))
+        | Ok _ -> ()
+
+        let exitCode, stdout, stderr = runDll (Path.Join(appOutDir, "OptApp.dll"))
+        Assert.Equal(0, exitCode)
+        Assert.True(String.IsNullOrWhiteSpace(stderr), stderr)
+        Assert.Equal("99\n-1", stdout.Trim().Replace("\r\n", "\n"))
+
+    [<Fact>]
     let ``buildProject should fail when atla.yaml is missing`` () =
         let projectRoot = createTempProjectDir ()
 
