@@ -1,5 +1,6 @@
 import Stride'Core'Mathematics'Color
 import Stride'Core'Mathematics'Vector2
+import Stride'Core'Mathematics'RectangleF
 import Stride'Engine'Game
 import Stride'Games'GameTime
 import Stride'Graphics'DepthStencilClearOptions
@@ -43,6 +44,11 @@ impl FlappyGame as Game
         |@ self'_spriteBatch
         |: Opt'Some spriteBatch =>
             self'GraphicsContext spriteBatch'Begin.
+
+            |@ self'_whiteTexture
+            |: Opt'Some whiteTexture =>
+                whiteTexture (self'_birdPos'X self'_birdPos'Y self'_birdSize self'_birdSize RectangleF.) Color'Yellow spriteBatch'Draw.
+            |: Opt'None => ()
 
             spriteBatch'End.
         |: Opt'None => ()
