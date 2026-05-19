@@ -55,8 +55,8 @@ module Analyze =
                     |> Option.map (fun exports -> alias, exports))
                 |> Map.ofList
 
-            // Std.Prelude は組み込み標準ライブラリの識別名。Compile.fs の同名定数と一致させること。
-            let stdPreludeModuleName = "Std.Prelude"
+            // Std.lib は標準ライブラリのエントリモジュール識別名。Compile.fs の同名定数と一致させること。
+            let stdPreludeModuleName = "Std.lib"
             let bootstrapNameEnv = NameEnv(symbolTable, resolvedModule.moduleScope, Map.empty, moduleExportView)
             // typeMetaFactory は複数モジュールをまたいで共有されるため、
             // 各モジュールで新しいファクトリを生成すると TypeSubst 上のメタ ID が衝突する。

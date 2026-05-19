@@ -106,6 +106,7 @@ module Console =
             Console.Error.WriteLine($"{diagnosticPrefix diagnostic.severity}: {diagnostic.toDisplayText()}"))
 
     /// BuildSystem.buildProject を実行して BuildPlan を抽出する。
+    /// Std が未宣言の場合は ~/ .atla/packages/Std から暗黙依存を追加する。
     /// 成功時は BuildPreparation を返し、失敗時は diagnostics 出力後に終了コード 1 を返す。
     let private prepareBuild (normalizedProjectRoot: string) : Result<BuildPreparation, int> =
         let buildResult = BuildSystem.buildProject { projectRoot = normalizedProjectRoot }
@@ -119,7 +120,16 @@ module Console =
                 Console.Error.WriteLine("build plan was not produced")
                 Error 1
             | Some plan ->
-                Ok { plan = plan }
+                let planWithStd =
+                    if plan.projectName = "Std" then
+                        plan
+                    elif plan.dependencies |> List.exists (fun d -> d.name = "Std") then
+                        plan
+                    else
+                        match InstallSystem.tryResolveImplicitStdDependency () with
+                        | None -> plan
+                        | Some stdDep -> { plan with dependencies = plan.dependencies @ [ stdDep ] }
+                Ok { plan = planWithStd }
 
     /// Resolve the compile entry module name from package.type and discovered source modules.
     /// - exe: `main` is required
@@ -139,7 +149,20 @@ module Console =
             | None ->
                 let candidatePath = Path.Join(projectRoot, "src", "main.atla")
                 Error $"project entrypoint not found: {candidatePath}"
-        | BuildPackageType.Lib
+        | BuildPackageType.Lib ->
+            let findLibModule () =
+                modules |> List.tryFind (fun modul -> modul.moduleName = "lib")
+            match findLibModule () with
+            | Some _ -> Ok "lib"
+            | None ->
+                match findMainModule () with
+                | Some _ -> Ok "main"
+                | None ->
+                    match modules with
+                    | firstModule :: _ -> Ok firstModule.moduleName
+                    | [] ->
+                        let srcRoot = Path.Join(projectRoot, "src")
+                        Error $"no source modules were found: {srcRoot}"
         | BuildPackageType.Dll ->
             match findMainModule () with
             | Some _ -> Ok "main"

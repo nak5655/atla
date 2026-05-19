@@ -597,6 +597,7 @@ module BuildSystem =
 
     /// モジュール別 HIR + AST から public.api.json ノードを構築する。
     let private createPublicApiNode
+        (packageName: string)
         (hirModules: Hir.Module list)
         (moduleAsts: Map<string, Ast.Module>)
         (symbolTable: SymbolTable)
@@ -776,6 +777,19 @@ module BuildSystem =
             exportsNode.Add("values", valuesNode)
             exportsNode.Add("types", typesNode)
             moduleNode.Add("exports", exportsNode)
+
+            // public import 宣言による再エクスポートを記録する（非修飾モジュール名で記録）。
+            let reexportsNode = JsonArray()
+            moduleAst.decls
+            |> List.iter (fun decl ->
+                match decl with
+                | :? Ast.Decl.Import as importDecl when importDecl.isPublic ->
+                    let importedModuleName = String.concat "." importDecl.path
+                    reexportsNode.Add(JsonValue.Create(importedModuleName))
+                | _ -> ())
+            if reexportsNode.Count > 0 then
+                moduleNode.Add("reexports", reexportsNode)
+
             modulesNode.Add(moduleNode))
 
         let rootNode = JsonObject()
@@ -897,7 +911,7 @@ module BuildSystem =
                     | Result.Error diagnostics -> Result.Error diagnostics
                     | Ok lockNode ->
                         let jsonOptions = JsonSerializerOptions(WriteIndented = true)
-                        let publicApiNode = createPublicApiNode hirModules moduleAsts symbolTable
+                        let publicApiNode = createPublicApiNode projectName hirModules moduleAsts symbolTable
 
                         let entryBytes = ResizeArray<string * byte[]>()
                         entryBytes.Add("assemblies/" + $"{asmName}.dll", File.ReadAllBytes(assemblyPath))

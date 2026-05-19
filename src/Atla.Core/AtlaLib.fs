@@ -393,6 +393,17 @@ module AtlaLib =
                 | Result.Error _ -> None)
 
         let folder (moduleExportsAcc, typeDefsAcc, moduleNamesAcc, typeNamesAcc, diagnosticsAcc) (_path, archive: LoadedArchive) =
+            // パッケージ名を atlalib.json から取得する（修飾モジュール名生成に使用）。
+            let packageName =
+                let mutable packageNode = Unchecked.defaultof<JsonElement>
+                let mutable nameNode = Unchecked.defaultof<JsonElement>
+                if archive.metadata.RootElement.TryGetProperty("package", &packageNode)
+                   && packageNode.TryGetProperty("name", &nameNode)
+                   && nameNode.ValueKind = JsonValueKind.String then
+                    nameNode.GetString()
+                else
+                    ""
+
             let root = archive.publicApi.RootElement
             let schemaDiagnostics =
                 match tryGetRequiredProperty "public.api" "schemaVersion" root with
@@ -751,7 +762,69 @@ module AtlaLib =
                         parsedModules
                         |> List.fold (fun acc (_, _, typeDefs, _) -> typeDefs |> Map.keys |> Set.ofSeq |> Set.union acc) typeNamesAcc
 
-                    parsedModuleExports, parsedTypeDefs, parsedModuleNames, parsedTypeNames, diagnosticsAcc @ parsedDiagnostics
+                    // public import による再エクスポート（"reexports" 配列）を処理する。
+                    // 参照先モジュールのエクスポートと型定義をこのモジュールにマージする（SID は共有）。
+                    let moduleExportsWithReexports, typeDefsWithReexports, typeNamesWithReexports =
+                        let reexportFolder (exAcc, tdAcc, tnAcc) (moduleNode: JsonElement) =
+                            let moduleName = moduleNode.GetProperty("name").GetString()
+                            let mutable reexportsNode = Unchecked.defaultof<JsonElement>
+                            if moduleNode.TryGetProperty("reexports", &reexportsNode) && reexportsNode.ValueKind = JsonValueKind.Array then
+                                reexportsNode.EnumerateArray()
+                                |> Seq.fold (fun (exAcc2: Map<string, Map<string, ModuleExport>>, tdAcc2: Map<string, DataTypeDef>, tnAcc2: Set<string>) (refNode: JsonElement) ->
+                                    let referencedModuleName = refNode.GetString()
+                                    let additionalExports =
+                                        match exAcc2.TryFind referencedModuleName with
+                                        | None -> Map.empty
+                                        | Some refExports -> refExports
+                                    let exAcc3 =
+                                        match exAcc2.TryFind moduleName with
+                                        | None -> exAcc2
+                                        | Some existing ->
+                                            let merged = Map.fold (fun acc k v -> Map.add k v acc) existing additionalExports
+                                            Map.add moduleName merged exAcc2
+                                    let reexportedTypeDefs =
+                                        tdAcc2
+                                        |> Map.toList
+                                        |> List.filter (fun (fullName, _) -> fullName.StartsWith(referencedModuleName + "."))
+                                        |> List.map (fun (origFullName, typeDef) ->
+                                            let typeName = origFullName.Substring(referencedModuleName.Length + 1)
+                                            $"{moduleName}.{typeName}", typeDef)
+                                    let tdAcc3 = List.fold (fun acc (k, v) -> Map.add k v acc) tdAcc2 reexportedTypeDefs
+                                    let tnAcc3 = List.fold (fun acc (k, _) -> Set.add k acc) tnAcc2 reexportedTypeDefs
+                                    exAcc3, tdAcc3, tnAcc3)
+                                    (exAcc, tdAcc, tnAcc)
+                            else
+                                exAcc, tdAcc, tnAcc
+                        List.fold reexportFolder (parsedModuleExports, parsedTypeDefs, parsedTypeNames) moduleArray
+
+                    // パッケージ名で修飾したモジュール名エントリを追加する（例: "Std.lib" を "lib" の別名として登録）。
+                    // これにより、ユーザーは "import lib'Type" でインポートでき、
+                    // Prelude ルックアップは "Std.lib" で一意に検索できる。
+                    let finalExports, finalTypeDefs, finalModuleNames, finalTypeNames =
+                        if String.IsNullOrEmpty packageName then
+                            moduleExportsWithReexports, typeDefsWithReexports, parsedModuleNames, typeNamesWithReexports
+                        else
+                            let qualifyFolder (exAcc: Map<string, Map<string, ModuleExport>>, tdAcc: Map<string, DataTypeDef>, mnAcc: Set<string>, tnAcc: Set<string>) (moduleName: string, _: Map<string, ModuleExport>, _: Map<string, DataTypeDef>, _: Diagnostic list) =
+                                let qualifiedModuleName = $"{packageName}.{moduleName}"
+                                let qualifiedExports =
+                                    match exAcc.TryFind moduleName with
+                                    | None -> Map.empty
+                                    | Some exports -> exports
+                                let exAcc2 = Map.add qualifiedModuleName qualifiedExports exAcc
+                                let qualifiedTypeDefs =
+                                    tdAcc
+                                    |> Map.toList
+                                    |> List.filter (fun (fullName, _) -> fullName.StartsWith(moduleName + "."))
+                                    |> List.map (fun (origFullName, typeDef) ->
+                                        let typeName = origFullName.Substring(moduleName.Length + 1)
+                                        $"{qualifiedModuleName}.{typeName}", typeDef)
+                                let tdAcc2 = List.fold (fun acc (k, v) -> Map.add k v acc) tdAcc qualifiedTypeDefs
+                                let mnAcc2 = Set.add qualifiedModuleName mnAcc
+                                let tnAcc2 = List.fold (fun acc (k, _) -> Set.add k acc) tnAcc qualifiedTypeDefs
+                                exAcc2, tdAcc2, mnAcc2, tnAcc2
+                            List.fold qualifyFolder (moduleExportsWithReexports, typeDefsWithReexports, parsedModuleNames, typeNamesWithReexports) parsedModules
+
+                    finalExports, finalTypeDefs, finalModuleNames, finalTypeNames, diagnosticsAcc @ parsedDiagnostics
 
         let moduleExports, typeDefsByFullName, moduleNames, typeFullNames, diagnostics =
             openedArchives
