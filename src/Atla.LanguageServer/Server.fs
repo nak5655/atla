@@ -483,14 +483,22 @@ type Server
             | [] -> true
             | roots -> roots |> List.exists (pathIsUnder path)
 
+    let addImplicitStdIfNeeded (planName: string) (deps: Compiler.ResolvedDependency list) =
+        if planName = "Std" then deps
+        elif deps |> List.exists (fun d -> d.name = "Std") then deps
+        else
+            match resolveImplicitStd () with
+            | None -> deps
+            | Some stdDep -> deps @ [ stdDep ]
+
     let resolveDependenciesForDocument
         (normalizedUri: string)
         : Result<Compiler.ResolvedDependency list, Atla.Core.Semantics.Data.Diagnostic list> =
         match tryUriToNormalizedPath normalizedUri with
-        | None -> Ok []
+        | None -> Ok (addImplicitStdIfNeeded "" [])
         | Some normalizedPath ->
             match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
-            | None -> Ok []
+            | None -> Ok (addImplicitStdIfNeeded "" [])
             | Some projectRoot ->
                 let buildResult = buildProject { projectRoot = projectRoot }
                 if buildResult.succeeded then
@@ -500,14 +508,7 @@ type Server
                         |> Option.defaultValue []
                     let planName =
                         buildResult.plan |> Option.map (fun plan -> plan.projectName) |> Option.defaultValue ""
-                    let depsWithStd =
-                        if planName = "Std" then deps
-                        elif deps |> List.exists (fun d -> d.name = "Std") then deps
-                        else
-                            match resolveImplicitStd () with
-                            | None -> deps
-                            | Some stdDep -> deps @ [ stdDep ]
-                    Ok depsWithStd
+                    Ok (addImplicitStdIfNeeded planName deps)
                 else
                     Result.Error buildResult.diagnostics
 
