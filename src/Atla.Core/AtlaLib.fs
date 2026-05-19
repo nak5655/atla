@@ -419,20 +419,49 @@ module AtlaLib =
                             let moduleName = moduleNode.GetProperty("name").GetString()
                             let typesNode = moduleNode.GetProperty("exports").GetProperty("types")
                             typesNode.EnumerateArray()
-                            |> Seq.map (fun typeNode ->
+                            |> Seq.collect (fun typeNode ->
                                 let typeName = typeNode.GetProperty("name").GetString()
                                 let fullName = $"{moduleName}.{typeName}"
                                 let typeSid = symbolTable.NextId()
                                 let systemType = tryResolveLoadedType fullName
                                 symbolTable.Add(typeSid, { name = fullName; typ = TypeId.Name typeSid; kind = SymbolKind.External(ExternalBinding.SystemTypeRef(systemType |> Option.toObj)) })
-                                fullName,
-                                { moduleName = moduleName
-                                  typeName = typeName
-                                  fullName = fullName
-                                  element = typeNode
-                                  kind = typeNode.GetProperty("kind").GetString()
-                                  typeSid = typeSid
-                                  systemType = systemType })
+                                let mainEntry =
+                                    fullName,
+                                    { moduleName = moduleName
+                                      typeName = typeName
+                                      fullName = fullName
+                                      element = typeNode
+                                      kind = typeNode.GetProperty("kind").GetString()
+                                      typeSid = typeSid
+                                      systemType = systemType }
+                                // enum 型の場合、ペイロード型（内部実装型）も先行登録する。
+                                // 隠しフィールドの型がペイロード型への packageType 参照として
+                                // エクスポートされるため、フィールド型解析前に predeclaredTypes に
+                                // 含まれていなければ "not exported" エラーになる。
+                                let payloadEntries =
+                                    if typeNode.GetProperty("kind").GetString() = "enum" then
+                                        let mutable casesNode = Unchecked.defaultof<JsonElement>
+                                        if typeNode.TryGetProperty("cases", &casesNode) && casesNode.ValueKind = JsonValueKind.Array then
+                                            casesNode.EnumerateArray()
+                                            |> Seq.choose (fun caseNode ->
+                                                let mutable payloadTypeNode = Unchecked.defaultof<JsonElement>
+                                                if caseNode.TryGetProperty("payloadTypeName", &payloadTypeNode) && payloadTypeNode.ValueKind = JsonValueKind.String then
+                                                    let payloadTypeName = payloadTypeNode.GetString()
+                                                    let payloadFullName = $"{moduleName}.{payloadTypeName}"
+                                                    let payloadSid = symbolTable.NextId()
+                                                    // payloadFullName の最終セグメント分割では CIL 型名（例: "Opt.__enum_payload_Some_type"）に
+                                                    // 到達できないため、payloadTypeName でも直接検索する。
+                                                    let payloadSystemType =
+                                                        tryResolveLoadedType payloadFullName
+                                                        |> Option.orElseWith (fun () -> tryResolveLoadedType payloadTypeName)
+                                                    symbolTable.Add(payloadSid, { name = payloadFullName; typ = TypeId.Name payloadSid; kind = SymbolKind.External(ExternalBinding.SystemTypeRef(payloadSystemType |> Option.toObj)) })
+                                                    Some (payloadFullName, { moduleName = moduleName; typeName = payloadTypeName; fullName = payloadFullName; element = Unchecked.defaultof<JsonElement>; kind = "data"; typeSid = payloadSid; systemType = payloadSystemType })
+                                                else
+                                                    None)
+                                            |> Seq.toList
+                                        else []
+                                    else []
+                                mainEntry :: payloadEntries)
                             |> Seq.toList)
                         |> Map.ofList
 
@@ -589,10 +618,18 @@ module AtlaLib =
                                                                 if caseNode.TryGetProperty("payloadTypeName", &payloadTypeNode) && payloadTypeNode.ValueKind = JsonValueKind.String then
                                                                     let payloadTypeName = payloadTypeNode.GetString()
                                                                     let payloadFullName = $"{moduleName}.{payloadTypeName}"
-                                                                    let payloadSystemType = tryResolveLoadedType payloadFullName |> Option.toObj
-                                                                    let payloadSid = symbolTable.NextId()
-                                                                    symbolTable.Add(payloadSid, { name = payloadFullName; typ = TypeId.Name payloadSid; kind = SymbolKind.External(ExternalBinding.SystemTypeRef payloadSystemType) })
-                                                                    Some payloadSid
+                                                                    // 先行登録済みの SID を再利用して重複登録を防ぐ。
+                                                                    match predeclaredTypes.TryFind payloadFullName with
+                                                                    | Some predeclaredPayload -> Some predeclaredPayload.typeSid
+                                                                    | None ->
+                                                                        // payloadFullName の最終セグメントでは CIL 型名に到達できないため payloadTypeName も試す。
+                                                                        let payloadSystemType =
+                                                                            tryResolveLoadedType payloadFullName
+                                                                            |> Option.orElseWith (fun () -> tryResolveLoadedType payloadTypeName)
+                                                                            |> Option.toObj
+                                                                        let payloadSid = symbolTable.NextId()
+                                                                        symbolTable.Add(payloadSid, { name = payloadFullName; typ = TypeId.Name payloadSid; kind = SymbolKind.External(ExternalBinding.SystemTypeRef payloadSystemType) })
+                                                                        Some payloadSid
                                                                 else
                                                                     None
                                                             let payloadSlotSidOpt =

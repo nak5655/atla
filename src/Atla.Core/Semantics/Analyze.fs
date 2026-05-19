@@ -203,6 +203,7 @@ module Analyze =
                                     | _ ->
                                         let payloadTypeSid = symbolTable.NextId()
                                         symbolTable.Add(payloadTypeSid, { name = payloadTypeName; typ = TypeId.Name payloadTypeSid; kind = SymbolKind.Local() })
+                                        resolvedModule.moduleScope.DeclareType(payloadTypeName, TypeId.Name payloadTypeSid)
 
                                         let payloadRootFieldSid = symbolTable.NextId()
                                         symbolTable.Add(payloadRootFieldSid, { name = payloadFieldName; typ = TypeId.Name payloadTypeSid; kind = SymbolKind.Local() })
