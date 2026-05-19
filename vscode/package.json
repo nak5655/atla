@@ -63,11 +63,11 @@
             "properties": {
                 "atla.lsp-server.path": {
                     "type": "string",
-                    "default": "~/.atla/atla-lsp.exe"
+                    "default": "~/.atla/bin/atla-lsp.exe"
                 },
                 "atla.build-system.path": {
                     "type": "string",
-                    "default": "~/.atla/atla.exe"
+                    "default": "~/.atla/bin/atla.exe"
                 }
             }
         },
