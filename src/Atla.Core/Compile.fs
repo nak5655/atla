@@ -12,12 +12,12 @@ open System.IO
 module Compiler =
     /// 組み込み標準ライブラリ Prelude のモジュール名。全ユーザーモジュールで暗黙インポートされる。
     [<Literal>]
-    let stdPreludeModuleName = "Std.Prelude"
+    let stdPreludeModuleName = "Std.lib"
 
-    /// 埋め込みリソースから Std.Prelude のソースを読み込む。
+    /// 埋め込みリソースから Std.lib のソースを読み込む（将来の拡張用に保持）。
     let private loadStdPreludeSource () : string option =
         let asm = System.Reflection.Assembly.GetExecutingAssembly()
-        let resourceName = "Atla.Core.Std.Prelude.atla"
+        let resourceName = "Atla.Core.Std.lib.atla"
         use stream = asm.GetManifestResourceStream(resourceName)
         if isNull stream then None
         else
@@ -247,7 +247,8 @@ module Compiler =
             failed [ Diagnostic.Error("No source modules were provided", Span.Empty) ] None None None None
         else
             try
-                // ユーザーが Std.Prelude を指定していない場合は組み込みソースを先頭に注入する。
+                // ユーザーが Std.lib を指定していない場合は組み込みソースを先頭に注入する。
+                // 通常は Std が atlalib として依存関係に含まれるため、このパスは使われない。
                 let allModuleSources =
                     if request.modules |> List.exists (fun m -> m.moduleName = stdPreludeModuleName) then
                         request.modules

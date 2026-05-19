@@ -22,6 +22,29 @@ module InstallSystem =
         | value ->
             Path.GetFullPath(value)
 
+    /// `~/.atla/packages/Std` から最新版の Std.atlalib を暗黙依存として解決する。
+    let tryResolveImplicitStdDependency () : Compiler.ResolvedDependency option =
+        let atlaHome = resolveAtlaHome ()
+        let stdPackagesRoot = Path.Join(atlaHome, "packages", "Std")
+        if not (Directory.Exists stdPackagesRoot) then None
+        else
+            match Directory.GetDirectories(stdPackagesRoot) |> Array.sort |> Array.tryLast with
+            | None -> None
+            | Some versionDir ->
+                let atlaLibPath = Path.Join(versionDir, "Std.atlalib")
+                if not (File.Exists atlaLibPath) then None
+                else
+                    match AtlaLib.resolveRuntimeAssets atlaLibPath with
+                    | Result.Error _ -> None
+                    | Ok assets ->
+                        Some {
+                            name = assets.packageName
+                            version = assets.packageVersion
+                            source = atlaLibPath
+                            compileReferencePaths = []
+                            runtimeLoadPaths = assets.runtimeLoadPaths
+                            nativeRuntimePaths = assets.nativeRuntimePaths }
+
     /// ランチャーへ安全に埋め込める識別子かを検証する。
     let private launcherNameRegex = Regex("^[A-Za-z0-9._-]+$", RegexOptions.Compiled)
 
