@@ -396,6 +396,11 @@ type Server
     let mutable workspaceRoots: string list = []
     let buffers = Dictionary<string, string>()
     let displayUris = Dictionary<string, string>()
+    /// ドキュメントごとに解決済みのプロジェクトルートパスをキャッシュする。
+    /// None は「プロジェクト外のスタンドアロンファイル」を意味する。
+    /// 初回（didOpen）に確定した結果を再利用することで、didChange のたびに
+    /// ファイルシステム探索を繰り返さず、依存解決の基点が変わらないことを保証する。
+    let documentProjectRoots = Dictionary<string, string option>()
     /// キャッシュ: 正規化 URI → (PositionIndex, SymbolTable)。
     /// コンパイルが意味解析フェーズを通過した場合に格納され、IntelliSense クエリに使用する。
     let hirCache = Dictionary<string, PositionIndex.PositionIndex * SymbolTable>()
@@ -489,10 +494,19 @@ type Server
         match tryUriToNormalizedPath normalizedUri with
         | None -> Ok []
         | Some normalizedPath ->
-            match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
+            // プロジェクトルートを初回探索してキャッシュし、以降の didChange でも同じ基点を使う。
+            // これにより依存解決がドキュメントのライフサイクル全体で安定する。
+            let projectRoot =
+                match documentProjectRoots.TryGetValue normalizedUri with
+                | true, cached -> cached
+                | false, _ ->
+                    let found = tryFindProjectRootFromManifest workspaceRoots normalizedPath
+                    documentProjectRoots.[normalizedUri] <- found
+                    found
+            match projectRoot with
             | None -> Ok []
-            | Some projectRoot ->
-                let buildResult = buildProject { projectRoot = projectRoot }
+            | Some root ->
+                let buildResult = buildProject { projectRoot = root }
                 if buildResult.succeeded then
                     let deps =
                         buildResult.plan
@@ -540,7 +554,13 @@ type Server
                             // normalizedPath からは正しい名前を得られない。
                             let displayPath =
                                 tryUriToNormalizedPath displayUri |> Option.defaultValue normalizedPath
-                            match tryFindProjectRootFromManifest workspaceRoots normalizedPath with
+                            // resolveDependenciesForDocument がキャッシュ済みの projectRoot を使用する。
+                            // 重複したファイルシステム探索を避けるため、キャッシュから取得する。
+                            let cachedProjectRoot =
+                                match documentProjectRoots.TryGetValue normalizedUri with
+                                | true, v -> v
+                                | false, _ -> tryFindProjectRootFromManifest workspaceRoots normalizedPath
+                            match cachedProjectRoot with
                             | Some projectRoot ->
                                 buildCompileRequestForDocument projectRoot normalizedPath displayPath text asmName outputDir dependencies
                                 |> compile
@@ -792,6 +812,7 @@ type Server
             buffers.Remove(key) |> ignore
             displayUris.Remove(key) |> ignore
             documentRevisions.Remove(key) |> ignore
+            documentProjectRoots.Remove(key) |> ignore
             lock hirCacheLock (fun () -> hirCache.Remove(key) |> ignore)
 
     /// textDocument/didChange（Incremental モード）の contentChanges をバッファに逐次適用し、
