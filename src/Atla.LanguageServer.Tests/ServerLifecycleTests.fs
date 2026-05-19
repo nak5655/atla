@@ -490,3 +490,173 @@ module ServerLifecycleTests =
         List.iter2 (fun (uri1: string, count1: int) (uri2: string, count2: int) ->
             Assert.Equal(uri1, uri2)
             Assert.Equal(count1, count2)) first second
+
+    [<Fact>]
+    let ``ChangeDocument preserves project dependencies when buildProject keeps succeeding`` () =
+        // 依存解決が didOpen・didChange を通じて一貫して成功するとき、
+        // コンパイルリクエストに毎回同じ依存が渡されることを検証する。
+        let capturedRequests = ResizeArray<Compiler.CompileModulesRequest>()
+        let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-change-deps-{System.Guid.NewGuid():N}")
+
+        try
+            let srcDir = Path.Join(tempRoot, "src")
+            Directory.CreateDirectory(srcDir) |> ignore
+            File.WriteAllText(
+                Path.Join(tempRoot, "atla.yaml"),
+                "package:\n  name: \"myapp\"\n  version: \"0.1.0\"\n")
+
+            let dep: Compiler.ResolvedDependency =
+                { name = "Std"
+                  version = "1.0.0"
+                  source = ""
+                  compileReferencePaths = []
+                  runtimeLoadPaths = []
+                  nativeRuntimePaths = [] }
+
+            let buildProject (_: BuildRequest) : BuildResult =
+                { succeeded = true
+                  plan =
+                    Some {
+                        projectName = "myapp"
+                        projectVersion = "0.1.0"
+                        projectRoot = tempRoot
+                        packageType = BuildPackageType.Exe
+                        dependencies = [ dep ] }
+                  diagnostics = [] }
+
+            let compile (request: Compiler.CompileModulesRequest) : Compiler.CompileResult =
+                capturedRequests.Add(request)
+                { succeeded = true
+                  diagnostics = []
+                  hir = None
+                  hirModules = None
+                  symbolTable = None
+                  moduleAsts = None }
+
+            let server =
+                Server(
+                    (fun _ _ -> ()),
+                    buildProjectFn = buildProject,
+                    compileFn = compile,
+                    resolveImplicitStdFn = (fun () -> None),
+                    debounceDelayMs = 0
+                )
+
+            let initializeContent = JObject.Parse($"""
+            {{
+              "params": {{
+                "rootUri": "{System.Uri(tempRoot).AbsoluteUri}",
+                "capabilities": {{
+                  "textDocument": {{
+                    "publishDiagnostics": {{ "relatedInformation": true }},
+                    "semanticTokens": {{ "tokenTypes": ["keyword", "number", "string", "variable", "type"] }}
+                  }}
+                }}
+              }}
+            }}
+            """)
+
+            server.Initialize(initializeContent) |> ignore
+            server.IsAvailablePublishDiagnostics <- true
+
+            let documentUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
+            server.OpenDocument(documentUri, "fn main: Int = 0")
+            server.ChangeDocument(documentUri, "fn main: Int = 1")
+            server.WaitForPendingCompilations()
+
+            // didOpen と didChange 両方でコンパイルが呼ばれていること。
+            Assert.True(capturedRequests.Count >= 2)
+            // 全コンパイルリクエストに Std 依存が含まれていること。
+            for request in capturedRequests do
+                Assert.Contains(request.dependencies, fun d -> d.name = "Std")
+        finally
+            if Directory.Exists tempRoot then
+                Directory.Delete(tempRoot, recursive = true)
+
+    [<Fact>]
+    let ``ChangeDocument with build failure publishes build diagnostics and skips compile`` () =
+        // 依存解決（buildProject）が didChange 時に失敗したとき、
+        // コンパイルをスキップして build ソースの診断のみが公開されることを検証する。
+        let published = ResizeArray<string * Atla.LanguageServer.LSPTypes.Diagnostic list>()
+        let mutable compileCalled = false
+        let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-change-fail-{System.Guid.NewGuid():N}")
+
+        try
+            let srcDir = Path.Join(tempRoot, "src")
+            Directory.CreateDirectory(srcDir) |> ignore
+            File.WriteAllText(
+                Path.Join(tempRoot, "atla.yaml"),
+                "package:\n  name: \"broken\"\n")
+
+            let mutable callCount = 0
+            let buildProject (_: BuildRequest) : BuildResult =
+                callCount <- callCount + 1
+                if callCount = 1 then
+                    // didOpen 時は成功する。
+                    { succeeded = true
+                      plan =
+                        Some {
+                            projectName = "broken"
+                            projectVersion = "0.1.0"
+                            projectRoot = tempRoot
+                            packageType = BuildPackageType.Exe
+                            dependencies = [] }
+                      diagnostics = [] }
+                else
+                    // didChange 時は失敗する。
+                    { succeeded = false
+                      plan = None
+                      diagnostics = [ Atla.Core.Semantics.Data.Diagnostic.Error("dep resolution failed on change", Span.Empty) ] }
+
+            let compile (_: Compiler.CompileModulesRequest) : Compiler.CompileResult =
+                compileCalled <- true
+                { succeeded = true
+                  diagnostics = []
+                  hir = None
+                  hirModules = None
+                  symbolTable = None
+                  moduleAsts = None }
+
+            let server =
+                Server(
+                    (fun uri diagnostics -> published.Add(uri, diagnostics)),
+                    buildProjectFn = buildProject,
+                    compileFn = compile,
+                    debounceDelayMs = 0
+                )
+
+            let initializeContent = JObject.Parse($"""
+            {{
+              "params": {{
+                "rootUri": "{System.Uri(tempRoot).AbsoluteUri}",
+                "capabilities": {{
+                  "textDocument": {{
+                    "publishDiagnostics": {{ "relatedInformation": true }},
+                    "semanticTokens": {{ "tokenTypes": ["keyword", "number", "string", "variable", "type"] }}
+                  }}
+                }}
+              }}
+            }}
+            """)
+
+            server.Initialize(initializeContent) |> ignore
+            server.IsAvailablePublishDiagnostics <- true
+
+            let documentUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
+            // didOpen: buildProject 成功 → コンパイル実行。
+            server.OpenDocument(documentUri, "fn main: Int = 0")
+            compileCalled <- false
+
+            // didChange: buildProject 失敗 → build 診断のみ返し、コンパイルはスキップ。
+            server.ChangeDocument(documentUri, "fn main: Int = 1")
+            server.WaitForPendingCompilations()
+
+            Assert.False(compileCalled, "compile must not be called when dependency resolution fails")
+            let lastPublication = published |> Seq.last
+            let (_, lastDiagnostics) = lastPublication
+            let diagnostic = Assert.Single(lastDiagnostics)
+            Assert.Equal("atla-build", diagnostic.source)
+        finally
+            if Directory.Exists tempRoot then
+                Directory.Delete(tempRoot, recursive = true)
+
