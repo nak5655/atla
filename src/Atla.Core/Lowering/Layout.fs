@@ -736,12 +736,26 @@ module Layout =
         let residualLambdaDiagnostics =
             asm.modules
             |> List.collect (fun closedModule ->
-                closedModule.methods
-                |> List.choose (fun closedMethod ->
-                    if hasLambdaExpr closedMethod.body then
-                        Some(Diagnostic.Error($"Residual lambda remains after closure conversion. methodSid={closedMethod.sym.id}", closedMethod.span))
-                    else
-                        None))
+                // モジュールレベルメソッドの残留 Lambda を検出する。
+                let moduleMethodDiags =
+                    closedModule.methods
+                    |> List.choose (fun closedMethod ->
+                        if hasLambdaExpr closedMethod.body then
+                            Some(Diagnostic.Error($"Residual lambda remains after closure conversion. methodSid={closedMethod.sym.id}", closedMethod.span))
+                        else
+                            None)
+                // 型インスタンスメソッドの残留 Lambda を検出する。
+                let typeMethodDiags =
+                    closedModule.types
+                    |> List.filter (fun t -> not t.isInterface)
+                    |> List.collect (fun t ->
+                        t.methods
+                        |> List.choose (fun closedMethod ->
+                            if hasLambdaExpr closedMethod.body then
+                                Some(Diagnostic.Error($"Residual lambda remains after closure conversion in instance method. methodSid={closedMethod.sym.id}", closedMethod.span))
+                            else
+                                None))
+                moduleMethodDiags @ typeMethodDiags)
 
         match residualLambdaDiagnostics with
         | residual when not residual.IsEmpty -> PhaseResult.failed residual

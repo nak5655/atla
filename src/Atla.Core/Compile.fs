@@ -166,6 +166,21 @@ module Compiler =
                     ({ symbolId = methodInfo.sym
                        typ = symInfo.typ }: AnalyzeEnv.ModuleExport)))
 
+        // インスタンス impl メソッドは hirType.methods へ移動したため、
+        // 非 interface 型のメソッドもエクスポートに含める。
+        // これにより、クロスモジュールのメソッドインポートが正しく解決される。
+        let typeInstanceMethodExports =
+            hirModule.types
+            |> List.filter (fun hirType -> not hirType.isInterface)
+            |> List.collect (fun hirType ->
+                hirType.methods
+                |> List.choose (fun methodInfo ->
+                    symbolTable.Get(methodInfo.sym)
+                    |> Option.map (fun symInfo ->
+                        symInfo.name,
+                        ({ symbolId = methodInfo.sym
+                           typ = symInfo.typ }: AnalyzeEnv.ModuleExport))))
+
         // データ型の typeSid を "type:{TypeName}" キーでエクスポートする。
         // import sub'Person のような型 import 時に元の typeSid を再利用するために使用する。
         let typeExports =
@@ -204,7 +219,7 @@ module Compiler =
                         ({ symbolId = hirType.sym
                            typ = baseType }: AnalyzeEnv.ModuleExport)))
 
-        valueExports @ methodExports @ typeExports @ fieldExports @ implBaseExports
+        valueExports @ methodExports @ typeInstanceMethodExports @ typeExports @ fieldExports @ implBaseExports
         |> Map.ofList
 
     /// 複数 HIR モジュールを 1 つへ統合し、CIL 生成のランタイム制約（単一 dynamic module）に合わせる。

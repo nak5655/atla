@@ -483,8 +483,16 @@ module ClosureConversion =
 
     /// モジュール内 method を順序保持で変換し、生成メソッドと型を末尾追加した一覧を返す。
     /// Phase 1 で各メソッドの CaptureMap を構築し、Phase 2 でラムダを lambda lifting / env-class 方式で lower する。
+    /// 型のインスタンスメソッドも同じ変換を適用する。
     let private rewriteMethods (symbolTable: SymbolTable) (hirModule: Hir.Module) : ClosedHir.Method list * ClosedHir.Type list * Map<int, int> * Diagnostic list =
-        let globalSymbols = hirModule.methods |> List.map (fun methodInfo -> methodInfo.sym.id) |> Set.ofList
+        // グローバルシンボルにはモジュールレベルメソッドと型インスタンスメソッドを含める。
+        // これにより、各メソッド内のラムダが自由変数として誤検知されなくなる。
+        let moduleMethodSymbols = hirModule.methods |> List.map (fun m -> m.sym.id) |> Set.ofList
+        let typeMethodSymbols =
+            hirModule.types
+            |> List.collect (fun t -> t.methods |> List.map (fun m -> m.sym.id))
+            |> Set.ofList
+        let globalSymbols = moduleMethodSymbols |> Set.union typeMethodSymbols
         let initialState =
             { generatedMethods = []
               generatedTypes = []
@@ -516,21 +524,48 @@ module ClosureConversion =
             asm.modules
             |> List.fold (fun (modules, allDiagnostics) hirModule ->
                 let rewrittenMethods, generatedTypes, closureInvokeMethods, moduleDiagnostics = rewriteMethods symbolTable hirModule
-                // 元の HIR 型定義を ClosedHir.Type へ構造的に変換する。
-                let convertedTypes =
+                // グローバルシンボルにはモジュールレベルメソッドと型インスタンスメソッドを含める。
+                let moduleMethodSymbols = hirModule.methods |> List.map (fun m -> m.sym.id) |> Set.ofList
+                let typeMethodSymbols =
                     hirModule.types
-                    |> List.map (fun hirType ->
-                        let convertedTypeMethods =
+                    |> List.collect (fun t -> t.methods |> List.map (fun m -> m.sym.id))
+                    |> Set.ofList
+                let globalSymbols = moduleMethodSymbols |> Set.union typeMethodSymbols
+                // 元の HIR 型定義を ClosedHir.Type へ変換する。
+                // role 型（isInterface=true）の抽象メソッドは convertHirExpr で構造変換するだけでよい。
+                // インスタンス impl メソッド（isInterface=false かつ body あり）はクロージャー変換を適用する。
+                let convertedTypes, typeConversionDiagnostics =
+                    hirModule.types
+                    |> List.mapFold (fun diagAcc hirType ->
+                        let convertedTypeMethods, methodDiags =
                             hirType.methods
-                            |> List.map (fun methodInfo ->
-                                ClosedHir.Method(methodInfo.sym, methodInfo.args, convertHirExpr methodInfo.body, methodInfo.typ, methodInfo.span))
-                        ClosedHir.Type(
-                            hirType.sym,
-                            hirType.isInterface,
-                            hirType.baseType,
-                            hirType.typeParams,
-                            hirType.fields |> List.map (fun f -> ClosedHir.Field(f.sym, f.typ, convertHirExpr f.body, f.span)),
-                            convertedTypeMethods))
+                            |> List.mapFold (fun acc methodInfo ->
+                                if hirType.isInterface then
+                                    // abstract メソッド（role）: 構造変換のみ
+                                    ClosedHir.Method(methodInfo.sym, methodInfo.args, convertHirExpr methodInfo.body, methodInfo.typ, methodInfo.span), acc
+                                else
+                                    // インスタンス impl メソッド: クロージャー変換を適用する。
+                                    // initialState を毎回リセットし、生成メソッド/型は型変換後に追加する。
+                                    let methodInitState =
+                                        { generatedMethods = []
+                                          generatedTypes = []
+                                          closureInvokeMethods = Map.empty
+                                          diagnostics = []
+                                          captureMetadata = [] }
+                                    let captureMap = buildCaptureMap symbolTable globalSymbols methodInfo
+                                    let rewrittenBody, methodFinalState = rewriteExpr symbolTable methodInfo captureMap methodInfo.body methodInitState
+                                    let converted = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.span)
+                                    converted, acc @ methodFinalState.diagnostics)
+                                []
+                        let closedHirType =
+                            ClosedHir.Type(
+                                hirType.sym,
+                                hirType.isInterface,
+                                hirType.baseType,
+                                hirType.typeParams,
+                                hirType.fields |> List.map (fun f -> ClosedHir.Field(f.sym, f.typ, convertHirExpr f.body, f.span)),
+                                convertedTypeMethods)
+                        closedHirType, diagAcc @ methodDiags) []
                 let allTypes = convertedTypes @ generatedTypes
                 // 元の HIR モジュールフィールドを ClosedHir.Field へ構造的に変換する。
                 let convertedFields =
@@ -544,7 +579,7 @@ module ClosureConversion =
                         rewrittenMethods,
                         hirModule.scope,
                         closureInvokeMethods)
-                modules @ [ rewrittenModule ], allDiagnostics @ moduleDiagnostics) ([], [])
+                modules @ [ rewrittenModule ], allDiagnostics @ moduleDiagnostics @ typeConversionDiagnostics) ([], [])
 
         match diagnostics with
         | [] -> PhaseResult.succeeded (ClosedHir.Assembly(asm.name, rewrittenModules)) []

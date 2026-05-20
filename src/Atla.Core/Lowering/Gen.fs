@@ -755,9 +755,9 @@ module Gen =
             env.typeBuilders.Add(typ.sym, typeBuilder)
 
         // フェーズ 1b: 具象型に .NET ネイティブ基底インターフェイスの実装を追加する。
-        // role（TypeId.Name）経由のインターフェイス実装は、impl メソッドが現在モジュールレベルの
-        // 静的関数として生成されており、仮想インスタンスメソッドを要求するインターフェイスを
-        // 直接満たせないため、AddInterfaceImplementation を呼ばない（型安全性はセマンティクス層で保証）。
+        // role（TypeId.Name）経由のインターフェイス実装は、impl メソッドが CIL インスタンスメソッドに
+        // なったが、virtual/override が未サポートのため AddInterfaceImplementation は行わない
+        // （型安全性はセマンティクス層で保証）。
         // TypeId.Native で指定された .NET インターフェイスのみ AddInterfaceImplementation を追加する。
         for typ in modul.types do
             if not typ.isInterface then
