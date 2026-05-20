@@ -64,6 +64,13 @@ All changes must preserve semantic equivalence across lowering stages and keep p
 ### Change-control rule
 - If a task appears to require edits to `src/Atla.Core/Syntax/Lexer.fs` or `src/Atla.Core/Syntax/Parser.fs`, request explicit confirmation before changing them.
 
+### Building examples projects
+When building or testing any Atla project under the `examples/` directory, follow the procedure
+
+Key steps (summary):
+1. Run `install.bat` (Windows) or `bash install.sh` (Linux/macOS) from the repo root to build and install the compiler.
+2. Run `atla build` from the directory containing `atla.yaml` (or pass the directory as an argument: `atla build examples/<project>`).
+
 ---
 
 ## 4) Testing Requirements
