@@ -222,13 +222,11 @@ module NativeInterop =
                 Some(Hir.Expr.Int(int (unbox<uint16> defaultValue), span))
             elif parameterType = typeof<string> then
                 Some(Hir.Expr.String((if obj.ReferenceEquals(defaultValue, null) then "" else unbox<string> defaultValue), span))
-            elif not (obj.ReferenceEquals(System.Nullable.GetUnderlyingType(parameterType), null)) then
-                // Nullable<T> パラメータのデフォルト値（null nullable）。
-                // CIL では initobj + ldloc のシーケンスで発行される。
-                Some(Hir.Expr.Null(TypeId.fromSystemType parameterType, span))
-            elif not parameterType.IsValueType && obj.ReferenceEquals(defaultValue, null) then
-                // null デフォルト値を持つ参照型パラメータ（Action などのデリゲート型が該当）は
-                // HIR の Null リテラルとして表現し、CIL 生成時に ldnull を発行する。
+            elif obj.ReferenceEquals(defaultValue, null) then
+                // null/default デフォルト値を持つパラメータを HIR の Null として表現する。
+                //   - 参照型 (Action 等のデリゲート): Layout 層で ldnull に変換。
+                //   - Nullable<T>, カスタム構造体 (例: Color4 colorAdd = default(Color4)):
+                //       Layout 層で NullableDefault となり、CIL では initobj + ldloc を発行。
                 Some(Hir.Expr.Null(TypeId.fromSystemType parameterType, span))
             else
                 None
