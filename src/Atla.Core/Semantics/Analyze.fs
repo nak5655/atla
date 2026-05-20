@@ -688,7 +688,8 @@ module Analyze =
                                                 // これにより、同モジュール内から addButton のようなベアネームで参照できる。
                                                 if isStatic then
                                                     resolvedModule.moduleScope.DeclareVar(methodDecl.name, methodSid)
-                                                Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap, (methodSid, methodDecl) :: declAcc, diagAcc
+                                                // declAcc には (メソッドSID, 宣言, ターゲット型SID, isStatic) を積む。
+                                                Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap, (methodSid, methodDecl, dataTypeDef.typeSid, isStatic) :: declAcc, diagAcc
 
                                         if isInstanceMethod methodDecl.args then
                                             registerImplMethod false
@@ -713,9 +714,22 @@ module Analyze =
             resolvedModule.fnDecls
             |> List.iter (fun fnDecl -> methods.Add(ExprAnalyze.analyzeMethod nameEnv typeEnv fnDecl))
 
+            // インスタンス impl メソッドはターゲット型の Hir.Type.methods へルーティングし、
+            // CIL インスタンスメソッドとしてコンパイルする。
+            // 静的 impl メソッドは従来どおりモジュールレベルメソッド（Globals 型の static）として追加する。
+            let instanceImplMethodsByType = System.Collections.Generic.Dictionary<int, Hir.Method list>()
+
             implMethodDecls
-            |> List.iter (fun (methodSid, methodDecl) ->
-                methods.Add(ExprAnalyze.analyzeMethodCore nameEnv typeEnv methodSid methodDecl))
+            |> List.iter (fun (methodSid, methodDecl, targetTypeSid, isStatic) ->
+                let hirMethod = ExprAnalyze.analyzeMethodCore nameEnv typeEnv methodSid methodDecl
+                if isStatic then
+                    methods.Add(hirMethod)
+                else
+                    let existing =
+                        match instanceImplMethodsByType.TryGetValue(targetTypeSid.id) with
+                        | true, ms -> ms
+                        | false, _ -> []
+                    instanceImplMethodsByType.[targetTypeSid.id] <- existing @ [ hirMethod ])
 
             // impl で確定した基底型情報を HIR.Type へ反映する。
             let baseTypeById =
@@ -732,7 +746,13 @@ module Analyze =
                     let baseTypeOpt =
                         if typ.isInterface then typ.baseType
                         else baseTypeById |> Map.tryFind typ.sym.id |> Option.flatten
-                    Hir.Type(typ.sym, typ.isInterface, baseTypeOpt, typ.typeParams, typ.fields, typ.methods))
+                    // インスタンス impl メソッドをターゲット型の methods に追加する。
+                    // これにより CIL インスタンスメソッドとしてコンパイルされる。
+                    let instanceImplMethods =
+                        match instanceImplMethodsByType.TryGetValue(typ.sym.id) with
+                        | true, ms -> ms
+                        | false, _ -> []
+                    Hir.Type(typ.sym, typ.isInterface, baseTypeOpt, typ.typeParams, typ.fields, typ.methods @ instanceImplMethods))
 
             let untypedHirModule =
                 Hir.Module(

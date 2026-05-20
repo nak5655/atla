@@ -3,6 +3,7 @@ namespace Atla.Core.Tests.Lowering
 open System
 open System.Diagnostics
 open System.IO
+open System.Reflection
 open Xunit
 open Atla.Compiler
 
@@ -1351,3 +1352,60 @@ fn main: () = ()
 
         let dllPath = Path.Join(outDir, "GenericImplNamedField.dll")
         Assert.True(File.Exists dllPath)
+
+    [<Fact>]
+    let ``impl instance method compiles as CIL instance method not static`` () =
+        // 回帰テスト: fn f self で定義した impl メソッドが CIL インスタンスメソッドとして
+        // コンパイルされることを検証する。コンパイル後の DLL をリフレクションで検査する。
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let source = """
+import System'Console
+
+data Point = { x: Int, y: Int }
+
+impl Point
+    fn sum self: Int = self'x + self'y
+
+fn main: () =
+    let p = Point { x = 3, y = 4 }
+    p'sum. Console'WriteLine.
+"""
+
+        let res = compileSingle { asmName = "ImplInstanceMethod"; source = source.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "ImplInstanceMethod.dll")
+        Assert.True(File.Exists dllPath)
+
+        // コンパイル済み DLL をリフレクションでロードして Point.sum がインスタンスメソッドであることを確認する。
+        let loadContext = System.Runtime.Loader.AssemblyLoadContext("TestImplInstanceMethod", isCollectible = true)
+        try
+            let asm = loadContext.LoadFromAssemblyPath(dllPath)
+            let pointType = asm.GetType("Point")
+            Assert.NotNull(pointType)
+            let sumMethod = pointType.GetMethod("sum", BindingFlags.Public ||| BindingFlags.Instance)
+            Assert.NotNull(sumMethod)
+            Assert.False(sumMethod.IsStatic, "sum method must be a CIL instance method, not static")
+        finally
+            loadContext.Unload()
+
+        // プログラムを実行して正しい結果（7）を返すことを確認する。
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("7", stdout.Trim())

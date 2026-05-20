@@ -530,8 +530,12 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let subst = TypeSubst()
         match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
         | { succeeded = true; value = Some hirModule } ->
-            let hasEvaluate =
+            // インスタンス impl メソッドは hirType.methods へルーティングされる。
+            let allMethods =
                 hirModule.methods
+                @ (hirModule.types |> List.filter (fun t -> not t.isInterface) |> List.collect (fun t -> t.methods))
+            let hasEvaluate =
+                allMethods
                 |> List.exists (fun methodInfo -> symbolTable.Get(methodInfo.sym) |> Option.exists (fun symbolInfo -> symbolInfo.name = "Line.evaluate"))
             Assert.True(hasEvaluate, "impl method symbol 'Line.evaluate' was not found")
         | { diagnostics = diagnostics } ->
@@ -2718,8 +2722,12 @@ impl MyError as Exception
                 let subst = TypeSubst()
                 match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
                 | { succeeded = true; value = Some hirModule } ->
-                    let baseTextMethod =
+                    // インスタンス impl メソッドは hirType.methods へルーティングされる。
+                    let allMethods =
                         hirModule.methods
+                        @ (hirModule.types |> List.filter (fun t -> not t.isInterface) |> List.collect (fun t -> t.methods))
+                    let baseTextMethod =
+                        allMethods
                         |> List.tryFind (fun methodDef ->
                             match symbolTable.Get(methodDef.sym) with
                             | Some symInfo -> symInfo.name = "MyError.baseText"

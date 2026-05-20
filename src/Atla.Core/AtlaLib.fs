@@ -578,7 +578,8 @@ module AtlaLib =
                                                                 systemType.GetMethods(flags)
                                                                 |> Array.filter (fun methodInfo -> methodInfo.Name = methodName)
                                                                 |> Array.toList
-                                                        else
+                                                        elif isStatic then
+                                                            // 静的 impl メソッドは Globals 型の static メソッドとしてコンパイルされる。
                                                             match globalsType with
                                                             | Some globals ->
                                                                 globals.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
@@ -586,6 +587,14 @@ module AtlaLib =
                                                                 |> Array.toList
                                                             | None ->
                                                                 []
+                                                        else
+                                                            // インスタンス impl メソッドは型自体のインスタンスメソッドとしてコンパイルされる。
+                                                            if isNull systemType then
+                                                                []
+                                                            else
+                                                                systemType.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+                                                                |> Array.filter (fun methodInfo -> methodInfo.Name = methodName)
+                                                                |> Array.toList
                                                     symbolTable.Add(methodSid, { name = $"{fullTypeName}.{methodName}"; typ = methodType; kind = SymbolKind.External(ExternalBinding.NativeMethodGroup reflectedMethods) })
                                                     Map.add methodName (methodSid, methodType, isStatic) methodAcc,
                                                     if reflectedMethods.IsEmpty then

@@ -642,6 +642,14 @@ module BuildSystem =
                 |> List.map (fun hirType -> symbolNameOrFallback symbolTable hirType.sym, hirType)
                 |> Map.ofList
 
+            // インスタンス impl メソッドは hirType.methods へ移動したため、
+            // モジュールメソッドと型インスタンスメソッドを統合して検索するヘルパーを定義する。
+            let allHirMethods =
+                hirModule.methods
+                @ (hirModule.types
+                   |> List.filter (fun t -> not t.isInterface)
+                   |> List.collect (fun t -> t.methods))
+
             moduleAst.decls
             |> List.choose (fun decl ->
                 match decl with
@@ -672,7 +680,7 @@ module BuildSystem =
 
                 let addMethodNode (methodDecl: Ast.Decl.Fn) (methodSym: SymbolId) =
                     let methodInfo =
-                        hirModule.methods
+                        allHirMethods
                         |> List.find (fun methodInfo -> methodInfo.sym.id = methodSym.id)
                     let isStatic = not (isInstanceMethod methodDecl)
                     let methodNode = JsonObject()
@@ -704,7 +712,7 @@ module BuildSystem =
                     |> List.sortBy (fun methodDecl -> methodDecl.name)
                     |> List.iter (fun methodDecl ->
                         let methodSym =
-                            hirModule.methods
+                            allHirMethods
                             |> List.find (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym = $"{typeName}.{methodDecl.name}")
                             |> fun methodInfo -> methodInfo.sym
                         addMethodNode methodDecl methodSym)
