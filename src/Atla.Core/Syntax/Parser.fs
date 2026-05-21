@@ -403,16 +403,34 @@ module Parser =
                                      afterTailTermsPos)
                 loop head afterHeadPos)
 
+    // `await Expr` を解析する。dot-call チェーン全体（term2）をオペランドとして取り込むため、
+    // term2 と binop の間のレイヤーに位置する。
+    // `await base'LoadContent.` は `Await(Apply(MemberAccess(base, LoadContent), []))` となる。
+    // バイナリ演算子よりは結合が緩いため、`await foo. + 1` は `(await foo.) + 1` と解釈される。
+    // `async fn` 本体内でのみ使用可能で、それ以外の文脈での使用は Analyze フェーズで診断される。
+    and awaitExpr: PackratParser<Token, Ast.Expr> =
+        Delay (fun () -> fun input pos ->
+            match (keyword "await") input pos with
+            | Success (kw, afterKwPos) ->
+                match awaitExpr input afterKwPos with
+                | Success (operand, nextPos) ->
+                    Success
+                        (Ast.Expr.Await(operand, { left = kw.span.left; right = operand.span.right }) :> Ast.Expr,
+                         nextPos)
+                | Failure (reason, span) -> Failure (reason, span)
+            | Failure _ ->
+                term2 input pos)
+
     // 二項演算
     and binopExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            List.fold (fun acc prec -> 
+            List.fold (fun acc prec ->
                 let op = infixOp prec
                 acc <&> Many (op <&> acc) |>> fun (left, rest) ->
                     rest
                     |> List.fold (fun current (op, right) ->
                         Ast.Expr.Apply (Ast.Expr.Id(op.str, op.span), [current; right], { left = current.span.left; right = right.span.right }) :> Ast.Expr) left
-            ) term2 [9 .. -1 .. 0])
+            ) awaitExpr [9 .. -1 .. 0])
 
     // lambda 引数名の重複を検証し、最初に見つかった重複名を返す。
     and private tryFindDuplicateArgName (args: Ast.FnArg list) : string option =
@@ -660,26 +678,47 @@ module Parser =
 
     and fnDecl: PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            block (asToken (keyword "fn")) (Once (tid <&> Many fnArg <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, false, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
+            Optional (keyword "async") <&>
+            block (asToken (keyword "fn"))
+                (Once (tid <&> Many fnArg <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, false, false, { left = id.span.left; right = body.span.right }) :> Ast.Decl)
+                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+            |>> fun (asyncOpt, fnDecl) ->
+                match asyncOpt, fnDecl with
+                | None, _ -> fnDecl
+                | Some kw, (:? Ast.Decl.Fn as fn) ->
+                    Ast.Decl.Fn(
+                        fn.name, fn.args, fn.ret, fn.body, fn.isOverride, true,
+                        { left = kw.span.left; right = fn.span.right }) :> Ast.Decl
+                | Some _, other -> other)
 
-    // `override` 修飾子はオプショナル。`impl A as B` 内のメソッドでのみ意味があり、
-    // 他文脈での使用は Resolve フェーズでエラーとして検出する（パーサ側では受理する）。
+    // `override` / `async` 修飾子はオプショナル。記述順は `override async fn` を期待する。
+    // `override` は `impl A as B` 内のメソッドでのみ意味があり、他文脈での使用は Resolve
+    // フェーズでエラーとして検出する（パーサ側では受理する）。
+    // `async` は本体で `await` を許可し、戻り値型が Task / Task T であることを Analyze で検査する。
     and implMethodDecl: PackratParser<Token, Ast.Decl.Fn> =
         Delay (fun () ->
             Optional (keyword "override") <&>
+            Optional (keyword "async") <&>
             block (asToken (keyword "fn"))
                     (Once
                     (tid <&> methodArgList <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr
-                     |>> fun (((id, args), ret), body) -> Ast.Decl.Fn(id.str, args, ret, body, false, { left = id.span.left; right = body.span.right }))
+                     |>> fun (((id, args), ret), body) -> Ast.Decl.Fn(id.str, args, ret, body, false, false, { left = id.span.left; right = body.span.right }))
                     (fun (msg, span) ->
-                        Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), false, span)))
-            |>> fun (overrideOpt, fnDecl) ->
-                match overrideOpt with
-                | None -> fnDecl
-                | Some kw ->
+                        Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), false, false, span)))
+            |>> fun ((overrideOpt, asyncOpt), fnDecl) ->
+                let leftSpan =
+                    match overrideOpt, asyncOpt with
+                    | Some kw, _ -> kw.span.left
+                    | None, Some kw -> kw.span.left
+                    | None, None -> fnDecl.span.left
+                let isOverride = Option.isSome overrideOpt
+                let isAsync = Option.isSome asyncOpt
+                if not isOverride && not isAsync then
+                    fnDecl
+                else
                     Ast.Decl.Fn(
-                        fnDecl.name, fnDecl.args, fnDecl.ret, fnDecl.body, true,
-                        { left = kw.span.left; right = fnDecl.span.right }))
+                        fnDecl.name, fnDecl.args, fnDecl.ret, fnDecl.body, isOverride, isAsync,
+                        { left = leftSpan; right = fnDecl.span.right }))
 
     // role 宣言の抽象メソッドシグネチャ（ボディなし）。
     // `fn name args: ret` の形式で、`= body` を持たない。

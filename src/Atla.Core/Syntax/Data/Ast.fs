@@ -149,6 +149,16 @@ module Ast =
             interface HasSpan with
                 member this.span = this.span
 
+        /// `await Expr` 形式の式。`async fn` の本体内でのみ使用でき、
+        /// オペランドは `Task` または `Task T` 型でなければならない（Analyze で検査）。
+        type Await(operand: Expr, span: Span) =
+            member this.operand = operand
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type GenericApply(func: Expr, typeArgs: TypeExpr list, span: Span) =
             member this.func = func
             member this.typeArgs = typeArgs
@@ -481,7 +491,7 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Fn(name: string, args: FnArg list, ret: TypeExpr, body: Expr, isOverride: bool, span: Span) =
+        type Fn(name: string, args: FnArg list, ret: TypeExpr, body: Expr, isOverride: bool, isAsync: bool, span: Span) =
             member this.name = name
             member this.args = args
             member this.ret = ret
@@ -489,6 +499,9 @@ module Ast =
             /// `override` 修飾子の有無。`impl A as B` 内のメソッドでのみ意味があり、
             /// 他の文脈では Resolve フェーズでエラー扱いされる。
             member this.isOverride = isOverride
+            /// `async` 修飾子の有無。本体内で `await` を使用でき、戻り値型は
+            /// `Task` または `Task T` でなければならない（Analyze フェーズで検査）。
+            member this.isAsync = isAsync
             member this.span = span
             interface Decl with
                 member this.span = span
