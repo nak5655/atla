@@ -2267,7 +2267,7 @@ fn bad (): Int = do
         let metaTid = TypeId.Meta(metaFactory.Fresh())
         Type.unify subst metaTid TypeId.Int |> ignore
 
-        let hirMethod = Hir.Method(methodSym, [ argSid, metaTid ], Hir.Expr.Id(argSid, metaTid, span), TypeId.Fn([ metaTid ], metaTid), None, span)
+        let hirMethod = Hir.Method(methodSym, [ argSid, metaTid ], Hir.Expr.Id(argSid, metaTid, span), TypeId.Fn([ metaTid ], metaTid), None, false, span)
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
 
         match Infer.inferModule(subst, hirModule) with
@@ -3609,6 +3609,176 @@ impl Opt T
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``async fn returning Task is accepted`` () =
+        let source = """
+import System'Threading'Tasks'Task
+
+async fn run (): Task = ()
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let runMethod = hirModule.methods |> List.find (fun m -> m.isAsync)
+                    Assert.True(runMethod.isAsync, "method should be flagged isAsync")
+                    Assert.False(runMethod.hasError, "async fn returning Task should have no diagnostics")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``async fn returning non-Task type produces diagnostic`` () =
+        let source = """
+async fn bad (): Int = 1
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                let result = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
+                let hasError =
+                    match result.value with
+                    | Some hirModule -> hirModule.hasError
+                    | None -> not (List.isEmpty result.diagnostics)
+                Assert.True(hasError, "async fn returning Int should produce a diagnostic")
+                let combinedText =
+                    let modDiagText =
+                        result.value
+                        |> Option.map (fun m -> m.getDiagnostics |> List.map (fun d -> d.message) |> String.concat "; ")
+                        |> Option.defaultValue ""
+                    let topDiagText = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                    modDiagText + ";" + topDiagText
+                Assert.Contains("Task", combinedText)
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``await outside async fn produces diagnostic`` () =
+        let source = """
+import System'Threading'Tasks'Task
+
+fn sync (t: Task): () = await t
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                let result = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
+                let hasError =
+                    match result.value with
+                    | Some hirModule -> hirModule.hasError
+                    | None -> not (List.isEmpty result.diagnostics)
+                Assert.True(hasError, "non-async fn using await should produce a diagnostic")
+                let combinedText =
+                    let modDiagText =
+                        result.value
+                        |> Option.map (fun m -> m.getDiagnostics |> List.map (fun d -> d.message) |> String.concat "; ")
+                        |> Option.defaultValue ""
+                    let topDiagText = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                    modDiagText + ";" + topDiagText
+                Assert.Contains("await", combinedText)
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``await on Task produces Unit result type`` () =
+        let source = """
+import System'Threading'Tasks'Task
+
+async fn run (t: Task): Task =
+    await t
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let runMethod = hirModule.methods |> List.find (fun m -> m.isAsync)
+                    Assert.False(runMethod.hasError, "method should have no diagnostics")
+                    let rec findAwait (e: Hir.Expr) : Hir.Expr option =
+                        match e with
+                        | Hir.Expr.Await _ -> Some e
+                        | Hir.Expr.Block (stmts, body, _, _) ->
+                            let fromStmts =
+                                stmts
+                                |> List.tryPick (fun s ->
+                                    match s with
+                                    | Hir.Stmt.ExprStmt (ee, _) -> findAwait ee
+                                    | Hir.Stmt.Let (_, _, ee, _) -> findAwait ee
+                                    | _ -> None)
+                            match fromStmts with
+                            | Some _ -> fromStmts
+                            | None -> findAwait body
+                        | _ -> None
+                    match findAwait runMethod.body with
+                    | Some (Hir.Expr.Await (_, resultTid, _)) ->
+                        Assert.Equal(TypeId.Unit, Type.resolve subst resultTid)
+                    | _ -> Assert.True(false, "expected Hir.Expr.Await in body")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``await on non-Task operand produces diagnostic`` () =
+        let source = """
+async fn bad (x: Int): Int = await x
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                let result = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
+                let hasError =
+                    match result.value with
+                    | Some hirModule -> hirModule.hasError
+                    | None -> not (List.isEmpty result.diagnostics)
+                Assert.True(hasError, "await on a non-Task operand should produce a diagnostic")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->

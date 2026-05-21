@@ -48,6 +48,9 @@ module Hir =
         | MemberAccess of mem: Member * instance: Expr option * tid: TypeId * span: Span
         | Block of stmts: Stmt list * expr: Expr * tid: TypeId * span: Span
         | If of cond: Expr * thenBranch: Expr * elseBranch: Expr * tid: TypeId * span: Span
+        /// `await operand` 式。`async fn` 本体内でのみ使用可能（ExprAnalyze で検査）。
+        /// operand は Task / Task<T> を表す式で、tid は結果型（Task のとき Unit、Task<T> のとき T）。
+        | Await of operand: Expr * tid: TypeId * span: Span
         | ExprError of message: string * errTyp: TypeId * span: Span
 
         member this.typ =
@@ -64,6 +67,7 @@ module Hir =
             | MemberAccess (_, _, t, _) -> t
             | Block (_, _, t, _) -> t
             | If (_, _, _, t, _) -> t
+            | Await (_, t, _) -> t
             | ExprError (_, t, _) -> t
 
         member this.span =
@@ -80,6 +84,7 @@ module Hir =
             | MemberAccess (_, _, _, span) -> span
             | Block (_, _, _, span) -> span
             | If (_, _, _, _, span) -> span
+            | Await (_, _, span) -> span
             | ExprError (_, _, span) -> span
 
         member this.hasError =
@@ -103,6 +108,7 @@ module Hir =
                 instance
                 |> Option.map (fun expr -> expr.getDiagnostics)
                 |> Option.defaultValue []
+            | Await (operand, _, _) -> operand.getDiagnostics
             | _ -> []
 
     and Stmt =
@@ -139,7 +145,7 @@ module Hir =
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics
 
-    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, overrideTarget: MethodInfo option, span: Span) =
+    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, overrideTarget: MethodInfo option, isAsync: bool, span: Span) =
         member this.sym = sid
         // メソッドの引数リスト（宣言順に (SymbolId, TypeId) の組で保持）。
         member this.args = args
@@ -148,6 +154,9 @@ module Hir =
         /// `override` 付きメソッドの場合、上書き対象となる親 .NET クラスの MethodInfo。
         /// Resolve フェーズで確定し、CIL Gen で `DefineMethodOverride` に渡される。
         member this.overrideTarget = overrideTarget
+        /// `async` 修飾子が付いていたかどうか。本体内で `await` を許可し、
+        /// 戻り値型は Task または Task<T>。状態機械生成は PR-3 で行う（現状は素通し）。
+        member this.isAsync = isAsync
         member this.span = span
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics
@@ -218,6 +227,8 @@ module Hir =
                 Block(stmts |> List.map (mapStmt f), mapExpr f body, tid, span)
             | Expr.If (cond, thenBranch, elseBranch, tid, span) ->
                 Expr.If(mapExpr f cond, mapExpr f thenBranch, mapExpr f elseBranch, tid, span)
+            | Await (operand, tid, span) ->
+                Await(mapExpr f operand, tid, span)
         f mapped
 
     /// `Stmt` に含まれる全 `Expr` を bottom-up で変換する。
@@ -260,6 +271,7 @@ module Hir =
             let acc'' = foldExpr f acc' cond
             let acc''' = foldExpr f acc'' thenBranch
             foldExpr f acc''' elseBranch
+        | Await (operand, _, _) -> foldExpr f acc' operand
 
     /// `Stmt` に含まれる全 `Expr` を pre-order で畳み込む。
     and foldStmt (f: 'a -> Expr -> 'a) (acc: 'a) (stmt: Stmt) : 'a =
@@ -336,6 +348,8 @@ module Hir =
             [ cond; thenBranch; elseBranch ]
             |> List.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
             |> List.fold merge zero
+        | Await (operand, _, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' operand
 
     /// `Stmt` 内の全 `Expr` を Reader 文脈（`ctx`）を保持しながら畳み込む。
     /// For ループの反復変数は `afterStmt` に合成 `Let` を渡してボディの文脈へ追加する。

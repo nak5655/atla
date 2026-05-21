@@ -182,6 +182,8 @@ let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) 
         walkExpr blockScope body state1
     | Hir.Expr.If(cond, thenBr, elseBr, _, _) ->
         state |> walkExpr scopeSpan cond |> walkExpr scopeSpan thenBr |> walkExpr scopeSpan elseBr
+    | Hir.Expr.Await(operand, _, _) ->
+        walkExpr scopeSpan operand state
     | Hir.Expr.Unit _
     | Hir.Expr.Bool _
     | Hir.Expr.Int _

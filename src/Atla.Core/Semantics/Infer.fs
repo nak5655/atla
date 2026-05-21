@@ -35,6 +35,8 @@ module Infer =
             let inferredThen = inferExpr typeSubst thenBranch
             let inferredElse = inferExpr typeSubst elseBranch
             Hir.Expr.If(inferredCond, inferredThen, inferredElse, inferType tid, span)
+        | Hir.Expr.Await (operand, tid, span) ->
+            Hir.Expr.Await(inferExpr typeSubst operand, inferType tid, span)
         | Hir.Expr.ExprError (message, errTyp, span) ->
             Hir.Expr.ExprError(message, inferType errTyp, span)
 
@@ -70,7 +72,7 @@ module Infer =
             |> List.map (fun meth ->
                 // 引数の型も型変数が解決された具体的な型に置き換える。
                 let inferredArgs = meth.args |> List.map (fun (sid, tid) -> (sid, Type.resolve typeSubst tid))
-                Hir.Method(meth.sym, inferredArgs, inferExpr typeSubst meth.body, Type.resolve typeSubst meth.typ, meth.overrideTarget, meth.span))
+                Hir.Method(meth.sym, inferredArgs, inferExpr typeSubst meth.body, Type.resolve typeSubst meth.typ, meth.overrideTarget, meth.isAsync, meth.span))
 
         let inferredTypes =
             hirModule.types
@@ -82,7 +84,7 @@ module Infer =
                     typ.methods
                     |> List.map (fun meth ->
                         let inferredArgs = meth.args |> List.map (fun (sid, tid) -> (sid, Type.resolve typeSubst tid))
-                        Hir.Method(meth.sym, inferredArgs, inferExpr typeSubst meth.body, Type.resolve typeSubst meth.typ, meth.overrideTarget, meth.span))
+                        Hir.Method(meth.sym, inferredArgs, inferExpr typeSubst meth.body, Type.resolve typeSubst meth.typ, meth.overrideTarget, meth.isAsync, meth.span))
                 let inferredBaseType = typ.baseType |> Option.map (Type.resolve typeSubst)
                 Hir.Type(typ.sym, typ.isInterface, inferredBaseType, typ.typeParams, inferredTypeFields, inferredTypeMethods))
 

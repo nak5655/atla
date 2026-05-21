@@ -42,12 +42,23 @@ module AnalyzeEnv =
             symbolTable: SymbolTable,
             scope: Scope,
             dataTypeDefs: Map<string, DataTypeDef>,
-            importedModuleExports: Map<string, Map<string, ModuleExport>>
+            importedModuleExports: Map<string, Map<string, ModuleExport>>,
+            isInsideAsyncFn: bool
         ) =
+        new (
+                symbolTable: SymbolTable,
+                scope: Scope,
+                dataTypeDefs: Map<string, DataTypeDef>,
+                importedModuleExports: Map<string, Map<string, ModuleExport>>
+            ) =
+            NameEnv(symbolTable, scope, dataTypeDefs, importedModuleExports, false)
         member this.symbolTable = symbolTable
         member this.scope = scope
         member this.dataTypeDefs = dataTypeDefs
         member this.importedModuleExports = importedModuleExports
+        /// `async fn` の本体を解析中かどうか。`await` 式が許可される文脈の判定に用いる。
+        /// Lambda 境界では false に reset される（ラムダは async 不可）。
+        member this.isInsideAsyncFn = isInsideAsyncFn
 
         // TypeExprをTypeIdへ解決する。
         member this.resolveTypeExpr (typeExpr: Ast.TypeExpr) : TypeId =
@@ -130,7 +141,18 @@ module AnalyzeEnv =
 
         member this.sub(): NameEnv =
             let blockScope = Scope(Some this.scope)
-            NameEnv(this.symbolTable, blockScope, this.dataTypeDefs, this.importedModuleExports)
+            NameEnv(this.symbolTable, blockScope, this.dataTypeDefs, this.importedModuleExports, isInsideAsyncFn)
+
+        /// `async fn` 本体解析用のサブ環境を返す。`isInsideAsyncFn` フラグを true にする。
+        member this.subAsync(): NameEnv =
+            let blockScope = Scope(Some this.scope)
+            NameEnv(this.symbolTable, blockScope, this.dataTypeDefs, this.importedModuleExports, true)
+
+        /// Lambda 境界用に `isInsideAsyncFn` を false に reset したサブ環境を返す。
+        /// ラムダ式は async にできないため、外側の async 文脈は内側のラムダへ伝播しない。
+        member this.subLambda(): NameEnv =
+            let blockScope = Scope(Some this.scope)
+            NameEnv(this.symbolTable, blockScope, this.dataTypeDefs, this.importedModuleExports, false)
 
         /// import された Atla モジュールからメンバー参照を解決する。
         member this.tryResolveImportedModuleMember (moduleAlias: string) (memberName: string) : ModuleExport option =

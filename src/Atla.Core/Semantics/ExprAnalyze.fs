@@ -35,6 +35,40 @@ module ExprAnalyze =
         | TypeId.Unit -> true
         | _ -> false
 
+    /// `tid` が `System.Threading.Tasks.Task` または `Task T` 形（`App(Name task, [t])`）のとき、
+    /// 待機結果型（Task → Unit, Task<T> → T）を `Some` で返す。それ以外は `None`。
+    /// `import System'Threading'Tasks'Task` 経由でインポートされた Task は `Name sid` として現れ、
+    /// シンボル表の `SystemTypeRef` を経由して `typeof<Task>` 等価性で判定する。
+    let private tryUnwrapTaskType (nameEnv: NameEnv) (typeEnv: TypeEnv) (tid: TypeId) : TypeId option =
+        let taskType = typeof<System.Threading.Tasks.Task>
+
+        let resolveSidToSystemType (sid: SymbolId) : System.Type option =
+            match nameEnv.resolveSym sid with
+            | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) }
+                when not (obj.ReferenceEquals(sysType, null)) -> Some sysType
+            | _ -> None
+
+        let isTaskSystemType (t: System.Type) : bool =
+            not (obj.ReferenceEquals(t, null)) && t = taskType
+
+        let resolveHeadToSystemType (head: TypeId) : System.Type option =
+            match typeEnv.resolveType head with
+            | TypeId.Native t -> Some t
+            | TypeId.Name sid -> resolveSidToSystemType sid
+            | _ -> None
+
+        match typeEnv.resolveType tid with
+        | TypeId.Native t when isTaskSystemType t -> Some TypeId.Unit
+        | TypeId.Name sid ->
+            match resolveSidToSystemType sid with
+            | Some t when isTaskSystemType t -> Some TypeId.Unit
+            | _ -> None
+        | TypeId.App (head, [ arg ]) ->
+            match resolveHeadToSystemType head with
+            | Some t when isTaskSystemType t -> Some arg
+            | _ -> None
+        | _ -> None
+
     // Format a TypeId into a user-friendly, human-readable type name.
     let rec private formatTypeForDisplay (nameEnv: NameEnv) (typeEnv: TypeEnv) (tid: TypeId) : string =
         match typeEnv.resolveType tid with
@@ -1856,7 +1890,8 @@ module ExprAnalyze =
                 Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
         | :? Ast.Expr.Lambda as lambdaExpr ->
             // ラムダ本体専用のスコープを作成し、引数束縛を外側と分離する。
-            let lambdaNameEnv = nameEnv.sub()
+            // Lambda 境界では `isInsideAsyncFn` を false にリセットする（ラムダは async 不可）。
+            let lambdaNameEnv = nameEnv.subLambda()
 
             // 期待型が関数型で引数個数が一致する場合は、その型情報を優先する。
             // 一致しない場合は fresh meta を割り当て、後段の単一化で整合性を確定する。
@@ -1941,6 +1976,24 @@ module ExprAnalyze =
                         | _ -> resolvedLambdaType
                     Hir.Expr.Lambda(resolvedArgs, resolvedRetType, analyzedBody, finalLambdaType, lambdaExpr.span)
                 | Result.Error exprErr -> exprErr
+        | :? Ast.Expr.Await as awaitExpr ->
+            // `await` は `async fn` 本体内でのみ使用可能。それ以外の文脈ではエラーを返す。
+            if not nameEnv.isInsideAsyncFn then
+                errorExpr tid awaitExpr.span "'await' can only be used inside an 'async fn' body"
+            else
+                // operand の型は推論が必要。`freshMeta` を与えて自由に解析させ、結果型から判定する。
+                let operandTid = typeEnv.freshMeta()
+                let analyzedOperand = analyzeExpr nameEnv typeEnv awaitExpr.operand operandTid
+                match tryUnwrapTaskType nameEnv typeEnv analyzedOperand.typ with
+                | Some resultType ->
+                    match unifyOrError nameEnv typeEnv tid resultType awaitExpr.span with
+                    | Result.Ok _ ->
+                        Hir.Expr.Await(analyzedOperand, typeEnv.resolveType resultType, awaitExpr.span)
+                    | Result.Error exprErr -> exprErr
+                | None ->
+                    let actualTypeStr = formatTypeForDisplay nameEnv typeEnv analyzedOperand.typ
+                    errorExpr tid awaitExpr.span
+                        (sprintf "'await' expects Task or Task<T>, got '%s'" actualTypeStr)
         | _ -> errorExpr tid expr.span "Unsupported expression type"
 
     and private analyzeStmt (nameEnv: NameEnv) (typeEnv: TypeEnv) (stmt: Ast.Stmt) : Hir.Stmt =
@@ -2185,8 +2238,34 @@ module ExprAnalyze =
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
     let analyzeMethodCoreWithOverride (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) (overrideTarget: MethodInfo option) : Hir.Method =
-        let bodyNameEnv = nameEnv.sub()
+        // `async fn` の場合は本体を async 文脈で解析し、戻り値型 Task / Task<T> から
+        // 内側の型（Unit / T）を「期待される本体の型」として使う。PR-3 で本体の Task 化を行う。
+        let bodyNameEnv =
+            if fnDecl.isAsync then nameEnv.subAsync() else nameEnv.sub()
         let retType = nameEnv.resolveTypeExpr fnDecl.ret
+
+        // `async fn` の戻り値型が Task / Task<T> でなければ診断エラー。
+        // 戻り値型として宣言された値はそのまま Hir.Method.typ に保持し、
+        // 本体は effectiveBodyRet（Unit / T）に対して型検査する。
+        // 非 Task の場合は本体エラーとして包む。
+        let asyncReturnDiagnostic : string option =
+            if fnDecl.isAsync then
+                match tryUnwrapTaskType nameEnv typeEnv retType with
+                | Some _ -> None
+                | None ->
+                    let actual = formatTypeForDisplay nameEnv typeEnv retType
+                    Some (sprintf "'async fn' must return Task or Task<T>, got '%s'" actual)
+            else
+                None
+
+        let effectiveBodyRet : TypeId =
+            if fnDecl.isAsync then
+                match tryUnwrapTaskType nameEnv typeEnv retType with
+                | Some inner -> inner
+                | None -> retType
+            else
+                retType
+
         let rawArgTypes =
             let nonUnitArgCount =
                 fnDecl.args
@@ -2222,9 +2301,17 @@ module ExprAnalyze =
             |> List.choose id
 
         let tid = TypeId.Fn(argTypes, retType)
-        let body = analyzeExpr bodyNameEnv typeEnv fnDecl.body retType
+        let analyzedBody = analyzeExpr bodyNameEnv typeEnv fnDecl.body effectiveBodyRet
 
-        Hir.Method(sid, argSids, body, tid, overrideTarget, fnDecl.span)
+        // 戻り値型診断がある場合、本体の先頭に ErrorStmt を仕込んで診断を浮上させる。
+        let body =
+            match asyncReturnDiagnostic with
+            | Some msg ->
+                let errStmt = Hir.Stmt.ErrorStmt(msg, fnDecl.span)
+                Hir.Expr.Block([ errStmt ], analyzedBody, analyzedBody.typ, fnDecl.span)
+            | None -> analyzedBody
+
+        Hir.Method(sid, argSids, body, tid, overrideTarget, fnDecl.isAsync, fnDecl.span)
 
     let analyzeMethodCore (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) : Hir.Method =
         analyzeMethodCoreWithOverride nameEnv typeEnv sid fnDecl None

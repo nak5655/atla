@@ -356,6 +356,9 @@ module Layout =
             Result.Error (Diagnostic.Error($"Cannot lower erroneous expression: {message}", span))
         | ClosedHir.Expr.Lambda (_, _, _, _, span) ->
             Result.Error (Diagnostic.Error("Lambda lowering is not implemented", span))
+        | ClosedHir.Expr.Await (_, _, span) ->
+            // PR-3 で AsyncRewrite が状態機械化する前提のため、ここに来ることは想定していない。
+            Result.Error (Diagnostic.Error("await expressions are not yet lowered to CIL (state machine generation pending)", span))
         // env-class クロージャーフィールド参照: env インスタンス引数からフィールドを読み込む。
         | ClosedHir.Expr.EnvFieldLoad (envArgSid, capturedSid, tid, span) ->
             match Mir.Frame.get envArgSid state.frame with
