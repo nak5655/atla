@@ -7,6 +7,7 @@ import Stride'Graphics'DepthStencilClearOptions
 import Stride'Graphics'SpriteBatch
 import Stride'Graphics'Texture
 import Stride'Graphics'PixelFormat
+import System'Threading'Tasks'Task
 
 data FlappyGame =
     { _spriteBatch: Opt SpriteBatch
@@ -24,6 +25,9 @@ impl FlappyGame as Game
 
     override fn Initialize self: () =
         base'Initialize.
+
+    override async fn LoadContent self: Task =
+        await base'LoadContent.
 
         self'_spriteBatch = self'GraphicsDevice SpriteBatch. Opt'Some.
 

@@ -394,7 +394,10 @@ module Compiler =
                                             (Some symbolTable)
                                             (Some moduleAsts)
                                     | { value = Some closedAsm; diagnostics = closureDiagnostics } ->
-                                        match Layout.layoutAssembly(request.asmName, closedAsm) with
+                                        // PR-3a: `async fn` の本体 Task ラップと await 同期化を施す。
+                                        // PR-3b で状態機械生成に置き換える予定。
+                                        let rewrittenAsm = AsyncRewrite.rewriteAssembly symbolTable closedAsm
+                                        match Layout.layoutAssembly(request.asmName, rewrittenAsm) with
                                         | { succeeded = false; diagnostics = layoutDiagnostics } ->
                                             failed
                                                 (allDiagnostics @ closureDiagnostics @ layoutDiagnostics)

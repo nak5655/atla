@@ -1458,3 +1458,82 @@ fn main: () =
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.StartsWith("MyError", stdout.Trim())
+
+    // ──────────────────────────────────────────────────────────────
+    // async / await (PR-3a: AsyncRewrite で同期化されたエンドツーエンド)
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``async fn returning Task wraps body and produces Task-returning method`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn run (): Task = ()
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncTaskRet"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message =
+                res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncTaskRet.dll")
+        Assert.True(File.Exists dllPath)
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let runMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "run")
+
+        match runMethod with
+        | Some mi ->
+            // 戻り値型が System.Threading.Tasks.Task であること。
+            Assert.Equal("System.Threading.Tasks.Task", mi.ReturnType.FullName)
+            // 実際に呼び出して、null でない完了済み Task が返ることを確認する。
+            let result = mi.Invoke(null, [||]) :?> System.Threading.Tasks.Task
+            Assert.NotNull(result)
+            result.Wait()
+            Assert.True(result.IsCompletedSuccessfully)
+        | None ->
+            Assert.True(false, "'run' method not found in generated assembly")
+
+    [<Fact>]
+    let ``await inside async fn lowers via GetAwaiter().GetResult() and runs synchronously`` () =
+        // 既に完了している Task.CompletedTask を await した上で、後続代入を実行する。
+        // PR-3a の同期実装では `awaiter.GetResult()` でブロックするだけで完了し、後続が走る。
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn run (t: Task): Task = await t
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncAwaitSync"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message =
+                res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncAwaitSync.dll")
+        Assert.True(File.Exists dllPath)
+
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let runMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "run")
+
+        match runMethod with
+        | Some mi ->
+            Assert.Equal("System.Threading.Tasks.Task", mi.ReturnType.FullName)
+            let arg = System.Threading.Tasks.Task.CompletedTask :> obj
+            let result = mi.Invoke(null, [| arg |]) :?> System.Threading.Tasks.Task
+            Assert.NotNull(result)
+            result.Wait()
+            Assert.True(result.IsCompletedSuccessfully, "async fn 本体は同期実装で完走するべき")
+        | None ->
+            Assert.True(false, "'run' method not found in generated assembly")

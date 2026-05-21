@@ -35,6 +35,7 @@
     <Compile Include="Semantics\PositionIndex.fs" />
     <Compile Include="Lowering\Data\Mir.fs" />
     <Compile Include="Lowering\ClosureConversion.fs" />
+    <Compile Include="Lowering\AsyncRewrite.fs" />
     <Compile Include="Lowering\Layout.fs" />
     <Compile Include="Lowering\Gen.fs" />
     <Compile Include="AtlaLib.fs" />
