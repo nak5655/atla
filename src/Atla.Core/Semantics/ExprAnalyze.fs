@@ -458,8 +458,7 @@ module ExprAnalyze =
 
     // Generate an overload error message with available candidates when argument count does not match.
     let private noOverloadMessage (callable: Hir.Callable) (argCount: int) : string =
-        match callable with
-        | Hir.Callable.NativeMethodGroup methods when not methods.IsEmpty ->
+        let formatMethodOverloads (methods: MethodInfo list) =
             let name = (List.head methods).Name
             let overloads =
                 methods
@@ -468,6 +467,11 @@ module ExprAnalyze =
                     sprintf "  %s(%s)" mi.Name ps)
                 |> String.concat "\n"
             sprintf "No overload of '%s' accepts %d argument(s). Available overloads:\n%s" name argCount overloads
+        match callable with
+        | Hir.Callable.NativeMethodGroup methods when not methods.IsEmpty ->
+            formatMethodOverloads methods
+        | Hir.Callable.NativeBaseMethodGroup methods when not methods.IsEmpty ->
+            formatMethodOverloads methods
         | Hir.Callable.NativeConstructorGroup ctors when not ctors.IsEmpty ->
             let typeName = (List.head ctors).DeclaringType.FullName
             let overloads =
@@ -518,6 +522,8 @@ module ExprAnalyze =
             match memberInfo with
             | Hir.Member.NativeMethod methodInfo -> Some (Hir.Callable.NativeMethod methodInfo)
             | Hir.Member.NativeMethodGroup methodInfos -> Some (Hir.Callable.NativeMethodGroup methodInfos)
+            | Hir.Member.NativeBaseMethod methodInfo -> Some (Hir.Callable.NativeBaseMethod methodInfo)
+            | Hir.Member.NativeBaseMethodGroup methodInfos -> Some (Hir.Callable.NativeBaseMethodGroup methodInfos)
             | Hir.Member.DataMethod (_, methodSid) -> Some (Hir.Callable.Fn methodSid)
             | _ -> None
         | _ -> None
@@ -1130,6 +1136,22 @@ module ExprAnalyze =
                             Some (resolvedCallable, TypeId.fromSystemType methodInfo.ReturnType)
                         else
                             None
+                    | Hir.Callable.NativeBaseMethod methodInfo ->
+                        // base 呼び出し: 親クラスのインスタンスメソッドなので拡張メソッドは想定しない。
+                        if methodInfo.GetParameters().Length = allArgs.Length || canApplyWithOptionalDefaults methodInfo then
+                            Some (resolvedCallable, TypeId.fromSystemType methodInfo.ReturnType)
+                        else
+                            None
+                    | Hir.Callable.NativeBaseMethodGroup methods ->
+                        let typeCompatible =
+                            methods
+                            |> List.filter (fun methodInfo ->
+                                let parameterCount = methodInfo.GetParameters().Length
+                                (parameterCount = allArgs.Length || (parameterCount > allArgs.Length && canApplyWithOptionalDefaults methodInfo))
+                                && methodMatchesTypes methodInfo)
+                        match tryPickBestMethod typeCompatible with
+                        | Some methodInfo -> Some (Hir.Callable.NativeBaseMethod methodInfo, TypeId.fromSystemType methodInfo.ReturnType)
+                        | None -> None
                     | Hir.Callable.Fn sid ->
                         match nameEnv.resolveSym sid with
                         | Some symInfo ->
@@ -1364,9 +1386,9 @@ module ExprAnalyze =
                                 match NativeInterop.resolveNativeMember typeEnv memberInfos tid with
                                 | [memberInfo, resolvedTid] ->
                                     match memberInfo with
-                                    | :? MethodInfo as methodInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethod methodInfo, Some resolvedSelfExpr, resolvedTid, memberAccessExpr.span))
+                                    | :? MethodInfo as methodInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeBaseMethod methodInfo, Some resolvedSelfExpr, resolvedTid, memberAccessExpr.span))
                                     | :? FieldInfo as fieldInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeField fieldInfo, Some resolvedSelfExpr, resolvedTid, memberAccessExpr.span))
-                                    | :? PropertyInfo as propertyInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeProperty propertyInfo, Some resolvedSelfExpr, resolvedTid, memberAccessExpr.span))
+                                    | :? PropertyInfo as propertyInfo -> Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeBaseProperty propertyInfo, Some resolvedSelfExpr, resolvedTid, memberAccessExpr.span))
                                     | _ -> Result.Error(sprintf "Unsupported member type for '%s'" memberAccessExpr.memberName)
                                 | [] -> Result.Error(sprintf "Undefined member '%s' for type '%s'" memberAccessExpr.memberName baseSysType.FullName)
                                 | members ->
@@ -1377,7 +1399,7 @@ module ExprAnalyze =
                                             | :? MethodInfo as methodInfo -> Some methodInfo
                                             | _ -> None)
                                     if methodInfos.Length = members.Length then
-                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeMethodGroup methodInfos, Some resolvedSelfExpr, tid, memberAccessExpr.span))
+                                        Result.Ok(Hir.Expr.MemberAccess(Hir.Member.NativeBaseMethodGroup methodInfos, Some resolvedSelfExpr, tid, memberAccessExpr.span))
                                     else
                                         Result.Error(sprintf "Ambiguous member '%s' for type '%s'" memberAccessExpr.memberName baseSysType.FullName)
                             | Some unsupportedBaseType ->
