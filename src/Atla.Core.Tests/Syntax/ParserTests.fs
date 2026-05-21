@@ -1255,6 +1255,147 @@ override fn main (): Unit = ()
             ()
 
     [<Fact>]
+    let ``fileModule parses async fn in impl as block`` () =
+        let program = """
+data MyTask =
+    { value: Int
+    }
+impl MyTask as Object
+    async fn run self: Unit = ()
+    fn sync self: Unit = ()
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
+                    | _ -> None)
+
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.Equal(2, parsedImplDecl.methods.Length)
+                let runMethod = parsedImplDecl.methods |> List.find (fun m -> m.name = "run")
+                let syncMethod = parsedImplDecl.methods |> List.find (fun m -> m.name = "sync")
+                Assert.True(runMethod.isAsync, "run method should have isAsync = true")
+                Assert.False(runMethod.isOverride, "run method should not have isOverride")
+                Assert.False(syncMethod.isAsync, "sync method should have isAsync = false")
+            | None ->
+                Assert.True(false, "impl declaration was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses override async fn in impl as block`` () =
+        let program = """
+data MyTask =
+    { value: Int
+    }
+impl MyTask as Object
+    override async fn run self: Unit = ()
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
+                    | _ -> None)
+
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.Single(parsedImplDecl.methods) |> ignore
+                let runMethod = parsedImplDecl.methods.Head
+                Assert.True(runMethod.isOverride, "run method should have isOverride = true")
+                Assert.True(runMethod.isAsync, "run method should have isAsync = true")
+            | None ->
+                Assert.True(false, "impl declaration was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses async fn at top level`` () =
+        let program = "async fn run (): Unit = ()"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                Assert.True(fn.isAsync, "top-level fn with 'async' should have isAsync = true")
+                Assert.False(fn.isOverride, "top-level async fn should have isOverride = false")
+            | None ->
+                Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses await expr in fn body`` () =
+        let program = "async fn run (x: Int): Unit = await x"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                Assert.True(fn.isAsync, "fn should be async")
+                match terminalBodyExpr fn.body with
+                | :? Ast.Expr.Await as awaitExpr ->
+                    match awaitExpr.operand with
+                    | :? Ast.Expr.Id as idExpr ->
+                        Assert.Equal("x", idExpr.name)
+                    | other ->
+                        Assert.True(false, $"expected Ast.Expr.Id but got {other.GetType().Name}")
+                | other ->
+                    Assert.True(false, $"expected Ast.Expr.Await but got {other.GetType().Name}")
+            | None ->
+                Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses await with dot-call operand`` () =
+        // `await x f.` は `await (f(x))` として解析され、operand は Apply となる。
+        let program = "async fn run (x: Int): Unit = await x f."
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match terminalBodyExpr fn.body with
+                | :? Ast.Expr.Await as awaitExpr ->
+                    match awaitExpr.operand with
+                    | :? Ast.Expr.Apply -> ()
+                    | other ->
+                        Assert.True(false, $"expected Apply operand but got {other.GetType().Name}")
+                | other ->
+                    Assert.True(false, $"expected Ast.Expr.Await but got {other.GetType().Name}")
+            | None ->
+                Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses true literal as Bool`` () =
         let program = "fn main (): Bool = True"
 
