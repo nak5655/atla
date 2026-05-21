@@ -99,6 +99,7 @@ module ExprAnalyze =
             sprintf "(%s%s... -> %s)" prefix
                 (formatTypeForDisplay nameEnv typeEnv elemType)
                 (formatTypeForDisplay nameEnv typeEnv ret)
+        | TypeId.ByRef inner -> sprintf "ref %s" (formatTypeForDisplay nameEnv typeEnv inner)
 
     // UnifyError を人間が読みやすいメッセージへ変換する。
     // formatTypeForDisplay を使い、型変数（Meta）を "unknown" に、既知の型を短い名前で表示する。

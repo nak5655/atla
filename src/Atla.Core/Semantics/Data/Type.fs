@@ -32,6 +32,10 @@ type TypeId =
     /// 可変長引数関数型: a1 -> ... -> an -> b... -> r
     /// fixedArgs: 先頭の固定引数型リスト, elemType: 可変長部分の要素型, ret: 戻り値型
     | VarargFn of fixedArgs: TypeId list * elemType: TypeId * ret: TypeId
+    /// マネージドポインタ（CIL の `T&`）。state machine の `ref this.<>u__N` や
+    /// `ref stateMachine` 等、address-of 値・ref パラメータの型として用いる。
+    /// ユーザー言語からは直接生成されず、AsyncRewrite 等の lowering で導入する。
+    | ByRef of inner: TypeId
 
 module TypeId =
     let rec fromSystemType (t: System.Type) : TypeId =
@@ -105,6 +109,10 @@ module TypeId =
         // TypeId.Fn は対応するデリゲート型（Func<>/Action<>）へ変換する。
         | Fn (args, ret) -> tryFnToDelegateSystemType args ret
         | VarargFn _ -> None
+        // `ByRef T` は CIL の `T&`。CIL シグネチャに直接載せられる。
+        | ByRef inner ->
+            tryToRuntimeSystemType inner
+            |> Option.map (fun t -> t.MakeByRefType())
         | _ -> None
 
     let tryResolveToSystemType (resolveName: SymbolId -> System.Type option) (tid: TypeId) : System.Type option =
@@ -132,6 +140,7 @@ module Type =
         | Fn (args, ret) -> List.exists (occurs subst m) args || occurs subst m ret
         | VarargFn(fixedArgs, e, r) ->
             (fixedArgs |> List.exists (occurs subst m)) || occurs subst m e || occurs subst m r
+        | ByRef inner -> occurs subst m inner
         | _ -> false
 
     let rec canUnify (subst: TypeSubst) (tid1: TypeId) (tid2: TypeId) : bool =
@@ -172,6 +181,8 @@ module Type =
         | Native t, Fn _ when TypeId.isDelegateType t -> canUnify subst tid2 tid1
         // 同名の型パラメータは互換とみなす。
         | TypeVar n1, TypeVar n2 -> n1 = n2
+        // ByRef は内側の型が互換であれば互換。
+        | ByRef a, ByRef b -> canUnify subst a b
         | VarargFn(fixed1, e1, r1), VarargFn(fixed2, e2, r2)
             when List.length fixed1 = List.length fixed2 ->
             (List.zip fixed1 fixed2 |> List.forall (fun (a, b) -> canUnify subst a b))
@@ -201,6 +212,7 @@ module Type =
         | Fn (args, ret) -> Fn (List.map (resolve subst) args, resolve subst ret)
         | VarargFn(fixedArgs, e, r) ->
             VarargFn(fixedArgs |> List.map (resolve subst), resolve subst e, resolve subst r)
+        | ByRef inner -> ByRef (resolve subst inner)
         | _ -> tid
 
     // 単一化
@@ -284,6 +296,8 @@ module Type =
             | Result.Error e -> Result.Error e
         // 同名の型パラメータは同一型として単一化する。
         | TypeVar n1, TypeVar n2 when n1 = n2 -> Result.Ok (TypeVar n1)
+        | ByRef a, ByRef b ->
+            unify subst a b |> Result.map ByRef
         | VarargFn(fixed1, e1, r1), VarargFn(fixed2, e2, r2)
             when List.length fixed1 = List.length fixed2 ->
             let fixedResults = List.zip fixed1 fixed2 |> List.map (fun (a, b) -> unify subst a b)
@@ -333,6 +347,7 @@ module Type =
         | Fn (args, ret) -> List.exists (hasError subst) args || hasError subst ret
         | VarargFn(fixedArgs, e, r) ->
             (fixedArgs |> List.exists (hasError subst)) || hasError subst e || hasError subst r
+        | ByRef inner -> hasError subst inner
         | Meta m ->
             match subst.TryGetValue(m) with
             | true, t' -> hasError subst t'

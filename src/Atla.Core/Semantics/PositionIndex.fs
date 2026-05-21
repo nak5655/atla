@@ -38,6 +38,7 @@ let rec formatType (resolve: SymbolId -> string) (tid: TypeId) : string =
             if fixedArgs.IsEmpty then ""
             else (fixedArgs |> List.map (formatType resolve) |> String.concat " -> ") + " -> "
         sprintf "(%s%s... -> %s)" prefix (formatType resolve elemType) (formatType resolve ret)
+    | TypeId.ByRef inner -> sprintf "ref %s" (formatType resolve inner)
 
 /// SymbolTable を使って TypeId をフォーマットする。
 let formatTypeWithTable (symbolTable: SymbolTable) (tid: TypeId) : string =

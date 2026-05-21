@@ -44,6 +44,10 @@ module ClosedHir =
         // methodSid: lifted invoke メソッドの SymbolId
         // captured: 捕捉変数の (SymbolId * TypeId * isMutable) リスト（SymbolId 昇順）
         | ClosureCreate of envTypeSid: SymbolId * methodSid: SymbolId * captured: (SymbolId * TypeId * bool) list * tid: TypeId * span: Span
+        /// `&target` — マネージドポインタ（`T&`）を生成する式。
+        /// target は `Id`（ローカル/引数）または `MemberAccess(DataField | NativeField, Some instance)` を想定。
+        /// tid は `TypeId.ByRef inner`。AsyncRewrite 等の lowering で導入され、ユーザー言語からは生成されない。
+        | AddrOf of target: Expr * tid: TypeId * span: Span
 
         member this.typ =
             match this with
@@ -63,6 +67,7 @@ module ClosedHir =
             | ExprError (_, t, _) -> t
             | EnvFieldLoad (_, _, t, _) -> t
             | ClosureCreate (_, _, _, t, _) -> t
+            | AddrOf (_, t, _) -> t
 
         member this.span =
             match this with
@@ -82,6 +87,7 @@ module ClosedHir =
             | ExprError (_, _, span) -> span
             | EnvFieldLoad (_, _, _, span) -> span
             | ClosureCreate (_, _, _, _, span) -> span
+            | AddrOf (_, _, span) -> span
 
     /// クロージャー変換後の文。`Hir.Stmt` と同構造だが `ClosedHir.Expr` を参照する。
     and Stmt =
@@ -172,6 +178,8 @@ module ClosedHir =
                 Expr.If(mapExpr f cond, mapExpr f thenBranch, mapExpr f elseBranch, tid, span)
             | Await (operand, tid, span) ->
                 Await(mapExpr f operand, tid, span)
+            | AddrOf (target, tid, span) ->
+                AddrOf(mapExpr f target, tid, span)
         f mapped
 
     /// `Stmt` に含まれる全 `Expr` を bottom-up で変換する。
@@ -217,6 +225,7 @@ module ClosedHir =
             let acc''' = foldExpr f acc'' thenBranch
             foldExpr f acc''' elseBranch
         | Await (operand, _, _) -> foldExpr f acc' operand
+        | AddrOf (target, _, _) -> foldExpr f acc' target
 
     /// `Stmt` に含まれる全 `Expr` を pre-order で畳み込む。
     and foldStmt (f: 'a -> Expr -> 'a) (acc: 'a) (stmt: Stmt) : 'a =
@@ -294,6 +303,8 @@ module ClosedHir =
             |> List.fold merge zero
         | Await (operand, _, _) ->
             foldExprWithCtx descend afterStmt leaf merge zero ctx' operand
+        | AddrOf (target, _, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' target
 
     /// `Stmt` 内の全 `Expr` を Reader 文脈（`ctx`）を保持しながら畳み込む。
     /// For ループの反復変数は `afterStmt` に合成 `Let` を渡してボディの文脈へ追加する。

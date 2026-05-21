@@ -92,6 +92,12 @@ module Mir =
         // targetReg=None:   ldnull;            ldftn <sid>; newobj <delegateType>::.ctor
         // targetReg=Some r: ldarg/ldloc <r>;   ldftn <sid>; newobj <delegateType>::.ctor
         | FnDelegate of sid: SymbolId * delegateType: System.Type * targetReg: Reg option
+        // レジスタのアドレス値（マネージドポインタ `T&`）。Gen で Ldloca/Ldarga として発行する。
+        // state machine の `builder.Start(ref sm)`, `ref this` 等で使用する。
+        | RegAddr of reg: Reg
+        // 指定インスタンスレジスタのフィールドアドレス値（`T&`）。Gen で `<inst>; ldflda <field>` を発行する。
+        // state machine の `builder.AwaitUnsafeOnCompleted(ref this.<>u__N, ...)` で使用する。
+        | FieldAddr of inst: Reg * field: FieldInfo
         override this.ToString() =
             match this with
             | ImmVal v -> sprintf "Imm(%s)" (v.ToString())
@@ -104,6 +110,8 @@ module Mir =
                     |> Option.map (fun reg -> reg.ToString())
                     |> Option.defaultValue "null"
                 sprintf "FnDelegate(sid=%d, type=%s, target=%s)" sid.id dt.FullName targetText
+            | RegAddr reg -> sprintf "Addr(%s)" (reg.ToString())
+            | FieldAddr (inst, field) -> sprintf "Addr(%s.%s)" (inst.ToString()) field.Name
 
     type OpCode =
         | Add
@@ -142,6 +150,10 @@ module Mir =
         | StoreEnvField of inst: Reg * typeSid: SymbolId * fieldSid: SymbolId * value: Value
         // env-class インスタンスのフィールドから値を読み込む（typeSid・fieldSid で解決）。
         | LoadEnvField of dst: Reg * inst: Reg * typeSid: SymbolId * fieldSid: SymbolId
+        // env-class インスタンスのフィールドアドレスを `dst` レジスタへロードする（typeSid・fieldSid で解決）。
+        // Gen では `<inst>; ldflda <field>; stloc/starg <dst>` に展開する。
+        // state machine の `ref this.<>u__N` 等を AddrOf から取り出すために使用する。
+        | LoadEnvFieldAddr of dst: Reg * inst: Reg * typeSid: SymbolId * fieldSid: SymbolId
         | Ret
         | RetValue of value: Value
         | Jump of label: LabelId
@@ -165,6 +177,7 @@ module Mir =
             | NewEnv(dst, typeSid) -> sprintf "%A = new_env(typeSid=%d)" dst typeSid.id
             | StoreEnvField(inst, typeSid, fieldSid, value) -> sprintf "%A.field_%d(typeSid=%d) = %s" inst fieldSid.id typeSid.id (value.ToString())
             | LoadEnvField(dst, inst, typeSid, fieldSid) -> sprintf "%A = %A.field_%d(typeSid=%d)" dst inst fieldSid.id typeSid.id
+            | LoadEnvFieldAddr(dst, inst, typeSid, fieldSid) -> sprintf "%A = &%A.field_%d(typeSid=%d)" dst inst fieldSid.id typeSid.id
             | Ret -> "Ret"
             | RetValue v -> sprintf "return %s" (v.ToString())
             | Jump label -> sprintf "Jump %s" (label.ToString())

@@ -359,6 +359,39 @@ module Layout =
         | ClosedHir.Expr.Await (_, _, span) ->
             // PR-3 で AsyncRewrite が状態機械化する前提のため、ここに来ることは想定していない。
             Result.Error (Diagnostic.Error("await expressions are not yet lowered to CIL (state machine generation pending)", span))
+        // `&target` をマネージドポインタ値へ下す。target は Id / DataField / NativeField のいずれか。
+        // AsyncRewrite 等の lowering が導入するノードであり、ユーザー言語からは生成されない。
+        | ClosedHir.Expr.AddrOf (target, tid, span) ->
+            match target with
+            | ClosedHir.Expr.Id (sid, _, _) ->
+                match Mir.Frame.get sid state.frame with
+                | Some reg -> Ok (state, { ins = []; res = Some(Mir.Value.RegAddr reg) })
+                | None -> Result.Error (Diagnostic.Error($"AddrOf: id {sid} not found in frame", span))
+            | ClosedHir.Expr.MemberAccess (mem, instanceOpt, _, _) ->
+                match mem, instanceOpt with
+                | Hir.Member.DataField (typeSid, fieldSid), Some instExpr ->
+                    match layoutExpr state instExpr with
+                    | Result.Error e -> Result.Error e
+                    | Ok (state1, instKn) ->
+                        match instKn.res with
+                        | Some (Mir.Value.RegVal instReg) ->
+                            let dst, state2 = declareTemp state1 tid
+                            Ok (state2, { ins = instKn.ins @ [ Mir.Ins.LoadEnvFieldAddr(dst, instReg, typeSid, fieldSid) ]; res = Some(Mir.Value.RegVal dst) })
+                        | _ ->
+                            Result.Error (Diagnostic.Error("AddrOf: data field instance must lower to a register", span))
+                | Hir.Member.NativeField fi, Some instExpr ->
+                    match layoutExpr state instExpr with
+                    | Result.Error e -> Result.Error e
+                    | Ok (state1, instKn) ->
+                        match instKn.res with
+                        | Some (Mir.Value.RegVal instReg) ->
+                            Ok (state1, { ins = instKn.ins; res = Some(Mir.Value.FieldAddr(instReg, fi)) })
+                        | _ ->
+                            Result.Error (Diagnostic.Error("AddrOf: native field instance must lower to a register", span))
+                | _ ->
+                    Result.Error (Diagnostic.Error("AddrOf: only data/native field member access is supported", span))
+            | _ ->
+                Result.Error (Diagnostic.Error("AddrOf target must be Id or field MemberAccess", span))
         // env-class クロージャーフィールド参照: env インスタンス引数からフィールドを読み込む。
         | ClosedHir.Expr.EnvFieldLoad (envArgSid, capturedSid, tid, span) ->
             match Mir.Frame.get envArgSid state.frame with
