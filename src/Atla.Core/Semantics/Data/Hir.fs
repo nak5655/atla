@@ -17,6 +17,9 @@ module Hir =
         | BuiltinArray
         | NativeMethod of MethodInfo
         | NativeMethodGroup of MethodInfo list
+        /// `base'X` 由来のメソッド呼び出し。Gen で `OpCodes.Call`（非仮想）として発行する。
+        | NativeBaseMethod of MethodInfo
+        | NativeBaseMethodGroup of MethodInfo list
         | NativeConstructor of ConstructorInfo
         | NativeConstructorGroup of ConstructorInfo list
 
@@ -25,6 +28,10 @@ module Hir =
         | NativeProperty of PropertyInfo
         | NativeMethod of MethodInfo
         | NativeMethodGroup of MethodInfo list
+        /// `base'X` 由来のメソッド/プロパティ参照。Gen で `OpCodes.Call`（非仮想）として発行する。
+        | NativeBaseMethod of MethodInfo
+        | NativeBaseMethodGroup of MethodInfo list
+        | NativeBaseProperty of PropertyInfo
         | DataField of typeSid: SymbolId * fieldSid: SymbolId
         | DataMethod of typeSid: SymbolId * methodSid: SymbolId
 

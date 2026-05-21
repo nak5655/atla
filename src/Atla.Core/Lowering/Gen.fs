@@ -388,6 +388,17 @@ module Gen =
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        // `base'X` 由来の非仮想呼び出し。virtual メソッドであっても `OpCodes.Call` で発行し、
+        // 親クラス実装を直接呼ぶ（callvirt だとオーバーライド側に再ディスパッチし無限再帰になる）。
+        | Mir.Ins.CallBase (method, args) ->
+            emitMethodArgs method args
+            gen.Emit(OpCodes.Call, method)
+        | Mir.Ins.CallAssignBase (dst, method, args) ->
+            emitMethodArgs method args
+            gen.Emit(OpCodes.Call, method)
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         | Mir.Ins.CallAssignSym (dst, sid, args) ->
             for arg in args do
                 genValue env gen arg

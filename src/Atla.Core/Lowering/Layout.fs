@@ -1,5 +1,6 @@
 namespace Atla.Core.Lowering
 
+open Atla.Core.Data
 open Atla.Core.Semantics.Data
 open Atla.Core.Lowering.Data
 
@@ -122,32 +123,14 @@ module Layout =
                         | None ->
                             Result.Error (Diagnostic.Error("Data field receiver did not produce a value", span))
             | Hir.Member.NativeProperty pi ->
-                match pi.GetMethod with
-                | null -> Result.Error (Diagnostic.Error($"Property has no getter: {pi.Name}", span))
-                | getter ->
-                    let instanceResult =
-                        match instance with
-                        | Some expr -> layoutExpr state expr |> Result.map (fun (s1, kn) -> s1, Some kn)
-                        | None -> Ok (state, None)
-                    match instanceResult with
-                    | Result.Error e -> Result.Error e
-                    | Ok (state1, instanceKnOpt) ->
-                        let instanceIns =
-                            instanceKnOpt
-                            |> Option.map (fun kn -> kn.ins)
-                            |> Option.defaultValue []
-
-                        let instanceArg =
-                            instanceKnOpt
-                            |> Option.bind (fun kn -> kn.res)
-                            |> Option.map List.singleton
-                            |> Option.defaultValue []
-
-                        if tid = TypeId.Unit || getter.ReturnType = typeof<System.Void> then
-                            Ok (state1, { ins = instanceIns @ [ Mir.Ins.Call(Choice1Of2 getter, instanceArg) ]; res = None })
-                        else
-                            let dst, state2 = declareTemp state1 tid
-                            Ok (state2, { ins = instanceIns @ [ Mir.Ins.CallAssign(dst, getter, instanceArg) ]; res = Some(Mir.Value.RegVal dst) })
+                layoutPropertyGetter state pi instance tid span false
+            | Hir.Member.NativeBaseProperty pi ->
+                // base'X 由来のプロパティ getter は非仮想呼び出しで発行する。
+                layoutPropertyGetter state pi instance tid span true
+            | Hir.Member.NativeBaseMethod _ ->
+                Result.Error (Diagnostic.Error("First-class native base method value is not supported", span))
+            | Hir.Member.NativeBaseMethodGroup _ ->
+                Result.Error (Diagnostic.Error("First-class native base method group value is not supported", span))
         | ClosedHir.Expr.Call (func, instanceOpt, args, tid, callSpan) ->
             // instance call の receiver を必ず先頭に載せ、Gen 側の call/callvirt 規約（receiver :: args）を満たす。
             let instanceLayoutResult =
@@ -192,21 +175,34 @@ module Layout =
                         | Ok instanceArgs ->
                             let callArgs = instanceArgs @ argValues
                             // MethodInfo を使った呼び出しを発行するヘルパー。
-                            let emitCall (st: LayoutState) (mi: System.Reflection.MethodInfo) =
+                            // nonVirtual=true の場合は `base'X` 由来として `CallBase`/`CallAssignBase` を発行する。
+                            let emitCallWith (nonVirtual: bool) (st: LayoutState) (mi: System.Reflection.MethodInfo) =
                                 let returnsUnit = (mi.ReturnType = typeof<System.Void>)
                                 match tid, returnsUnit with
                                 | _, true
                                 | TypeId.Unit, _ ->
-                                    Ok (st, { ins = instanceIns @ argIns @ [ Mir.Ins.Call(Choice1Of2 mi, callArgs) ]; res = None })
+                                    let callIns =
+                                        if nonVirtual then Mir.Ins.CallBase(mi, callArgs)
+                                        else Mir.Ins.Call(Choice1Of2 mi, callArgs)
+                                    Ok (st, { ins = instanceIns @ argIns @ [ callIns ]; res = None })
                                 | _ ->
                                     let dst, st' = declareTemp st tid
-                                    Ok (st', { ins = instanceIns @ argIns @ [ Mir.Ins.CallAssign(dst, mi, callArgs) ]; res = Some(Mir.Value.RegVal dst) })
+                                    let callIns =
+                                        if nonVirtual then Mir.Ins.CallAssignBase(dst, mi, callArgs)
+                                        else Mir.Ins.CallAssign(dst, mi, callArgs)
+                                    Ok (st', { ins = instanceIns @ argIns @ [ callIns ]; res = Some(Mir.Value.RegVal dst) })
+                            let emitCall = emitCallWith false
 
                             match func with
                             | Hir.Callable.NativeMethod mi -> emitCall state2 mi
                             | Hir.Callable.NativeMethodGroup methods ->
                                 match methods |> List.tryFind (fun m -> m.GetParameters().Length = argValues.Length) with
                                 | Some mi -> emitCall state2 mi
+                                | None -> Result.Error (Diagnostic.Error($"No overload matched argument count {argValues.Length}", callSpan))
+                            | Hir.Callable.NativeBaseMethod mi -> emitCallWith true state2 mi
+                            | Hir.Callable.NativeBaseMethodGroup methods ->
+                                match methods |> List.tryFind (fun m -> m.GetParameters().Length = argValues.Length) with
+                                | Some mi -> emitCallWith true state2 mi
                                 | None -> Result.Error (Diagnostic.Error($"No overload matched argument count {argValues.Length}", callSpan))
                             | Hir.Callable.NativeConstructor ctor ->
                                 let dst, state3 = declareTemp state2 tid
@@ -393,6 +389,50 @@ module Layout =
                 Ok (state1, { ins = [ newEnvIns ] @ storeIns; res = Some(Mir.Value.FnDelegate(methodSid, delegateType, Some envReg)) })
             | None ->
                 Result.Error (Diagnostic.Error($"Cannot resolve delegate type for ClosureCreate: {tid}", span))
+
+    /// Property getter 呼び出しを MIR 命令列に変換する共通ヘルパー。
+    /// `nonVirtual=true` の場合（`base'X` 由来）は `CallBase`/`CallAssignBase` を発行し、
+    /// `false` の場合は通常の `Call`/`CallAssign` を発行する。
+    and private layoutPropertyGetter
+        (state: LayoutState)
+        (pi: System.Reflection.PropertyInfo)
+        (instance: ClosedHir.Expr option)
+        (tid: TypeId)
+        (span: Span)
+        (nonVirtual: bool)
+        : Result<LayoutState * KNormal, Diagnostic> =
+        match pi.GetMethod with
+        | null -> Result.Error (Diagnostic.Error($"Property has no getter: {pi.Name}", span))
+        | getter ->
+            let instanceResult =
+                match instance with
+                | Some expr -> layoutExpr state expr |> Result.map (fun (s1, kn) -> s1, Some kn)
+                | None -> Ok (state, None)
+            match instanceResult with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, instanceKnOpt) ->
+                let instanceIns =
+                    instanceKnOpt
+                    |> Option.map (fun kn -> kn.ins)
+                    |> Option.defaultValue []
+
+                let instanceArg =
+                    instanceKnOpt
+                    |> Option.bind (fun kn -> kn.res)
+                    |> Option.map List.singleton
+                    |> Option.defaultValue []
+
+                if tid = TypeId.Unit || getter.ReturnType = typeof<System.Void> then
+                    let callIns =
+                        if nonVirtual then Mir.Ins.CallBase(getter, instanceArg)
+                        else Mir.Ins.Call(Choice1Of2 getter, instanceArg)
+                    Ok (state1, { ins = instanceIns @ [ callIns ]; res = None })
+                else
+                    let dst, state2 = declareTemp state1 tid
+                    let callIns =
+                        if nonVirtual then Mir.Ins.CallAssignBase(dst, getter, instanceArg)
+                        else Mir.Ins.CallAssign(dst, getter, instanceArg)
+                    Ok (state2, { ins = instanceIns @ [ callIns ]; res = Some(Mir.Value.RegVal dst) })
 
     and private layoutStmt (state: LayoutState) (stmt: ClosedHir.Stmt) : Result<LayoutState * Mir.Ins list, Diagnostic> =
         match stmt with

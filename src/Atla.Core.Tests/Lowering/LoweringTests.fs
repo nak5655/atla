@@ -1409,3 +1409,52 @@ fn main: () =
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("7", stdout.Trim())
+
+    [<Fact>]
+    let ``override fn body calls base'Method as non-virtual call (not callvirt)`` () =
+        // 回帰テスト: `impl A as B` の `override fn` から `base'Method` を呼んだとき、
+        // CIL が `callvirt` で発行されるとオーバーライド側に再ディスパッチして無限再帰になる。
+        // `OpCodes.Call`（非仮想）で発行されていれば親クラス（Exception）の実装が直接実行される。
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let source = """
+import System'Console
+import System'Exception
+
+data MyError = { code: Int }
+
+impl MyError as Exception
+    fn new (c: Int): MyError = MyError { code = c }
+    override fn ToString self: String = base'ToString.
+
+fn main: () =
+    let e = 42 MyError'new.
+    e'ToString. Console'WriteLine.
+"""
+
+        let res = compileSingle { asmName = "BaseCallNonVirtual"; source = source.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "BaseCallNonVirtual.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        // `callvirt` 発行のままだと StackOverflowException でプロセスが落ち、ExitCode は 0 以外になる。
+        // `call` 発行であれば Exception.ToString が直接呼ばれ、結果は実行時型名（"MyError"）で始まる文字列。
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.StartsWith("MyError", stdout.Trim())
