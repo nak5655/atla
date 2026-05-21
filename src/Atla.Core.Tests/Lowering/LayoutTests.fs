@@ -50,6 +50,7 @@ module LayoutTests =
                 [],
                 Hir.Expr.Int(42, span),
                 TypeId.Fn([], TypeId.Int),
+                None,
                 span)
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
@@ -431,6 +432,7 @@ fn main: () =
                 [],
                 lambdaExpr,
                 TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
+                None,
                 span)
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
@@ -467,6 +469,7 @@ fn main: () =
                 [],
                 lambdaExpr,
                 TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
+                None,
                 span)
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
@@ -504,7 +507,7 @@ fn main: () =
                 Hir.Expr.Id(argSid, TypeId.Int, span),
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
                 span)
-        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), span)
+        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), None, span)
         let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
 
         let snapshotOf (asm: ClosedHir.Assembly) =
@@ -548,7 +551,7 @@ fn main: () =
                     span),
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
                 span)
-        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), span)
+        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), None, span)
         let result = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
         Assert.False(result.succeeded, "captured lambda with no binding info should still fail before env-class implementation")
@@ -580,7 +583,7 @@ fn main: () =
                 TypeId.Fn([ TypeId.Unit ], TypeId.Int),
                 span)
 
-        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Fn([ TypeId.Unit ], TypeId.Int)), span)
+        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Fn([ TypeId.Unit ], TypeId.Int)), None, span)
         let result = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
         // mutableSym は let 束縛でメソッドの bindings に入るため、env-class 変換が成功すべき。
@@ -634,7 +637,7 @@ fn main: () =
                 TypeId.Unit,
                 span)
 
-        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Unit), span)
+        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Unit), None, span)
 
         // 新しい動作: iterSym は for 文のボディ内で bindings に登録されるため、
         // ClosureConversion は env-class 変換に成功する。
@@ -679,6 +682,7 @@ fn main: () =
                 [ outerArgSid, TypeId.Int ],
                 lambdaExpr,
                 TypeId.Fn([ TypeId.Int ], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
+                None,
                 span)
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
@@ -827,6 +831,7 @@ fn bad (): Int = undefinedVar
                 [ argSid, TypeId.Int ],
                 Hir.Expr.Id(argSid, TypeId.Int, span),
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
+                None,
                 span)
         let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
 
@@ -859,6 +864,7 @@ fn bad (): Int = undefinedVar
                 [],
                 ClosedHir.Expr.ExprError("type mismatch in test", TypeId.Int, errorSpan),
                 TypeId.Fn([], TypeId.Int),
+                None,
                 errorSpan)
 
         let closedModule =
@@ -896,6 +902,7 @@ fn bad (): Int = undefinedVar
                     TypeId.Unit,
                     bodySpan),
                 TypeId.Fn([], TypeId.Unit),
+                None,
                 bodySpan)
 
         let closedModule =
@@ -934,6 +941,7 @@ fn bad (): Int = undefinedVar
                     TypeId.Unit,
                     bodySpan),
                 TypeId.Fn([], TypeId.Unit),
+                None,
                 bodySpan)
 
         let closedModule =

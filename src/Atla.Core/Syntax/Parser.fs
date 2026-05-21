@@ -660,16 +660,26 @@ module Parser =
 
     and fnDecl: PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            block (asToken (keyword "fn")) (Once (tid <&> Many fnArg <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
+            block (asToken (keyword "fn")) (Once (tid <&> Many fnArg <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, false, { left = id.span.left; right = body.span.right })) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
+    // `override` 修飾子はオプショナル。`impl A as B` 内のメソッドでのみ意味があり、
+    // 他文脈での使用は Resolve フェーズでエラーとして検出する（パーサ側では受理する）。
     and implMethodDecl: PackratParser<Token, Ast.Decl.Fn> =
         Delay (fun () ->
+            Optional (keyword "override") <&>
             block (asToken (keyword "fn"))
                     (Once
                     (tid <&> methodArgList <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr
-                     |>> fun (((id, args), ret), body) -> Ast.Decl.Fn(id.str, args, ret, body, { left = id.span.left; right = body.span.right }))
+                     |>> fun (((id, args), ret), body) -> Ast.Decl.Fn(id.str, args, ret, body, false, { left = id.span.left; right = body.span.right }))
                     (fun (msg, span) ->
-                        Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), span))))
+                        Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), false, span)))
+            |>> fun (overrideOpt, fnDecl) ->
+                match overrideOpt with
+                | None -> fnDecl
+                | Some kw ->
+                    Ast.Decl.Fn(
+                        fnDecl.name, fnDecl.args, fnDecl.ret, fnDecl.body, true,
+                        { left = kw.span.left; right = fnDecl.span.right }))
 
     // role 宣言の抽象メソッドシグネチャ（ボディなし）。
     // `fn name args: ret` の形式で、`= body` を持たない。

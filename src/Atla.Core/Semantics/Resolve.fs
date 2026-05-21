@@ -345,6 +345,20 @@ module Resolve =
                             diagnostics.Add(Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodName implDecl.typeName, implDecl.span))
                         | None -> ()
 
+                        // `override` 修飾子は `impl A as B` 形式（asTypeName が解決済み）でのみ許可する。
+                        // - `impl A` / `impl B for A` 内の override はエラー。
+                        // - `impl A as B` でも as の解決に失敗（resolvedBaseTypeOpt = None）した場合はエラー（基底クラスが無いため）。
+                        match implDecl.asTypeName, resolvedBaseTypeOpt with
+                        | Some _, Some (TypeId.Native _) -> ()
+                        | _ ->
+                            for methodDecl in implDecl.methods do
+                                if methodDecl.isOverride then
+                                    diagnostics.Add(
+                                        Diagnostic.Error(
+                                            sprintf "'override' keyword is only allowed in 'impl ... as ...' blocks; method '%s' in impl '%s'"
+                                                methodDecl.name implDecl.typeName,
+                                            methodDecl.span))
+
                         // impl ブロックの個数制約:
                         // - `impl T`（for なし）は型ごとに 1 つ
                         // - `impl T as DotNetClass` は（T, DotNetClass）ごとに 1 つ

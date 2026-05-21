@@ -1,5 +1,6 @@
 namespace Atla.Core.Semantics.Data
 
+open System.Reflection
 open Atla.Core.Data
 
 /// クロージャー変換後 HIR。`Hir` の全構造に加え、クロージャー変換が導入する
@@ -96,12 +97,14 @@ module ClosedHir =
         member this.span = span
 
     /// クロージャー変換後のメソッド定義。本体が `ClosedHir.Expr` で表現される。
-    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, span: Span) =
+    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, overrideTarget: MethodInfo option, span: Span) =
         member this.sym = sid
         /// メソッドの引数リスト（宣言順に (SymbolId, TypeId) の組で保持）。
         member this.args = args
         member this.body = body
         member this.typ = tid
+        /// `override` 付きメソッドの場合、上書き対象となる親 .NET クラスの MethodInfo。
+        member this.overrideTarget = overrideTarget
         member this.span = span
 
     /// クロージャー変換後の型定義。

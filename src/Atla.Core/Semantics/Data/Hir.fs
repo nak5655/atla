@@ -132,12 +132,15 @@ module Hir =
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics
 
-    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, span: Span) =
+    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, overrideTarget: MethodInfo option, span: Span) =
         member this.sym = sid
         // メソッドの引数リスト（宣言順に (SymbolId, TypeId) の組で保持）。
         member this.args = args
         member this.body = body
         member this.typ = tid
+        /// `override` 付きメソッドの場合、上書き対象となる親 .NET クラスの MethodInfo。
+        /// Resolve フェーズで確定し、CIL Gen で `DefineMethodOverride` に渡される。
+        member this.overrideTarget = overrideTarget
         member this.span = span
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics

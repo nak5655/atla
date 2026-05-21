@@ -675,12 +675,29 @@ module Gen =
             // layoutDataTypeMethod がすでに 'this' を method.args から除去しているため、
             // method.args をそのまま CIL 明示引数シグネチャとして使用する。
             // 本体生成（IL emit）は genTypeBodies で行う。
+            // override 付きメソッド（overrideTarget が Some）は親クラスの virtual slot を再利用するため
+            // `Virtual | HideBySig` で emit し、`DefineMethodOverride` で明示紐付けする。
             for method in typ.methods do
                 let explicitArgTypes = method.args |> List.map (resolveType env) |> List.toArray
                 let methodRetType = resolveMethodReturnType method.ret
+                let attrs =
+                    match method.overrideTarget with
+                    | Some target ->
+                        let visibility =
+                            if target.IsPublic then MethodAttributes.Public
+                            elif target.IsFamilyOrAssembly then MethodAttributes.FamORAssem
+                            else MethodAttributes.Family
+                        // 親 slot を再利用するため NewSlot は付けない。
+                        visibility ||| MethodAttributes.Virtual ||| MethodAttributes.HideBySig
+                    | None ->
+                        MethodAttributes.Public
                 method.builder <-
-                    typ.builder.DefineMethod(getMethodClrName env.symbolTable method.sym method.name false, MethodAttributes.Public, methodRetType, explicitArgTypes)
+                    typ.builder.DefineMethod(getMethodClrName env.symbolTable method.sym method.name false, attrs, methodRetType, explicitArgTypes)
                 env.methodBuilders.[method.sym] <- (method.builder :> MethodInfo)
+                // 親メソッドの slot へ明示的に紐付ける（generic 等での名前解決のロバスト性向上）。
+                match method.overrideTarget with
+                | Some target -> typ.builder.DefineMethodOverride(method.builder, target)
+                | None -> ()
 
     /// 型の明示コンストラクタ本体と invoke メソッド本体を生成し、型を確定（CreateType）する。
     /// declareTypeMembers で全 MethodBuilder が登録済みであることが前提。
@@ -755,9 +772,10 @@ module Gen =
             env.typeBuilders.Add(typ.sym, typeBuilder)
 
         // フェーズ 1b: 具象型に .NET ネイティブ基底インターフェイスの実装を追加する。
-        // role（TypeId.Name）経由のインターフェイス実装は、impl メソッドが CIL インスタンスメソッドに
-        // なったが、virtual/override が未サポートのため AddInterfaceImplementation は行わない
-        // （型安全性はセマンティクス層で保証）。
+        // role（TypeId.Name）経由のインターフェイス実装は impl メソッドが CIL インスタンスメソッドとして
+        // 生成されるが、AddInterfaceImplementation は行わない（型安全性はセマンティクス層で保証）。
+        // `impl A as B` 内の override 付きメソッドは、declareTypeMembers 内で
+        // `Virtual | HideBySig` + `DefineMethodOverride` で親クラスの slot を上書きする。
         // TypeId.Native で指定された .NET インターフェイスのみ AddInterfaceImplementation を追加する。
         for typ in modul.types do
             if not typ.isInterface then

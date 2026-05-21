@@ -1,6 +1,7 @@
 namespace Atla.Core.Semantics
 
 open System.Collections.Generic
+open System.Reflection
 open Atla.Core.Syntax.Data
 open Atla.Core.Semantics.Data
 open Atla.Core.Semantics.Data.AnalyzeEnv
@@ -310,7 +311,7 @@ module Analyze =
                                 | :? Ast.FnArg.Unit -> None
                                 | _ -> None)
                             |> List.choose id
-                        Hir.Method(methodSid, argSids, Hir.Expr.Unit(roleSpan), methodType, roleSpan))
+                        Hir.Method(methodSid, argSids, Hir.Expr.Unit(roleSpan), methodType, None, roleSpan))
                 types.Add(Hir.Type(resolvedRoleDecl.typeSid, true, None, [], [], hirMethods))
 
             // Std.Prelude に含まれるジェネリック enum 等を暗黙インポートとして解決する。
@@ -688,8 +689,60 @@ module Analyze =
                                                 // これにより、同モジュール内から addButton のようなベアネームで参照できる。
                                                 if isStatic then
                                                     resolvedModule.moduleScope.DeclareVar(methodDecl.name, methodSid)
-                                                // declAcc には (メソッドSID, 宣言, ターゲット型SID, isStatic) を積む。
-                                                Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap, (methodSid, methodDecl, dataTypeDef.typeSid, isStatic) :: declAcc, diagAcc
+
+                                                // override 修飾子が付いている場合、親 .NET クラスの該当 virtual メソッドを解決する。
+                                                // - 親クラスが取得できない（`impl A as B` 以外）のは Resolve でエラー済みなので None。
+                                                // - static メソッドへの override はインスタンスメソッド限定なのでエラー。
+                                                // - 名前 + arity（明示引数数）一致の候補を検索し、0/2 件以上ならエラー。
+                                                let overrideTarget, overrideDiags =
+                                                    if not methodDecl.isOverride then
+                                                        None, []
+                                                    elif isStatic then
+                                                        None, [
+                                                            Diagnostic.Error(
+                                                                sprintf "'override' is only allowed on instance methods (with 'self' receiver); method '%s' in impl '%s'"
+                                                                    methodDecl.name targetTypeName,
+                                                                methodDecl.span) ]
+                                                    else
+                                                        match baseTypeOpt with
+                                                        | Some (TypeId.Native sysType) when not (obj.ReferenceEquals(sysType, null)) ->
+                                                            let methodName = methodDecl.name
+                                                            // 明示引数数（self / Unit を除外）
+                                                            let arity =
+                                                                methodDecl.args
+                                                                |> List.filter (fun arg ->
+                                                                    match arg with
+                                                                    | :? Ast.FnArg.Inferred -> false  // self
+                                                                    | :? Ast.FnArg.Unit -> false       // ()
+                                                                    | _ -> true)
+                                                                |> List.length
+                                                            let candidates =
+                                                                NativeInterop.getOverridableInstanceMethods sysType
+                                                                |> List.filter (fun mi ->
+                                                                    mi.Name = methodName
+                                                                    && mi.GetParameters().Length = arity)
+                                                            match candidates with
+                                                            | [] ->
+                                                                None, [
+                                                                    Diagnostic.Error(
+                                                                        sprintf "No overridable method '%s' (arity %d) found in base class '%s' of impl '%s'"
+                                                                            methodName arity sysType.FullName targetTypeName,
+                                                                        methodDecl.span) ]
+                                                            | [ mi ] -> Some mi, []
+                                                            | _ ->
+                                                                None, [
+                                                                    Diagnostic.Error(
+                                                                        sprintf "Ambiguous override target: multiple virtual methods named '%s' (arity %d) exist in '%s'"
+                                                                            methodName arity sysType.FullName,
+                                                                        methodDecl.span) ]
+                                                        | _ ->
+                                                            // Resolve で既にエラーが報告されているのでここでは追加しない。
+                                                            None, []
+
+                                                // declAcc には (メソッドSID, 宣言, ターゲット型SID, isStatic, overrideTarget) を積む。
+                                                Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap,
+                                                (methodSid, methodDecl, dataTypeDef.typeSid, isStatic, overrideTarget) :: declAcc,
+                                                diagAcc @ overrideDiags
 
                                         if isInstanceMethod methodDecl.args then
                                             registerImplMethod false
@@ -720,8 +773,8 @@ module Analyze =
             let instanceImplMethodsByType = System.Collections.Generic.Dictionary<int, Hir.Method list>()
 
             implMethodDecls
-            |> List.iter (fun (methodSid, methodDecl, targetTypeSid, isStatic) ->
-                let hirMethod = ExprAnalyze.analyzeMethodCore nameEnv typeEnv methodSid methodDecl
+            |> List.iter (fun (methodSid, methodDecl, targetTypeSid, isStatic, overrideTarget) ->
+                let hirMethod = ExprAnalyze.analyzeMethodCoreWithOverride nameEnv typeEnv methodSid methodDecl overrideTarget
                 if isStatic then
                     methods.Add(hirMethod)
                 else

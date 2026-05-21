@@ -54,7 +54,7 @@ module AnalyzeTests =
         let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let arg = Ast.FnArg.Named("x", argType, span) :> Ast.FnArg
         let body = Ast.Expr.Id("x", span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("id", [arg], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("id", [arg], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([fnDecl])
 
         let symbolTable = SymbolTable()
@@ -81,7 +81,7 @@ module AnalyzeTests =
         let callExpr = Ast.Expr.Apply(writeLineExpr, [ helloArg ], span) :> Ast.Expr
         let bodyStmt = Ast.Stmt.ExprStmt(callExpr, span) :> Ast.Stmt
         let body = Ast.Expr.Block([ bodyStmt ], span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([ importDecl; fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -324,7 +324,7 @@ fn makePoint (): Point = do
         let span = Span.Empty
         let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let body = Ast.Expr.Error("Expected '.' after callee in call expression.", span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -370,14 +370,14 @@ fn makePoint (): Point = do
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let incArg = Ast.FnArg.Named("x", intType, span) :> Ast.FnArg
         let incBody = Ast.Expr.Id("x", span) :> Ast.Expr
-        let incDecl = Ast.Decl.Fn("inc", [ incArg ], intType, incBody, span) :> Ast.Decl
+        let incDecl = Ast.Decl.Fn("inc", [ incArg ], intType, incBody, false, span) :> Ast.Decl
         let mainBody =
             Ast.Expr.Apply(
                 Ast.Expr.Id("inc", span) :> Ast.Expr,
                 [ Ast.Expr.Int(1, span) :> Ast.Expr ],
                 span
             ) :> Ast.Expr
-        let mainDecl = Ast.Decl.Fn("main", [], intType, mainBody, span) :> Ast.Decl
+        let mainDecl = Ast.Decl.Fn("main", [], intType, mainBody, false, span) :> Ast.Decl
         let astModule = Ast.Module([ incDecl; mainDecl ])
 
         let symbolTable = SymbolTable()
@@ -509,7 +509,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let thisArg = Ast.FnArg.Inferred("self", span) :> Ast.FnArg
         let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
         let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("self", span) :> Ast.Expr, "slope", span) :> Ast.Expr
-        let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, span)
+        let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, false, span)
         let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
@@ -523,7 +523,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 Ast.Expr.MemberAccess(lineInit, "evaluate", span) :> Ast.Expr,
                 [ Ast.Expr.Float(5.0, span) :> Ast.Expr ],
                 span) :> Ast.Expr
-        let mainDecl = Ast.Decl.Fn("main", [], floatType, callBody, span) :> Ast.Decl
+        let mainDecl = Ast.Decl.Fn("main", [], floatType, callBody, false, span) :> Ast.Decl
 
         let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
         let symbolTable = SymbolTable()
@@ -553,10 +553,10 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
-        let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
+        let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, false, span)
         let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
         let staticCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(Ast.Expr.Id("Line", span) :> Ast.Expr, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
-        let mainDecl = Ast.Decl.Fn("main", [], intType, staticCall, span) :> Ast.Decl
+        let mainDecl = Ast.Decl.Fn("main", [], intType, staticCall, false, span) :> Ast.Decl
 
         let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
         let symbolTable = SymbolTable()
@@ -584,12 +584,12 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
-        let helperFn = Ast.Decl.Fn("helper", [], intType, Ast.Expr.Int(42, span) :> Ast.Expr, span)
+        let helperFn = Ast.Decl.Fn("helper", [], intType, Ast.Expr.Int(42, span) :> Ast.Expr, false, span)
         let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ helperFn ], span) :> Ast.Decl
 
         // main calls `helper` as a bare name — this was previously "Undefined variable 'helper'"
         let bareNameCall = Ast.Expr.Apply(Ast.Expr.Id("helper", span) :> Ast.Expr, [], span) :> Ast.Expr
-        let mainDecl = Ast.Decl.Fn("main", [], intType, bareNameCall, span) :> Ast.Decl
+        let mainDecl = Ast.Decl.Fn("main", [], intType, bareNameCall, false, span) :> Ast.Decl
 
         let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
         let symbolTable = SymbolTable()
@@ -612,7 +612,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
-        let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, span)
+        let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, false, span)
         let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
         let lineInit =
             Ast.Expr.DataInit(
@@ -620,7 +620,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
                 [ Ast.DataInitField.Field("value", Ast.Expr.Int(42, span) :> Ast.Expr, span) :> Ast.DataInitField ],
                 span) :> Ast.Expr
         let badCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(lineInit, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
-        let mainDecl = Ast.Decl.Fn("main", [], intType, badCall, span) :> Ast.Decl
+        let mainDecl = Ast.Decl.Fn("main", [], intType, badCall, false, span) :> Ast.Decl
 
         let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
         let symbolTable = SymbolTable()
@@ -936,8 +936,8 @@ impl Widget as UnknownBase
         let span = Span.Empty
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let mkArg name = Ast.FnArg.Named(name, intType, span) :> Ast.FnArg
-        let idDecl = Ast.Decl.Fn("id", [ mkArg "x" ], intType, Ast.Expr.Id("x", span) :> Ast.Expr, span) :> Ast.Decl
-        let incDecl = Ast.Decl.Fn("inc", [ mkArg "y" ], intType, Ast.Expr.Id("y", span) :> Ast.Expr, span) :> Ast.Decl
+        let idDecl = Ast.Decl.Fn("id", [ mkArg "x" ], intType, Ast.Expr.Id("x", span) :> Ast.Expr, false, span) :> Ast.Decl
+        let incDecl = Ast.Decl.Fn("inc", [ mkArg "y" ], intType, Ast.Expr.Id("y", span) :> Ast.Expr, false, span) :> Ast.Decl
 
         let mainBody =
             Ast.Expr.Apply(
@@ -945,7 +945,7 @@ impl Widget as UnknownBase
                 [ Ast.Expr.Apply(Ast.Expr.Id("id", span) :> Ast.Expr, [ Ast.Expr.Int(1, span) :> Ast.Expr ], span) :> Ast.Expr ],
                 span
             ) :> Ast.Expr
-        let mainDecl = Ast.Decl.Fn("main", [], intType, mainBody, span) :> Ast.Decl
+        let mainDecl = Ast.Decl.Fn("main", [], intType, mainBody, false, span) :> Ast.Decl
         let astModule = Ast.Module([ idDecl; incDecl; mainDecl ])
 
         let symbolTable = SymbolTable()
@@ -1057,7 +1057,7 @@ fn main (): Int = ping.
         let letStmt = Ast.Stmt.Let("x", callExpr, span) :> Ast.Stmt
         let valueStmt = Ast.Stmt.ExprStmt(Ast.Expr.Id("x", span) :> Ast.Expr, span) :> Ast.Stmt
         let body = Ast.Expr.Block([ letStmt; valueStmt ], span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([ importDecl; fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -1076,7 +1076,7 @@ fn main (): Int = ping.
         let lambdaBody = Ast.Expr.Id("x", span) :> Ast.Expr
         let xArg = Ast.FnArg.Named("x", intType, span) :> Ast.FnArg
         let lambdaExpr = Ast.Expr.Lambda([ xArg ], lambdaBody, span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -1110,7 +1110,7 @@ fn main (): Int = ping.
         let xArg1 = Ast.FnArg.Named("x", intType, span) :> Ast.FnArg
         let xArg2 = Ast.FnArg.Named("x", intType, span) :> Ast.FnArg
         let lambdaExpr = Ast.Expr.Lambda([ xArg1; xArg2 ], lambdaBody, span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -1133,7 +1133,7 @@ fn main (): Int = ping.
         let retType = Ast.TypeExpr.Arrow(unitType, intType, span) :> Ast.TypeExpr
         let lambdaBody = Ast.Expr.Int(42, span) :> Ast.Expr
         let lambdaExpr = Ast.Expr.Lambda([], lambdaBody, span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, lambdaExpr, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -1263,7 +1263,7 @@ fn main: () =
 
         let bodyStmt = Ast.Stmt.ExprStmt(parseCall, span) :> Ast.Stmt
         let body = Ast.Expr.Block([ bodyStmt ], span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([ importConsole; importInt32; fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -1283,7 +1283,7 @@ fn main: () =
         let callExpr = Ast.Expr.Apply(writeLineExpr, [ Ast.Expr.String("ok", span) :> Ast.Expr ], span) :> Ast.Expr
         let bodyStmt = Ast.Stmt.ExprStmt(callExpr, span) :> Ast.Stmt
         let body = Ast.Expr.Block([ bodyStmt ], span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([ importDecl; fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -1308,7 +1308,7 @@ fn main: () =
         let callExpr = Ast.Expr.Apply(Ast.Expr.Unit(span) :> Ast.Expr, [ Ast.Expr.Unit(span) :> Ast.Expr ], span) :> Ast.Expr
         let callStmt = Ast.Stmt.ExprStmt(callExpr, span) :> Ast.Stmt
         let body = Ast.Expr.Block([ callStmt ], span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -2158,7 +2158,7 @@ fn apply (f: Int -> Int) (x: Int): Int = x f.
         // fn bad (): Int = "hello"  → Int と String が不一致
         let retTypeExpr = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let bodyExpr = Ast.Expr.String("hello", span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("bad", [], retTypeExpr, bodyExpr, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("bad", [], retTypeExpr, bodyExpr, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -2237,7 +2237,7 @@ fn bad (): Int = do
     let ``Resolve.resolveModule collects fn declarations`` () =
         let span = Span.Empty
         let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, Ast.Expr.Int(0, span) :> Ast.Expr, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, Ast.Expr.Int(0, span) :> Ast.Expr, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
         let symbolTable = SymbolTable()
 
@@ -2267,7 +2267,7 @@ fn bad (): Int = do
         let metaTid = TypeId.Meta(metaFactory.Fresh())
         Type.unify subst metaTid TypeId.Int |> ignore
 
-        let hirMethod = Hir.Method(methodSym, [ argSid, metaTid ], Hir.Expr.Id(argSid, metaTid, span), TypeId.Fn([ metaTid ], metaTid), span)
+        let hirMethod = Hir.Method(methodSym, [ argSid, metaTid ], Hir.Expr.Id(argSid, metaTid, span), TypeId.Fn([ metaTid ], metaTid), None, span)
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
 
         match Infer.inferModule(subst, hirModule) with
@@ -2285,7 +2285,7 @@ fn bad (): Int = do
     let ``Resolve then Infer pipeline produces fully typed HIR for simple function`` () =
         let span = Span.Empty
         let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
-        let fnDecl = Ast.Decl.Fn("answer", [], retType, Ast.Expr.Int(42, span) :> Ast.Expr, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("answer", [], retType, Ast.Expr.Int(42, span) :> Ast.Expr, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
         let symbolTable = SymbolTable()
         let subst = TypeSubst()
@@ -2357,7 +2357,7 @@ fn bad (): Int = do
         let span = Span.Empty
         let importDecl = Ast.Decl.Import([ "Non"; "Existent"; "Type" ], false, span) :> Ast.Decl
         let retType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, Ast.Expr.Int(0, span) :> Ast.Expr, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, Ast.Expr.Int(0, span) :> Ast.Expr, false, span) :> Ast.Decl
         let astModule = Ast.Module([ importDecl; fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -2558,7 +2558,7 @@ fn main (): () = do
         let span = Span.Empty
         let intType = Ast.TypeExpr.Id("Int", span) :> Ast.TypeExpr
         let body = Ast.Expr.Id("unknownValue", span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], intType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], intType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
         let symbolTable = SymbolTable()
@@ -2574,7 +2574,7 @@ fn main (): () = do
         let span = Span.Empty
         let retType = Ast.TypeExpr.Id("Bool", span) :> Ast.TypeExpr
         let body = Ast.Expr.Bool(true, span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([fnDecl])
 
         let symbolTable = SymbolTable()
@@ -2598,7 +2598,7 @@ fn main (): () = do
         let span = Span.Empty
         let retType = Ast.TypeExpr.Id("Bool", span) :> Ast.TypeExpr
         let body = Ast.Expr.Bool(false, span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], retType, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([fnDecl])
 
         let symbolTable = SymbolTable()
@@ -2772,6 +2772,195 @@ fn bad (e: MyError): String = e'NonExistentMember
                     Assert.True(hasError, "Expected an error diagnostic for undefined member on impl-as type")
                 | _ ->
                     Assert.True(false, "Semantic analysis unexpectedly succeeded for undefined member access on impl-as type")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    // ─────────────────────────────────────────────
+    // `override` 修飾子のセマンティクステスト
+    // ─────────────────────────────────────────────
+
+    [<Fact>]
+    let ``semantic analysis accepts override of native virtual method in impl as block`` () =
+        // System.Object.ToString は public virtual。MyError.ToString を override できる必要がある。
+        let source = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+    override fn ToString self: String = "MyError"
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true } -> ()
+                | { diagnostics = diagnostics } ->
+                    let message =
+                        diagnostics
+                        |> List.map (fun diagnostic -> diagnostic.toDisplayText())
+                        |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed unexpectedly for valid override: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis rejects override of method not present in base class`` () =
+        // System.Exception には `NotARealMethod` というメソッドはないので override エラー。
+        let source = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+    override fn NotARealMethod self: Unit = ()
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let combined = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                    Assert.Contains("No overridable method 'NotARealMethod'", combined)
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for override of nonexistent method")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis rejects override of non-virtual method in base class`` () =
+        // System.Object.GetType は非 virtual（実際は internal virtual に近いが GetMethods のフィルタで除外される）。
+        // arity 0 で `GetType` を override しようとすると候補無しエラー。
+        let source = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    fn new (code: Int): MyError = MyError { code = code }
+    override fn GetType self: String = "MyError"
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let combined = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                    Assert.Contains("No overridable method 'GetType'", combined)
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for override of non-virtual method")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis rejects override modifier in plain impl block`` () =
+        // `impl A`（as/for なし）の中での override はエラー。
+        let source = """
+data Foo = { x: Int }
+impl Foo
+    override fn bar self: Unit = ()
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let combined = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                    Assert.Contains("'override' keyword is only allowed in 'impl ... as ...' blocks", combined)
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for override in plain impl block")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis rejects override modifier in impl for role block`` () =
+        // `impl Role for Type` 形式での override はエラー。
+        let source = """
+import System'IDisposable
+data Box = { handle: Int }
+impl IDisposable for Box
+    override fn Dispose self: Unit = ()
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let combined = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                    Assert.Contains("'override' keyword is only allowed in 'impl ... as ...' blocks", combined)
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for override in 'impl for' block")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis rejects override on static (non-self) method`` () =
+        // self を取らない static メソッドへの override はインスタンスメソッド限定の制約に反する。
+        let source = """
+import System'Exception
+data MyError = { code: Int }
+impl MyError as Exception
+    override fn ToString (x: Int): String = "static"
+"""
+
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    let combined = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
+                    Assert.Contains("'override' is only allowed on instance methods", combined)
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for override on static method")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
@@ -3186,7 +3375,7 @@ fn test (domain: AppDomain): () =
                 Ast.Stmt.Var("x", Ast.Expr.Int(1, span) :> Ast.Expr, span) :> Ast.Stmt
                 Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Add, Ast.Expr.Id("x", span) :> Ast.Expr, Ast.Expr.Int(2, span) :> Ast.Expr, span) :> Ast.Stmt
             ], span) :> Ast.Expr
-        let fnDecl = Ast.Decl.Fn("main", [], Ast.TypeExpr.Unit(span) :> Ast.TypeExpr, body, span) :> Ast.Decl
+        let fnDecl = Ast.Decl.Fn("main", [], Ast.TypeExpr.Unit(span) :> Ast.TypeExpr, body, false, span) :> Ast.Decl
         let astModule = Ast.Module([ fnDecl ])
 
         let symbolTable = SymbolTable()

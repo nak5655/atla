@@ -185,13 +185,16 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Method(name: string, sid: SymbolId, args: TypeId list, ret: TypeId, body: Ins list, frame: Frame) =
+    type Method(name: string, sid: SymbolId, args: TypeId list, ret: TypeId, body: Ins list, overrideTarget: MethodInfo option, frame: Frame) =
         let mutable _builder: MethodBuilder option = None
         member this.name = name
         member this.sym = sid
         member this.args = args
         member this.ret = ret
         member this.body = body
+        /// `override` 付きメソッドの場合、上書き対象となる親 .NET クラスの MethodInfo。
+        /// CIL Gen で `DefineMethodOverride` に渡される。
+        member this.overrideTarget = overrideTarget
         member this.frame = frame
         member this.builder
             with get() = _builder.Value
