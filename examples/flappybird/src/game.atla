@@ -22,7 +22,7 @@ impl FlappyGame as Game
             , _birdPos = 200 300 Vector2.
             , _birdSize = 32 }
 
-    fn Initialize self: () =
+    override fn Initialize self: () =
         base'Initialize.
 
         self'_spriteBatch = self'GraphicsDevice SpriteBatch. Opt'Some.
@@ -31,10 +31,10 @@ impl FlappyGame as Game
         self'_whiteTexture = whiteTexture Opt'Some.
         self'GraphicsContext'CommandList (Color'White array.) whiteTexture'SetData[Color].
 
-    fn Update self (gameTime: GameTime): () =
+    override fn Update self (gameTime: GameTime): () =
         gameTime base'Update.
 
-    fn Draw self (gameTime: GameTime): () =
+    override fn Draw self (gameTime: GameTime): () =
         gameTime base'Draw.
 
         self'GraphicsDevice'Presenter'BackBuffer Color'CornflowerBlue self'GraphicsContext'CommandList'Clear.

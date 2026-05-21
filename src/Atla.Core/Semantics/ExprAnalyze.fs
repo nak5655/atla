@@ -2162,7 +2162,7 @@ module ExprAnalyze =
             | stmts -> Hir.Stmt.ErrorStmt(sprintf "Unexpected if stmt branch count: %d" stmts.Length, ifStmt.span)
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
-    let analyzeMethodCore (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) : Hir.Method =
+    let analyzeMethodCoreWithOverride (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) (overrideTarget: MethodInfo option) : Hir.Method =
         let bodyNameEnv = nameEnv.sub()
         let retType = nameEnv.resolveTypeExpr fnDecl.ret
         let rawArgTypes =
@@ -2202,7 +2202,10 @@ module ExprAnalyze =
         let tid = TypeId.Fn(argTypes, retType)
         let body = analyzeExpr bodyNameEnv typeEnv fnDecl.body retType
 
-        Hir.Method(sid, argSids, body, tid, fnDecl.span)
+        Hir.Method(sid, argSids, body, tid, overrideTarget, fnDecl.span)
+
+    let analyzeMethodCore (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) : Hir.Method =
+        analyzeMethodCoreWithOverride nameEnv typeEnv sid fnDecl None
 
     let analyzeMethod (nameEnv: NameEnv) (typeEnv: TypeEnv) (fnDecl: Ast.Decl.Fn) : Hir.Method =
         let argTypes =

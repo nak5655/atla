@@ -1167,7 +1167,92 @@ impl Widget as Control
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
+    [<Fact>]
+    let ``fileModule parses override fn in impl as block`` () =
+        let program = """
+data MyButton =
+    { label: String
+    }
+impl MyButton as Button
+    override fn click self: Unit = ()
+    fn helper self: Unit = ()
+"""
 
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
+                    | _ -> None)
+
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.Equal("MyButton", parsedImplDecl.typeName)
+                Assert.Equal(Some "Button", parsedImplDecl.asTypeName)
+                Assert.Equal(2, parsedImplDecl.methods.Length)
+                let clickMethod = parsedImplDecl.methods |> List.find (fun m -> m.name = "click")
+                let helperMethod = parsedImplDecl.methods |> List.find (fun m -> m.name = "helper")
+                Assert.True(clickMethod.isOverride, "click method should have isOverride = true")
+                Assert.False(helperMethod.isOverride, "helper method should have isOverride = false")
+            | None ->
+                Assert.True(false, "impl declaration was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses override fn even in plain impl block (resolve will reject later)`` () =
+        // override 修飾子は構文上はどの impl ブロックでも受理する。
+        // `impl A as B` 以外でのエラーは Resolve フェーズで報告される。
+        let program = """
+data Foo =
+    { x: Int
+    }
+impl Foo
+    override fn bar self: Unit = ()
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let implDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
+                    | _ -> None)
+
+            match implDecl with
+            | Some parsedImplDecl ->
+                Assert.True(parsedImplDecl.asTypeName.IsNone)
+                Assert.Single(parsedImplDecl.methods) |> ignore
+                let barMethod = parsedImplDecl.methods.Head
+                Assert.True(barMethod.isOverride, "override should be captured even in plain impl block")
+            | None ->
+                Assert.True(false, "impl declaration was not parsed")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule top-level fn does not accept override modifier`` () =
+        // トップレベル fn の前に override を書くのは構文エラー。
+        // fnDecl パーサが override を受理しないため、Decl.Error として吸収される。
+        let program = """
+override fn main (): Unit = ()
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let hasFn =
+                astModule.decls
+                |> List.exists (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fnDecl -> fnDecl.name = "main"
+                    | _ -> false)
+            Assert.False(hasFn, "top-level fn with 'override' modifier should not be parsed as a valid Fn declaration")
+        | Failure _ ->
+            // パース失敗も期待される結果。
+            ()
 
     [<Fact>]
     let ``fileModule parses true literal as Bool`` () =

@@ -541,7 +541,7 @@ module Layout =
                         match bodyKn.res with
                         | Some v -> bodyKn.ins @ [ Mir.Ins.RetValue v ]
                         | None -> bodyKn.ins @ [ Mir.Ins.Ret ]
-                Ok (Mir.Method(methodName, hirMethod.sym, args, ret, body, finalState.frame))
+                Ok (Mir.Method(methodName, hirMethod.sym, args, ret, body, None, finalState.frame))
         | _ -> Result.Error (Diagnostic.Error($"Expected function type for method: {hirMethod.typ}", hirMethod.span))
 
     /// データ型または role 型のインスタンスメソッドを生成する。
@@ -571,7 +571,7 @@ module Layout =
                     match hirMethod.args with
                     | _ :: rest -> rest |> List.map snd
                     | [] -> []
-                Ok (Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, finalState.frame))
+                Ok (Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, hirMethod.overrideTarget, finalState.frame))
         | _ -> Result.Error (Diagnostic.Error($"Expected function type for data type method: {hirMethod.typ}", hirMethod.span))
 
     let private layoutType (typeName: string) (resolveMethodName: SymbolId -> string) (hirType: ClosedHir.Type) : Result<Mir.Type, Diagnostic> =
@@ -617,7 +617,7 @@ module Layout =
                     match hirMethod.args with
                     | _ :: rest -> rest |> List.map snd
                     | [] -> []
-                Ok (Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, finalState.frame))
+                Ok (Mir.Method(methodName, hirMethod.sym, explicitArgs, ret, body, None, finalState.frame))
         | _ -> Result.Error (Diagnostic.Error($"Expected function type for invoke method: {hirMethod.typ}", hirMethod.span))
 
     let private layoutModule (hirModule: ClosedHir.Module) : Result<Mir.Module, Diagnostic list> =

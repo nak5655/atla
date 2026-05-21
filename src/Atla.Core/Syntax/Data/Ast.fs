@@ -481,11 +481,14 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Fn(name: string, args: FnArg list, ret: TypeExpr, body: Expr, span: Span) =
+        type Fn(name: string, args: FnArg list, ret: TypeExpr, body: Expr, isOverride: bool, span: Span) =
             member this.name = name
             member this.args = args
             member this.ret = ret
             member this.body = body
+            /// `override` 修飾子の有無。`impl A as B` 内のメソッドでのみ意味があり、
+            /// 他の文脈では Resolve フェーズでエラー扱いされる。
+            member this.isOverride = isOverride
             member this.span = span
             interface Decl with
                 member this.span = span

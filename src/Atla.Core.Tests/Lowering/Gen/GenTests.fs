@@ -24,6 +24,7 @@ module GenTests =
                 [],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
+                None,
                 Mir.Frame.empty)
 
         let useFooMethod =
@@ -33,6 +34,7 @@ module GenTests =
                 [ TypeId.Name typeSym ],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
+                None,
                 Mir.Frame.empty)
 
         let assembly =
@@ -72,6 +74,7 @@ module GenTests =
                 [],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
+                None,
                 Mir.Frame.empty)
 
         let intMethod =
@@ -81,6 +84,7 @@ module GenTests =
                 [],
                 TypeId.Int,
                 [ Mir.Ins.RetValue(Mir.Value.ImmVal(Mir.Imm.Int 42)) ],
+                None,
                 Mir.Frame.empty)
 
         let assembly =
@@ -123,6 +127,7 @@ module GenTests =
                 [],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
+                None,
                 Mir.Frame.empty)
 
         let firstMethod =
@@ -132,6 +137,7 @@ module GenTests =
                 [ TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.String ]) ],
                 TypeId.String,
                 [ Mir.Ins.RetValue(Mir.Value.ImmVal(Mir.Imm.String "ok")) ],
+                None,
                 Mir.Frame.empty)
 
         let assembly =
@@ -173,6 +179,7 @@ module GenTests =
                 [],
                 TypeId.Native typeof<DayOfWeek>,
                 [ Mir.Ins.RetValue(Mir.Value.FieldVal enumField) ],
+                None,
                 Mir.Frame.empty)
 
         let assembly =
@@ -231,6 +238,7 @@ module GenTests =
                 TypeId.Int,
                 [ Mir.Ins.CallAssign(applyRetReg, invokeMethod, [ Mir.Value.RegVal(Mir.Reg.Arg 0); Mir.Value.RegVal(Mir.Reg.Arg 1) ])
                   Mir.Ins.RetValue(Mir.Value.RegVal applyRetReg) ],
+                None,
                 applyFrame)
 
         let assembly =
@@ -284,6 +292,7 @@ module GenTests =
                 [ TypeId.String; TypeId.Int ],
                 TypeId.Int,
                 [ Mir.Ins.RetValue(Mir.Value.RegVal(Mir.Reg.Arg 1)) ],
+                None,
                 liftedFrame)
 
         let _, mainFrame = Mir.Frame.addArg envSid TypeId.String Mir.Frame.empty
@@ -294,6 +303,7 @@ module GenTests =
                 [ TypeId.String ],
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
                 [ Mir.Ins.RetValue(Mir.Value.FnDelegate(liftedSym, typeof<System.Func<int, int>>, Some(Mir.Reg.Arg 0))) ],
+                None,
                 mainFrame)
 
         let assembly =
@@ -340,6 +350,7 @@ module GenTests =
                 [],
                 TypeId.Unit,
                 [ Mir.Ins.Ret ],
+                None,
                 Mir.Frame.empty)
 
         let assembly =
@@ -397,6 +408,7 @@ module GenTests =
                       [ Mir.Value.ImmVal(Mir.Imm.Int 3)
                         Mir.Value.ImmVal(Mir.Imm.Int 2) ])
                   Mir.Ins.RetValue(Mir.Value.RegVal(Mir.Reg.Loc 0)) ],
+                None,
                 mainFrame)
 
         let assembly =
@@ -440,7 +452,7 @@ module GenTests =
         let mirType = Mir.Type("Wrapper", typeSym, false, None, ["T"], [ mirField ], [], [])
 
         let mainMethod =
-            Mir.Method("main", mainSym, [], TypeId.Unit, [ Mir.Ins.Ret ], Mir.Frame.empty)
+            Mir.Method("main", mainSym, [], TypeId.Unit, [ Mir.Ins.Ret ], None, Mir.Frame.empty)
 
         let assembly =
             Mir.Assembly("GenErasedType", [ Mir.Module("MainModule", [ mirType ], [ mainMethod ]) ])

@@ -22,6 +22,21 @@ module NativeInterop =
         typeEnv.resolveType tid
         |> TypeId.tryResolveToSystemType resolveNameType
 
+    /// 指定された .NET クラス（および継承チェーン全体）から、サブクラスで override 可能な
+    /// virtual インスタンスメソッドを列挙する。
+    /// - 可視性: public / family / familyOrAssem（assembly のみは除外）
+    /// - virtual かつ非 final（final virtual = sealed override は除外）
+    /// - インスタンスメソッド限定（static は除外）
+    /// `BindingFlags.FlattenHierarchy` により祖先クラスの virtual メソッドも拾う。
+    let getOverridableInstanceMethods (systemType: System.Type) : MethodInfo list =
+        systemType.GetMethods(
+            BindingFlags.Public ||| BindingFlags.NonPublic |||
+            BindingFlags.Instance ||| BindingFlags.FlattenHierarchy)
+        |> Array.filter (fun mi ->
+            mi.IsVirtual && not mi.IsFinal
+            && (mi.IsPublic || mi.IsFamily || mi.IsFamilyOrAssembly))
+        |> Array.toList
+
     /// 受け手型の public instance メンバー候補を、実装型 + 実装インターフェースから決定的順序で収集する。
     /// 明示的インターフェース実装により実装型側で直接見えないメンバー（例: ICollection<T>.Add）も候補化する。
     let getPublicInstanceMembersIncludingInterfaces (systemType: System.Type) : MemberInfo list =

@@ -727,7 +727,7 @@ module BuildSystem =
                             hirType.methods
                             |> List.find (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym = $"{typeName}.{methodDecl.name}")
                             |> fun methodInfo -> methodInfo.sym
-                        addMethodNode (Ast.Decl.Fn(methodDecl.name, methodDecl.args, methodDecl.ret, Ast.Expr.Unit(Span.Empty), methodDecl.span)) methodSym)
+                        addMethodNode (Ast.Decl.Fn(methodDecl.name, methodDecl.args, methodDecl.ret, Ast.Expr.Unit(Span.Empty), false, methodDecl.span)) methodSym)
                 | None -> ()
 
                 match enumDeclOpt with
