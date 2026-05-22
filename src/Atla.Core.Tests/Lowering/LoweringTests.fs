@@ -1982,3 +1982,75 @@ async fn run (t: Task): Task = await t
             Assert.IsType<System.InvalidOperationException>(agg.InnerException) |> ignore
         | None ->
             Assert.True(false, "'run' method not found in generated assembly")
+
+    // ──────────────────────────────────────────────────────────────
+    // async / await: async 関数同士の合成（ラウンドトリップ）
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``async fn can await another async fn (completed) and yield its result`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn inner (): Task Int = 42
+
+async fn outer (): Task Int = await (inner.)
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncCompose"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncCompose.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let outerMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "outer")
+
+        match outerMethod with
+        | Some mi ->
+            let result = mi.Invoke(null, [||]) :?> System.Threading.Tasks.Task<int>
+            Assert.True(result.Wait(5000), "outer は inner の完了で完了するべき")
+            Assert.Equal(42, result.Result)
+        | None ->
+            Assert.True(false, "'outer' method not found in generated assembly")
+
+    [<Fact>]
+    let ``async fn awaiting another async fn that suspends propagates completion through the chain`` () =
+        // outer → inner(t) → await t（未完了）。t 完了で inner→outer が連鎖的に完了する。
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn inner (t: Task Int): Task Int = await t
+
+async fn outer (t: Task Int): Task Int = await (t inner.)
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncComposeChain"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncComposeChain.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let outerMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "outer")
+
+        match outerMethod with
+        | Some mi ->
+            let tcs = System.Threading.Tasks.TaskCompletionSource<int>()
+            let result = mi.Invoke(null, [| tcs.Task :> obj |]) :?> System.Threading.Tasks.Task<int>
+            Assert.False(result.IsCompleted, "内側 Task が未完了なら outer も中断しているべき")
+            tcs.SetResult(7)
+            Assert.True(result.Wait(5000), "ソース Task 完了で連鎖的に完了するべき")
+            Assert.Equal(7, result.Result)
+        | None ->
+            Assert.True(false, "'outer' method not found in generated assembly")
