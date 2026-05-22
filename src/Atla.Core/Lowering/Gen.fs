@@ -332,7 +332,15 @@ module Gen =
             let parameters = methodInfo.GetParameters()
             match args with
             | receiver :: rest when not methodInfo.IsStatic && methodInfo.DeclaringType.IsValueType ->
+                // 値型インスタンスメソッドのレシーバーはアドレスを必要とする。
+                // レシーバーが既にマネージドポインタ（ByRef: RegAddr / FieldAddr / ByRef 型の Reg）
+                // の場合はそのアドレスをそのまま積む。そうでなければ Ldloca/Ldarga でアドレスを取る。
+                let receiverIsByRef =
+                    match getValueStackType frame receiver with
+                    | Some t -> t.IsByRef
+                    | None -> false
                 match receiver with
+                | _ when receiverIsByRef -> genValue env gen receiver
                 | Mir.Value.RegVal (Mir.Reg.Loc index) -> gen.Emit(OpCodes.Ldloca, index)
                 | Mir.Value.RegVal (Mir.Reg.Arg index) -> gen.Emit(OpCodes.Ldarga, index)
                 | _ -> genValue env gen receiver

@@ -6,9 +6,16 @@ open Atla.Core.Data
 open Atla.Core.Semantics.Data
 
 /// `async fn` のための ClosedHir レベル書き換え。
-/// PR-3a の現状は「同期実装」: `await expr` を `expr.GetAwaiter().GetResult()` へ展開し、
-/// 本体の最終値を `Task.CompletedTask` / `Task.FromResult<T>(value)` で包んで Task を返す。
-/// .NET 互換の Task を返すため、await 結果は同期的にブロックする（真の非同期は PR-3b で対応）。
+///
+/// PR-3b-2: 状態機械（state machine）型を生成する。各 async メソッドに対して
+/// `IAsyncStateMachine` を実装するクラスを新規生成し、引数・ローカルをそのフィールドへ
+/// ホイストする。元メソッドは「SM を生成・初期化し MoveNext を起動して builder.Task を
+/// return する」kickoff シムへ置き換える。
+///
+/// 現段階（3b-2）の MoveNext は **同期実行**: `await expr` は
+/// `expr.GetAwaiter().GetResult()` へ展開し、ブロッキングで完了を待つ。本体末尾で
+/// `builder.SetResult(...)` を呼ぶ。await 境界での真の yield（state switch +
+/// AwaitUnsafeOnCompleted による中断/再開）は PR-3b-3 で追加する。
 module AsyncRewrite =
     // ─────────────────────────────────────────────
     // .NET 反射のキャッシュ
@@ -19,18 +26,44 @@ module AsyncRewrite =
     let private taskAwaiterType : System.Type = typeof<System.Runtime.CompilerServices.TaskAwaiter>
     let private taskAwaiterGenericType : System.Type = typedefof<System.Runtime.CompilerServices.TaskAwaiter<_>>
 
-    /// `Task.CompletedTask`（static get property）の `getter` MethodInfo を解決する。
-    let private taskCompletedTaskGetter : MethodInfo =
-        let prop = taskType.GetProperty("CompletedTask", BindingFlags.Public ||| BindingFlags.Static)
-        prop.GetGetMethod()
+    let private builderType : System.Type = typeof<System.Runtime.CompilerServices.AsyncTaskMethodBuilder>
+    let private builderGenericType : System.Type = typedefof<System.Runtime.CompilerServices.AsyncTaskMethodBuilder<_>>
+    let private asyncStateMachineInterface : System.Type = typeof<System.Runtime.CompilerServices.IAsyncStateMachine>
 
-    /// `Task.FromResult<T>` のジェネリック定義 MethodInfo。`MakeGenericMethod` で閉じる。
-    let private taskFromResultDef : MethodInfo =
-        taskType.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
-        |> Array.find (fun m ->
-            m.Name = "FromResult"
-            && m.IsGenericMethodDefinition
-            && m.GetParameters().Length = 1)
+    /// `IAsyncStateMachine.MoveNext()` の MethodInfo。
+    let private iasmMoveNext : MethodInfo =
+        asyncStateMachineInterface.GetMethod("MoveNext", System.Type.EmptyTypes)
+
+    /// `IAsyncStateMachine.SetStateMachine(IAsyncStateMachine)` の MethodInfo。
+    let private iasmSetStateMachine : MethodInfo =
+        asyncStateMachineInterface.GetMethod("SetStateMachine", [| asyncStateMachineInterface |])
+
+    /// 非ジェネリック `AsyncTaskMethodBuilder.Create()`（static）。
+    let private builderCreate : MethodInfo =
+        builderType.GetMethod("Create", BindingFlags.Public ||| BindingFlags.Static, null, System.Type.EmptyTypes, null)
+
+    /// 非ジェネリック `AsyncTaskMethodBuilder.SetResult()`。
+    let private builderSetResult : MethodInfo =
+        builderType.GetMethod("SetResult", System.Type.EmptyTypes)
+
+    /// 非ジェネリック `AsyncTaskMethodBuilder.Task` getter（returns Task）。
+    let private builderTaskGetter : MethodInfo =
+        builderType.GetProperty("Task", BindingFlags.Public ||| BindingFlags.Instance).GetGetMethod()
+
+    /// `AsyncTaskMethodBuilder<T>.Create()`（static）を T で閉じて返す。
+    let private builderGenericCreateFor (t: System.Type) : MethodInfo =
+        let closed = builderGenericType.MakeGenericType([| t |])
+        closed.GetMethod("Create", BindingFlags.Public ||| BindingFlags.Static, null, System.Type.EmptyTypes, null)
+
+    /// `AsyncTaskMethodBuilder<T>.SetResult(T)` を T で閉じて返す。
+    let private builderGenericSetResultFor (t: System.Type) : MethodInfo =
+        let closed = builderGenericType.MakeGenericType([| t |])
+        closed.GetMethod("SetResult", [| t |])
+
+    /// `AsyncTaskMethodBuilder<T>.Task` getter（returns Task<T>）を T で閉じて返す。
+    let private builderGenericTaskGetterFor (t: System.Type) : MethodInfo =
+        let closed = builderGenericType.MakeGenericType([| t |])
+        closed.GetProperty("Task", BindingFlags.Public ||| BindingFlags.Instance).GetGetMethod()
 
     /// 非ジェネリック `Task.GetAwaiter() : TaskAwaiter`。
     let private taskGetAwaiter : MethodInfo =
@@ -51,11 +84,21 @@ module AsyncRewrite =
         closedAwaiter.GetMethod("GetResult", System.Type.EmptyTypes)
 
     // ─────────────────────────────────────────────
+    // シンボル採番
+    // ─────────────────────────────────────────────
+
+    /// 新しい SymbolId を採番し、コンパイラ生成シンボルとして登録する。
+    /// `name` は CIL のフィールド/メソッド名に使われる（Gen.fs が SymbolTable を参照する）。
+    let private allocateNamedSymbol (symbolTable: SymbolTable) (name: string) (typ: TypeId) : SymbolId =
+        let sid = symbolTable.NextId()
+        symbolTable.Add(sid, { name = name; typ = typ; kind = SymbolKind.Local() })
+        sid
+
+    // ─────────────────────────────────────────────
     // TypeId → System.Type の解決ヘルパー
     // ─────────────────────────────────────────────
 
     /// `TypeId.Name sid` をシンボルテーブル経由で `System.Type` へ解決する。
-    /// インポートされた `Task` などはここを通る。
     let private tryResolveNameToSystemType (symbolTable: SymbolTable) (sid: SymbolId) : System.Type option =
         match symbolTable.Get(sid) with
         | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) }
@@ -68,8 +111,6 @@ module AsyncRewrite =
         | TypeId.Native t -> Some t
         | TypeId.Name sid -> tryResolveNameToSystemType symbolTable sid
         | TypeId.App (TypeId.Native head, args) when head = taskType ->
-            // ユーザーが `Task T` と書いた場合、`Native typeof<Task>` をヘッドとして表現される。
-            // .NET の実体は `Task<T>` なのでジェネリックを閉じる。
             args
             |> List.map (tryResolveTypeToSystem symbolTable)
             |> List.fold (fun acc opt ->
@@ -80,7 +121,6 @@ module AsyncRewrite =
         | TypeId.App (head, args) ->
             match tryResolveTypeToSystem symbolTable head with
             | Some headSys ->
-                // 一般のジェネリック型適用も同様に閉じる。
                 args
                 |> List.map (tryResolveTypeToSystem symbolTable)
                 |> List.fold (fun acc opt ->
@@ -94,19 +134,22 @@ module AsyncRewrite =
                     else
                         Some headSys)
             | None -> None
-        | _ -> None
+        // プリミティブ（Int/Bool/Float/String/Unit）・配列・関数型などは汎用変換に委ねる。
+        | _ -> TypeId.tryToRuntimeSystemType tid
 
-    /// 与えられた `TypeId` が `Task` または `Task<T>` のとき、
-    /// `Some(awaitedType, isGeneric, taskSystemType, payloadSystemType option)` を返す。
-    let private tryClassifyTaskType (symbolTable: SymbolTable) (tid: TypeId) : (TypeId * System.Type * System.Type option) option =
+    /// 与えられた戻り値 `TypeId` を分類する。
+    /// `Task`         → `Some(None)`           （非ジェネリック）
+    /// `Task<T>`      → `Some(Some payloadSys)`（ジェネリック、payload の System.Type）
+    /// それ以外        → `None`
+    let private tryClassifyTaskType (symbolTable: SymbolTable) (tid: TypeId) : System.Type option option =
         let isTaskSystem (t: System.Type) : bool =
             not (obj.ReferenceEquals(t, null)) && t = taskType
 
         match tid with
-        | TypeId.Native t when isTaskSystem t -> Some (TypeId.Unit, t, None)
+        | TypeId.Native t when isTaskSystem t -> Some None
         | TypeId.Name sid ->
             match tryResolveNameToSystemType symbolTable sid with
-            | Some t when isTaskSystem t -> Some (TypeId.Unit, t, None)
+            | Some t when isTaskSystem t -> Some None
             | _ -> None
         | TypeId.App (head, [ arg ]) ->
             let headSysOpt =
@@ -116,172 +159,396 @@ module AsyncRewrite =
                 | _ -> None
             match headSysOpt with
             | Some t when isTaskSystem t ->
-                let payloadSys = tryResolveTypeToSystem symbolTable arg
-                let closedTask =
-                    payloadSys
-                    |> Option.map (fun ps -> taskGenericType.MakeGenericType([| ps |]))
-                    |> Option.defaultValue taskGenericType
-                Some (arg, closedTask, payloadSys)
+                match tryResolveTypeToSystem symbolTable arg with
+                | Some payloadSys -> Some (Some payloadSys)
+                | None -> None
             | _ -> None
         | _ -> None
 
     // ─────────────────────────────────────────────
-    // await の同期化
+    // await の同期化（3b-2 暫定）
     // ─────────────────────────────────────────────
 
     /// `await operand` を `operand.GetAwaiter().GetResult()` の Call 連鎖に変換する。
-    /// PR-3a の暫定実装: 同期的に Task の完了を待つ。
+    /// PR-3b-2 の暫定実装: MoveNext 内で同期的に Task の完了を待つ。
     let private buildSyncAwait (symbolTable: SymbolTable) (operand: ClosedHir.Expr) (resultTid: TypeId) (span: Span) : ClosedHir.Expr =
-        let operandType = operand.typ
-        match tryClassifyTaskType symbolTable operandType with
-        | Some (_, _, None) ->
+        match tryClassifyTaskType symbolTable operand.typ with
+        | Some None ->
             // 非ジェネリック Task: TaskAwaiter.GetResult() : void
             let awaiterCall =
                 ClosedHir.Expr.Call(
-                    Hir.Callable.NativeMethod taskGetAwaiter,
-                    Some operand,
-                    [],
-                    TypeId.Native taskAwaiterType,
-                    span)
+                    Hir.Callable.NativeMethod taskGetAwaiter, Some operand, [],
+                    TypeId.Native taskAwaiterType, span)
             ClosedHir.Expr.Call(
-                Hir.Callable.NativeMethod taskAwaiterGetResult,
-                Some awaiterCall,
-                [],
-                TypeId.Unit,
-                span)
-        | Some (_, _, Some payloadSys) ->
+                Hir.Callable.NativeMethod taskAwaiterGetResult, Some awaiterCall, [],
+                TypeId.Unit, span)
+        | Some (Some payloadSys) ->
             // ジェネリック Task<T>: TaskAwaiter<T>.GetResult() : T
             let getAwaiterMi = taskGenericGetAwaiterFor payloadSys
             let getResultMi = taskAwaiterGenericGetResultFor payloadSys
             let awaiterTid = TypeId.Native (taskAwaiterGenericType.MakeGenericType([| payloadSys |]))
             let awaiterCall =
                 ClosedHir.Expr.Call(
-                    Hir.Callable.NativeMethod getAwaiterMi,
-                    Some operand,
-                    [],
-                    awaiterTid,
-                    span)
+                    Hir.Callable.NativeMethod getAwaiterMi, Some operand, [],
+                    awaiterTid, span)
             ClosedHir.Expr.Call(
-                Hir.Callable.NativeMethod getResultMi,
-                Some awaiterCall,
-                [],
-                resultTid,
-                span)
+                Hir.Callable.NativeMethod getResultMi, Some awaiterCall, [],
+                resultTid, span)
         | None ->
-            // 型分類失敗。ExprError を返してエラーを上流へ伝える。
-            ClosedHir.Expr.ExprError(
-                "AsyncRewrite: await operand is not Task or Task<T>",
-                resultTid,
-                span)
+            ClosedHir.Expr.ExprError("AsyncRewrite: await operand is not Task or Task<T>", resultTid, span)
 
     // ─────────────────────────────────────────────
-    // 本体の Task ラップ
+    // ローカル変数（Let 束縛）の収集
     // ─────────────────────────────────────────────
 
-    /// 本体式を Task / Task<T> を返す形へ包む。
-    /// - 戻り値型が `Task`（非ジェネリック）の場合:
-    ///     `Block([ExprStmt(body)], Task.CompletedTask, Task, span)`
-    /// - 戻り値型が `Task<T>` の場合:
-    ///     `Task.FromResult<T>(body)`
-    let private wrapBody
+    /// 式・文の木を走査し、`Let` で束縛されたローカル変数 (sid, typ) を収集する。
+    /// ホイスト対象フィールドの算出に使う。For 反復変数は対象外（3b-2 ではローカルのまま）。
+    let rec private collectLetSids (expr: ClosedHir.Expr) : (SymbolId * TypeId) list =
+        match expr with
+        | ClosedHir.Expr.Block (stmts, body, _, _) ->
+            (stmts |> List.collect collectLetSidsStmt) @ collectLetSids body
+        | ClosedHir.Expr.Call (_, instance, args, _, _) ->
+            (instance |> Option.map collectLetSids |> Option.defaultValue [])
+            @ (args |> List.collect collectLetSids)
+        | ClosedHir.Expr.MemberAccess (_, instance, _, _) ->
+            instance |> Option.map collectLetSids |> Option.defaultValue []
+        | ClosedHir.Expr.If (cond, thenB, elseB, _, _) ->
+            collectLetSids cond @ collectLetSids thenB @ collectLetSids elseB
+        | ClosedHir.Expr.Await (operand, _, _) -> collectLetSids operand
+        | ClosedHir.Expr.AddrOf (target, _, _) -> collectLetSids target
+        | _ -> []
+
+    and private collectLetSidsStmt (stmt: ClosedHir.Stmt) : (SymbolId * TypeId) list =
+        match stmt with
+        | ClosedHir.Stmt.Let (sid, _, value, _) -> [ sid, value.typ ] @ collectLetSids value
+        | ClosedHir.Stmt.Assign (_, value, _) -> collectLetSids value
+        | ClosedHir.Stmt.ExprStmt (value, _) -> collectLetSids value
+        | ClosedHir.Stmt.StoreField (instanceExpr, _, _, value, _) ->
+            collectLetSids instanceExpr @ collectLetSids value
+        | ClosedHir.Stmt.For (_, _, iterable, body, _) ->
+            collectLetSids iterable @ (body |> List.collect collectLetSidsStmt)
+        | ClosedHir.Stmt.If (cond, thenBody, elseBody, _) ->
+            collectLetSids cond
+            @ (thenBody |> List.collect collectLetSidsStmt)
+            @ (elseBody |> List.collect collectLetSidsStmt)
+        | ClosedHir.Stmt.ErrorStmt _ -> []
+
+    // ─────────────────────────────────────────────
+    // フィールドホイスト
+    // ホイスト対象 sid への参照を `this.<field>` へ、Let/Assign を StoreField へ変換する。
+    // ─────────────────────────────────────────────
+
+    /// ホイスト書き換えの文脈。
+    type private HoistCtx = {
+        /// MoveNext の `this`（= SM インスタンス）を指す式。
+        thisExpr: ClosedHir.Expr
+        /// SM 型の SymbolId。
+        smTypeSid: SymbolId
+        /// ホイスト対象となる変数 sid の集合（引数 + Let ローカル）。
+        hoisted: Set<int>
+    }
+
+    /// 式中のホイスト対象 `Id` を `this.<field>` 読み出しへ書き換える。Block 内の Let/Assign は
+    /// `hoistStmt` で StoreField へ変換する。
+    let rec private hoistExpr (ctx: HoistCtx) (expr: ClosedHir.Expr) : ClosedHir.Expr =
+        match expr with
+        | ClosedHir.Expr.Id (sid, tid, span) when ctx.hoisted.Contains sid.id ->
+            ClosedHir.Expr.MemberAccess(
+                Hir.Member.DataField(ctx.smTypeSid, sid), Some ctx.thisExpr, tid, span)
+        | ClosedHir.Expr.Block (stmts, body, tid, span) ->
+            ClosedHir.Expr.Block(stmts |> List.map (hoistStmt ctx), hoistExpr ctx body, tid, span)
+        | ClosedHir.Expr.Call (func, instance, args, tid, span) ->
+            ClosedHir.Expr.Call(func, instance |> Option.map (hoistExpr ctx), args |> List.map (hoistExpr ctx), tid, span)
+        | ClosedHir.Expr.MemberAccess (mem, instance, tid, span) ->
+            ClosedHir.Expr.MemberAccess(mem, instance |> Option.map (hoistExpr ctx), tid, span)
+        | ClosedHir.Expr.If (cond, thenB, elseB, tid, span) ->
+            ClosedHir.Expr.If(hoistExpr ctx cond, hoistExpr ctx thenB, hoistExpr ctx elseB, tid, span)
+        | ClosedHir.Expr.Await (operand, tid, span) ->
+            ClosedHir.Expr.Await(hoistExpr ctx operand, tid, span)
+        | ClosedHir.Expr.AddrOf (target, tid, span) ->
+            ClosedHir.Expr.AddrOf(hoistExpr ctx target, tid, span)
+        // リテラル・非ホイスト Id・Null・ExprError・EnvFieldLoad・ClosureCreate・Lambda は素通し。
+        | _ -> expr
+
+    and private hoistStmt (ctx: HoistCtx) (stmt: ClosedHir.Stmt) : ClosedHir.Stmt =
+        match stmt with
+        | ClosedHir.Stmt.Let (sid, isMut, value, span) ->
+            let value' = hoistExpr ctx value
+            if ctx.hoisted.Contains sid.id then
+                ClosedHir.Stmt.StoreField(ctx.thisExpr, ctx.smTypeSid, sid, value', span)
+            else
+                ClosedHir.Stmt.Let(sid, isMut, value', span)
+        | ClosedHir.Stmt.Assign (sid, value, span) ->
+            let value' = hoistExpr ctx value
+            if ctx.hoisted.Contains sid.id then
+                ClosedHir.Stmt.StoreField(ctx.thisExpr, ctx.smTypeSid, sid, value', span)
+            else
+                ClosedHir.Stmt.Assign(sid, value', span)
+        | ClosedHir.Stmt.StoreField (instanceExpr, typeSid, fieldSid, value, span) ->
+            ClosedHir.Stmt.StoreField(hoistExpr ctx instanceExpr, typeSid, fieldSid, hoistExpr ctx value, span)
+        | ClosedHir.Stmt.ExprStmt (value, span) ->
+            ClosedHir.Stmt.ExprStmt(hoistExpr ctx value, span)
+        | ClosedHir.Stmt.For (sid, tid, iterable, body, span) ->
+            ClosedHir.Stmt.For(sid, tid, hoistExpr ctx iterable, body |> List.map (hoistStmt ctx), span)
+        | ClosedHir.Stmt.If (cond, thenBody, elseBody, span) ->
+            ClosedHir.Stmt.If(hoistExpr ctx cond, thenBody |> List.map (hoistStmt ctx), elseBody |> List.map (hoistStmt ctx), span)
+        | ClosedHir.Stmt.ErrorStmt _ -> stmt
+
+    // ─────────────────────────────────────────────
+    // 状態機械の生成
+    // ─────────────────────────────────────────────
+
+    /// 1 つの async メソッドに対する生成結果。
+    type private StateMachineGen = {
+        /// 元メソッドの新しい本体（kickoff シム）。
+        kickoffBody: ClosedHir.Expr
+        /// 生成された SM クラス型。
+        smType: ClosedHir.Type
+        /// kickoff メソッドの戻り値型。`Task` / `Task<T>` を確実に閉じた `Native` 型へ正規化したもの。
+        /// （Atla の `Task T` は `App(Name task, [T])` 表現で、Gen の総称消去では非総称 `Task` に
+        /// 落ちてしまうため、ここで実体の `Task<T>` に確定させる。）
+        resolvedRetType: TypeId
+    }
+
+    /// async メソッド本体から状態機械を生成する。
+    let private generateStateMachine
         (symbolTable: SymbolTable)
-        (body: ClosedHir.Expr)
-        (declaredRet: TypeId)
-        (span: Span) : ClosedHir.Expr =
-        match tryClassifyTaskType symbolTable declaredRet with
-        | Some (_, taskSys, None) ->
-            // Task.CompletedTask を MemberAccess(NativeProperty) として表現する。
-            let completedTaskProp =
-                taskType.GetProperty("CompletedTask", BindingFlags.Public ||| BindingFlags.Static)
-            let completedTaskExpr =
+        (method: ClosedHir.Method)
+        (declaredRet: TypeId) : StateMachineGen =
+        let span = method.span
+        let payloadOpt = tryClassifyTaskType symbolTable declaredRet |> Option.defaultValue None
+
+        // 戻り値型を実体の `Task` / `Task<T>`（Native）へ正規化する。
+        let resolvedRetType =
+            match payloadOpt with
+            | None -> TypeId.Native taskType
+            | Some payloadSys -> TypeId.Native (taskGenericType.MakeGenericType([| payloadSys |]))
+
+        // 1. builder のフィールド型と関連 MethodInfo を決定する。
+        let builderFieldType, createMi, taskGetterMi =
+            match payloadOpt with
+            | None -> TypeId.Native builderType, builderCreate, builderTaskGetter
+            | Some payloadSys ->
+                let closed = builderGenericType.MakeGenericType([| payloadSys |])
+                TypeId.Native closed, builderGenericCreateFor payloadSys, builderGenericTaskGetterFor payloadSys
+
+        // 2. SM 型・メンバーの SymbolId を採番する。
+        let smTypeSid = allocateNamedSymbol symbolTable "<>c__AsyncStateMachine" TypeId.Unit
+        let stateFieldSid = allocateNamedSymbol symbolTable "<>1__state" TypeId.Int
+        let builderFieldSid = allocateNamedSymbol symbolTable "<>t__builder" builderFieldType
+        let moveNextSid = allocateNamedSymbol symbolTable "MoveNext" (TypeId.Fn([ TypeId.Name smTypeSid ], TypeId.Unit))
+        let moveNextThisSid = allocateNamedSymbol symbolTable "this" (TypeId.Name smTypeSid)
+        let setSmSid =
+            allocateNamedSymbol symbolTable "SetStateMachine"
+                (TypeId.Fn([ TypeId.Name smTypeSid; TypeId.Native asyncStateMachineInterface ], TypeId.Unit))
+        let setSmThisSid = allocateNamedSymbol symbolTable "this" (TypeId.Name smTypeSid)
+        let setSmParamSid = allocateNamedSymbol symbolTable "stateMachine" (TypeId.Native asyncStateMachineInterface)
+        let smLocalSid = allocateNamedSymbol symbolTable "<>sm" (TypeId.Name smTypeSid)
+
+        // 3. ホイスト対象（引数 + Let ローカル）を算出する。元の sid をそのままフィールド sid に再利用する。
+        let argFields = method.args  // (sid, typ) list
+        let localFields = collectLetSids method.body
+        let hoistedSet =
+            (argFields |> List.map (fun (sid, _) -> sid.id))
+            @ (localFields |> List.map (fun (sid, _) -> sid.id))
+            |> Set.ofList
+
+        // 4. SM 型のフィールド群を構築する（state, builder, ホイスト引数/ローカル）。
+        let unitExpr = ClosedHir.Expr.Unit span
+        let smFields =
+            [ ClosedHir.Field(stateFieldSid, TypeId.Int, unitExpr, span)
+              ClosedHir.Field(builderFieldSid, builderFieldType, unitExpr, span) ]
+            @ (argFields |> List.map (fun (sid, typ) -> ClosedHir.Field(sid, typ, unitExpr, span)))
+            @ (localFields |> List.map (fun (sid, typ) -> ClosedHir.Field(sid, typ, unitExpr, span)))
+
+        // 5. MoveNext 本体を構築する。
+        let moveNextThisExpr = ClosedHir.Expr.Id(moveNextThisSid, TypeId.Name smTypeSid, span)
+        let hoistCtx = { thisExpr = moveNextThisExpr; smTypeSid = smTypeSid; hoisted = hoistedSet }
+
+        // 5a. await を同期化したのち、本体をホイストする。
+        let bodyAfterAwait =
+            ClosedHir.mapExpr
+                (fun e ->
+                    match e with
+                    | ClosedHir.Expr.Await (operand, resultTid, awaitSpan) ->
+                        buildSyncAwait symbolTable operand resultTid awaitSpan
+                    | _ -> e)
+                method.body
+        let hoistedBody = hoistExpr hoistCtx bodyAfterAwait
+
+        // 5b. `this.<>t__builder` のアドレスを取り出す式（struct メソッド呼び出し用）。
+        let builderAddr =
+            ClosedHir.Expr.AddrOf(
                 ClosedHir.Expr.MemberAccess(
-                    Hir.Member.NativeProperty completedTaskProp,
-                    None,
-                    TypeId.Native taskSys,
-                    span)
-            ClosedHir.Expr.Block(
-                [ ClosedHir.Stmt.ExprStmt(body, span) ],
-                completedTaskExpr,
-                TypeId.Native taskSys,
+                    Hir.Member.DataField(smTypeSid, builderFieldSid), Some moveNextThisExpr, builderFieldType, span),
+                TypeId.ByRef builderFieldType, span)
+
+        let moveNextBody =
+            match payloadOpt with
+            | None ->
+                // Task: 本体を実行 → builder.SetResult()
+                let setResultCall =
+                    ClosedHir.Expr.Call(
+                        Hir.Callable.NativeMethod builderSetResult, Some builderAddr, [], TypeId.Unit, span)
+                ClosedHir.Expr.Block(
+                    [ ClosedHir.Stmt.ExprStmt(hoistedBody, span) ], setResultCall, TypeId.Unit, span)
+            | Some payloadSys ->
+                // Task<T>: builder.SetResult(<body value>)
+                let setResultMi = builderGenericSetResultFor payloadSys
+                ClosedHir.Expr.Call(
+                    Hir.Callable.NativeMethod setResultMi, Some builderAddr, [ hoistedBody ], TypeId.Unit, span)
+
+        let moveNextMethod =
+            ClosedHir.Method(
+                moveNextSid,
+                [ moveNextThisSid, TypeId.Name smTypeSid ],
+                moveNextBody,
+                TypeId.Fn([ TypeId.Name smTypeSid ], TypeId.Unit),
+                Some iasmMoveNext,
+                false,
                 span)
-        | Some (_, closedTaskSys, Some payloadSys) ->
-            // Task.FromResult<T>(body)
-            let closedFromResult = taskFromResultDef.MakeGenericMethod([| payloadSys |])
+
+        // 6. SetStateMachine 本体（3b-2 では空スタブ）。
+        let setSmMethod =
+            ClosedHir.Method(
+                setSmSid,
+                [ setSmThisSid, TypeId.Name smTypeSid; setSmParamSid, TypeId.Native asyncStateMachineInterface ],
+                ClosedHir.Expr.Unit span,
+                TypeId.Fn([ TypeId.Name smTypeSid; TypeId.Native asyncStateMachineInterface ], TypeId.Unit),
+                Some iasmSetStateMachine,
+                false,
+                span)
+
+        // 7. SM 型（IAsyncStateMachine を実装するクラス）。
+        let smType =
+            ClosedHir.Type(
+                smTypeSid,
+                false,
+                Some (TypeId.Native asyncStateMachineInterface),
+                [],
+                smFields,
+                [ moveNextMethod; setSmMethod ])
+
+        // 8. kickoff シム本体を構築する。
+        let smLocalExpr = ClosedHir.Expr.Id(smLocalSid, TypeId.Name smTypeSid, span)
+        // 8a. `<>sm = new SM()`
+        let newSmStmt =
+            ClosedHir.Stmt.Let(
+                smLocalSid, false,
+                ClosedHir.Expr.Call(
+                    Hir.Callable.DataConstructor(smTypeSid, []), None, [], TypeId.Name smTypeSid, span),
+                span)
+        // 8b. `<>sm.<>t__builder = AsyncTaskMethodBuilder.Create()`
+        let initBuilderStmt =
+            ClosedHir.Stmt.StoreField(
+                smLocalExpr, smTypeSid, builderFieldSid,
+                ClosedHir.Expr.Call(Hir.Callable.NativeMethod createMi, None, [], builderFieldType, span),
+                span)
+        // 8c. `<>sm.<>1__state = -1`
+        let initStateStmt =
+            ClosedHir.Stmt.StoreField(
+                smLocalExpr, smTypeSid, stateFieldSid, ClosedHir.Expr.Int(-1, span), span)
+        // 8d. 各引数を SM フィールドへコピーする。
+        let copyArgStmts =
+            argFields
+            |> List.map (fun (argSid, argTyp) ->
+                ClosedHir.Stmt.StoreField(
+                    smLocalExpr, smTypeSid, argSid,
+                    ClosedHir.Expr.Id(argSid, argTyp, span), span))
+        // 8e. `<>sm.MoveNext()`
+        // impl インスタンスメソッド呼び出しの規約に合わせ、レシーバーを第一引数として注入し
+        // instance は None とする（Layout の Callable.Fn は instance を引数列へ含めないため）。
+        let moveNextCallStmt =
+            ClosedHir.Stmt.ExprStmt(
+                ClosedHir.Expr.Call(Hir.Callable.Fn moveNextSid, None, [ smLocalExpr ], TypeId.Unit, span), span)
+        // 8f. `return <>sm.<>t__builder.Task`
+        let builderAddrForTask =
+            ClosedHir.Expr.AddrOf(
+                ClosedHir.Expr.MemberAccess(
+                    Hir.Member.DataField(smTypeSid, builderFieldSid), Some smLocalExpr, builderFieldType, span),
+                TypeId.ByRef builderFieldType, span)
+        let returnTaskExpr =
             ClosedHir.Expr.Call(
-                Hir.Callable.NativeMethod closedFromResult,
-                None,
-                [ body ],
-                TypeId.Native closedTaskSys,
+                Hir.Callable.NativeMethod taskGetterMi, Some builderAddrForTask, [], resolvedRetType, span)
+
+        let kickoffBody =
+            ClosedHir.Expr.Block(
+                [ newSmStmt; initBuilderStmt; initStateStmt ] @ copyArgStmts @ [ moveNextCallStmt ],
+                returnTaskExpr,
+                resolvedRetType,
                 span)
-        | None ->
-            // PR-2 の戻り値型検証で既に診断済みの想定。素通しでフォールバック。
-            body
+
+        { kickoffBody = kickoffBody; smType = smType; resolvedRetType = resolvedRetType }
 
     // ─────────────────────────────────────────────
     // ClosedHir.Method の書き換え
     // ─────────────────────────────────────────────
 
-    /// `isAsync` メソッドの本体を「await 同期化 + Task ラップ」で書き換える。
-    /// 非 async メソッドはそのまま返す。
-    let private rewriteMethod (symbolTable: SymbolTable) (method: ClosedHir.Method) : ClosedHir.Method =
+    /// `isAsync` メソッドを状態機械化する。kickoff へ書き換えたメソッドと生成 SM 型を返す。
+    /// 非 async メソッドはそのまま返し、SM 型は生成しない。
+    let private rewriteMethod (symbolTable: SymbolTable) (method: ClosedHir.Method) : ClosedHir.Method * ClosedHir.Type option =
         if not method.isAsync then
-            method
+            method, None
         else
             let declaredRet =
                 match method.typ with
                 | TypeId.Fn (_, ret) -> ret
                 | _ -> method.typ
 
-            // 1. 全ての Await ノードを GetAwaiter().GetResult() の同期 Call 連鎖へ書き換える。
-            let bodyAfterAwaitRewrite =
-                ClosedHir.mapExpr
-                    (fun e ->
-                        match e with
-                        | ClosedHir.Expr.Await (operand, resultTid, span) ->
-                            buildSyncAwait symbolTable operand resultTid span
-                        | _ -> e)
-                    method.body
-
-            // 2. 本体を Task / Task<T> で包む。
-            let wrappedBody = wrapBody symbolTable bodyAfterAwaitRewrite declaredRet method.span
-
-            ClosedHir.Method(
-                method.sym,
-                method.args,
-                wrappedBody,
-                method.typ,
-                method.overrideTarget,
-                method.isAsync,
-                method.span)
+            let gen = generateStateMachine symbolTable method declaredRet
+            // kickoff の戻り値型を実体 `Task` / `Task<T>` へ正規化する（Gen の総称消去対策）。
+            // override メソッドの場合、親シグネチャと整合させるため overrideTarget の戻り値型も保持される。
+            let kickoffType =
+                match method.typ with
+                | TypeId.Fn (argTypes, _) -> TypeId.Fn (argTypes, gen.resolvedRetType)
+                | other -> other
+            let kickoff =
+                ClosedHir.Method(
+                    method.sym,
+                    method.args,
+                    gen.kickoffBody,
+                    kickoffType,
+                    method.overrideTarget,
+                    // kickoff 自体は通常メソッド（async 状態は SM に移動済み）。
+                    false,
+                    method.span)
+            kickoff, Some gen.smType
 
     // ─────────────────────────────────────────────
     // ClosedHir.Assembly の書き換え
     // ─────────────────────────────────────────────
 
-    /// `ClosedHir.Assembly` 全体を走査し、`isAsync = true` のメソッドを書き換える。
+    /// `ClosedHir.Assembly` 全体を走査し、`isAsync = true` のメソッドを状態機械化する。
+    /// 生成された SM 型は所属モジュールの types へ追加する。
     let rewriteAssembly (symbolTable: SymbolTable) (asm: ClosedHir.Assembly) : ClosedHir.Assembly =
         let rewriteModule (modul: ClosedHir.Module) : ClosedHir.Module =
-            let rewrittenMethods =
-                modul.methods |> List.map (rewriteMethod symbolTable)
-            let rewrittenTypes =
+            // モジュール直下メソッドを書き換え、生成 SM 型を収集する。
+            let rewrittenMethods, moduleGenTypes =
+                modul.methods
+                |> List.fold (fun (accMethods, accTypes) m ->
+                    let rewritten, smOpt = rewriteMethod symbolTable m
+                    accMethods @ [ rewritten ], accTypes @ (Option.toList smOpt)) ([], [])
+
+            // 各型のインスタンスメソッドを書き換え、生成 SM 型を収集する。
+            let rewrittenTypes, typeGenTypes =
                 modul.types
-                |> List.map (fun t ->
-                    let rewrittenTypeMethods =
-                        t.methods |> List.map (rewriteMethod symbolTable)
-                    ClosedHir.Type(
-                        t.sym,
-                        t.isInterface,
-                        t.baseType,
-                        t.typeParams,
-                        t.fields,
-                        rewrittenTypeMethods))
+                |> List.fold (fun (accTypes, accGen) t ->
+                    let rewrittenTypeMethods, genFromType =
+                        t.methods
+                        |> List.fold (fun (accM, accG) m ->
+                            let rewritten, smOpt = rewriteMethod symbolTable m
+                            accM @ [ rewritten ], accG @ (Option.toList smOpt)) ([], [])
+                    let rewrittenType =
+                        ClosedHir.Type(
+                            t.sym, t.isInterface, t.baseType, t.typeParams, t.fields, rewrittenTypeMethods)
+                    accTypes @ [ rewrittenType ], accGen @ genFromType) ([], [])
+
             ClosedHir.Module(
                 modul.name,
-                rewrittenTypes,
+                rewrittenTypes @ moduleGenTypes @ typeGenTypes,
                 modul.fields,
                 rewrittenMethods,
                 modul.scope,
                 modul.closureInvokeMethods)
 
-        let rewrittenModules = asm.modules |> List.map rewriteModule
-        ClosedHir.Assembly(asm.name, rewrittenModules)
+        ClosedHir.Assembly(asm.name, asm.modules |> List.map rewriteModule)

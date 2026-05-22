@@ -1537,3 +1537,109 @@ async fn run (t: Task): Task = await t
             Assert.True(result.IsCompletedSuccessfully, "async fn 本体は同期実装で完走するべき")
         | None ->
             Assert.True(false, "'run' method not found in generated assembly")
+
+    // ──────────────────────────────────────────────────────────────
+    // async / await (PR-3b-2: 状態機械生成)
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``async fn generates a state machine type implementing IAsyncStateMachine`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn run (t: Task): Task = await t
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncSMType"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncSMType.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+
+        // IAsyncStateMachine を実装する生成型が存在すること。
+        let smTypes =
+            loaded.GetTypes()
+            |> Array.filter (fun t -> typeof<System.Runtime.CompilerServices.IAsyncStateMachine>.IsAssignableFrom(t))
+        Assert.True(smTypes.Length >= 1, "should generate at least one IAsyncStateMachine type")
+
+        let smType = smTypes.[0]
+        // MoveNext / SetStateMachine を持つこと。
+        let allMethods = smType.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance)
+        Assert.Contains(allMethods, (fun m -> m.Name.EndsWith("MoveNext")))
+        Assert.Contains(allMethods, (fun m -> m.Name.EndsWith("SetStateMachine")))
+        // builder / state フィールドを持つこと。
+        let fields = smType.GetFields(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance)
+        Assert.Contains(fields, (fun f -> f.FieldType = typeof<System.Runtime.CompilerServices.AsyncTaskMethodBuilder>))
+        Assert.Contains(fields, (fun f -> f.FieldType = typeof<int> && f.Name.Contains("state")))
+
+    [<Fact>]
+    let ``async fn returning Task T awaits and yields the result through the state machine`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn runT (t: Task Int): Task Int = await t
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncTaskOfT"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncTaskOfT.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let runMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "runT")
+
+        match runMethod with
+        | Some mi ->
+            Assert.True(mi.ReturnType.IsGenericType, "return type should be a closed generic Task<T>")
+            Assert.Equal(typedefof<System.Threading.Tasks.Task<_>>, mi.ReturnType.GetGenericTypeDefinition())
+            Assert.Equal(typeof<int>, mi.ReturnType.GetGenericArguments().[0])
+            let arg = System.Threading.Tasks.Task.FromResult(42) :> obj
+            let result = mi.Invoke(null, [| arg |]) :?> System.Threading.Tasks.Task<int>
+            result.Wait()
+            Assert.Equal(42, result.Result)
+        | None ->
+            Assert.True(false, "'runT' method not found in generated assembly")
+
+    [<Fact>]
+    let ``async fn hoists local binding and argument into state machine fields`` () =
+        // `let x = await t` のローカル x と引数 t がフィールドへホイストされ、x が結果として返ること。
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn compute (t: Task Int): Task Int =
+    let x = await t
+    x
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncHoist"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncHoist.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let computeMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "compute")
+
+        match computeMethod with
+        | Some mi ->
+            let arg = System.Threading.Tasks.Task.FromResult(123) :> obj
+            let result = mi.Invoke(null, [| arg |]) :?> System.Threading.Tasks.Task<int>
+            result.Wait()
+            Assert.Equal(123, result.Result)
+        | None ->
+            Assert.True(false, "'compute' method not found in generated assembly")
