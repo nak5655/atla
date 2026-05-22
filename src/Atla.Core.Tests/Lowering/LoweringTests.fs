@@ -2187,3 +2187,51 @@ async fn outer (a: Task Int) (b: Task Int): Task Int = await ((await a) (await b
             Assert.Equal(200, result.Result)
         | None ->
             Assert.True(false, "'outer' method not found in generated assembly")
+
+    // ──────────────────────────────────────────────────────────────
+    // async / await: 条件分岐内の await
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``async fn awaits inside conditional branches`` () =
+        // 各分岐で await する条件式。spilling により分岐内 await が文レベルへ降格される。
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn choose (c: Bool) (a: Task Int) (b: Task Int): Task Int =
+    |? c => await a
+    |: else => await b
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncIfBranch"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncIfBranch.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let chooseMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "choose")
+
+        match chooseMethod with
+        | Some mi ->
+            // c=true → a を await。a を未完了で渡し中断→完了で再開。b は完了済みで未使用。
+            let tcsA = System.Threading.Tasks.TaskCompletionSource<int>()
+            let rTrue = mi.Invoke(null, [| true :> obj; tcsA.Task :> obj; System.Threading.Tasks.Task.FromResult(0) :> obj |]) :?> System.Threading.Tasks.Task<int>
+            Assert.False(rTrue.IsCompleted, "選択された分岐 (a) が未完了なら中断するべき")
+            tcsA.SetResult(11)
+            Assert.True(rTrue.Wait(5000))
+            Assert.Equal(11, rTrue.Result)
+            // c=false → b を await。
+            let tcsB = System.Threading.Tasks.TaskCompletionSource<int>()
+            let rFalse = mi.Invoke(null, [| false :> obj; System.Threading.Tasks.Task.FromResult(0) :> obj; tcsB.Task :> obj |]) :?> System.Threading.Tasks.Task<int>
+            Assert.False(rFalse.IsCompleted)
+            tcsB.SetResult(22)
+            Assert.True(rFalse.Wait(5000))
+            Assert.Equal(22, rFalse.Result)
+        | None ->
+            Assert.True(false, "'choose' method not found in generated assembly")

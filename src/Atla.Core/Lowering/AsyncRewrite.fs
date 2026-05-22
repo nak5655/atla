@@ -18,11 +18,11 @@ open Atla.Core.Semantics.Data
 /// へ展開する。式中ネストの await は spilling により文レベルへ持ち上げ、await を跨いで生存する
 /// 中間値は SM の spill フィールド（`<>s__N`）へ退避する（左→右の評価順を保つ）。
 ///
-/// MoveNext 全体は try/catch で囲い、本体で発生した例外は `builder.SetException(ex)` で捕捉して
-/// 返り Task を faulted にする（await 中断は try 内から `leave END` で SetResult を飛ばして抜ける）。
-///
-/// 既知の制約: SetResult は try 内の正常完了位置に置いているため、SetResult 自体が投げると
-/// 二重完了例外になり得る（正常系では発生しない）。
+/// MoveNext 本体は try/catch で囲い、本体で発生した例外は `builder.SetException(ex)` で捕捉して
+/// 返り Task を faulted にする。`SetResult` は try の外（正常完了の落ち先）で呼ぶことで、
+/// SetResult 自体が投げても catch が拾わないようにする（二重完了を防ぐ Roslyn 流）。
+/// Task<T> の結果値は try 内で spill フィールド（`<>s__N`）へ退避し、try 外でそれを SetResult する。
+/// await 中断と catch は `leave END` で SetResult を飛ばして抜ける。
 module AsyncRewrite =
     // ─────────────────────────────────────────────
     // .NET 反射のキャッシュ
@@ -731,32 +731,29 @@ module AsyncRewrite =
             |> List.ofSeq
 
         // 8. MoveNext 本体を組み立てる。
-        //    try { dispatch → 本体 → (正常完了) state=-2; SetResult(...) }
-        //    catch (Exception ex) { state=-2; builder.SetException(ex) }
-        //    END:   // await 中断は try 内から Leave END で SetResult を飛ばしてここへ抜ける
-        // 注意（既知の制約）: SetResult を try 内に置いているため、SetResult 自体が投げると
-        // catch が拾って SetException を試み二重完了例外になり得る（正常系では発生しない）。
+        //    try   { dispatch → 本体 → (正常完了) <結果を spill フィールドへ退避> }
+        //    catch (Exception ex) { state=-2; builder.SetException(ex); leave END }
+        //    (正常完了の落ち先) state=-2; builder.SetResult(<spill 結果>)
+        //    END:
+        // SetResult を try の外に置くことで、SetResult 自体が投げても catch が拾わない
+        // （二重完了を防ぐ Roslyn 流）。await 中断 / catch は END へ leave して SetResult を飛ばす。
+        // try 正常完了のみが（EndExceptionBlock 直後への暗黙 leave で）SetResult ブロックへ落ちる。
         let builderAddr = fieldAddr builderFieldSid builderFieldType
 
-        // 正常完了時の SetResult シーケンス。
-        let normalCompletion =
+        // try 本体末尾（正常完了）: 結果を計算し、Task<T> の場合は spill フィールドへ退避する。
+        // Task（非ジェネリック）の場合は最終式を実行するだけ。
+        let resultFieldSidOpt =
             match payloadOpt with
-            | None ->
-                let setResultCall =
-                    ClosedHir.Expr.Call(Hir.Callable.NativeMethod builderSetResult, Some builderAddr, [], TypeId.Unit, span)
-                [ ClosedHir.Stmt.ExprStmt(finalValue, span)
-                  storeState -2
-                  ClosedHir.Stmt.ExprStmt(setResultCall, span) ]
-            | Some payloadSys ->
-                let setResultMi = builderGenericSetResultFor payloadSys
-                let setResultCall =
-                    ClosedHir.Expr.Call(Hir.Callable.NativeMethod setResultMi, Some builderAddr, [ finalValue ], TypeId.Unit, span)
-                [ storeState -2
-                  ClosedHir.Stmt.ExprStmt(setResultCall, span) ]
+            | None -> None
+            | Some _ -> Some (freshSpillField finalValue.typ)
+        let tryNormalTail =
+            match resultFieldSidOpt with
+            | None -> [ ClosedHir.Stmt.ExprStmt(finalValue, span) ]
+            | Some resultSid -> [ ClosedHir.Stmt.StoreField(moveNextThisExpr, smTypeSid, resultSid, finalValue, span) ]
 
-        let tryBody = dispatchStmts @ linearizedStmts @ finalStmts @ normalCompletion
+        let tryBody = dispatchStmts @ linearizedStmts @ finalStmts @ tryNormalTail
 
-        // catch 節: state=-2 にして builder.SetException(ex)。
+        // catch 節: state=-2 にして builder.SetException(ex)、その後 END へ leave（SetResult を飛ばす）。
         let setExceptionMi =
             match payloadOpt with
             | None -> builderSetException
@@ -767,12 +764,28 @@ module AsyncRewrite =
                   ClosedHir.Expr.Call(
                       Hir.Callable.NativeMethod setExceptionMi, Some builderAddr,
                       [ ClosedHir.Expr.Id(exceptionVarSid, TypeId.Native exceptionType, span) ], TypeId.Unit, span),
-                  span) ]
+                  span)
+              ClosedHir.Stmt.Leave(endLabelId, span) ]
+
+        // try の外（正常完了の落ち先）で state=-2 にして SetResult する。
+        let setResultStmts =
+            match resultFieldSidOpt with
+            | None ->
+                [ storeState -2
+                  ClosedHir.Stmt.ExprStmt(
+                      ClosedHir.Expr.Call(Hir.Callable.NativeMethod builderSetResult, Some builderAddr, [], TypeId.Unit, span), span) ]
+            | Some resultSid ->
+                let setResultMi = builderGenericSetResultFor (payloadOpt.Value)
+                [ storeState -2
+                  ClosedHir.Stmt.ExprStmt(
+                      ClosedHir.Expr.Call(Hir.Callable.NativeMethod setResultMi, Some builderAddr,
+                                          [ fieldLoad resultSid finalValue.typ ], TypeId.Unit, span), span) ]
 
         let moveNextBodyRaw =
             ClosedHir.Expr.Block(
-                [ ClosedHir.Stmt.TryCatch(tryBody, exceptionType, exceptionVarSid, catchBody, span)
-                  ClosedHir.Stmt.Label(endLabelId, span) ],
+                [ ClosedHir.Stmt.TryCatch(tryBody, exceptionType, exceptionVarSid, catchBody, span) ]
+                @ setResultStmts
+                @ [ ClosedHir.Stmt.Label(endLabelId, span) ],
                 ClosedHir.Expr.Unit span, TypeId.Unit, span)
 
         // 残存する（式内ネスト等の）await は同期フォールバックへ変換する。
