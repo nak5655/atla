@@ -1797,3 +1797,115 @@ async fn two (a: Task) (b: Task Int): Task Int =
             Assert.Equal(55, result.Result)
         | None ->
             Assert.True(false, "'two' method not found in generated assembly")
+
+    // ──────────────────────────────────────────────────────────────
+    // async / await: 例外伝播（try/catch + SetException）
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``async fn awaiting a faulted Task returns a faulted Task instead of throwing synchronously`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn run (t: Task): Task = await t
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncFaulted"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncFaulted.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let runMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "run")
+
+        match runMethod with
+        | Some mi ->
+            let ex = System.InvalidOperationException("boom")
+            let faulted = System.Threading.Tasks.Task.FromException(ex)
+            // 呼び出しは同期的に投げず、faulted な Task を返すべき。
+            let result = mi.Invoke(null, [| faulted :> obj |]) :?> System.Threading.Tasks.Task
+            Assert.NotNull(result)
+            // 完了を待つ（faulted）。例外型・メッセージが伝播していることを確認する。
+            let agg = Assert.Throws<AggregateException>(fun () -> result.Wait())
+            Assert.True(result.IsFaulted, "await した Task が faulted なら返り Task も faulted になるべき")
+            let inner = agg.InnerException
+            Assert.IsType<System.InvalidOperationException>(inner) |> ignore
+            Assert.Equal("boom", inner.Message)
+        | None ->
+            Assert.True(false, "'run' method not found in generated assembly")
+
+    [<Fact>]
+    let ``async fn Task T awaiting a faulted Task propagates the exception into the result Task`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn compute (t: Task Int): Task Int =
+    let x = await t
+    x
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncFaultedT"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncFaultedT.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let computeMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "compute")
+
+        match computeMethod with
+        | Some mi ->
+            let ex = System.ArgumentException("bad arg")
+            let faulted = System.Threading.Tasks.Task.FromException<int>(ex)
+            let result = mi.Invoke(null, [| faulted :> obj |]) :?> System.Threading.Tasks.Task<int>
+            let agg = Assert.Throws<AggregateException>(fun () -> result.Wait())
+            Assert.True(result.IsFaulted)
+            Assert.IsType<System.ArgumentException>(agg.InnerException) |> ignore
+        | None ->
+            Assert.True(false, "'compute' method not found in generated assembly")
+
+    [<Fact>]
+    let ``async fn awaiting an incomplete Task that later faults yields a faulted Task`` () =
+        // 中断後に faulted で完了するケース（fast path ではなく、再開経路での例外伝播）。
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn run (t: Task): Task = await t
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncFaultLater"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncFaultLater.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let runMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "run")
+
+        match runMethod with
+        | Some mi ->
+            let tcs = System.Threading.Tasks.TaskCompletionSource()
+            let result = mi.Invoke(null, [| tcs.Task :> obj |]) :?> System.Threading.Tasks.Task
+            Assert.False(result.IsCompleted, "未完了 Task で中断するべき")
+            tcs.SetException(System.InvalidOperationException("late boom"))
+            let agg = Assert.Throws<AggregateException>(fun () -> result.Wait(5000) |> ignore)
+            Assert.True(result.IsFaulted, "再開後に faulted になるべき")
+            Assert.IsType<System.InvalidOperationException>(agg.InnerException) |> ignore
+        | None ->
+            Assert.True(false, "'run' method not found in generated assembly")

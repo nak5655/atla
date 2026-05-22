@@ -46,9 +46,20 @@ module AsyncRewrite =
     let private builderCreate : MethodInfo =
         builderType.GetMethod("Create", BindingFlags.Public ||| BindingFlags.Static, null, System.Type.EmptyTypes, null)
 
+    let private exceptionType : System.Type = typeof<System.Exception>
+
     /// 非ジェネリック `AsyncTaskMethodBuilder.SetResult()`。
     let private builderSetResult : MethodInfo =
         builderType.GetMethod("SetResult", System.Type.EmptyTypes)
+
+    /// 非ジェネリック `AsyncTaskMethodBuilder.SetException(Exception)`。
+    let private builderSetException : MethodInfo =
+        builderType.GetMethod("SetException", [| exceptionType |])
+
+    /// `AsyncTaskMethodBuilder<T>.SetException(Exception)` を T で閉じて返す。
+    let private builderGenericSetExceptionFor (t: System.Type) : MethodInfo =
+        let closed = builderGenericType.MakeGenericType([| t |])
+        closed.GetMethod("SetException", [| exceptionType |])
 
     /// 非ジェネリック `AsyncTaskMethodBuilder.Task` getter（returns Task）。
     let private builderTaskGetter : MethodInfo =
@@ -266,7 +277,9 @@ module AsyncRewrite =
             collectLetSids cond
             @ (thenBody |> List.collect collectLetSidsStmt)
             @ (elseBody |> List.collect collectLetSidsStmt)
-        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ -> []
+        | ClosedHir.Stmt.TryCatch (tryBody, _, _, catchBody, _) ->
+            (tryBody |> List.collect collectLetSidsStmt) @ (catchBody |> List.collect collectLetSidsStmt)
+        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> []
         | ClosedHir.Stmt.ErrorStmt _ -> []
 
     // ─────────────────────────────────────────────
@@ -328,7 +341,9 @@ module AsyncRewrite =
             ClosedHir.Stmt.For(sid, tid, hoistExpr ctx iterable, body |> List.map (hoistStmt ctx), span)
         | ClosedHir.Stmt.If (cond, thenBody, elseBody, span) ->
             ClosedHir.Stmt.If(hoistExpr ctx cond, thenBody |> List.map (hoistStmt ctx), elseBody |> List.map (hoistStmt ctx), span)
-        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ -> stmt
+        | ClosedHir.Stmt.TryCatch (tryBody, catchType, catchVarSid, catchBody, span) ->
+            ClosedHir.Stmt.TryCatch(tryBody |> List.map (hoistStmt ctx), catchType, catchVarSid, catchBody |> List.map (hoistStmt ctx), span)
+        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> stmt
         | ClosedHir.Stmt.ErrorStmt _ -> stmt
 
     // ─────────────────────────────────────────────
@@ -417,6 +432,12 @@ module AsyncRewrite =
         let mutable nextState = 0
         let mutable nextLabel = 0
 
+        // try/catch 用: メソッド末尾の END ラベルと catch 変数（例外）を確保する。
+        // await 中断は try 内から `Leave END` でメソッド末尾へ抜ける（SetResult を飛ばす）。
+        let endLabelId = nextLabel
+        nextLabel <- nextLabel + 1
+        let exceptionVarSid = allocateNamedSymbol symbolTable "<>ex" (TypeId.Native exceptionType)
+
         // 1 つの await を「GetAwaiter→IsCompleted 判定→state設定→AwaitUnsafeOnCompleted→Return→
         // resume ラベル→GetResult」へ展開し、(設定文リスト, 結果式) を返す。
         let emitAwaitSeq (op: ClosedHir.Expr) (resultTid: TypeId) (awaitSpan: Span) : ClosedHir.Stmt list * ClosedHir.Expr =
@@ -457,7 +478,8 @@ module AsyncRewrite =
                       skipIf
                       storeState stateNum
                       ClosedHir.Stmt.ExprStmt(awaitCall, awaitSpan)
-                      ClosedHir.Stmt.Return awaitSpan
+                      // try 内からの中断脱出は ret/br ではなく leave で END へ。
+                      ClosedHir.Stmt.Leave(endLabelId, awaitSpan)
                       ClosedHir.Stmt.Label(resumeLbl, awaitSpan)
                       storeState -1 ]
                 let resultExpr =
@@ -498,25 +520,50 @@ module AsyncRewrite =
                 ClosedHir.Stmt.If(eqCall, [ ClosedHir.Stmt.Goto(lbl, span) ], [], span))
             |> List.ofSeq
 
-        // 8. MoveNext 本体を組み立てる（dispatch → 本体 → SetResult）。
+        // 8. MoveNext 本体を組み立てる。
+        //    try { dispatch → 本体 → (正常完了) state=-2; SetResult(...) }
+        //    catch (Exception ex) { state=-2; builder.SetException(ex) }
+        //    END:   // await 中断は try 内から Leave END で SetResult を飛ばしてここへ抜ける
+        // 注意（既知の制約）: SetResult を try 内に置いているため、SetResult 自体が投げると
+        // catch が拾って SetException を試み二重完了例外になり得る（正常系では発生しない）。
         let builderAddr = fieldAddr builderFieldSid builderFieldType
-        let moveNextBodyRaw =
+
+        // 正常完了時の SetResult シーケンス。
+        let normalCompletion =
             match payloadOpt with
             | None ->
-                // Task: 本体を実行 → builder.SetResult()
                 let setResultCall =
                     ClosedHir.Expr.Call(Hir.Callable.NativeMethod builderSetResult, Some builderAddr, [], TypeId.Unit, span)
-                ClosedHir.Expr.Block(
-                    dispatchStmts @ linearizedStmts @ finalStmts @ [ ClosedHir.Stmt.ExprStmt(finalValue, span) ],
-                    setResultCall, TypeId.Unit, span)
+                [ ClosedHir.Stmt.ExprStmt(finalValue, span)
+                  storeState -2
+                  ClosedHir.Stmt.ExprStmt(setResultCall, span) ]
             | Some payloadSys ->
-                // Task<T>: builder.SetResult(<最終値>)
                 let setResultMi = builderGenericSetResultFor payloadSys
                 let setResultCall =
                     ClosedHir.Expr.Call(Hir.Callable.NativeMethod setResultMi, Some builderAddr, [ finalValue ], TypeId.Unit, span)
-                ClosedHir.Expr.Block(
-                    dispatchStmts @ linearizedStmts @ finalStmts,
-                    setResultCall, TypeId.Unit, span)
+                [ storeState -2
+                  ClosedHir.Stmt.ExprStmt(setResultCall, span) ]
+
+        let tryBody = dispatchStmts @ linearizedStmts @ finalStmts @ normalCompletion
+
+        // catch 節: state=-2 にして builder.SetException(ex)。
+        let setExceptionMi =
+            match payloadOpt with
+            | None -> builderSetException
+            | Some payloadSys -> builderGenericSetExceptionFor payloadSys
+        let catchBody =
+            [ storeState -2
+              ClosedHir.Stmt.ExprStmt(
+                  ClosedHir.Expr.Call(
+                      Hir.Callable.NativeMethod setExceptionMi, Some builderAddr,
+                      [ ClosedHir.Expr.Id(exceptionVarSid, TypeId.Native exceptionType, span) ], TypeId.Unit, span),
+                  span) ]
+
+        let moveNextBodyRaw =
+            ClosedHir.Expr.Block(
+                [ ClosedHir.Stmt.TryCatch(tryBody, exceptionType, exceptionVarSid, catchBody, span)
+                  ClosedHir.Stmt.Label(endLabelId, span) ],
+                ClosedHir.Expr.Unit span, TypeId.Unit, span)
 
         // 残存する（式内ネスト等の）await は同期フォールバックへ変換する。
         let moveNextBody =
