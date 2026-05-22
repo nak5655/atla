@@ -143,48 +143,33 @@ module internal Resolver =
                     Result.Error($"{source.PackageSource.Source}: {ex.Message}; {nextError}")
 
     (* NuGet.Client API を使い、指定 package/version を packagesRoot 配下へ展開する。 *)
-    /// 復元テンポラリ用の一意ディレクトリ名を生成する。
-    /// 同時実行プロセス間で衝突しないよう Guid を含める。
-    let private buildUniqueTempRootName (packageId: string) (version: string) : string =
-        let payload = $"{toNuGetPathSegment packageId}/{toNuGetPathSegment version}/{Guid.NewGuid():N}"
+    let private buildDeterministicTempRootName (packageId: string) (version: string) : string =
+        (* package/version をハッシュ化し、OS依存しない固定長のテンポラリ名へ正規化する。 *)
+        let payload = $"{toNuGetPathSegment packageId}/{toNuGetPathSegment version}"
         let bytes = Encoding.UTF8.GetBytes(payload)
         let hash = SHA256.HashData(bytes)
         let hex = Convert.ToHexString(hash).ToLowerInvariant()
         $"atla-build-nuget-download-{hex}"
 
-    /// NuGet パッケージを競合安全に復元する。
-    /// 既存 packagePath を削除せず、固有 staging へ展開してから初回作成時のみ移動する。
     let private tryRunRestore (packagesRoot: string) (packageId: string) (version: string) : Result<unit, string> =
         try
             let parsedVersion = NuGetVersion.Parse(version)
             let packagePath =
                 Path.Join(packagesRoot, toNuGetPathSegment packageId, toNuGetPathSegment version)
                 |> normalizePath
+            let tempRootName = buildDeterministicTempRootName packageId (parsedVersion.ToNormalizedString())
+            let tempRoot = Path.Join(Path.GetTempPath(), tempRootName)
+            resetDirectory tempRoot
+            let nupkgPath = Path.Join(tempRoot, $"{toNuGetPathSegment packageId}.{toNuGetPathSegment version}.nupkg")
+            let sources = getSourceRepositories ()
 
-            if Directory.Exists(packagePath) then
-                Ok ()
-            else
-                let tempRootName = buildUniqueTempRootName packageId (parsedVersion.ToNormalizedString())
-                let tempRoot = Path.Join(Path.GetTempPath(), tempRootName)
-                resetDirectory tempRoot
-                let nupkgPath = Path.Join(tempRoot, $"{toNuGetPathSegment packageId}.{toNuGetPathSegment version}.nupkg")
-                let stagingPath = Path.Join(tempRoot, "staging")
-                let sources = getSourceRepositories ()
-
-                match tryDownloadFromSources sources packageId parsedVersion nupkgPath with
-                | Result.Error message ->
-                    Result.Error message
-                | Ok () ->
-                    match extractNupkgToPackagePath nupkgPath stagingPath with
-                    | Result.Error message -> Result.Error message
-                    | Ok () ->
-                        try
-                            Directory.CreateDirectory(Path.GetDirectoryName(packagePath)) |> ignore
-                            Directory.Move(stagingPath, packagePath)
-                            Ok ()
-                        with
-                        | :? IOException when Directory.Exists(packagePath) -> Ok ()
-                        | ex -> Result.Error($"failed to finalize extracted package: {ex.Message}")
+            match tryDownloadFromSources sources packageId parsedVersion nupkgPath with
+            | Result.Error message ->
+                Result.Error message
+            | Ok () ->
+                match extractNupkgToPackagePath nupkgPath packagePath with
+                | Ok () -> Ok ()
+                | Result.Error message -> Result.Error message
         with ex ->
             Result.Error($"failed to run NuGet.Client restore: {ex.Message}")
 
