@@ -424,6 +424,21 @@ module Gen =
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        // ジェネリックメソッド定義を Gen で解決した型引数で閉じて呼ぶ。
+        // 引数（レシーバーのアドレス含む）は呼び出し側が構築済みのため、評価順に積むだけでよい。
+        // 型引数に生成型（TypeBuilder）が含まれると GetParameters() が例外を投げ得るため、
+        // 数値型強制は行わず（async builder の引数は全てマネージドポインタで強制不要）そのまま積む。
+        | Mir.Ins.CallGenericNative (methodDef, typeArgs, args) ->
+            let closed = methodDef.MakeGenericMethod(typeArgs |> List.map (resolveType env) |> List.toArray)
+            for arg in args do genValue env gen arg
+            emitMethodCall closed
+        | Mir.Ins.CallGenericNativeAssign (dst, methodDef, typeArgs, args) ->
+            let closed = methodDef.MakeGenericMethod(typeArgs |> List.map (resolveType env) |> List.toArray)
+            for arg in args do genValue env gen arg
+            emitMethodCall closed
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         // `base'X` 由来の非仮想呼び出し。virtual メソッドであっても `OpCodes.Call` で発行し、
         // 親クラス実装を直接呼ぶ（callvirt だとオーバーライド側に再ディスパッチし無限再帰になる）。
         | Mir.Ins.CallBase (method, args) ->

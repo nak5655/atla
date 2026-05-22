@@ -137,6 +137,11 @@ module Mir =
         | Call of method: Choice<MethodInfo, ConstructorInfo> * args: Value list
         | CallSym of sid: SymbolId * args: Value list
         | CallAssign of dst: Reg * method: MethodInfo * args: Value list
+        /// ジェネリックメソッド定義を `typeArgs`（Gen で解決）で `MakeGenericMethod` して呼ぶ（戻り値なし）。
+        /// 引数はすべて評価順に積む（レシーバーのアドレス含め呼び出し側が構築済みの前提）。
+        | CallGenericNative of methodDef: MethodInfo * typeArgs: TypeId list * args: Value list
+        /// `CallGenericNative` の戻り値を `dst` へ格納する版。
+        | CallGenericNativeAssign of dst: Reg * methodDef: MethodInfo * typeArgs: TypeId list * args: Value list
         | CallAssignSym of dst: Reg * sid: SymbolId * args: Value list
         /// `base'X` 由来の非仮想呼び出し（戻り値なし）。Gen で `OpCodes.Call` として発行する。
         | CallBase of method: MethodInfo * args: Value list
@@ -169,6 +174,8 @@ module Mir =
             | Call(method, args) -> sprintf "%A(%s)" method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallSym(sid, args) -> sprintf "call sid=%d (%s)" sid.id (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssign(dst, method, args) -> sprintf "%A = %A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | CallGenericNative(method, typeArgs, args) -> sprintf "%s<%d>(%s)" method.Name typeArgs.Length (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | CallGenericNativeAssign(dst, method, typeArgs, args) -> sprintf "%A = %s<%d>(%s)" dst method.Name typeArgs.Length (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssignSym(dst, sid, args) -> sprintf "%A = sid:%d(%s)" dst sid.id (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallBase(method, args) -> sprintf "call_base %A(%s)" method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssignBase(dst, method, args) -> sprintf "%A = base.%A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))

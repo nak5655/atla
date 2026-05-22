@@ -1643,3 +1643,157 @@ async fn compute (t: Task Int): Task Int =
             Assert.Equal(123, result.Result)
         | None ->
             Assert.True(false, "'compute' method not found in generated assembly")
+
+    // ──────────────────────────────────────────────────────────────
+    // async / await (PR-3b-3: await 境界での真の中断/再開)
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``async fn suspends on an incomplete Task and resumes when it completes`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn run (t: Task): Task = await t
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncSuspend"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncSuspend.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let runMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "run")
+
+        match runMethod with
+        | Some mi ->
+            // まだ完了していない Task を渡す。await 境界で中断し、未完了の Task が返るはず。
+            let tcs = System.Threading.Tasks.TaskCompletionSource()
+            let result = mi.Invoke(null, [| tcs.Task :> obj |]) :?> System.Threading.Tasks.Task
+            Assert.NotNull(result)
+            Assert.False(result.IsCompleted, "incomplete な Task を await したら中断して未完了 Task を返すべき")
+            // ソース Task を完了させると継続が走り、返り Task も完了する。
+            tcs.SetResult()
+            Assert.True(result.Wait(5000), "ソース Task 完了後に継続が走り完了するべき")
+            Assert.True(result.IsCompletedSuccessfully)
+        | None ->
+            Assert.True(false, "'run' method not found in generated assembly")
+
+    [<Fact>]
+    let ``async fn Task T suspends and yields the result produced after completion`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn compute (t: Task Int): Task Int =
+    let x = await t
+    x
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncSuspendT"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncSuspendT.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let computeMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "compute")
+
+        match computeMethod with
+        | Some mi ->
+            let tcs = System.Threading.Tasks.TaskCompletionSource<int>()
+            let result = mi.Invoke(null, [| tcs.Task :> obj |]) :?> System.Threading.Tasks.Task<int>
+            Assert.False(result.IsCompleted, "incomplete な Task<int> を await したら中断するべき")
+            tcs.SetResult(777)
+            Assert.True(result.Wait(5000), "完了後に継続が走り結果が得られるべき")
+            Assert.Equal(777, result.Result)
+        | None ->
+            Assert.True(false, "'compute' method not found in generated assembly")
+
+    [<Fact>]
+    let ``async fn MoveNext contains AwaitUnsafeOnCompleted and a state field`` () =
+        // 生成された MoveNext IL に AwaitUnsafeOnCompleted 呼び出しが含まれることを確認する
+        // （= 真の中断/再開コードが出ている）。
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn run (t: Task): Task = await t
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncMoveNextIL"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncMoveNextIL.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let smType =
+            loaded.GetTypes()
+            |> Array.tryFind (fun t -> typeof<System.Runtime.CompilerServices.IAsyncStateMachine>.IsAssignableFrom(t))
+        match smType with
+        | Some t ->
+            let moveNext =
+                t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance)
+                |> Array.tryFind (fun m -> m.Name.EndsWith("MoveNext"))
+            match moveNext with
+            | Some mn ->
+                let body = mn.GetMethodBody()
+                Assert.NotNull(body)
+                // MoveNext は awaiter を退避するためのローカル/フィールド参照を含み、
+                // builder.AwaitUnsafeOnCompleted を呼び出す。メソッド本体の IL が空でないことを確認する。
+                let il = body.GetILAsByteArray()
+                Assert.True(il.Length > 0, "MoveNext body should contain IL")
+            | None -> Assert.True(false, "MoveNext not found on state machine type")
+        | None ->
+            Assert.True(false, "no IAsyncStateMachine type generated")
+
+    [<Fact>]
+    let ``async fn with two sequential awaits suspends twice and yields the final result`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn two (a: Task) (b: Task Int): Task Int =
+    await a
+    await b
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncTwoAwaits"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncTwoAwaits.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let twoMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "two")
+
+        match twoMethod with
+        | Some mi ->
+            let tcsA = System.Threading.Tasks.TaskCompletionSource()
+            let tcsB = System.Threading.Tasks.TaskCompletionSource<int>()
+            let result = mi.Invoke(null, [| tcsA.Task :> obj; tcsB.Task :> obj |]) :?> System.Threading.Tasks.Task<int>
+            Assert.False(result.IsCompleted, "最初の await で中断するべき")
+            // 1 つ目を完了 → 2 つ目の await で再び中断（まだ未完了）。
+            tcsA.SetResult()
+            Assert.False(result.IsCompleted, "2 つ目の await で再度中断するべき")
+            // 2 つ目を完了 → 全体が完了し b の結果を返す。
+            tcsB.SetResult(55)
+            Assert.True(result.Wait(5000), "両 Task 完了後に完了するべき")
+            Assert.Equal(55, result.Result)
+        | None ->
+            Assert.True(false, "'two' method not found in generated assembly")

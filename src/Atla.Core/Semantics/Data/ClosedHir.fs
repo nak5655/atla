@@ -97,6 +97,14 @@ module ClosedHir =
         | ExprStmt of expr: Expr * span: Span
         | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
         | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
+        /// 非構造化制御フロー用のラベル定義（Layout で `Mir.Ins.MarkLabel` へ下す）。
+        /// AsyncRewrite の状態機械生成（resume ポイント等）が導入する。labelId はメソッド内で一意。
+        | Label of labelId: int * span: Span
+        /// 無条件ジャンプ（Layout で `Mir.Ins.Jump` へ下す）。
+        | Goto of labelId: int * span: Span
+        /// メソッドからの即時 return（戻り値なし。Layout で `Mir.Ins.Ret` へ下す）。
+        /// 状態機械 MoveNext の await 中断点で使用する。
+        | Return of span: Span
         | ErrorStmt of message: string * span: Span
 
     /// クロージャー変換後のフィールド定義。
@@ -194,6 +202,7 @@ module ClosedHir =
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
         | Stmt.If (cond, thenBody, elseBody, span) ->
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
+        | Label _ | Goto _ | Return _ -> stmt
         | ErrorStmt _ -> stmt
 
     /// `Expr` ツリー全体を pre-order（トップダウン）で畳み込む。
@@ -242,6 +251,7 @@ module ClosedHir =
             let acc' = foldExpr f acc cond
             let acc'' = thenBody |> List.fold (foldStmt f) acc'
             elseBody |> List.fold (foldStmt f) acc''
+        | Label _ | Goto _ | Return _ -> acc
         | ErrorStmt _ -> acc
 
     // ─────────────────────────────────────────────
@@ -354,4 +364,5 @@ module ClosedHir =
                     (zero, ctx)
                 |> fst
             merge condAcc (merge thenAcc elseAcc)
+        | Label _ | Goto _ | Return _ -> zero
         | ErrorStmt _ -> zero

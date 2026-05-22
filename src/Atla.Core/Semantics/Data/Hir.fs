@@ -17,6 +17,10 @@ module Hir =
         | BuiltinArray
         | NativeMethod of MethodInfo
         | NativeMethodGroup of MethodInfo list
+        /// ジェネリックメソッド定義を、解決時（Gen フェーズ）に `typeArgs` で `MakeGenericMethod` して
+        /// 呼び出す。型引数に「Gen でしか TypeBuilder が確定しない生成型（state machine 等）」を含められる。
+        /// AsyncRewrite が `AwaitUnsafeOnCompleted` / `Start` の呼び出しに使用する。
+        | NativeGenericMethod of methodDef: MethodInfo * typeArgs: TypeId list
         /// `base'X` 由来のメソッド呼び出し。Gen で `OpCodes.Call`（非仮想）として発行する。
         | NativeBaseMethod of MethodInfo
         | NativeBaseMethodGroup of MethodInfo list

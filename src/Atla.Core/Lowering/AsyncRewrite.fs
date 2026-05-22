@@ -7,15 +7,19 @@ open Atla.Core.Semantics.Data
 
 /// `async fn` のための ClosedHir レベル書き換え。
 ///
-/// PR-3b-2: 状態機械（state machine）型を生成する。各 async メソッドに対して
-/// `IAsyncStateMachine` を実装するクラスを新規生成し、引数・ローカルをそのフィールドへ
-/// ホイストする。元メソッドは「SM を生成・初期化し MoveNext を起動して builder.Task を
-/// return する」kickoff シムへ置き換える。
+/// 各 async メソッドに対して `IAsyncStateMachine` を実装するクラス（state machine）を
+/// 新規生成し、引数・ローカルをそのフィールドへホイストする。元メソッドは
+/// 「SM を生成・初期化し `builder.Start(ref sm)` で起動して `builder.Task` を return する」
+/// kickoff シムへ置き換える。
 ///
-/// 現段階（3b-2）の MoveNext は **同期実行**: `await expr` は
-/// `expr.GetAwaiter().GetResult()` へ展開し、ブロッキングで完了を待つ。本体末尾で
-/// `builder.SetResult(...)` を呼ぶ。await 境界での真の yield（state switch +
-/// AwaitUnsafeOnCompleted による中断/再開）は PR-3b-3 で追加する。
+/// PR-3b-3: await 境界で真に yield する。MoveNext 冒頭に `<>1__state` による
+/// ディスパッチ（resume ジャンプ）を置き、各 await を
+/// `awaiter = task.GetAwaiter(); if(!awaiter.IsCompleted){ state=N; builder.AwaitUnsafeOnCompleted(ref awaiter, ref this); return } resume_N: ... awaiter.GetResult()`
+/// へ展開する。トップレベル文 / 最終式の await を対象とし、それ以外の位置（式中ネスト等）の
+/// await は同期 `GetResult()` へフォールバックする。
+///
+/// 既知の制約: try/catch + `SetException` は未対応（MIR の例外ブロック対応が必要）。
+/// 未捕捉例外は MoveNext から伝播する。
 module AsyncRewrite =
     // ─────────────────────────────────────────────
     // .NET 反射のキャッシュ
@@ -82,6 +86,23 @@ module AsyncRewrite =
     let private taskAwaiterGenericGetResultFor (t: System.Type) : MethodInfo =
         let closedAwaiter = taskAwaiterGenericType.MakeGenericType([| t |])
         closedAwaiter.GetMethod("GetResult", System.Type.EmptyTypes)
+
+    /// awaiter 型（`TaskAwaiter` / `TaskAwaiter<T>`）の `IsCompleted` getter。
+    let private awaiterIsCompletedGetter (awaiterType: System.Type) : MethodInfo =
+        awaiterType.GetProperty("IsCompleted", BindingFlags.Public ||| BindingFlags.Instance).GetGetMethod()
+
+    /// builder 実体型（`AsyncTaskMethodBuilder` / `AsyncTaskMethodBuilder<T>`）から
+    /// `AwaitUnsafeOnCompleted<TAwaiter, TStateMachine>` のジェネリックメソッド定義を得る。
+    let private awaitUnsafeOnCompletedDef (builderRuntimeType: System.Type) : MethodInfo =
+        builderRuntimeType.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+        |> Array.find (fun m ->
+            m.Name = "AwaitUnsafeOnCompleted" && m.IsGenericMethodDefinition && m.GetParameters().Length = 2)
+
+    /// builder 実体型から `Start<TStateMachine>(ref TStateMachine)` のジェネリックメソッド定義を得る。
+    let private startDef (builderRuntimeType: System.Type) : MethodInfo =
+        builderRuntimeType.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+        |> Array.find (fun m ->
+            m.Name = "Start" && m.IsGenericMethodDefinition && m.GetParameters().Length = 1)
 
     // ─────────────────────────────────────────────
     // シンボル採番
@@ -165,8 +186,22 @@ module AsyncRewrite =
             | _ -> None
         | _ -> None
 
+    /// await operand 型から awaiter 関連の MethodInfo 群を解決する。
+    /// `(awaiterSysType, GetAwaiter, IsCompleted getter, GetResult)` を返す。
+    /// operand が `Task` / `Task<T>` でない場合は `None`。
+    let private classifyAwaitOperand
+        (symbolTable: SymbolTable)
+        (operandType: TypeId) : (System.Type * MethodInfo * MethodInfo * MethodInfo) option =
+        match tryClassifyTaskType symbolTable operandType with
+        | Some None ->
+            Some (taskAwaiterType, taskGetAwaiter, awaiterIsCompletedGetter taskAwaiterType, taskAwaiterGetResult)
+        | Some (Some payloadSys) ->
+            let awaiterSys = taskAwaiterGenericType.MakeGenericType([| payloadSys |])
+            Some (awaiterSys, taskGenericGetAwaiterFor payloadSys, awaiterIsCompletedGetter awaiterSys, taskAwaiterGenericGetResultFor payloadSys)
+        | None -> None
+
     // ─────────────────────────────────────────────
-    // await の同期化（3b-2 暫定）
+    // await の同期化（残存 await のフォールバック）
     // ─────────────────────────────────────────────
 
     /// `await operand` を `operand.GetAwaiter().GetResult()` の Call 連鎖に変換する。
@@ -231,6 +266,7 @@ module AsyncRewrite =
             collectLetSids cond
             @ (thenBody |> List.collect collectLetSidsStmt)
             @ (elseBody |> List.collect collectLetSidsStmt)
+        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ -> []
         | ClosedHir.Stmt.ErrorStmt _ -> []
 
     // ─────────────────────────────────────────────
@@ -292,6 +328,7 @@ module AsyncRewrite =
             ClosedHir.Stmt.For(sid, tid, hoistExpr ctx iterable, body |> List.map (hoistStmt ctx), span)
         | ClosedHir.Stmt.If (cond, thenBody, elseBody, span) ->
             ClosedHir.Stmt.If(hoistExpr ctx cond, thenBody |> List.map (hoistStmt ctx), elseBody |> List.map (hoistStmt ctx), span)
+        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ -> stmt
         | ClosedHir.Stmt.ErrorStmt _ -> stmt
 
     // ─────────────────────────────────────────────
@@ -353,50 +390,151 @@ module AsyncRewrite =
             @ (localFields |> List.map (fun (sid, _) -> sid.id))
             |> Set.ofList
 
-        // 4. SM 型のフィールド群を構築する（state, builder, ホイスト引数/ローカル）。
+        // builder 実体型（await/start のジェネリックメソッド定義取得用）。
+        let builderRuntimeType =
+            match payloadOpt with
+            | None -> builderType
+            | Some payloadSys -> builderGenericType.MakeGenericType([| payloadSys |])
+        let awaitUnsafeDef = awaitUnsafeOnCompletedDef builderRuntimeType
+        let startMethodDef = startDef builderRuntimeType
+
+        // 4. ホイスト用 this 式とコンテキスト、フィールドアクセス補助。
+        let moveNextThisExpr = ClosedHir.Expr.Id(moveNextThisSid, TypeId.Name smTypeSid, span)
+        let hoistCtx = { thisExpr = moveNextThisExpr; smTypeSid = smTypeSid; hoisted = hoistedSet }
+        let fieldLoad (fieldSid: SymbolId) (fieldTyp: TypeId) =
+            ClosedHir.Expr.MemberAccess(Hir.Member.DataField(smTypeSid, fieldSid), Some moveNextThisExpr, fieldTyp, span)
+        let fieldAddr (fieldSid: SymbolId) (fieldTyp: TypeId) =
+            ClosedHir.Expr.AddrOf(fieldLoad fieldSid fieldTyp, TypeId.ByRef fieldTyp, span)
+        let storeState (n: int) =
+            ClosedHir.Stmt.StoreField(moveNextThisExpr, smTypeSid, stateFieldSid, ClosedHir.Expr.Int(n, span), span)
+
+        // 5. 本体をホイストする（await ノードは保持し、operand の Id のみホイストされる）。
+        let hoistedBody = hoistExpr hoistCtx method.body
+
+        // 6. await の中断/再開シーケンスを生成しながら本体を線形化する。
+        let awaiterFields = System.Collections.Generic.List<ClosedHir.Field>()
+        let dispatchEntries = System.Collections.Generic.List<int * int>()  // (stateNum, resumeLabelId)
+        let mutable nextState = 0
+        let mutable nextLabel = 0
+
+        // 1 つの await を「GetAwaiter→IsCompleted 判定→state設定→AwaitUnsafeOnCompleted→Return→
+        // resume ラベル→GetResult」へ展開し、(設定文リスト, 結果式) を返す。
+        let emitAwaitSeq (op: ClosedHir.Expr) (resultTid: TypeId) (awaitSpan: Span) : ClosedHir.Stmt list * ClosedHir.Expr =
+            match classifyAwaitOperand symbolTable op.typ with
+            | None ->
+                // Task/Task<T> と判定できない operand は同期フォールバック。
+                [], buildSyncAwait symbolTable op resultTid awaitSpan
+            | Some (awaiterSys, getAwaiterMi, isCompletedMi, getResultMi) ->
+                let stateNum = nextState
+                nextState <- nextState + 1
+                let resumeLbl = nextLabel
+                nextLabel <- nextLabel + 1
+                let uSid = allocateNamedSymbol symbolTable (sprintf "<>u__%d" stateNum) (TypeId.Native awaiterSys)
+                awaiterFields.Add(ClosedHir.Field(uSid, TypeId.Native awaiterSys, ClosedHir.Expr.Unit span, span))
+                dispatchEntries.Add((stateNum, resumeLbl))
+                let awaiterTyp = TypeId.Native awaiterSys
+                // this.<>u__N = op.GetAwaiter()
+                let storeAwaiter =
+                    ClosedHir.Stmt.StoreField(
+                        moveNextThisExpr, smTypeSid, uSid,
+                        ClosedHir.Expr.Call(Hir.Callable.NativeMethod getAwaiterMi, Some op, [], awaiterTyp, awaitSpan),
+                        awaitSpan)
+                // if (this.<>u__N.IsCompleted) goto resume
+                let isCompletedCall =
+                    ClosedHir.Expr.Call(Hir.Callable.NativeMethod isCompletedMi, Some (fieldAddr uSid awaiterTyp), [], TypeId.Bool, awaitSpan)
+                let skipIf = ClosedHir.Stmt.If(isCompletedCall, [ ClosedHir.Stmt.Goto(resumeLbl, awaitSpan) ], [], awaitSpan)
+                // builder.AwaitUnsafeOnCompleted<TAwaiter, TStateMachine>(ref this.builder, ref this.<>u__N, ref this)
+                let awaitCall =
+                    ClosedHir.Expr.Call(
+                        Hir.Callable.NativeGenericMethod(awaitUnsafeDef, [ TypeId.Native awaiterSys; TypeId.Name smTypeSid ]),
+                        None,
+                        [ fieldAddr builderFieldSid builderFieldType
+                          fieldAddr uSid awaiterTyp
+                          ClosedHir.Expr.AddrOf(moveNextThisExpr, TypeId.ByRef (TypeId.Name smTypeSid), awaitSpan) ],
+                        TypeId.Unit, awaitSpan)
+                let setup =
+                    [ storeAwaiter
+                      skipIf
+                      storeState stateNum
+                      ClosedHir.Stmt.ExprStmt(awaitCall, awaitSpan)
+                      ClosedHir.Stmt.Return awaitSpan
+                      ClosedHir.Stmt.Label(resumeLbl, awaitSpan)
+                      storeState -1 ]
+                let resultExpr =
+                    ClosedHir.Expr.Call(Hir.Callable.NativeMethod getResultMi, Some (fieldAddr uSid awaiterTyp), [], resultTid, awaitSpan)
+                setup, resultExpr
+
+        // トップレベルの await（standalone / let 束縛由来の StoreField）を中断/再開へ展開する。
+        let linearizeStmt (stmt: ClosedHir.Stmt) : ClosedHir.Stmt list =
+            match stmt with
+            | ClosedHir.Stmt.ExprStmt (ClosedHir.Expr.Await (op, resTid, awaitSpan), _) ->
+                let setup, resultExpr = emitAwaitSeq op resTid awaitSpan
+                setup @ [ ClosedHir.Stmt.ExprStmt(resultExpr, awaitSpan) ]
+            | ClosedHir.Stmt.StoreField (inst, tSid, fSid, ClosedHir.Expr.Await (op, resTid, awaitSpan), sfSpan) ->
+                let setup, resultExpr = emitAwaitSeq op resTid awaitSpan
+                setup @ [ ClosedHir.Stmt.StoreField(inst, tSid, fSid, resultExpr, sfSpan) ]
+            | other -> [ other ]
+
+        // 本体を (先行文, 最終値式) に分解し、最終式が await ならそれも展開する。
+        let bodyStmts, bodyFinal =
+            match hoistedBody with
+            | ClosedHir.Expr.Block (stmts, final, _, _) -> stmts, final
+            | other -> [], other
+        let linearizedStmts = bodyStmts |> List.collect linearizeStmt
+        let finalStmts, finalValue =
+            match bodyFinal with
+            | ClosedHir.Expr.Await (op, resTid, awaitSpan) -> emitAwaitSeq op resTid awaitSpan
+            | other -> [], other
+
+        // 7. ディスパッチ（state スイッチ）: 各 await の resume ラベルへ分岐する。
+        let stateLoad = fieldLoad stateFieldSid TypeId.Int
+        let dispatchStmts =
+            dispatchEntries
+            |> Seq.map (fun (n, lbl) ->
+                let eqCall =
+                    ClosedHir.Expr.Call(
+                        Hir.Callable.BuiltinOperator Builtins.Operators.OpEq,
+                        None, [ stateLoad; ClosedHir.Expr.Int(n, span) ], TypeId.Bool, span)
+                ClosedHir.Stmt.If(eqCall, [ ClosedHir.Stmt.Goto(lbl, span) ], [], span))
+            |> List.ofSeq
+
+        // 8. MoveNext 本体を組み立てる（dispatch → 本体 → SetResult）。
+        let builderAddr = fieldAddr builderFieldSid builderFieldType
+        let moveNextBodyRaw =
+            match payloadOpt with
+            | None ->
+                // Task: 本体を実行 → builder.SetResult()
+                let setResultCall =
+                    ClosedHir.Expr.Call(Hir.Callable.NativeMethod builderSetResult, Some builderAddr, [], TypeId.Unit, span)
+                ClosedHir.Expr.Block(
+                    dispatchStmts @ linearizedStmts @ finalStmts @ [ ClosedHir.Stmt.ExprStmt(finalValue, span) ],
+                    setResultCall, TypeId.Unit, span)
+            | Some payloadSys ->
+                // Task<T>: builder.SetResult(<最終値>)
+                let setResultMi = builderGenericSetResultFor payloadSys
+                let setResultCall =
+                    ClosedHir.Expr.Call(Hir.Callable.NativeMethod setResultMi, Some builderAddr, [ finalValue ], TypeId.Unit, span)
+                ClosedHir.Expr.Block(
+                    dispatchStmts @ linearizedStmts @ finalStmts,
+                    setResultCall, TypeId.Unit, span)
+
+        // 残存する（式内ネスト等の）await は同期フォールバックへ変換する。
+        let moveNextBody =
+            ClosedHir.mapExpr
+                (fun e ->
+                    match e with
+                    | ClosedHir.Expr.Await (operand, resultTid, awaitSpan) -> buildSyncAwait symbolTable operand resultTid awaitSpan
+                    | _ -> e)
+                moveNextBodyRaw
+
+        // 9. SM 型のフィールド群（state, builder, ホイスト引数/ローカル, awaiter）。
         let unitExpr = ClosedHir.Expr.Unit span
         let smFields =
             [ ClosedHir.Field(stateFieldSid, TypeId.Int, unitExpr, span)
               ClosedHir.Field(builderFieldSid, builderFieldType, unitExpr, span) ]
             @ (argFields |> List.map (fun (sid, typ) -> ClosedHir.Field(sid, typ, unitExpr, span)))
             @ (localFields |> List.map (fun (sid, typ) -> ClosedHir.Field(sid, typ, unitExpr, span)))
-
-        // 5. MoveNext 本体を構築する。
-        let moveNextThisExpr = ClosedHir.Expr.Id(moveNextThisSid, TypeId.Name smTypeSid, span)
-        let hoistCtx = { thisExpr = moveNextThisExpr; smTypeSid = smTypeSid; hoisted = hoistedSet }
-
-        // 5a. await を同期化したのち、本体をホイストする。
-        let bodyAfterAwait =
-            ClosedHir.mapExpr
-                (fun e ->
-                    match e with
-                    | ClosedHir.Expr.Await (operand, resultTid, awaitSpan) ->
-                        buildSyncAwait symbolTable operand resultTid awaitSpan
-                    | _ -> e)
-                method.body
-        let hoistedBody = hoistExpr hoistCtx bodyAfterAwait
-
-        // 5b. `this.<>t__builder` のアドレスを取り出す式（struct メソッド呼び出し用）。
-        let builderAddr =
-            ClosedHir.Expr.AddrOf(
-                ClosedHir.Expr.MemberAccess(
-                    Hir.Member.DataField(smTypeSid, builderFieldSid), Some moveNextThisExpr, builderFieldType, span),
-                TypeId.ByRef builderFieldType, span)
-
-        let moveNextBody =
-            match payloadOpt with
-            | None ->
-                // Task: 本体を実行 → builder.SetResult()
-                let setResultCall =
-                    ClosedHir.Expr.Call(
-                        Hir.Callable.NativeMethod builderSetResult, Some builderAddr, [], TypeId.Unit, span)
-                ClosedHir.Expr.Block(
-                    [ ClosedHir.Stmt.ExprStmt(hoistedBody, span) ], setResultCall, TypeId.Unit, span)
-            | Some payloadSys ->
-                // Task<T>: builder.SetResult(<body value>)
-                let setResultMi = builderGenericSetResultFor payloadSys
-                ClosedHir.Expr.Call(
-                    Hir.Callable.NativeMethod setResultMi, Some builderAddr, [ hoistedBody ], TypeId.Unit, span)
+            @ (awaiterFields |> List.ofSeq)
 
         let moveNextMethod =
             ClosedHir.Method(
@@ -455,12 +593,20 @@ module AsyncRewrite =
                 ClosedHir.Stmt.StoreField(
                     smLocalExpr, smTypeSid, argSid,
                     ClosedHir.Expr.Id(argSid, argTyp, span), span))
-        // 8e. `<>sm.MoveNext()`
-        // impl インスタンスメソッド呼び出しの規約に合わせ、レシーバーを第一引数として注入し
-        // instance は None とする（Layout の Callable.Fn は instance を引数列へ含めないため）。
-        let moveNextCallStmt =
+        // 8e. `<>sm.<>t__builder.Start(ref <>sm)`
+        // Start<TStateMachine> が ExecutionContext を捕捉し、内部で sm.MoveNext() を起動する。
+        let startStmt =
             ClosedHir.Stmt.ExprStmt(
-                ClosedHir.Expr.Call(Hir.Callable.Fn moveNextSid, None, [ smLocalExpr ], TypeId.Unit, span), span)
+                ClosedHir.Expr.Call(
+                    Hir.Callable.NativeGenericMethod(startMethodDef, [ TypeId.Name smTypeSid ]),
+                    None,
+                    [ ClosedHir.Expr.AddrOf(
+                        ClosedHir.Expr.MemberAccess(
+                            Hir.Member.DataField(smTypeSid, builderFieldSid), Some smLocalExpr, builderFieldType, span),
+                        TypeId.ByRef builderFieldType, span)
+                      ClosedHir.Expr.AddrOf(smLocalExpr, TypeId.ByRef (TypeId.Name smTypeSid), span) ],
+                    TypeId.Unit, span),
+                span)
         // 8f. `return <>sm.<>t__builder.Task`
         let builderAddrForTask =
             ClosedHir.Expr.AddrOf(
@@ -473,7 +619,7 @@ module AsyncRewrite =
 
         let kickoffBody =
             ClosedHir.Expr.Block(
-                [ newSmStmt; initBuilderStmt; initStateStmt ] @ copyArgStmts @ [ moveNextCallStmt ],
+                [ newSmStmt; initBuilderStmt; initStateStmt ] @ copyArgStmts @ [ startStmt ],
                 returnTaskExpr,
                 resolvedRetType,
                 span)
