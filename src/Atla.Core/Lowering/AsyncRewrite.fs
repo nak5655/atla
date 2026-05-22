@@ -400,9 +400,99 @@ module AsyncRewrite =
         let setSmParamSid = allocateNamedSymbol symbolTable "stateMachine" (TypeId.Native asyncStateMachineInterface)
         let smLocalSid = allocateNamedSymbol symbolTable "<>sm" (TypeId.Name smTypeSid)
 
+        // ラベル払い出しカウンタ（For 展開・await の resume・try の END で共有する）。
+        let mutable nextLabel = 0
+        let freshLabelId () =
+            let l = nextLabel
+            nextLabel <- nextLabel + 1
+            l
+
+        // 2.5 For ループ展開: await を含む For を「明示イテレータ + Label/Goto」ループへ
+        // ClosedHir レベルで展開する。イテレータ・ループ変数を Let 束縛にすることで、後段の
+        // フィールドホイストで SM フィールド化され、await 中断を跨いで生存できるようになる。
+        // （await を含まない For は Layout の効率的な実装に委ねるため展開しない。）
+        let stmtHasAwait (s: ClosedHir.Stmt) : bool =
+            ClosedHir.foldStmt (fun acc e -> acc || (match e with ClosedHir.Expr.Await _ -> true | _ -> false)) false s
+
+        // iterable 型から列挙子の MoveNext() と Current getter を反射解決する（Layout と同じ手順）。
+        let resolveEnumerator (iterableTyp: TypeId) : (MethodInfo * MethodInfo) option =
+            match tryResolveTypeToSystem symbolTable iterableTyp with
+            | None -> None
+            | Some iterType ->
+                let candidates = iterType :: (iterType.GetInterfaces() |> Array.toList)
+                let moveNext =
+                    candidates
+                    |> List.tryPick (fun t ->
+                        t.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+                        |> Array.tryFind (fun m -> m.Name = "MoveNext" && m.GetParameters().Length = 0))
+                let currentProp =
+                    candidates
+                    |> List.collect (fun t ->
+                        t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+                        |> Array.filter (fun p -> p.Name = "Current")
+                        |> Array.toList)
+                    |> List.tryFind (fun p -> p.PropertyType <> typeof<obj>)
+                    |> Option.orElseWith (fun () ->
+                        candidates
+                        |> List.tryPick (fun t ->
+                            t.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+                            |> Array.tryFind (fun p -> p.Name = "Current")))
+                match moveNext, currentProp with
+                | Some mn, Some cp when not (obj.ReferenceEquals(cp.GetMethod, null)) -> Some (mn, cp.GetMethod)
+                | _ -> None
+
+        let rec expandForExpr (e: ClosedHir.Expr) : ClosedHir.Expr =
+            match e with
+            | ClosedHir.Expr.Block (stmts, final, tid, bSpan) ->
+                ClosedHir.Expr.Block(stmts |> List.collect expandForStmt, expandForExpr final, tid, bSpan)
+            | ClosedHir.Expr.Call (f, inst, args, tid, sp) ->
+                ClosedHir.Expr.Call(f, inst |> Option.map expandForExpr, args |> List.map expandForExpr, tid, sp)
+            | ClosedHir.Expr.MemberAccess (m, inst, tid, sp) ->
+                ClosedHir.Expr.MemberAccess(m, inst |> Option.map expandForExpr, tid, sp)
+            | ClosedHir.Expr.If (c, t, el, tid, sp) ->
+                ClosedHir.Expr.If(expandForExpr c, expandForExpr t, expandForExpr el, tid, sp)
+            | ClosedHir.Expr.Await (op, tid, sp) -> ClosedHir.Expr.Await(expandForExpr op, tid, sp)
+            | ClosedHir.Expr.AddrOf (t, tid, sp) -> ClosedHir.Expr.AddrOf(expandForExpr t, tid, sp)
+            | _ -> e
+        and expandForStmt (stmt: ClosedHir.Stmt) : ClosedHir.Stmt list =
+            match stmt with
+            | ClosedHir.Stmt.For (sid, tid, iterable, body, fSpan) when stmtHasAwait stmt ->
+                let iterable' = expandForExpr iterable
+                let body' = body |> List.collect expandForStmt
+                match resolveEnumerator iterable'.typ with
+                | Some (moveNextMi, currentGetterMi) ->
+                    let itSid = allocateNamedSymbol symbolTable "<>for_it" iterable'.typ
+                    let condSid = allocateNamedSymbol symbolTable "<>for_cond" TypeId.Bool
+                    let loopStart = freshLabelId ()
+                    let loopBody = freshLabelId ()
+                    let loopEnd = freshLabelId ()
+                    let itExpr = ClosedHir.Expr.Id(itSid, iterable'.typ, fSpan)
+                    [ ClosedHir.Stmt.Let(itSid, false, iterable', fSpan)
+                      ClosedHir.Stmt.Label(loopStart, fSpan)
+                      ClosedHir.Stmt.Let(condSid, false, ClosedHir.Expr.Call(Hir.Callable.NativeMethod moveNextMi, Some itExpr, [], TypeId.Bool, fSpan), fSpan)
+                      ClosedHir.Stmt.If(ClosedHir.Expr.Id(condSid, TypeId.Bool, fSpan), [ ClosedHir.Stmt.Goto(loopBody, fSpan) ], [ ClosedHir.Stmt.Goto(loopEnd, fSpan) ], fSpan)
+                      ClosedHir.Stmt.Label(loopBody, fSpan)
+                      ClosedHir.Stmt.Let(sid, false, ClosedHir.Expr.Call(Hir.Callable.NativeMethod currentGetterMi, Some itExpr, [], tid, fSpan), fSpan) ]
+                    @ body'
+                    @ [ ClosedHir.Stmt.Goto(loopStart, fSpan); ClosedHir.Stmt.Label(loopEnd, fSpan) ]
+                | None ->
+                    // 列挙子を解決できない場合は展開せず Layout に委ねる（await ループは未対応のまま）。
+                    [ ClosedHir.Stmt.For(sid, tid, iterable', body', fSpan) ]
+            | ClosedHir.Stmt.For (sid, tid, iterable, body, fSpan) ->
+                [ ClosedHir.Stmt.For(sid, tid, expandForExpr iterable, body |> List.collect expandForStmt, fSpan) ]
+            | ClosedHir.Stmt.If (cond, thenB, elseB, ifSpan) ->
+                [ ClosedHir.Stmt.If(expandForExpr cond, thenB |> List.collect expandForStmt, elseB |> List.collect expandForStmt, ifSpan) ]
+            | ClosedHir.Stmt.Let (sid, m, v, sp) -> [ ClosedHir.Stmt.Let(sid, m, expandForExpr v, sp) ]
+            | ClosedHir.Stmt.Assign (sid, v, sp) -> [ ClosedHir.Stmt.Assign(sid, expandForExpr v, sp) ]
+            | ClosedHir.Stmt.ExprStmt (v, sp) -> [ ClosedHir.Stmt.ExprStmt(expandForExpr v, sp) ]
+            | ClosedHir.Stmt.StoreField (i, tSid, fSid, v, sp) -> [ ClosedHir.Stmt.StoreField(expandForExpr i, tSid, fSid, expandForExpr v, sp) ]
+            | other -> [ other ]
+
+        let expandedBody = expandForExpr method.body
+
         // 3. ホイスト対象（引数 + Let ローカル）を算出する。元の sid をそのままフィールド sid に再利用する。
         let argFields = method.args  // (sid, typ) list
-        let localFields = collectLetSids method.body
+        let localFields = collectLetSids expandedBody
         let hoistedSet =
             (argFields |> List.map (fun (sid, _) -> sid.id))
             @ (localFields |> List.map (fun (sid, _) -> sid.id))
@@ -426,8 +516,8 @@ module AsyncRewrite =
         let storeState (n: int) =
             ClosedHir.Stmt.StoreField(moveNextThisExpr, smTypeSid, stateFieldSid, ClosedHir.Expr.Int(n, span), span)
 
-        // 5. 本体をホイストする（await ノードは保持し、operand の Id のみホイストされる）。
-        let hoistedBody = hoistExpr hoistCtx method.body
+        // 5. 本体（For 展開済み）をホイストする（await ノードは保持し、operand の Id のみホイストされる）。
+        let hoistedBody = hoistExpr hoistCtx expandedBody
 
         // 6. await の中断/再開シーケンスを生成しながら本体を線形化する。
         let awaiterFields = System.Collections.Generic.List<ClosedHir.Field>()
@@ -436,7 +526,6 @@ module AsyncRewrite =
         let spillFields = System.Collections.Generic.List<ClosedHir.Field>()
         let mutable nextSpill = 0
         let mutable nextState = 0
-        let mutable nextLabel = 0
 
         let freshSpillField (typ: TypeId) : SymbolId =
             let sid = allocateNamedSymbol symbolTable (sprintf "<>s__%d" nextSpill) typ
@@ -446,8 +535,7 @@ module AsyncRewrite =
 
         // try/catch 用: メソッド末尾の END ラベルと catch 変数（例外）を確保する。
         // await 中断は try 内から `Leave END` でメソッド末尾へ抜ける（SetResult を飛ばす）。
-        let endLabelId = nextLabel
-        nextLabel <- nextLabel + 1
+        let endLabelId = freshLabelId ()
         let exceptionVarSid = allocateNamedSymbol symbolTable "<>ex" (TypeId.Native exceptionType)
 
         // 1 つの await を「GetAwaiter→IsCompleted 判定→state設定→AwaitUnsafeOnCompleted→Return→

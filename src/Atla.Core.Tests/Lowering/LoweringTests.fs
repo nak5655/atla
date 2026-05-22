@@ -1984,6 +1984,53 @@ async fn run (t: Task): Task = await t
             Assert.True(false, "'run' method not found in generated assembly")
 
     // ──────────────────────────────────────────────────────────────
+    // async / await: for ループ内の await
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``async fn awaits inside a for loop and completes after suspension`` () =
+        // ループ本体で await し、未完了 Task で中断 → 完了で再開してループを継続・完了する。
+        // ループ変数・イテレータが SM フィールドへホイストされ中断を跨いで生存する必要がある。
+        let program = """
+import System'Threading'Tasks'Task
+import System'Linq'Enumerable
+
+async fn loopAwait (t: Task): Task =
+    for i in 1 3 Enumerable'Range.
+        await t
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncForLoop"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncForLoop.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let loopMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "loopAwait")
+
+        match loopMethod with
+        | Some mi ->
+            // 完了済み Task: 中断せずループ完走。
+            let r1 = mi.Invoke(null, [| System.Threading.Tasks.Task.CompletedTask :> obj |]) :?> System.Threading.Tasks.Task
+            Assert.True(r1.Wait(5000))
+            Assert.True(r1.IsCompletedSuccessfully)
+            // 未完了 Task: 1 回目の反復で中断 → 完了で再開しループ継続。
+            let tcs = System.Threading.Tasks.TaskCompletionSource()
+            let r2 = mi.Invoke(null, [| tcs.Task :> obj |]) :?> System.Threading.Tasks.Task
+            Assert.False(r2.IsCompleted, "ループ内 await が未完了なら中断するべき")
+            tcs.SetResult()
+            Assert.True(r2.Wait(5000), "完了後に再開してループを完走するべき")
+            Assert.True(r2.IsCompletedSuccessfully)
+        | None ->
+            Assert.True(false, "'loopAwait' method not found in generated assembly")
+
+    // ──────────────────────────────────────────────────────────────
     // async / await: async 関数同士の合成（ラウンドトリップ）
     // ──────────────────────────────────────────────────────────────
 
