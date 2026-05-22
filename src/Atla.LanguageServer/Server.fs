@@ -416,7 +416,7 @@ type Server
     let getAssemblyLocation =
         defaultArg assemblyLocationResolver (fun () -> Assembly.GetExecutingAssembly().Location)
     let buildProject = defaultArg buildProjectFn BuildSystem.buildProject
-    let compile = defaultArg compileFn Compiler.compileModules
+    let compile = defaultArg compileFn Compiler.compileModulesForLanguageServer
     let resolveImplicitStd = defaultArg resolveImplicitStdFn InstallSystem.tryResolveImplicitStdDependency
     let debounceMs = defaultArg debounceDelayMs 300
 

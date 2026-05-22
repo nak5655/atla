@@ -244,7 +244,10 @@ module Compiler =
         Hir.Module(entryModuleName, mergedTypes, mergedFields, mergedMethods, mergedScope)
 
     /// 依存解決・意味解析・lowering を含む実コンパイルを実行する（複数モジュール入力対応）。
-    let compileModules (request: CompileModulesRequest) : CompileResult =
+    let private compileModulesWithDependencyLoadPolicy
+        (dependencyLoadPolicy: DependencyLoader.DependencyLoadPolicy)
+        (request: CompileModulesRequest)
+        : CompileResult =
         if List.isEmpty request.modules then
             failed [ Diagnostic.Error("No source modules were provided", Span.Empty) ] None None None None
         else
@@ -276,7 +279,7 @@ module Compiler =
                             request.dependencies
                             |> List.map (fun dependency -> dependency.name, dependency.runtimeLoadPaths)
 
-                        match DependencyLoader.loadDependencies dependencyInputs with
+                        match DependencyLoader.loadDependenciesWithPolicy dependencyLoadPolicy dependencyInputs with
                         | { succeeded = false; diagnostics = dependencyDiagnostics } ->
                             failed dependencyDiagnostics None None None (Some moduleAsts)
                         | { loadContext = dependencyLoadContext } ->
@@ -440,3 +443,11 @@ module Compiler =
                                 DependencyLoader.unloadDependencies dependencyLoadContext
             with ex ->
                 failed [ Diagnostic.Error($"Compilation failed: [{ex.GetType().Name}] {ex.Message}\n{ex.StackTrace}", Span.Empty) ] None None None None
+
+    /// 通常ビルド向けコンパイル（依存DLLは元パスを直接ロード）。
+    let compileModules (request: CompileModulesRequest) : CompileResult =
+        compileModulesWithDependencyLoadPolicy DependencyLoader.DependencyLoadPolicy.Direct request
+
+    /// Language Server 向けコンパイル（依存DLLはローカルコピーを経由してロード）。
+    let compileModulesForLanguageServer (request: CompileModulesRequest) : CompileResult =
+        compileModulesWithDependencyLoadPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache request
