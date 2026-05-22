@@ -165,7 +165,12 @@ module Mir =
         | JumpTrue of value: Value * label: LabelId
         | JumpFalse of value: Value * label: LabelId
         | MarkLabel of label: LabelId
+        /// 保護領域外ラベルへの脱出（CIL `leave`）。try/catch の中から抜ける際に使用する。
+        | Leave of label: LabelId
         | Try of body: Ins list * finallyBody: Ins list
+        /// try/catch（catch は単一の例外型）。
+        /// Gen で BeginExceptionBlock→tryBody→BeginCatchBlock(catchType)→stloc catchVar→catchBody→EndExceptionBlock。
+        | TryCatch of tryBody: Ins list * catchType: System.Type * catchVar: Reg * catchBody: Ins list
         override this.ToString() =
             match this with
             | Assign(name, value) -> sprintf "%A = %s" name (value.ToString())
@@ -191,7 +196,10 @@ module Mir =
             | JumpTrue(v, label) -> sprintf "JumpTrue %s %s" (v.ToString()) (label.ToString())
             | JumpFalse(v, label) -> sprintf "JumpFalse %s %s" (v.ToString()) (label.ToString())
             | MarkLabel label -> sprintf "MarkLabel %s" (label.ToString())
+            | Leave label -> sprintf "Leave %s" (label.ToString())
             | Try(body, finallyBody) -> sprintf "Try(body=%d, finally=%d)" (List.length body) (List.length finallyBody)
+            | TryCatch(tryBody, catchType, catchVar, catchBody) ->
+                sprintf "TryCatch(try=%d, catch %s %A: %d)" (List.length tryBody) catchType.Name catchVar (List.length catchBody)
 
     // Convenience wrapper for fields in generated types
     type Field(sid: SymbolId, tid: TypeId) =

@@ -105,6 +105,13 @@ module ClosedHir =
         /// メソッドからの即時 return（戻り値なし。Layout で `Mir.Ins.Ret` へ下す）。
         /// 状態機械 MoveNext の await 中断点で使用する。
         | Return of span: Span
+        /// 保護領域（try）から領域外ラベルへ脱出する（Layout で `Mir.Ins.Leave` へ下す）。
+        /// CIL では try/catch の中から `ret`/`br` で抜けられないため、状態機械 MoveNext の
+        /// await 中断点（try 内）からメソッド末尾へ抜けるのに使用する。
+        | Leave of labelId: int * span: Span
+        /// try/catch（catch は単一の例外型）。Layout で `Mir.Ins.TryCatch` へ下す。
+        /// catchVarSid は catch 節で捕捉した例外を束縛する変数（型は catchType）。
+        | TryCatch of tryBody: Stmt list * catchType: System.Type * catchVarSid: SymbolId * catchBody: Stmt list * span: Span
         | ErrorStmt of message: string * span: Span
 
     /// クロージャー変換後のフィールド定義。
@@ -202,7 +209,9 @@ module ClosedHir =
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
         | Stmt.If (cond, thenBody, elseBody, span) ->
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
-        | Label _ | Goto _ | Return _ -> stmt
+        | TryCatch (tryBody, catchType, catchVarSid, catchBody, span) ->
+            TryCatch(tryBody |> List.map (mapStmt f), catchType, catchVarSid, catchBody |> List.map (mapStmt f), span)
+        | Label _ | Goto _ | Return _ | Leave _ -> stmt
         | ErrorStmt _ -> stmt
 
     /// `Expr` ツリー全体を pre-order（トップダウン）で畳み込む。
@@ -251,7 +260,10 @@ module ClosedHir =
             let acc' = foldExpr f acc cond
             let acc'' = thenBody |> List.fold (foldStmt f) acc'
             elseBody |> List.fold (foldStmt f) acc''
-        | Label _ | Goto _ | Return _ -> acc
+        | TryCatch (tryBody, _, _, catchBody, _) ->
+            let acc' = tryBody |> List.fold (foldStmt f) acc
+            catchBody |> List.fold (foldStmt f) acc'
+        | Label _ | Goto _ | Return _ | Leave _ -> acc
         | ErrorStmt _ -> acc
 
     // ─────────────────────────────────────────────
@@ -364,5 +376,15 @@ module ClosedHir =
                     (zero, ctx)
                 |> fst
             merge condAcc (merge thenAcc elseAcc)
-        | Label _ | Goto _ | Return _ -> zero
+        | TryCatch (tryBody, _, _, catchBody, _) ->
+            let tryAcc =
+                tryBody
+                |> List.fold (fun (acc, c) s -> merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s) (zero, ctx)
+                |> fst
+            let catchAcc =
+                catchBody
+                |> List.fold (fun (acc, c) s -> merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s) (zero, ctx)
+                |> fst
+            merge tryAcc catchAcc
+        | Label _ | Goto _ | Return _ | Leave _ -> zero
         | ErrorStmt _ -> zero

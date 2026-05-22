@@ -624,6 +624,24 @@ module Layout =
             Ok (state1, [ Mir.Ins.Jump lbl ])
         | ClosedHir.Stmt.Return _ ->
             Ok (state, [ Mir.Ins.Ret ])
+        | ClosedHir.Stmt.Leave (clId, _) ->
+            let lbl, state1 = gotoLabel state clId
+            Ok (state1, [ Mir.Ins.Leave lbl ])
+        | ClosedHir.Stmt.TryCatch (tryBody, catchType, catchVarSid, catchBody, _) ->
+            match mapFoldResult layoutStmt state tryBody with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, tryInsList) ->
+                // catch 変数（例外）を Loc として frame に登録してから catchBody を layout する。
+                let _, frame2 = Mir.Frame.addLoc catchVarSid (TypeId.Native catchType) state1.frame
+                let state2 = { state1 with frame = frame2 }
+                let catchVarReg =
+                    match Mir.Frame.get catchVarSid state2.frame with
+                    | Some reg -> reg
+                    | None -> failwith "TryCatch: catch variable register not found after registration"
+                match mapFoldResult layoutStmt state2 catchBody with
+                | Result.Error e -> Result.Error e
+                | Ok (state3, catchInsList) ->
+                    Ok (state3, [ Mir.Ins.TryCatch(List.concat tryInsList, catchType, catchVarReg, List.concat catchInsList) ])
         | ClosedHir.Stmt.ErrorStmt (message, span) ->
             Result.Error (Diagnostic.Error($"Cannot lower erroneous statement: {message}", span))
 
@@ -832,7 +850,9 @@ module Layout =
             hasLambdaExpr cond
             || (thenBody |> List.exists hasLambdaStmt)
             || (elseBody |> List.exists hasLambdaStmt)
-        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ -> false
+        | ClosedHir.Stmt.TryCatch (tryBody, _, _, catchBody, _) ->
+            (tryBody |> List.exists hasLambdaStmt) || (catchBody |> List.exists hasLambdaStmt)
+        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> false
         | ClosedHir.Stmt.ErrorStmt _ -> false
 
     /// クロージャー変換済み `ClosedHir.Assembly` を受け取り、MIR へ変換する。

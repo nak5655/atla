@@ -315,7 +315,8 @@ module Gen =
     // MIR命令をIL命令列へ変換する。
     // ilLabels/ilOffsets はメソッドごとに作成したラベル解決状態を受け取る。
     // frame はレジスタ型の解決および数値型強制変換に使用する。
-    let private genIns (env: Env) (frame: Mir.Frame) (gen: ILGenerator) (ilLabels: Dictionary<Mir.LabelId, Label>) (ilOffsets: Dictionary<Mir.LabelId, int>) (ins: Mir.Ins) =
+    // try/catch のネストした命令列を再帰処理するため rec。
+    let rec private genIns (env: Env) (frame: Mir.Frame) (gen: ILGenerator) (ilLabels: Dictionary<Mir.LabelId, Label>) (ilOffsets: Dictionary<Mir.LabelId, int>) (ins: Mir.Ins) =
         let emitMethodCall (methodInfo: MethodInfo) =
             if methodInfo.IsStatic then
                 gen.Emit(OpCodes.Call, methodInfo)
@@ -612,6 +613,29 @@ module Gen =
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        // 保護領域外ラベルへの脱出（CIL `leave`）。
+        | Mir.Ins.Leave labelId ->
+            let ilLabel =
+                match ilLabels.TryGetValue(labelId) with
+                | true, l -> l
+                | false, _ ->
+                    let l = gen.DefineLabel()
+                    ilLabels.[labelId] <- l
+                    l
+            gen.Emit(OpCodes.Leave, ilLabel)
+        // try/catch（単一 catch 型）。
+        | Mir.Ins.TryCatch (tryBody, catchType, catchVar, catchBody) ->
+            gen.BeginExceptionBlock() |> ignore
+            for tryIns in tryBody do
+                genIns env frame gen ilLabels ilOffsets tryIns
+            gen.BeginCatchBlock(catchType)
+            // catch 進入時、例外オブジェクトが評価スタックに積まれているので catchVar へ退避する。
+            match catchVar with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+            for catchIns in catchBody do
+                genIns env frame gen ilLabels ilOffsets catchIns
+            gen.EndExceptionBlock()
         | _ -> failwithf "Unsupported instruction: %A" ins
 
     // コンストラクタ本体を生成する
