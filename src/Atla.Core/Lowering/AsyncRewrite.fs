@@ -898,6 +898,118 @@ module AsyncRewrite =
         { kickoffBody = kickoffBody; smType = smType; resolvedRetType = resolvedRetType }
 
     // ─────────────────────────────────────────────
+    // 基底メソッド呼び出しの引き上げ（MethodAccessException 回避）
+    // ─────────────────────────────────────────────
+
+    /// async メソッド本体中の `Call(NativeBaseMethod(mi), ...)` を
+    /// 含んでいる型のヘルパーメソッド呼び出しに置き換える。
+    ///
+    /// 状態機械の MoveNext() は含んでいる型の派生クラスではないため、`OpCodes.Call` で
+    /// protected 基底メソッドを直接呼ぶと MethodAccessException が発生する。
+    /// Roslyn と同様に、含んでいる型に private helper を生成し（FlappyGame 側で
+    /// `call base.LoadContent()` を発行）、SM からはそのヘルパーを呼ぶようにする。
+    ///
+    /// 戻り値: (書き換え後の本体式, 含む型へ追加するヘルパーメソッドリスト)
+    let private liftBaseCallsToHelpers
+        (symbolTable: SymbolTable)
+        (containingTypeSid: SymbolId)
+        (body: ClosedHir.Expr)
+        (span: Span) : ClosedHir.Expr * ClosedHir.Method list =
+
+        // mi → helperSid のキャッシュ（同じ基底メソッドが複数回現れる場合に再利用）。
+        let helperCache = System.Collections.Generic.Dictionary<MethodInfo, SymbolId>()
+        let helperMethods = System.Collections.Generic.List<ClosedHir.Method>()
+
+        /// 基底 MethodInfo に対するヘルパーメソッドを生成または既存のものを返す。
+        let getOrCreateHelper (mi: MethodInfo) : SymbolId =
+            match helperCache.TryGetValue(mi) with
+            | true, sid -> sid
+            | false, _ ->
+                let retTid =
+                    if mi.ReturnType = typeof<System.Void> then TypeId.Unit
+                    else TypeId.Native mi.ReturnType
+                // ヘルパーの self 引数
+                let selfSid = allocateNamedSymbol symbolTable "this" (TypeId.Name containingTypeSid)
+                // ヘルパーの明示引数（基底メソッドのパラメーターと 1:1 対応）
+                let paramSids =
+                    mi.GetParameters()
+                    |> Array.mapi (fun i p ->
+                        let pTid = TypeId.Native p.ParameterType
+                        allocateNamedSymbol symbolTable (sprintf "p%d" i) pTid, pTid)
+                    |> Array.toList
+                let allArgs = (selfSid, TypeId.Name containingTypeSid) :: paramSids
+                // ヘルパー本体: `base.X(params...)` を直接呼ぶ
+                let helperBody =
+                    ClosedHir.Expr.Call(
+                        Hir.Callable.NativeBaseMethod mi,
+                        Some (ClosedHir.Expr.Id(selfSid, TypeId.Name containingTypeSid, span)),
+                        paramSids |> List.map (fun (pSid, pTid) -> ClosedHir.Expr.Id(pSid, pTid, span)),
+                        retTid,
+                        span)
+                let helperFnType = TypeId.Fn(allArgs |> List.map snd, retTid)
+                let helperSid = allocateNamedSymbol symbolTable "<>n__BaseBridge" helperFnType
+                let helperMethod = ClosedHir.Method(helperSid, allArgs, helperBody, helperFnType, None, false, span)
+                helperMethods.Add(helperMethod)
+                helperCache.[mi] <- helperSid
+                helperSid
+
+        let rec rewriteExpr (e: ClosedHir.Expr) : ClosedHir.Expr =
+            match e with
+            // `Call(NativeBaseMethod(mi), Some(inst), args, ...)` を
+            // `Call(Fn(helperSid), None, [inst, ...args], ...)` へ変換する。
+            // instance を args 先頭に移動することで CallSym のレシーバー受け渡しに合わせる。
+            | ClosedHir.Expr.Call (Hir.Callable.NativeBaseMethod mi, instanceOpt, args, tid, callSpan) ->
+                let helperSid = getOrCreateHelper mi
+                let newArgs =
+                    [ yield! instanceOpt |> Option.toList |> List.map rewriteExpr
+                      yield! args |> List.map rewriteExpr ]
+                ClosedHir.Expr.Call(Hir.Callable.Fn helperSid, None, newArgs, tid, callSpan)
+            | ClosedHir.Expr.Call (Hir.Callable.NativeBaseMethodGroup mis, instanceOpt, args, tid, callSpan) ->
+                // オーバーロード選択は引数数で行う（Layout と同じ）。
+                match mis |> List.tryFind (fun m -> m.GetParameters().Length = args.Length) with
+                | Some mi ->
+                    let helperSid = getOrCreateHelper mi
+                    let newArgs =
+                        [ yield! instanceOpt |> Option.toList |> List.map rewriteExpr
+                          yield! args |> List.map rewriteExpr ]
+                    ClosedHir.Expr.Call(Hir.Callable.Fn helperSid, None, newArgs, tid, callSpan)
+                | None ->
+                    // 解決できなければそのまま（後段でエラーになる）。
+                    e
+            // 再帰的に走査する。
+            | ClosedHir.Expr.Call (func, instOpt, args, tid, sp) ->
+                ClosedHir.Expr.Call(func, instOpt |> Option.map rewriteExpr, args |> List.map rewriteExpr, tid, sp)
+            | ClosedHir.Expr.Block (stmts, fin, tid, sp) ->
+                ClosedHir.Expr.Block(stmts |> List.map rewriteStmt, rewriteExpr fin, tid, sp)
+            | ClosedHir.Expr.If (cond, thenB, elseB, tid, sp) ->
+                ClosedHir.Expr.If(rewriteExpr cond, rewriteExpr thenB, rewriteExpr elseB, tid, sp)
+            | ClosedHir.Expr.Await (op, tid, sp) ->
+                ClosedHir.Expr.Await(rewriteExpr op, tid, sp)
+            | ClosedHir.Expr.MemberAccess (mem, instOpt, tid, sp) ->
+                ClosedHir.Expr.MemberAccess(mem, instOpt |> Option.map rewriteExpr, tid, sp)
+            | ClosedHir.Expr.AddrOf (t, tid, sp) ->
+                ClosedHir.Expr.AddrOf(rewriteExpr t, tid, sp)
+            | _ -> e
+
+        and rewriteStmt (s: ClosedHir.Stmt) : ClosedHir.Stmt =
+            match s with
+            | ClosedHir.Stmt.Let (sid, m, v, sp) -> ClosedHir.Stmt.Let(sid, m, rewriteExpr v, sp)
+            | ClosedHir.Stmt.Assign (sid, v, sp) -> ClosedHir.Stmt.Assign(sid, rewriteExpr v, sp)
+            | ClosedHir.Stmt.ExprStmt (v, sp) -> ClosedHir.Stmt.ExprStmt(rewriteExpr v, sp)
+            | ClosedHir.Stmt.StoreField (inst, tSid, fSid, v, sp) ->
+                ClosedHir.Stmt.StoreField(rewriteExpr inst, tSid, fSid, rewriteExpr v, sp)
+            | ClosedHir.Stmt.If (cond, thenB, elseB, sp) ->
+                ClosedHir.Stmt.If(rewriteExpr cond, thenB |> List.map rewriteStmt, elseB |> List.map rewriteStmt, sp)
+            | ClosedHir.Stmt.For (sid, tid, it, body, sp) ->
+                ClosedHir.Stmt.For(sid, tid, rewriteExpr it, body |> List.map rewriteStmt, sp)
+            | ClosedHir.Stmt.TryCatch (tryB, ct, cv, catchB, sp) ->
+                ClosedHir.Stmt.TryCatch(tryB |> List.map rewriteStmt, ct, cv, catchB |> List.map rewriteStmt, sp)
+            | other -> other
+
+        let rewrittenBody = rewriteExpr body
+        rewrittenBody, List.ofSeq helperMethods
+
+    // ─────────────────────────────────────────────
     // ClosedHir.Method の書き換え
     // ─────────────────────────────────────────────
 
@@ -950,14 +1062,23 @@ module AsyncRewrite =
             let rewrittenTypes, typeGenTypes =
                 modul.types
                 |> List.fold (fun (accTypes, accGen) t ->
-                    let rewrittenTypeMethods, genFromType =
+                    let rewrittenTypeMethods, genFromType, helperMethods =
                         t.methods
-                        |> List.fold (fun (accM, accG) m ->
-                            let rewritten, smOpt = rewriteMethod symbolTable m
-                            accM @ [ rewritten ], accG @ (Option.toList smOpt)) ([], [])
+                        |> List.fold (fun (accM, accG, accH) m ->
+                            // async メソッドに含まれる基底呼び出しを事前にヘルパーへ引き上げる。
+                            // 状態機械の MoveNext() から protected 基底メソッドを直接呼ぶと
+                            // MethodAccessException になるため、含む型にヘルパーを生成して回避する。
+                            let m', newHelpers =
+                                if m.isAsync then
+                                    let rewrittenBody, helpers = liftBaseCallsToHelpers symbolTable t.sym m.body m.span
+                                    ClosedHir.Method(m.sym, m.args, rewrittenBody, m.typ, m.overrideTarget, m.isAsync, m.span), helpers
+                                else
+                                    m, []
+                            let rewritten, smOpt = rewriteMethod symbolTable m'
+                            accM @ [ rewritten ], accG @ (Option.toList smOpt), accH @ newHelpers) ([], [], [])
                     let rewrittenType =
                         ClosedHir.Type(
-                            t.sym, t.isInterface, t.baseType, t.typeParams, t.fields, rewrittenTypeMethods)
+                            t.sym, t.isInterface, t.baseType, t.typeParams, t.fields, rewrittenTypeMethods @ helperMethods)
                     accTypes @ [ rewrittenType ], accGen @ genFromType) ([], [])
 
             ClosedHir.Module(
