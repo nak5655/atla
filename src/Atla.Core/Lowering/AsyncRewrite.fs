@@ -12,14 +12,17 @@ open Atla.Core.Semantics.Data
 /// 「SM を生成・初期化し `builder.Start(ref sm)` で起動して `builder.Task` を return する」
 /// kickoff シムへ置き換える。
 ///
-/// PR-3b-3: await 境界で真に yield する。MoveNext 冒頭に `<>1__state` による
+/// await 境界で真に yield する。MoveNext 冒頭に `<>1__state` による
 /// ディスパッチ（resume ジャンプ）を置き、各 await を
-/// `awaiter = task.GetAwaiter(); if(!awaiter.IsCompleted){ state=N; builder.AwaitUnsafeOnCompleted(ref awaiter, ref this); return } resume_N: ... awaiter.GetResult()`
-/// へ展開する。トップレベル文 / 最終式の await を対象とし、それ以外の位置（式中ネスト等）の
-/// await は同期 `GetResult()` へフォールバックする。
+/// `awaiter = task.GetAwaiter(); if(!awaiter.IsCompleted){ state=N; builder.AwaitUnsafeOnCompleted(ref awaiter, ref this); leave END } resume_N: ... awaiter.GetResult()`
+/// へ展開する。式中ネストの await は spilling により文レベルへ持ち上げ、await を跨いで生存する
+/// 中間値は SM の spill フィールド（`<>s__N`）へ退避する（左→右の評価順を保つ）。
 ///
-/// 既知の制約: try/catch + `SetException` は未対応（MIR の例外ブロック対応が必要）。
-/// 未捕捉例外は MoveNext から伝播する。
+/// MoveNext 全体は try/catch で囲い、本体で発生した例外は `builder.SetException(ex)` で捕捉して
+/// 返り Task を faulted にする（await 中断は try 内から `leave END` で SetResult を飛ばして抜ける）。
+///
+/// 既知の制約: SetResult は try 内の正常完了位置に置いているため、SetResult 自体が投げると
+/// 二重完了例外になり得る（正常系では発生しない）。
 module AsyncRewrite =
     // ─────────────────────────────────────────────
     // .NET 反射のキャッシュ
@@ -519,7 +522,16 @@ module AsyncRewrite =
         // 6. await の中断/再開シーケンスを生成しながら本体を線形化する。
         let awaiterFields = System.Collections.Generic.List<ClosedHir.Field>()
         let dispatchEntries = System.Collections.Generic.List<int * int>()  // (stateNum, resumeLabelId)
+        // spill 用フィールド（await を跨いで生存する中間値）。式中ネストの await を文レベルへ展開する際に使う。
+        let spillFields = System.Collections.Generic.List<ClosedHir.Field>()
+        let mutable nextSpill = 0
         let mutable nextState = 0
+
+        let freshSpillField (typ: TypeId) : SymbolId =
+            let sid = allocateNamedSymbol symbolTable (sprintf "<>s__%d" nextSpill) typ
+            nextSpill <- nextSpill + 1
+            spillFields.Add(ClosedHir.Field(sid, typ, ClosedHir.Expr.Unit span, span))
+            sid
 
         // try/catch 用: メソッド末尾の END ラベルと catch 変数（例外）を確保する。
         // await 中断は try 内から `Leave END` でメソッド末尾へ抜ける（SetResult を飛ばす）。
@@ -574,27 +586,137 @@ module AsyncRewrite =
                     ClosedHir.Expr.Call(Hir.Callable.NativeMethod getResultMi, Some (fieldAddr uSid awaiterTyp), [], resultTid, awaitSpan)
                 setup, resultExpr
 
-        // トップレベルの await（standalone / let 束縛由来の StoreField）を中断/再開へ展開する。
-        let linearizeStmt (stmt: ClosedHir.Stmt) : ClosedHir.Stmt list =
+        // 式が（深さ問わず）await を含むか判定する。
+        let rec containsAwait (e: ClosedHir.Expr) : bool =
+            match e with
+            | ClosedHir.Expr.Await _ -> true
+            | ClosedHir.Expr.Call (_, inst, args, _, _) ->
+                (inst |> Option.map containsAwait |> Option.defaultValue false) || (args |> List.exists containsAwait)
+            | ClosedHir.Expr.MemberAccess (_, inst, _, _) -> inst |> Option.map containsAwait |> Option.defaultValue false
+            | ClosedHir.Expr.If (c, t, el, _, _) -> containsAwait c || containsAwait t || containsAwait el
+            | ClosedHir.Expr.Block (stmts, fin, _, _) -> (stmts |> List.exists containsAwaitStmt) || containsAwait fin
+            | ClosedHir.Expr.AddrOf (t, _, _) -> containsAwait t
+            | _ -> false
+        and containsAwaitStmt (s: ClosedHir.Stmt) : bool =
+            match s with
+            | ClosedHir.Stmt.Let (_, _, v, _) | ClosedHir.Stmt.Assign (_, v, _) | ClosedHir.Stmt.ExprStmt (v, _) -> containsAwait v
+            | ClosedHir.Stmt.StoreField (i, _, _, v, _) -> containsAwait i || containsAwait v
+            | ClosedHir.Stmt.For (_, _, it, body, _) -> containsAwait it || (body |> List.exists containsAwaitStmt)
+            | ClosedHir.Stmt.If (c, t, el, _) -> containsAwait c || (t |> List.exists containsAwaitStmt) || (el |> List.exists containsAwaitStmt)
+            | _ -> false
+
+        // 式中ネストの await を文レベルへ展開する（spilling）。
+        // 返り値: (先行文, await を含まない残余式)。
+        let rec spillExpr (e: ClosedHir.Expr) : ClosedHir.Stmt list * ClosedHir.Expr =
+            match e with
+            | ClosedHir.Expr.Await (op, resTid, awaitSpan) ->
+                let pop, rop = spillExpr op
+                let awaitSetup, getResultExpr = emitAwaitSeq rop resTid awaitSpan
+                // GetResult は一度だけ評価し、結果を spill フィールドへ退避してから残余として読む。
+                let spillSid = freshSpillField resTid
+                let storeStmt = ClosedHir.Stmt.StoreField(moveNextThisExpr, smTypeSid, spillSid, getResultExpr, awaitSpan)
+                pop @ awaitSetup @ [ storeStmt ], fieldLoad spillSid resTid
+            | ClosedHir.Expr.Call (func, instance, args, tid, span) ->
+                let operands = (Option.toList instance) @ args
+                let prefix, residuals = spillOperands operands
+                let resInstance, resArgs =
+                    match instance with
+                    | Some _ -> Some (List.head residuals), List.tail residuals
+                    | None -> None, residuals
+                prefix, ClosedHir.Expr.Call(func, resInstance, resArgs, tid, span)
+            | ClosedHir.Expr.MemberAccess (mem, Some inst, tid, span) ->
+                let p, r = spillExpr inst
+                p, ClosedHir.Expr.MemberAccess(mem, Some r, tid, span)
+            | ClosedHir.Expr.If (cond, thenB, elseB, tid, span) when containsAwait thenB || containsAwait elseB ->
+                // 分岐内に await がある値 If は、結果を spill フィールドへ書き込む文レベル If へ降格する。
+                let pc, rc = spillExpr cond
+                let resultSid = freshSpillField tid
+                let pThen, rThen = spillExpr thenB
+                let pElse, rElse = spillExpr elseB
+                let thenStmts = pThen @ [ ClosedHir.Stmt.StoreField(moveNextThisExpr, smTypeSid, resultSid, rThen, span) ]
+                let elseStmts = pElse @ [ ClosedHir.Stmt.StoreField(moveNextThisExpr, smTypeSid, resultSid, rElse, span) ]
+                pc @ [ ClosedHir.Stmt.If(rc, thenStmts, elseStmts, span) ], fieldLoad resultSid tid
+            | ClosedHir.Expr.If (cond, thenB, elseB, tid, span) ->
+                // 分岐に await なし: cond だけ spill。
+                let pc, rc = spillExpr cond
+                pc, ClosedHir.Expr.If(rc, thenB, elseB, tid, span)
+            | ClosedHir.Expr.Block (stmts, final, _, _) ->
+                let stmtSpilled = stmts |> List.collect spillStmt
+                let pf, rf = spillExpr final
+                stmtSpilled @ pf, rf
+            | _ -> [], e   // リーフ（await を含まない想定）
+
+        // オペランド列を左→右の評価順を保ったまま spill する。
+        // 後続オペランドに await が含まれる場合、現オペランドの残余を temp フィールドへ退避する
+        // （await 中断で評価スタックが破棄されるため、跨いで生存する値はフィールド化が必要）。
+        and spillOperands (operands: ClosedHir.Expr list) : ClosedHir.Stmt list * ClosedHir.Expr list =
+            let arr = List.toArray operands
+            let n = arr.Length
+            let suffixHasAwait = Array.zeroCreate n
+            let mutable acc = false
+            for i in (n - 1) .. -1 .. 0 do
+                suffixHasAwait.[i] <- acc
+                if containsAwait arr.[i] then acc <- true
+            let prefix = System.Collections.Generic.List<ClosedHir.Stmt>()
+            let residuals =
+                arr |> Array.mapi (fun i op ->
+                    let pop, rop = spillExpr op
+                    prefix.AddRange(pop)
+                    if suffixHasAwait.[i] then
+                        let tmpSid = freshSpillField op.typ
+                        prefix.Add(ClosedHir.Stmt.StoreField(moveNextThisExpr, smTypeSid, tmpSid, rop, op.span))
+                        fieldLoad tmpSid op.typ
+                    else rop)
+            List.ofSeq prefix, List.ofArray residuals
+
+        // 文の await を spill して文レベルへ展開する。
+        and spillStmt (stmt: ClosedHir.Stmt) : ClosedHir.Stmt list =
             match stmt with
+            // よくある形（standalone await / 単純な StoreField 値が await）は spill フィールドを介さず直接展開する。
             | ClosedHir.Stmt.ExprStmt (ClosedHir.Expr.Await (op, resTid, awaitSpan), _) ->
-                let setup, resultExpr = emitAwaitSeq op resTid awaitSpan
-                setup @ [ ClosedHir.Stmt.ExprStmt(resultExpr, awaitSpan) ]
-            | ClosedHir.Stmt.StoreField (inst, tSid, fSid, ClosedHir.Expr.Await (op, resTid, awaitSpan), sfSpan) ->
-                let setup, resultExpr = emitAwaitSeq op resTid awaitSpan
-                setup @ [ ClosedHir.Stmt.StoreField(inst, tSid, fSid, resultExpr, sfSpan) ]
+                let pop, rop = spillExpr op
+                let setup, getResult = emitAwaitSeq rop resTid awaitSpan
+                pop @ setup @ [ ClosedHir.Stmt.ExprStmt(getResult, awaitSpan) ]
+            | ClosedHir.Stmt.StoreField (inst, tSid, fSid, ClosedHir.Expr.Await (op, resTid, awaitSpan), sfSpan)
+                    when not (containsAwait inst) ->
+                let pop, rop = spillExpr op
+                let setup, getResult = emitAwaitSeq rop resTid awaitSpan
+                pop @ setup @ [ ClosedHir.Stmt.StoreField(inst, tSid, fSid, getResult, sfSpan) ]
+            | ClosedHir.Stmt.ExprStmt (e, span) ->
+                let p, r = spillExpr e
+                p @ [ ClosedHir.Stmt.ExprStmt(r, span) ]
+            | ClosedHir.Stmt.StoreField (inst, tSid, fSid, v, span) ->
+                match spillOperands [ inst; v ] with
+                | prefix, [ rInst; rV ] -> prefix @ [ ClosedHir.Stmt.StoreField(rInst, tSid, fSid, rV, span) ]
+                | _ -> [ stmt ]
+            | ClosedHir.Stmt.Let (sid, isMut, v, span) ->
+                let p, r = spillExpr v
+                p @ [ ClosedHir.Stmt.Let(sid, isMut, r, span) ]
+            | ClosedHir.Stmt.Assign (sid, v, span) ->
+                let p, r = spillExpr v
+                p @ [ ClosedHir.Stmt.Assign(sid, r, span) ]
+            | ClosedHir.Stmt.If (cond, thenB, elseB, span) ->
+                let pc, rc = spillExpr cond
+                pc @ [ ClosedHir.Stmt.If(rc, thenB |> List.collect spillStmt, elseB |> List.collect spillStmt, span) ]
+            | ClosedHir.Stmt.For (sid, tid, iter, body, span) ->
+                let pi, ri = spillExpr iter
+                pi @ [ ClosedHir.Stmt.For(sid, tid, ri, body |> List.collect spillStmt, span) ]
             | other -> [ other ]
 
-        // 本体を (先行文, 最終値式) に分解し、最終式が await ならそれも展開する。
+        // 本体を (先行文, 最終値式) に分解し、await を spill して文レベルへ展開する。
         let bodyStmts, bodyFinal =
             match hoistedBody with
             | ClosedHir.Expr.Block (stmts, final, _, _) -> stmts, final
             | other -> [], other
-        let linearizedStmts = bodyStmts |> List.collect linearizeStmt
+        let linearizedStmts = bodyStmts |> List.collect spillStmt
         let finalStmts, finalValue =
             match bodyFinal with
-            | ClosedHir.Expr.Await (op, resTid, awaitSpan) -> emitAwaitSeq op resTid awaitSpan
-            | other -> [], other
+            // 最終式が直接 await の場合は spill フィールドを介さず GetResult を結果値にする。
+            | ClosedHir.Expr.Await (op, resTid, awaitSpan) ->
+                let pop, rop = spillExpr op
+                let setup, getResult = emitAwaitSeq rop resTid awaitSpan
+                pop @ setup, getResult
+            | other -> spillExpr other
 
         // 7. ディスパッチ（state スイッチ）: 各 await の resume ラベルへ分岐する。
         let stateLoad = fieldLoad stateFieldSid TypeId.Int
@@ -670,6 +792,7 @@ module AsyncRewrite =
             @ (argFields |> List.map (fun (sid, typ) -> ClosedHir.Field(sid, typ, unitExpr, span)))
             @ (localFields |> List.map (fun (sid, typ) -> ClosedHir.Field(sid, typ, unitExpr, span)))
             @ (awaiterFields |> List.ofSeq)
+            @ (spillFields |> List.ofSeq)
 
         let moveNextMethod =
             ClosedHir.Method(
