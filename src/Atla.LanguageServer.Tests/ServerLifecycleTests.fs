@@ -1,5 +1,6 @@
 namespace Atla.LanguageServer.Tests
 
+open System
 open System.IO
 open Newtonsoft.Json.Linq
 open Xunit
@@ -401,6 +402,84 @@ module ServerLifecycleTests =
         Assert.Equal("CalculatorWindow", moduleSource.moduleName)
 
     [<Fact>]
+    let ``LSP default compile loads dependency from local copy cache and keeps source path intact`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        let tempRoot = Path.Join(Path.GetTempPath(), $"atla-lsp-local-copy-{System.Guid.NewGuid():N}")
+        let srcDir = Path.Join(tempRoot, "src")
+        Directory.CreateDirectory(srcDir) |> ignore
+        File.WriteAllText(Path.Join(tempRoot, "atla.yaml"), "package:\n  name: \"app\"\n  version: \"0.1.0\"\n")
+        let documentUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
+        let normalizedSourceDependencyPath = Path.GetFullPath(jsonAssemblyPath)
+
+        let buildProject (_: BuildRequest) : BuildResult =
+            { succeeded = true
+              plan =
+                Some {
+                    projectName = "app"
+                    projectVersion = "0.1.0"
+                    projectRoot = tempRoot
+                    packageType = BuildPackageType.Exe
+                    dependencies =
+                        [ { name = "System.Text.Json"
+                            version = "runtime"
+                            source = runtimeDir
+                            compileReferencePaths = [ jsonAssemblyPath ]
+                            runtimeLoadPaths = [ jsonAssemblyPath ]
+                            nativeRuntimePaths = [] } ]
+                  }
+              diagnostics = [] }
+
+        let published = ResizeArray<Atla.LanguageServer.LSPTypes.Diagnostic list>()
+        let capturedRequests = ResizeArray<Compiler.CompileModulesRequest>()
+
+        let compile (request: Compiler.CompileModulesRequest) : Compiler.CompileResult =
+            capturedRequests.Add(request)
+            Compiler.compileModulesForLanguageServer request
+
+        let server =
+            Server(
+                (fun _ diagnostics -> published.Add(diagnostics)),
+                buildProjectFn = buildProject,
+                compileFn = compile,
+                resolveImplicitStdFn = fun () -> None
+            )
+
+        let initializeContent = JObject.Parse($"""
+        {{
+          "params": {{
+            "rootUri": "{System.Uri(tempRoot).AbsoluteUri}",
+            "capabilities": {{
+              "textDocument": {{
+                "publishDiagnostics": {{ "relatedInformation": true }},
+                "semanticTokens": {{ "tokenTypes": ["keyword", "number", "string", "variable", "type"] }}
+              }}
+            }}
+          }}
+        }}
+        """)
+
+        try
+            DependencyLoader.clearLocalCopyCache()
+            server.Initialize(initializeContent) |> ignore
+            server.IsAvailablePublishDiagnostics <- true
+            server.OpenDocument(documentUri, "import System'Text'Json'JsonNamingPolicy\nfn main: () = do\n    let _ = JsonNamingPolicy'CamelCase")
+            server.WaitForPendingCompilations()
+
+            Assert.True(File.Exists(normalizedSourceDependencyPath))
+            let compileRequest = Assert.Single(capturedRequests)
+            let dependency = Assert.Single(compileRequest.dependencies)
+            let runtimePath = Assert.Single(dependency.runtimeLoadPaths)
+            Assert.Equal(normalizedSourceDependencyPath, Path.GetFullPath(runtimePath))
+            Assert.NotEmpty(published)
+        finally
+            DependencyLoader.clearLocalCopyCache()
+            if Directory.Exists(tempRoot) then
+                Directory.Delete(tempRoot, recursive = true)
+
+    [<Fact>]
     let ``build failure publishes diagnostics as build source and skips compiler`` () =
         let published = ResizeArray<string * Atla.LanguageServer.LSPTypes.Diagnostic list>()
         let mutable compileCalled = false
@@ -659,4 +738,3 @@ module ServerLifecycleTests =
         finally
             if Directory.Exists tempRoot then
                 Directory.Delete(tempRoot, recursive = true)
-

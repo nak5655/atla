@@ -705,6 +705,79 @@ fn main: () = do
         Assert.Equal<string list>(messages1, messages2)
 
     [<Fact>]
+    let ``dependency local copy cache should reuse copied path when source is unchanged`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        try
+            DependencyLoader.clearLocalCopyCache()
+
+            let requestDeps = [ ("System.Text.Json", [ jsonAssemblyPath ]) ]
+            let first = DependencyLoader.loadDependenciesWithPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache requestDeps
+            Assert.True(first.succeeded, String.Join(Environment.NewLine, first.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+            DependencyLoader.unloadDependencies first.loadContext
+
+            let firstCopyPath =
+                DependencyLoader.getLocalCopyCacheEntries()
+                |> List.find (fun entry -> String.Equals(entry.sourcePath, Path.GetFullPath(jsonAssemblyPath), StringComparison.OrdinalIgnoreCase))
+                |> fun entry -> entry.copyPath
+
+            let second = DependencyLoader.loadDependenciesWithPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache requestDeps
+            Assert.True(second.succeeded, String.Join(Environment.NewLine, second.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+            DependencyLoader.unloadDependencies second.loadContext
+
+            let sourceEntries =
+                DependencyLoader.getLocalCopyCacheEntries()
+                |> List.filter (fun entry -> String.Equals(entry.sourcePath, Path.GetFullPath(jsonAssemblyPath), StringComparison.OrdinalIgnoreCase))
+            Assert.Single(sourceEntries) |> ignore
+            Assert.Equal(firstCopyPath, sourceEntries.Head.copyPath)
+        finally
+            DependencyLoader.clearLocalCopyCache()
+
+    [<Fact>]
+    let ``dependency local copy cache should refresh copied path when source timestamp changes`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        let tempDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(tempDir) |> ignore
+        let sourcePath = Path.Join(tempDir, "System.Text.Json.dll")
+        File.Copy(jsonAssemblyPath, sourcePath, overwrite = true)
+
+        try
+            DependencyLoader.clearLocalCopyCache()
+            let requestDeps = [ ("System.Text.Json", [ sourcePath ]) ]
+
+            let first = DependencyLoader.loadDependenciesWithPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache requestDeps
+            Assert.True(first.succeeded, String.Join(Environment.NewLine, first.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+            DependencyLoader.unloadDependencies first.loadContext
+
+            let firstEntries =
+                DependencyLoader.getLocalCopyCacheEntries()
+                |> List.filter (fun entry -> String.Equals(entry.sourcePath, Path.GetFullPath(sourcePath), StringComparison.OrdinalIgnoreCase))
+            let firstCopyPath = Assert.Single(firstEntries).copyPath
+
+            let bumped = File.GetLastWriteTimeUtc(sourcePath).AddSeconds(2.0)
+            File.SetLastWriteTimeUtc(sourcePath, bumped)
+
+            let second = DependencyLoader.loadDependenciesWithPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache requestDeps
+            Assert.True(second.succeeded, String.Join(Environment.NewLine, second.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+            DependencyLoader.unloadDependencies second.loadContext
+
+            let secondEntries =
+                DependencyLoader.getLocalCopyCacheEntries()
+                |> List.filter (fun entry -> String.Equals(entry.sourcePath, Path.GetFullPath(sourcePath), StringComparison.OrdinalIgnoreCase))
+            Assert.Equal(2, secondEntries.Length)
+            Assert.Contains(secondEntries, fun entry -> entry.copyPath = firstCopyPath)
+            Assert.Contains(secondEntries, fun entry -> entry.copyPath <> firstCopyPath)
+        finally
+            DependencyLoader.clearLocalCopyCache()
+            if Directory.Exists(tempDir) then
+                Directory.Delete(tempDir, recursive = true)
+
+    [<Fact>]
     let ``function with imported dotnet type as parameter compiles and runs`` () =
         // インポート型（TypeId.Name sid）を関数パラメータに使った場合の CIL 生成を検証する。
         // System.Text.StringBuilder を引数に取る関数を定義し、正常にコンパイル・実行できることを確認する。
