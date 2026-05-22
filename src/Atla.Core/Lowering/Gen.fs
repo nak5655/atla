@@ -62,7 +62,7 @@ module Gen =
           typeParamBuilders: Dictionary<string, Type> }
 
     // MIRのTypeIdをCIL生成用のSystem.Typeへ解決する
-    let private resolveType (env: Env) (tid: TypeId) : Type =
+    let rec private resolveType (env: Env) (tid: TypeId) : Type =
         let resolveName (sid: SymbolId) : Type option =
             match env.typeBuilders.TryGetValue(sid) with
             | true, builder -> Some (builder :> Type)
@@ -79,6 +79,10 @@ module Gen =
             match env.typeParamBuilders.TryGetValue(name) with
             | true, builder -> builder
             | false, _ -> typeof<obj> // 型消去：ジェネリクスコンテキスト外では obj にフォールバック
+        // `ByRef T` は CIL の `T&`。内側型を resolveType で再帰解決し、MakeByRefType を適用する。
+        // `TypeId.Name` 等を含むケースに対応するため `tryToRuntimeSystemType` ではなく resolveType を経由する。
+        | TypeId.ByRef inner ->
+            (resolveType env inner).MakeByRefType()
         | _ ->
 
         // 先に通常の解決を試す（Native/App/配列/関数など）。
@@ -194,6 +198,15 @@ module Gen =
                 gen.Emit(OpCodes.Newobj, ctor)
             | false, _ ->
                 failwithf "Unknown method symbol for delegate creation: %A" sid
+        // レジスタのアドレスをロード（マネージドポインタ）。
+        | Mir.Value.RegAddr reg ->
+            match reg with
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Ldloca, index)
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Ldarga, index)
+        // インスタンスレジスタのフィールドアドレスをロード。
+        | Mir.Value.FieldAddr (inst, field) ->
+            genValue env gen (Mir.Value.RegVal inst)
+            gen.Emit(OpCodes.Ldflda, field)
 
     /// レジスタの CIL 型を返す。locs/args を逆引きして locTypes/argTypes を参照し、resolveType で解決する。
     let private getRegCilType (env: Env) (frame: Mir.Frame) (reg: Mir.Reg) : Type option =
@@ -238,6 +251,21 @@ module Gen =
                     |> Option.orElseWith (fun () -> frame.locTypes |> Map.tryFind sid)
                 tidOpt |> Option.bind TypeId.tryToRuntimeSystemType
         | Mir.Value.FieldVal fi -> Some fi.FieldType
+        // アドレス値は `T&`（MakeByRefType）。インナー型を逆引きしてから `&` を付ける。
+        | Mir.Value.RegAddr reg ->
+            let findSid (regMap: Map<SymbolId, Mir.Reg>) =
+                regMap |> Map.tryFindKey (fun _ r -> r = reg)
+            let sidOpt =
+                findSid frame.args
+                |> Option.orElseWith (fun () -> findSid frame.locs)
+            match sidOpt with
+            | None -> None
+            | Some sid ->
+                frame.argTypes |> Map.tryFind sid
+                |> Option.orElseWith (fun () -> frame.locTypes |> Map.tryFind sid)
+                |> Option.bind TypeId.tryToRuntimeSystemType
+                |> Option.map (fun t -> t.MakeByRefType())
+        | Mir.Value.FieldAddr (_, field) -> Some (field.FieldType.MakeByRefType())
         | _ -> None
 
     /// ネイティブメソッド・コンストラクター呼び出し時に必要な数値型変換命令を発行する。
@@ -304,7 +332,15 @@ module Gen =
             let parameters = methodInfo.GetParameters()
             match args with
             | receiver :: rest when not methodInfo.IsStatic && methodInfo.DeclaringType.IsValueType ->
+                // 値型インスタンスメソッドのレシーバーはアドレスを必要とする。
+                // レシーバーが既にマネージドポインタ（ByRef: RegAddr / FieldAddr / ByRef 型の Reg）
+                // の場合はそのアドレスをそのまま積む。そうでなければ Ldloca/Ldarga でアドレスを取る。
+                let receiverIsByRef =
+                    match getValueStackType frame receiver with
+                    | Some t -> t.IsByRef
+                    | None -> false
                 match receiver with
+                | _ when receiverIsByRef -> genValue env gen receiver
                 | Mir.Value.RegVal (Mir.Reg.Loc index) -> gen.Emit(OpCodes.Ldloca, index)
                 | Mir.Value.RegVal (Mir.Reg.Arg index) -> gen.Emit(OpCodes.Ldarga, index)
                 | _ -> genValue env gen receiver
@@ -385,6 +421,21 @@ module Gen =
         | Mir.Ins.CallAssign (dst, method, args) ->
             emitMethodArgs method args
             emitMethodCall method
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        // ジェネリックメソッド定義を Gen で解決した型引数で閉じて呼ぶ。
+        // 引数（レシーバーのアドレス含む）は呼び出し側が構築済みのため、評価順に積むだけでよい。
+        // 型引数に生成型（TypeBuilder）が含まれると GetParameters() が例外を投げ得るため、
+        // 数値型強制は行わず（async builder の引数は全てマネージドポインタで強制不要）そのまま積む。
+        | Mir.Ins.CallGenericNative (methodDef, typeArgs, args) ->
+            let closed = methodDef.MakeGenericMethod(typeArgs |> List.map (resolveType env) |> List.toArray)
+            for arg in args do genValue env gen arg
+            emitMethodCall closed
+        | Mir.Ins.CallGenericNativeAssign (dst, methodDef, typeArgs, args) ->
+            let closed = methodDef.MakeGenericMethod(typeArgs |> List.map (resolveType env) |> List.toArray)
+            for arg in args do genValue env gen arg
+            emitMethodCall closed
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
@@ -525,6 +576,19 @@ module Gen =
                 | Some { kind = SymbolKind.External(ExternalBinding.SystemFieldRef fieldInfo) } ->
                     gen.Emit(OpCodes.Stfld, fieldInfo)
                 | _ -> failwithf "Unknown env field symbol for StoreEnvField: %A" fieldSid
+        | Mir.Ins.LoadEnvFieldAddr (dst, inst, _, fieldSid) ->
+            // env インスタンスをスタックへ積み、ldflda でフィールドアドレスを取得して dst へ格納する。
+            genValue env gen (Mir.Value.RegVal inst)
+            match env.fieldBuilders.TryGetValue(fieldSid) with
+            | true, fieldInfo -> gen.Emit(OpCodes.Ldflda, fieldInfo)
+            | false, _ ->
+                match env.symbolTable.Get(fieldSid) with
+                | Some { kind = SymbolKind.External(ExternalBinding.SystemFieldRef fieldInfo) } ->
+                    gen.Emit(OpCodes.Ldflda, fieldInfo)
+                | _ -> failwithf "Unknown env field symbol for LoadEnvFieldAddr: %A" fieldSid
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         | Mir.Ins.LoadEnvField (dst, inst, _, fieldSid) ->
             // env インスタンスをスタックへ積んでから ldfld を発行し、結果をレジスタへ格納する。
             genValue env gen (Mir.Value.RegVal inst)

@@ -32,6 +32,8 @@ module ClosedHir =
         | MemberAccess of mem: Member * instance: Expr option * tid: TypeId * span: Span
         | Block of stmts: Stmt list * expr: Expr * tid: TypeId * span: Span
         | If of cond: Expr * thenBranch: Expr * elseBranch: Expr * tid: TypeId * span: Span
+        /// `await operand` 式（ClosedHir 段階では Hir.Expr.Await を素通し）。状態機械生成は PR-3 で行う。
+        | Await of operand: Expr * tid: TypeId * span: Span
         | ExprError of message: string * errTyp: TypeId * span: Span
         // env-class クロージャーフィールド参照。lifted invoke method の第一引数（env インスタンス）からフィールドを読む。
         // envArgSid: env インスタンスが格納された引数の SymbolId（lifted method 内の Arg(0)）
@@ -42,6 +44,10 @@ module ClosedHir =
         // methodSid: lifted invoke メソッドの SymbolId
         // captured: 捕捉変数の (SymbolId * TypeId * isMutable) リスト（SymbolId 昇順）
         | ClosureCreate of envTypeSid: SymbolId * methodSid: SymbolId * captured: (SymbolId * TypeId * bool) list * tid: TypeId * span: Span
+        /// `&target` — マネージドポインタ（`T&`）を生成する式。
+        /// target は `Id`（ローカル/引数）または `MemberAccess(DataField | NativeField, Some instance)` を想定。
+        /// tid は `TypeId.ByRef inner`。AsyncRewrite 等の lowering で導入され、ユーザー言語からは生成されない。
+        | AddrOf of target: Expr * tid: TypeId * span: Span
 
         member this.typ =
             match this with
@@ -57,9 +63,11 @@ module ClosedHir =
             | MemberAccess (_, _, t, _) -> t
             | Block (_, _, t, _) -> t
             | If (_, _, _, t, _) -> t
+            | Await (_, t, _) -> t
             | ExprError (_, t, _) -> t
             | EnvFieldLoad (_, _, t, _) -> t
             | ClosureCreate (_, _, _, t, _) -> t
+            | AddrOf (_, t, _) -> t
 
         member this.span =
             match this with
@@ -75,9 +83,11 @@ module ClosedHir =
             | MemberAccess (_, _, _, span) -> span
             | Block (_, _, _, span) -> span
             | If (_, _, _, _, span) -> span
+            | Await (_, _, span) -> span
             | ExprError (_, _, span) -> span
             | EnvFieldLoad (_, _, _, span) -> span
             | ClosureCreate (_, _, _, _, span) -> span
+            | AddrOf (_, _, span) -> span
 
     /// クロージャー変換後の文。`Hir.Stmt` と同構造だが `ClosedHir.Expr` を参照する。
     and Stmt =
@@ -87,6 +97,14 @@ module ClosedHir =
         | ExprStmt of expr: Expr * span: Span
         | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
         | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
+        /// 非構造化制御フロー用のラベル定義（Layout で `Mir.Ins.MarkLabel` へ下す）。
+        /// AsyncRewrite の状態機械生成（resume ポイント等）が導入する。labelId はメソッド内で一意。
+        | Label of labelId: int * span: Span
+        /// 無条件ジャンプ（Layout で `Mir.Ins.Jump` へ下す）。
+        | Goto of labelId: int * span: Span
+        /// メソッドからの即時 return（戻り値なし。Layout で `Mir.Ins.Ret` へ下す）。
+        /// 状態機械 MoveNext の await 中断点で使用する。
+        | Return of span: Span
         | ErrorStmt of message: string * span: Span
 
     /// クロージャー変換後のフィールド定義。
@@ -97,7 +115,7 @@ module ClosedHir =
         member this.span = span
 
     /// クロージャー変換後のメソッド定義。本体が `ClosedHir.Expr` で表現される。
-    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, overrideTarget: MethodInfo option, span: Span) =
+    type Method(sid: SymbolId, args: (SymbolId * TypeId) list, body: Expr, tid: TypeId, overrideTarget: MethodInfo option, isAsync: bool, span: Span) =
         member this.sym = sid
         /// メソッドの引数リスト（宣言順に (SymbolId, TypeId) の組で保持）。
         member this.args = args
@@ -105,6 +123,8 @@ module ClosedHir =
         member this.typ = tid
         /// `override` 付きメソッドの場合、上書き対象となる親 .NET クラスの MethodInfo。
         member this.overrideTarget = overrideTarget
+        /// `async` 修飾子が付いていたかどうか。状態機械生成は PR-3 で行う。
+        member this.isAsync = isAsync
         member this.span = span
 
     /// クロージャー変換後の型定義。
@@ -164,6 +184,10 @@ module ClosedHir =
                 Block(stmts |> List.map (mapStmt f), mapExpr f body, tid, span)
             | Expr.If (cond, thenBranch, elseBranch, tid, span) ->
                 Expr.If(mapExpr f cond, mapExpr f thenBranch, mapExpr f elseBranch, tid, span)
+            | Await (operand, tid, span) ->
+                Await(mapExpr f operand, tid, span)
+            | AddrOf (target, tid, span) ->
+                AddrOf(mapExpr f target, tid, span)
         f mapped
 
     /// `Stmt` に含まれる全 `Expr` を bottom-up で変換する。
@@ -178,6 +202,7 @@ module ClosedHir =
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
         | Stmt.If (cond, thenBody, elseBody, span) ->
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
+        | Label _ | Goto _ | Return _ -> stmt
         | ErrorStmt _ -> stmt
 
     /// `Expr` ツリー全体を pre-order（トップダウン）で畳み込む。
@@ -208,6 +233,8 @@ module ClosedHir =
             let acc'' = foldExpr f acc' cond
             let acc''' = foldExpr f acc'' thenBranch
             foldExpr f acc''' elseBranch
+        | Await (operand, _, _) -> foldExpr f acc' operand
+        | AddrOf (target, _, _) -> foldExpr f acc' target
 
     /// `Stmt` に含まれる全 `Expr` を pre-order で畳み込む。
     and foldStmt (f: 'a -> Expr -> 'a) (acc: 'a) (stmt: Stmt) : 'a =
@@ -224,6 +251,7 @@ module ClosedHir =
             let acc' = foldExpr f acc cond
             let acc'' = thenBody |> List.fold (foldStmt f) acc'
             elseBody |> List.fold (foldStmt f) acc''
+        | Label _ | Goto _ | Return _ -> acc
         | ErrorStmt _ -> acc
 
     // ─────────────────────────────────────────────
@@ -283,6 +311,10 @@ module ClosedHir =
             [ cond; thenBranch; elseBranch ]
             |> List.map (foldExprWithCtx descend afterStmt leaf merge zero ctx')
             |> List.fold merge zero
+        | Await (operand, _, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' operand
+        | AddrOf (target, _, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' target
 
     /// `Stmt` 内の全 `Expr` を Reader 文脈（`ctx`）を保持しながら畳み込む。
     /// For ループの反復変数は `afterStmt` に合成 `Let` を渡してボディの文脈へ追加する。
@@ -332,4 +364,5 @@ module ClosedHir =
                     (zero, ctx)
                 |> fst
             merge condAcc (merge thenAcc elseAcc)
+        | Label _ | Goto _ | Return _ -> zero
         | ErrorStmt _ -> zero

@@ -311,7 +311,7 @@ module Analyze =
                                 | :? Ast.FnArg.Unit -> None
                                 | _ -> None)
                             |> List.choose id
-                        Hir.Method(methodSid, argSids, Hir.Expr.Unit(roleSpan), methodType, None, roleSpan))
+                        Hir.Method(methodSid, argSids, Hir.Expr.Unit(roleSpan), methodType, None, false, roleSpan))
                 types.Add(Hir.Type(resolvedRoleDecl.typeSid, true, None, [], [], hirMethods))
 
             // Std.Prelude に含まれるジェネリック enum 等を暗黙インポートとして解決する。

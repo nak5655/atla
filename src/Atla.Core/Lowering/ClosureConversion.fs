@@ -59,6 +59,8 @@ module ClosureConversion =
             ClosedHir.Expr.Block(stmts |> List.map convertHirStmt, convertHirExpr body, tid, span)
         | Hir.Expr.If (cond, thenBranch, elseBranch, tid, span) ->
             ClosedHir.Expr.If(convertHirExpr cond, convertHirExpr thenBranch, convertHirExpr elseBranch, tid, span)
+        | Hir.Expr.Await (operand, tid, span) ->
+            ClosedHir.Expr.Await(convertHirExpr operand, tid, span)
         | Hir.Expr.ExprError (msg, tid, span) -> ClosedHir.Expr.ExprError(msg, tid, span)
 
     /// `Hir.Stmt` を構造的に `ClosedHir.Stmt` へ変換する（クロージャー変換なし）。
@@ -358,6 +360,11 @@ module ClosureConversion =
             let rt, ts = rewriteExpr symbolTable ownerMethod captureMap thenBranch cs
             let re, es = rewriteExpr symbolTable ownerMethod captureMap elseBranch ts
             ClosedHir.Expr.If(rc, rt, re, tid, span), es
+        | Hir.Expr.Await (operand, tid, span) ->
+            // `await` 自体はクロージャー変換と直交。operand を再帰変換するだけ。
+            // PR-3 の AsyncRewrite で状態機械生成時に意味解釈される。
+            let rewrittenOperand, nextState = rewriteExpr symbolTable ownerMethod captureMap operand state
+            ClosedHir.Expr.Await(rewrittenOperand, tid, span), nextState
         | Hir.Expr.Lambda (args, ret, body, tid, span) ->
             // Phase 1 で構築済みの captureMap を参照して捕捉変数メタデータを取得する。
             let capturedMetadata, unknownSids =
@@ -381,7 +388,8 @@ module ClosureConversion =
                     let liftedMethodType = TypeId.Fn(methodArgs |> List.map snd, ret)
                     // SymbolTable を使って一元採番し、lifted メソッドの SymbolId を確保する。
                     let liftedSid = allocateSymbolId symbolTable liftedMethodType
-                    let liftedMethod = ClosedHir.Method(liftedSid, methodArgs, rewrittenBody, liftedMethodType, None, span)
+                    // 非捕捉ラムダは isAsync=false（ラムダ式は async 不可）。
+                    let liftedMethod = ClosedHir.Method(liftedSid, methodArgs, rewrittenBody, liftedMethodType, None, false, span)
                     let updatedState = { bodyState with generatedMethods = bodyState.generatedMethods @ [ liftedMethod ] }
                     ClosedHir.Expr.Id(liftedSid, tid, span), updatedState
                 | _ ->
@@ -414,7 +422,8 @@ module ClosureConversion =
                     let capturedTypeMap = capturedMetadata |> List.map (fun cm -> cm.sid, cm.typ) |> Map.ofList
                     let rewrittenBodyWithEnv = rewriteCapturedRefs envArgSid capturedSidSet capturedTypeMap rewrittenBody
 
-                    let liftedMethod = ClosedHir.Method(liftedMethodSid, methodArgs, rewrittenBodyWithEnv, liftedMethodType, None, span)
+                    // 捕捉ラムダは isAsync=false（ラムダ式は async 不可）。
+                    let liftedMethod = ClosedHir.Method(liftedMethodSid, methodArgs, rewrittenBodyWithEnv, liftedMethodType, None, false, span)
 
                     // env-class の ClosedHir.Type を生成する（クロージャー用の env-class はインターフェイスではない）。
                     // クロージャー env-class は型パラメータを持たない（生成される CIL クラスは具象型）。
@@ -507,7 +516,7 @@ module ClosureConversion =
                 let captureMap = buildCaptureMap symbolTable globalSymbols methodInfo
                 // Phase 2: CaptureMap を参照してラムダを lambda lifting / env-class へ変換する。
                 let rewrittenBody, bodyState = rewriteExpr symbolTable methodInfo captureMap methodInfo.body state
-                let rewrittenMethod = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.overrideTarget, methodInfo.span)
+                let rewrittenMethod = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.overrideTarget, methodInfo.isAsync, methodInfo.span)
                 accMethods @ [ rewrittenMethod ], bodyState) ([], initialState)
 
         rewrittenMethods @ finalState.generatedMethods,
@@ -542,7 +551,7 @@ module ClosureConversion =
                             |> List.mapFold (fun acc methodInfo ->
                                 if hirType.isInterface then
                                     // abstract メソッド（role）: 構造変換のみ
-                                    ClosedHir.Method(methodInfo.sym, methodInfo.args, convertHirExpr methodInfo.body, methodInfo.typ, methodInfo.overrideTarget, methodInfo.span), acc
+                                    ClosedHir.Method(methodInfo.sym, methodInfo.args, convertHirExpr methodInfo.body, methodInfo.typ, methodInfo.overrideTarget, methodInfo.isAsync, methodInfo.span), acc
                                 else
                                     // インスタンス impl メソッド: クロージャー変換を適用する。
                                     // initialState を毎回リセットし、生成メソッド/型は型変換後に追加する。
@@ -554,7 +563,7 @@ module ClosureConversion =
                                           captureMetadata = [] }
                                     let captureMap = buildCaptureMap symbolTable globalSymbols methodInfo
                                     let rewrittenBody, methodFinalState = rewriteExpr symbolTable methodInfo captureMap methodInfo.body methodInitState
-                                    let converted = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.overrideTarget, methodInfo.span)
+                                    let converted = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.overrideTarget, methodInfo.isAsync, methodInfo.span)
                                     converted, acc @ methodFinalState.diagnostics)
                                 []
                         let closedHirType =

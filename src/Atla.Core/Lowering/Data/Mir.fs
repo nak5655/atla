@@ -92,6 +92,12 @@ module Mir =
         // targetReg=None:   ldnull;            ldftn <sid>; newobj <delegateType>::.ctor
         // targetReg=Some r: ldarg/ldloc <r>;   ldftn <sid>; newobj <delegateType>::.ctor
         | FnDelegate of sid: SymbolId * delegateType: System.Type * targetReg: Reg option
+        // レジスタのアドレス値（マネージドポインタ `T&`）。Gen で Ldloca/Ldarga として発行する。
+        // state machine の `builder.Start(ref sm)`, `ref this` 等で使用する。
+        | RegAddr of reg: Reg
+        // 指定インスタンスレジスタのフィールドアドレス値（`T&`）。Gen で `<inst>; ldflda <field>` を発行する。
+        // state machine の `builder.AwaitUnsafeOnCompleted(ref this.<>u__N, ...)` で使用する。
+        | FieldAddr of inst: Reg * field: FieldInfo
         override this.ToString() =
             match this with
             | ImmVal v -> sprintf "Imm(%s)" (v.ToString())
@@ -104,6 +110,8 @@ module Mir =
                     |> Option.map (fun reg -> reg.ToString())
                     |> Option.defaultValue "null"
                 sprintf "FnDelegate(sid=%d, type=%s, target=%s)" sid.id dt.FullName targetText
+            | RegAddr reg -> sprintf "Addr(%s)" (reg.ToString())
+            | FieldAddr (inst, field) -> sprintf "Addr(%s.%s)" (inst.ToString()) field.Name
 
     type OpCode =
         | Add
@@ -129,6 +137,11 @@ module Mir =
         | Call of method: Choice<MethodInfo, ConstructorInfo> * args: Value list
         | CallSym of sid: SymbolId * args: Value list
         | CallAssign of dst: Reg * method: MethodInfo * args: Value list
+        /// ジェネリックメソッド定義を `typeArgs`（Gen で解決）で `MakeGenericMethod` して呼ぶ（戻り値なし）。
+        /// 引数はすべて評価順に積む（レシーバーのアドレス含め呼び出し側が構築済みの前提）。
+        | CallGenericNative of methodDef: MethodInfo * typeArgs: TypeId list * args: Value list
+        /// `CallGenericNative` の戻り値を `dst` へ格納する版。
+        | CallGenericNativeAssign of dst: Reg * methodDef: MethodInfo * typeArgs: TypeId list * args: Value list
         | CallAssignSym of dst: Reg * sid: SymbolId * args: Value list
         /// `base'X` 由来の非仮想呼び出し（戻り値なし）。Gen で `OpCodes.Call` として発行する。
         | CallBase of method: MethodInfo * args: Value list
@@ -142,6 +155,10 @@ module Mir =
         | StoreEnvField of inst: Reg * typeSid: SymbolId * fieldSid: SymbolId * value: Value
         // env-class インスタンスのフィールドから値を読み込む（typeSid・fieldSid で解決）。
         | LoadEnvField of dst: Reg * inst: Reg * typeSid: SymbolId * fieldSid: SymbolId
+        // env-class インスタンスのフィールドアドレスを `dst` レジスタへロードする（typeSid・fieldSid で解決）。
+        // Gen では `<inst>; ldflda <field>; stloc/starg <dst>` に展開する。
+        // state machine の `ref this.<>u__N` 等を AddrOf から取り出すために使用する。
+        | LoadEnvFieldAddr of dst: Reg * inst: Reg * typeSid: SymbolId * fieldSid: SymbolId
         | Ret
         | RetValue of value: Value
         | Jump of label: LabelId
@@ -157,6 +174,8 @@ module Mir =
             | Call(method, args) -> sprintf "%A(%s)" method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallSym(sid, args) -> sprintf "call sid=%d (%s)" sid.id (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssign(dst, method, args) -> sprintf "%A = %A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | CallGenericNative(method, typeArgs, args) -> sprintf "%s<%d>(%s)" method.Name typeArgs.Length (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | CallGenericNativeAssign(dst, method, typeArgs, args) -> sprintf "%A = %s<%d>(%s)" dst method.Name typeArgs.Length (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssignSym(dst, sid, args) -> sprintf "%A = sid:%d(%s)" dst sid.id (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallBase(method, args) -> sprintf "call_base %A(%s)" method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssignBase(dst, method, args) -> sprintf "%A = base.%A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
@@ -165,6 +184,7 @@ module Mir =
             | NewEnv(dst, typeSid) -> sprintf "%A = new_env(typeSid=%d)" dst typeSid.id
             | StoreEnvField(inst, typeSid, fieldSid, value) -> sprintf "%A.field_%d(typeSid=%d) = %s" inst fieldSid.id typeSid.id (value.ToString())
             | LoadEnvField(dst, inst, typeSid, fieldSid) -> sprintf "%A = %A.field_%d(typeSid=%d)" dst inst fieldSid.id typeSid.id
+            | LoadEnvFieldAddr(dst, inst, typeSid, fieldSid) -> sprintf "%A = &%A.field_%d(typeSid=%d)" dst inst fieldSid.id typeSid.id
             | Ret -> "Ret"
             | RetValue v -> sprintf "return %s" (v.ToString())
             | Jump label -> sprintf "Jump %s" (label.ToString())

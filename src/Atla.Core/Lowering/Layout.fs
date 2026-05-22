@@ -14,14 +14,25 @@ module Layout =
     type private LayoutState = {
         frame: Mir.Frame
         nextLabel: int
+        /// ClosedHir の Label/Goto の labelId（メソッド内一意な int）から Mir.LabelId への対応表。
+        /// 状態機械 MoveNext の resume ラベル等、前方参照されるラベルを安定して同一 Mir.LabelId へ解決する。
+        gotoLabels: Map<int, Mir.LabelId>
     }
 
     /// 初期レイアウト状態（空フレーム、ラベルカウンタ 0）を返す。
-    let private emptyState: LayoutState = { frame = Mir.Frame.empty; nextLabel = 0 }
+    let private emptyState: LayoutState = { frame = Mir.Frame.empty; nextLabel = 0; gotoLabels = Map.empty }
 
     /// 一意なラベル ID を払い出し、更新後の状態と共に返す。
     let private freshLabel (state: LayoutState) : Mir.LabelId * LayoutState =
         Mir.LabelId state.nextLabel, { state with nextLabel = state.nextLabel + 1 }
+
+    /// ClosedHir のラベル ID に対応する Mir.LabelId を取得（未割当なら新規払い出し）する。
+    let private gotoLabel (state: LayoutState) (clId: int) : Mir.LabelId * LayoutState =
+        match state.gotoLabels |> Map.tryFind clId with
+        | Some lbl -> lbl, state
+        | None ->
+            let lbl, state1 = freshLabel state
+            lbl, { state1 with gotoLabels = state1.gotoLabels |> Map.add clId lbl }
 
     /// 一時変数用の新規ローカルレジスタを確保し、更新後の状態と共に返す。
     /// 負の SymbolId を候補として使い、既存エントリと衝突しないものを選ぶ。
@@ -195,6 +206,16 @@ module Layout =
 
                             match func with
                             | Hir.Callable.NativeMethod mi -> emitCall state2 mi
+                            | Hir.Callable.NativeGenericMethod (methodDef, typeArgs) ->
+                                // 型引数は Gen で resolveType→MakeGenericMethod される。args は instance を含めた全実引数。
+                                let returnsVoid = (methodDef.ReturnType = typeof<System.Void>)
+                                match tid, returnsVoid with
+                                | _, true
+                                | TypeId.Unit, _ ->
+                                    Ok (state2, { ins = instanceIns @ argIns @ [ Mir.Ins.CallGenericNative(methodDef, typeArgs, callArgs) ]; res = None })
+                                | _ ->
+                                    let dst, state3 = declareTemp state2 tid
+                                    Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.CallGenericNativeAssign(dst, methodDef, typeArgs, callArgs) ]; res = Some(Mir.Value.RegVal dst) })
                             | Hir.Callable.NativeMethodGroup methods ->
                                 match methods |> List.tryFind (fun m -> m.GetParameters().Length = argValues.Length) with
                                 | Some mi -> emitCall state2 mi
@@ -356,6 +377,42 @@ module Layout =
             Result.Error (Diagnostic.Error($"Cannot lower erroneous expression: {message}", span))
         | ClosedHir.Expr.Lambda (_, _, _, _, span) ->
             Result.Error (Diagnostic.Error("Lambda lowering is not implemented", span))
+        | ClosedHir.Expr.Await (_, _, span) ->
+            // PR-3 で AsyncRewrite が状態機械化する前提のため、ここに来ることは想定していない。
+            Result.Error (Diagnostic.Error("await expressions are not yet lowered to CIL (state machine generation pending)", span))
+        // `&target` をマネージドポインタ値へ下す。target は Id / DataField / NativeField のいずれか。
+        // AsyncRewrite 等の lowering が導入するノードであり、ユーザー言語からは生成されない。
+        | ClosedHir.Expr.AddrOf (target, tid, span) ->
+            match target with
+            | ClosedHir.Expr.Id (sid, _, _) ->
+                match Mir.Frame.get sid state.frame with
+                | Some reg -> Ok (state, { ins = []; res = Some(Mir.Value.RegAddr reg) })
+                | None -> Result.Error (Diagnostic.Error($"AddrOf: id {sid} not found in frame", span))
+            | ClosedHir.Expr.MemberAccess (mem, instanceOpt, _, _) ->
+                match mem, instanceOpt with
+                | Hir.Member.DataField (typeSid, fieldSid), Some instExpr ->
+                    match layoutExpr state instExpr with
+                    | Result.Error e -> Result.Error e
+                    | Ok (state1, instKn) ->
+                        match instKn.res with
+                        | Some (Mir.Value.RegVal instReg) ->
+                            let dst, state2 = declareTemp state1 tid
+                            Ok (state2, { ins = instKn.ins @ [ Mir.Ins.LoadEnvFieldAddr(dst, instReg, typeSid, fieldSid) ]; res = Some(Mir.Value.RegVal dst) })
+                        | _ ->
+                            Result.Error (Diagnostic.Error("AddrOf: data field instance must lower to a register", span))
+                | Hir.Member.NativeField fi, Some instExpr ->
+                    match layoutExpr state instExpr with
+                    | Result.Error e -> Result.Error e
+                    | Ok (state1, instKn) ->
+                        match instKn.res with
+                        | Some (Mir.Value.RegVal instReg) ->
+                            Ok (state1, { ins = instKn.ins; res = Some(Mir.Value.FieldAddr(instReg, fi)) })
+                        | _ ->
+                            Result.Error (Diagnostic.Error("AddrOf: native field instance must lower to a register", span))
+                | _ ->
+                    Result.Error (Diagnostic.Error("AddrOf: only data/native field member access is supported", span))
+            | _ ->
+                Result.Error (Diagnostic.Error("AddrOf target must be Id or field MemberAccess", span))
         // env-class クロージャーフィールド参照: env インスタンス引数からフィールドを読み込む。
         | ClosedHir.Expr.EnvFieldLoad (envArgSid, capturedSid, tid, span) ->
             match Mir.Frame.get envArgSid state.frame with
@@ -559,6 +616,14 @@ module Layout =
                             @ [ Mir.Ins.MarkLabel thenLabelId ] @ List.concat thenInsList @ [ Mir.Ins.Jump endLabelId ]
                             @ [ Mir.Ins.MarkLabel elseLabelId ] @ List.concat elseInsList @ [ Mir.Ins.Jump endLabelId ]
                             @ [ Mir.Ins.MarkLabel endLabelId ])
+        | ClosedHir.Stmt.Label (clId, _) ->
+            let lbl, state1 = gotoLabel state clId
+            Ok (state1, [ Mir.Ins.MarkLabel lbl ])
+        | ClosedHir.Stmt.Goto (clId, _) ->
+            let lbl, state1 = gotoLabel state clId
+            Ok (state1, [ Mir.Ins.Jump lbl ])
+        | ClosedHir.Stmt.Return _ ->
+            Ok (state, [ Mir.Ins.Ret ])
         | ClosedHir.Stmt.ErrorStmt (message, span) ->
             Result.Error (Diagnostic.Error($"Cannot lower erroneous statement: {message}", span))
 
@@ -767,6 +832,7 @@ module Layout =
             hasLambdaExpr cond
             || (thenBody |> List.exists hasLambdaStmt)
             || (elseBody |> List.exists hasLambdaStmt)
+        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ -> false
         | ClosedHir.Stmt.ErrorStmt _ -> false
 
     /// クロージャー変換済み `ClosedHir.Assembly` を受け取り、MIR へ変換する。

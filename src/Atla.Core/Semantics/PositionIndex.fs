@@ -38,6 +38,7 @@ let rec formatType (resolve: SymbolId -> string) (tid: TypeId) : string =
             if fixedArgs.IsEmpty then ""
             else (fixedArgs |> List.map (formatType resolve) |> String.concat " -> ") + " -> "
         sprintf "(%s%s... -> %s)" prefix (formatType resolve elemType) (formatType resolve ret)
+    | TypeId.ByRef inner -> sprintf "ref %s" (formatType resolve inner)
 
 /// SymbolTable を使って TypeId をフォーマットする。
 let formatTypeWithTable (symbolTable: SymbolTable) (tid: TypeId) : string =
@@ -182,6 +183,8 @@ let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) 
         walkExpr blockScope body state1
     | Hir.Expr.If(cond, thenBr, elseBr, _, _) ->
         state |> walkExpr scopeSpan cond |> walkExpr scopeSpan thenBr |> walkExpr scopeSpan elseBr
+    | Hir.Expr.Await(operand, _, _) ->
+        walkExpr scopeSpan operand state
     | Hir.Expr.Unit _
     | Hir.Expr.Bool _
     | Hir.Expr.Int _

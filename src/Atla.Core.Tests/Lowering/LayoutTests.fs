@@ -35,6 +35,7 @@ module LayoutTests =
         | Hir.Expr.Unit _ -> "Unit"
         | Hir.Expr.Null _ -> "Null"
         | Hir.Expr.Lambda _ -> "Lambda"
+        | Hir.Expr.Await _ -> "Await"
         | Hir.Expr.ExprError _ -> "Error"
 
     [<Fact>]
@@ -50,7 +51,7 @@ module LayoutTests =
                 [],
                 Hir.Expr.Int(42, span),
                 TypeId.Fn([], TypeId.Int),
-                None,
+                None, false,
                 span)
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
@@ -432,7 +433,7 @@ fn main: () =
                 [],
                 lambdaExpr,
                 TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
-                None,
+                None, false,
                 span)
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
@@ -469,7 +470,7 @@ fn main: () =
                 [],
                 lambdaExpr,
                 TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
-                None,
+                None, false,
                 span)
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
@@ -507,7 +508,7 @@ fn main: () =
                 Hir.Expr.Id(argSid, TypeId.Int, span),
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
                 span)
-        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), None, span)
+        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), None, false, span)
         let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
 
         let snapshotOf (asm: ClosedHir.Assembly) =
@@ -551,7 +552,7 @@ fn main: () =
                     span),
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
                 span)
-        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), None, span)
+        let hirMethod = Hir.Method(methodSym, [], lambdaExpr, TypeId.Fn([], TypeId.Fn([ TypeId.Int ], TypeId.Int)), None, false, span)
         let result = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
         Assert.False(result.succeeded, "captured lambda with no binding info should still fail before env-class implementation")
@@ -583,7 +584,7 @@ fn main: () =
                 TypeId.Fn([ TypeId.Unit ], TypeId.Int),
                 span)
 
-        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Fn([ TypeId.Unit ], TypeId.Int)), None, span)
+        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Fn([ TypeId.Unit ], TypeId.Int)), None, false, span)
         let result = layoutHirAssembly("TestAsm", Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ]))
 
         // mutableSym は let 束縛でメソッドの bindings に入るため、env-class 変換が成功すべき。
@@ -637,7 +638,7 @@ fn main: () =
                 TypeId.Unit,
                 span)
 
-        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Unit), None, span)
+        let hirMethod = Hir.Method(methodSym, [], body, TypeId.Fn([], TypeId.Unit), None, false, span)
 
         // 新しい動作: iterSym は for 文のボディ内で bindings に登録されるため、
         // ClosureConversion は env-class 変換に成功する。
@@ -682,7 +683,7 @@ fn main: () =
                 [ outerArgSid, TypeId.Int ],
                 lambdaExpr,
                 TypeId.Fn([ TypeId.Int ], TypeId.Fn([ TypeId.Int ], TypeId.Int)),
-                None,
+                None, false,
                 span)
 
         let hirModule = Hir.Module("Main", [], [], [ hirMethod ], scope)
@@ -831,7 +832,7 @@ fn bad (): Int = undefinedVar
                 [ argSid, TypeId.Int ],
                 Hir.Expr.Id(argSid, TypeId.Int, span),
                 TypeId.Fn([ TypeId.Int ], TypeId.Int),
-                None,
+                None, false,
                 span)
         let hirAssembly = Hir.Assembly("test", [ Hir.Module("Main", [], [], [ hirMethod ], scope) ])
 
@@ -864,7 +865,7 @@ fn bad (): Int = undefinedVar
                 [],
                 ClosedHir.Expr.ExprError("type mismatch in test", TypeId.Int, errorSpan),
                 TypeId.Fn([], TypeId.Int),
-                None,
+                None, false,
                 errorSpan)
 
         let closedModule =
@@ -902,7 +903,7 @@ fn bad (): Int = undefinedVar
                     TypeId.Unit,
                     bodySpan),
                 TypeId.Fn([], TypeId.Unit),
-                None,
+                None, false,
                 bodySpan)
 
         let closedModule =
@@ -919,6 +920,214 @@ fn bad (): Int = undefinedVar
             Assert.Equal(stmtSpan.left.Line, d.span.left.Line)
             Assert.Equal(stmtSpan.left.Column, d.span.left.Column)
         | None -> ()
+
+    // ──────────────────────────────────────────────────────────────
+    // AddrOf / ByRef (PR-3b-1)
+    // AsyncRewrite が将来生成するアドレス値を Layout が MIR に下す経路を検証する。
+    // ──────────────────────────────────────────────────────────────
+
+    /// `ClosedHir.Expr.AddrOf(Id sid)` がローカル変数を指していれば、
+    /// Layout は `Mir.Value.RegAddr (Loc _)` を最終値として返し、その値で `RetValue` する。
+    [<Fact>]
+    let ``layoutAssembly lowers AddrOf of local Id to RegAddr Loc`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 6001
+        let localSym = SymbolId 6002
+        let scope = Scope(None)
+        scope.DeclareVar("takeLocalAddr", methodSym)
+
+        // body: { let x = 7; &x }
+        let body =
+            ClosedHir.Expr.Block(
+                [ ClosedHir.Stmt.Let(localSym, false, ClosedHir.Expr.Int(7, span), span) ],
+                ClosedHir.Expr.AddrOf(
+                    ClosedHir.Expr.Id(localSym, TypeId.Int, span),
+                    TypeId.ByRef TypeId.Int,
+                    span),
+                TypeId.ByRef TypeId.Int,
+                span)
+
+        let closedMethod =
+            ClosedHir.Method(
+                methodSym, [], body,
+                TypeId.Fn([], TypeId.ByRef TypeId.Int),
+                None, false, span)
+
+        let closedAsm =
+            ClosedHir.Assembly("test", [
+                ClosedHir.Module("Main", [], [], [ closedMethod ], scope, Map.empty) ])
+
+        let result = Layout.layoutAssembly("TestAsm", closedAsm)
+        let asm =
+            match result with
+            | { succeeded = true; value = Some a } -> a
+            | { diagnostics = diags } ->
+                let msg = diags |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                failwith $"layoutAssembly failed: {msg}"
+
+        let methodBody = asm.modules.Head.methods.Head.body
+        // 末尾命令は RetValue(Addr(Loc _))
+        let hasAddrRet =
+            methodBody
+            |> List.exists (function
+                | Mir.Ins.RetValue (Mir.Value.RegAddr (Mir.Reg.Loc _)) -> true
+                | _ -> false)
+        Assert.True(hasAddrRet, sprintf "expected RetValue(RegAddr(Loc _)), got body: %A" methodBody)
+
+    /// `ClosedHir.Expr.AddrOf(Id sid)` が引数を指していれば、`Mir.Value.RegAddr (Arg _)` を返す。
+    [<Fact>]
+    let ``layoutAssembly lowers AddrOf of argument Id to RegAddr Arg`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 6010
+        let argSym = SymbolId 6011
+        let scope = Scope(None)
+        scope.DeclareVar("takeArgAddr", methodSym)
+
+        // body: &x  （x は引数）
+        let body =
+            ClosedHir.Expr.AddrOf(
+                ClosedHir.Expr.Id(argSym, TypeId.Int, span),
+                TypeId.ByRef TypeId.Int,
+                span)
+
+        let closedMethod =
+            ClosedHir.Method(
+                methodSym,
+                [ argSym, TypeId.Int ],
+                body,
+                TypeId.Fn([ TypeId.Int ], TypeId.ByRef TypeId.Int),
+                None, false, span)
+
+        let closedAsm =
+            ClosedHir.Assembly("test", [
+                ClosedHir.Module("Main", [], [], [ closedMethod ], scope, Map.empty) ])
+
+        let result = Layout.layoutAssembly("TestAsm", closedAsm)
+        let asm =
+            match result with
+            | { succeeded = true; value = Some a } -> a
+            | { diagnostics = diags } ->
+                failwith (diags |> List.map (fun d -> d.toDisplayText()) |> String.concat "; ")
+
+        let methodBody = asm.modules.Head.methods.Head.body
+        let hasAddrRet =
+            methodBody
+            |> List.exists (function
+                | Mir.Ins.RetValue (Mir.Value.RegAddr (Mir.Reg.Arg _)) -> true
+                | _ -> false)
+        Assert.True(hasAddrRet, sprintf "expected RetValue(RegAddr(Arg _)), got body: %A" methodBody)
+
+    /// `ClosedHir.Expr.AddrOf(MemberAccess(DataField …, Some inst))` は
+    /// `LoadEnvFieldAddr` 命令を経由して一時レジスタ経由のアドレス値として下りる。
+    [<Fact>]
+    let ``layoutAssembly lowers AddrOf of DataField to LoadEnvFieldAddr`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 6020
+        let typeSym = SymbolId 6021
+        let fieldSym = SymbolId 6022
+        let instSym = SymbolId 6023
+        let scope = Scope(None)
+        scope.DeclareVar("takeFieldAddr", methodSym)
+
+        // body: &self.field  （self は引数、field は data field）
+        let body =
+            ClosedHir.Expr.AddrOf(
+                ClosedHir.Expr.MemberAccess(
+                    Hir.Member.DataField(typeSym, fieldSym),
+                    Some (ClosedHir.Expr.Id(instSym, TypeId.Name typeSym, span)),
+                    TypeId.Int,
+                    span),
+                TypeId.ByRef TypeId.Int,
+                span)
+
+        let closedMethod =
+            ClosedHir.Method(
+                methodSym,
+                [ instSym, TypeId.Name typeSym ],
+                body,
+                TypeId.Fn([ TypeId.Name typeSym ], TypeId.ByRef TypeId.Int),
+                None, false, span)
+
+        let closedAsm =
+            ClosedHir.Assembly("test", [
+                ClosedHir.Module("Main", [], [], [ closedMethod ], scope, Map.empty) ])
+
+        let result = Layout.layoutAssembly("TestAsm", closedAsm)
+        let asm =
+            match result with
+            | { succeeded = true; value = Some a } -> a
+            | { diagnostics = diags } ->
+                failwith (diags |> List.map (fun d -> d.toDisplayText()) |> String.concat "; ")
+
+        let methodBody = asm.modules.Head.methods.Head.body
+        let hasLoadAddr =
+            methodBody
+            |> List.exists (function
+                | Mir.Ins.LoadEnvFieldAddr (_, _, tSid, fSid) ->
+                    tSid = typeSym && fSid = fieldSym
+                | _ -> false)
+        Assert.True(hasLoadAddr, sprintf "expected LoadEnvFieldAddr, got body: %A" methodBody)
+
+    /// `ClosedHir.Expr.AddrOf(MemberAccess(NativeField fi, Some inst))` は
+    /// `Mir.Value.FieldAddr` の値を返し、追加の命令は出さない（インスタンスロードのみ）。
+    [<Fact>]
+    let ``layoutAssembly lowers AddrOf of NativeField to FieldAddr value`` () =
+        let span = { left = Position.Zero; right = Position.Zero }
+        let methodSym = SymbolId 6030
+        let instSym = SymbolId 6031
+        let scope = Scope(None)
+        scope.DeclareVar("takeNativeFieldAddr", methodSym)
+
+        // public フィールドを持つ既存 BCL 型として `System.Numerics.Vector2`（X / Y フィールド）を借用する。
+        let fi = typeof<System.Numerics.Vector2>.GetField("X", System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+        Assert.NotNull(fi)
+
+        let body =
+            ClosedHir.Expr.AddrOf(
+                ClosedHir.Expr.MemberAccess(
+                    Hir.Member.NativeField fi,
+                    Some (ClosedHir.Expr.Id(instSym, TypeId.Native typeof<System.Numerics.Vector2>, span)),
+                    TypeId.Native typeof<float32>,
+                    span),
+                TypeId.ByRef (TypeId.Native typeof<float32>),
+                span)
+
+        let closedMethod =
+            ClosedHir.Method(
+                methodSym,
+                [ instSym, TypeId.Native typeof<System.Numerics.Vector2> ],
+                body,
+                TypeId.Fn([ TypeId.Native typeof<System.Numerics.Vector2> ], TypeId.ByRef (TypeId.Native typeof<float32>)),
+                None, false, span)
+
+        let closedAsm =
+            ClosedHir.Assembly("test", [
+                ClosedHir.Module("Main", [], [], [ closedMethod ], scope, Map.empty) ])
+
+        let result = Layout.layoutAssembly("TestAsm", closedAsm)
+        let asm =
+            match result with
+            | { succeeded = true; value = Some a } -> a
+            | { diagnostics = diags } ->
+                failwith (diags |> List.map (fun d -> d.toDisplayText()) |> String.concat "; ")
+
+        let methodBody = asm.modules.Head.methods.Head.body
+        let hasFieldAddrRet =
+            methodBody
+            |> List.exists (function
+                | Mir.Ins.RetValue (Mir.Value.FieldAddr (_, retField)) -> retField = fi
+                | _ -> false)
+        Assert.True(hasFieldAddrRet, sprintf "expected RetValue(FieldAddr(_, %s)), got body: %A" fi.Name methodBody)
+
+    /// `TypeId.ByRef` は `tryToRuntimeSystemType` で `T&` (MakeByRefType) へ解決される。
+    [<Fact>]
+    let ``TypeId.ByRef resolves to T& via tryToRuntimeSystemType`` () =
+        let resolved = TypeId.tryToRuntimeSystemType (TypeId.ByRef TypeId.Int)
+        match resolved with
+        | Some t ->
+            Assert.True(t.IsByRef, "ByRef Int should resolve to a ByRef System.Type")
+            Assert.Equal(typeof<int>, t.GetElementType())
+        | None -> Assert.True(false, "expected ByRef Int to resolve")
 
     /// 未定義変数への代入文を lower しようとすると、そのスパン付きの Diagnostic.Error が返ることを検証する。
     [<Fact>]
@@ -941,7 +1150,7 @@ fn bad (): Int = undefinedVar
                     TypeId.Unit,
                     bodySpan),
                 TypeId.Fn([], TypeId.Unit),
-                None,
+                None, false,
                 bodySpan)
 
         let closedModule =
