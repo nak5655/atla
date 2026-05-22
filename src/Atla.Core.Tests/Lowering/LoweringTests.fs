@@ -705,6 +705,79 @@ fn main: () = do
         Assert.Equal<string list>(messages1, messages2)
 
     [<Fact>]
+    let ``dependency local copy cache should reuse copied path when source is unchanged`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        try
+            DependencyLoader.clearLocalCopyCache()
+
+            let requestDeps = [ ("System.Text.Json", [ jsonAssemblyPath ]) ]
+            let first = DependencyLoader.loadDependenciesWithPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache requestDeps
+            Assert.True(first.succeeded, String.Join(Environment.NewLine, first.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+            DependencyLoader.unloadDependencies first.loadContext
+
+            let firstCopyPath =
+                DependencyLoader.getLocalCopyCacheEntries()
+                |> List.find (fun entry -> String.Equals(entry.sourcePath, Path.GetFullPath(jsonAssemblyPath), StringComparison.OrdinalIgnoreCase))
+                |> fun entry -> entry.copyPath
+
+            let second = DependencyLoader.loadDependenciesWithPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache requestDeps
+            Assert.True(second.succeeded, String.Join(Environment.NewLine, second.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+            DependencyLoader.unloadDependencies second.loadContext
+
+            let sourceEntries =
+                DependencyLoader.getLocalCopyCacheEntries()
+                |> List.filter (fun entry -> String.Equals(entry.sourcePath, Path.GetFullPath(jsonAssemblyPath), StringComparison.OrdinalIgnoreCase))
+            Assert.Single(sourceEntries) |> ignore
+            Assert.Equal(firstCopyPath, sourceEntries.Head.copyPath)
+        finally
+            DependencyLoader.clearLocalCopyCache()
+
+    [<Fact>]
+    let ``dependency local copy cache should refresh copied path when source timestamp changes`` () =
+        let runtimeDir = Path.GetDirectoryName(typeof<string>.Assembly.Location)
+        let jsonAssemblyPath = Path.Join(runtimeDir, "System.Text.Json.dll")
+        Assert.True(File.Exists(jsonAssemblyPath), $"missing runtime assembly for test: {jsonAssemblyPath}")
+
+        let tempDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(tempDir) |> ignore
+        let sourcePath = Path.Join(tempDir, "System.Text.Json.dll")
+        File.Copy(jsonAssemblyPath, sourcePath, overwrite = true)
+
+        try
+            DependencyLoader.clearLocalCopyCache()
+            let requestDeps = [ ("System.Text.Json", [ sourcePath ]) ]
+
+            let first = DependencyLoader.loadDependenciesWithPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache requestDeps
+            Assert.True(first.succeeded, String.Join(Environment.NewLine, first.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+            DependencyLoader.unloadDependencies first.loadContext
+
+            let firstEntries =
+                DependencyLoader.getLocalCopyCacheEntries()
+                |> List.filter (fun entry -> String.Equals(entry.sourcePath, Path.GetFullPath(sourcePath), StringComparison.OrdinalIgnoreCase))
+            let firstCopyPath = Assert.Single(firstEntries).copyPath
+
+            let bumped = File.GetLastWriteTimeUtc(sourcePath).AddSeconds(2.0)
+            File.SetLastWriteTimeUtc(sourcePath, bumped)
+
+            let second = DependencyLoader.loadDependenciesWithPolicy DependencyLoader.DependencyLoadPolicy.LocalCopyCache requestDeps
+            Assert.True(second.succeeded, String.Join(Environment.NewLine, second.diagnostics |> List.map (fun diagnostic -> diagnostic.message)))
+            DependencyLoader.unloadDependencies second.loadContext
+
+            let secondEntries =
+                DependencyLoader.getLocalCopyCacheEntries()
+                |> List.filter (fun entry -> String.Equals(entry.sourcePath, Path.GetFullPath(sourcePath), StringComparison.OrdinalIgnoreCase))
+            Assert.Equal(2, secondEntries.Length)
+            Assert.Contains(secondEntries, fun entry -> entry.copyPath = firstCopyPath)
+            Assert.Contains(secondEntries, fun entry -> entry.copyPath <> firstCopyPath)
+        finally
+            DependencyLoader.clearLocalCopyCache()
+            if Directory.Exists(tempDir) then
+                Directory.Delete(tempDir, recursive = true)
+
+    [<Fact>]
     let ``function with imported dotnet type as parameter compiles and runs`` () =
         // インポート型（TypeId.Name sid）を関数パラメータに使った場合の CIL 生成を検証する。
         // System.Text.StringBuilder を引数に取る関数を定義し、正常にコンパイル・実行できることを確認する。
@@ -1909,6 +1982,78 @@ async fn run (t: Task): Task = await t
             Assert.IsType<System.InvalidOperationException>(agg.InnerException) |> ignore
         | None ->
             Assert.True(false, "'run' method not found in generated assembly")
+
+    // ──────────────────────────────────────────────────────────────
+    // async / await: async 関数同士の合成（ラウンドトリップ）
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``async fn can await another async fn (completed) and yield its result`` () =
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn inner (): Task Int = 42
+
+async fn outer (): Task Int = await (inner.)
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncCompose"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncCompose.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let outerMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "outer")
+
+        match outerMethod with
+        | Some mi ->
+            let result = mi.Invoke(null, [||]) :?> System.Threading.Tasks.Task<int>
+            Assert.True(result.Wait(5000), "outer は inner の完了で完了するべき")
+            Assert.Equal(42, result.Result)
+        | None ->
+            Assert.True(false, "'outer' method not found in generated assembly")
+
+    [<Fact>]
+    let ``async fn awaiting another async fn that suspends propagates completion through the chain`` () =
+        // outer → inner(t) → await t（未完了）。t 完了で inner→outer が連鎖的に完了する。
+        let program = """
+import System'Threading'Tasks'Task
+
+async fn inner (t: Task Int): Task Int = await t
+
+async fn outer (t: Task Int): Task Int = await (t inner.)
+"""
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "AsyncComposeChain"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, "AsyncComposeChain.dll")
+        let loaded = Assembly.LoadFile(Path.GetFullPath(dllPath))
+        let outerMethod =
+            loaded.GetTypes()
+            |> Array.collect (fun t -> t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance))
+            |> Array.tryFind (fun m -> m.Name = "outer")
+
+        match outerMethod with
+        | Some mi ->
+            let tcs = System.Threading.Tasks.TaskCompletionSource<int>()
+            let result = mi.Invoke(null, [| tcs.Task :> obj |]) :?> System.Threading.Tasks.Task<int>
+            Assert.False(result.IsCompleted, "内側 Task が未完了なら outer も中断しているべき")
+            tcs.SetResult(7)
+            Assert.True(result.Wait(5000), "ソース Task 完了で連鎖的に完了するべき")
+            Assert.Equal(7, result.Result)
+        | None ->
+            Assert.True(false, "'outer' method not found in generated assembly")
 
     // ──────────────────────────────────────────────────────────────
     // async / await: 式中ネストした await の spilling
