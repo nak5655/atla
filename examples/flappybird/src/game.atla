@@ -9,6 +9,8 @@ import Stride'Graphics'Texture
 import Stride'Graphics'PixelFormat
 import System'Threading'Tasks'Task
 import Stride'Input'Keys
+import System'Linq'Enumerable
+import System'Random
 
 data FlappyGame =
     { _spriteBatch: Opt SpriteBatch
@@ -17,20 +19,38 @@ data FlappyGame =
     , _birdVelocity: Float
     , _birdSize: Int
     , _jumpPower: Float
-    , _gravity: Float }
+    , _gravity: Float
+    , _rand: Random
+    , _pipes: List Vector2
+    , _pipeWidth: Int
+    , _pipeGap: Int
+    , _pipeSpeed: Int }
 
 impl FlappyGame as Game
     fn new: FlappyGame =
         FlappyGame
             { _spriteBatch = Opt'None
             , _whiteTexture = Opt'None
-            , _birdPos = 200 300 Vector2.
-            , _birdVelocity = 0.0
+            , _birdPos = 200.0f 300.0f Vector2.
+            , _birdVelocity = 0.0f
             , _birdSize = 32
-            , _jumpPower = 350.0
-            , _gravity = 900.0 }
+            , _jumpPower = -350.0f
+            , _gravity = 900.0f
+            , _rand = Random.
+            , _pipes = List.
+            , _pipeWidth = 60
+            , _pipeGap = 180
+            , _pipeSpeed = 200 }
+
+    fn RandomGap self: Int =
+        200 450 self'_rand'Next.
+
     override fn Initialize self: () =
         base'Initialize.
+
+        # 初期パイプ生成
+        for i in 0 4 Enumerable'Range.
+            ((600 + i * 250f) self'RandomGap. Vector2.) self'_pipes'Add.
 
     override async fn LoadContent self: () =
         await base'LoadContent.
@@ -44,13 +64,13 @@ impl FlappyGame as Game
     override fn Update self (gameTime: GameTime): () =
         gameTime base'Update.
 
-        let dt = gameTime'Elapsed'TotalSeconds
+        let dt = gameTime'Elapsed'TotalSeconds toFloat.
 
         # Bird
         |? Keys'Space self'Input'IsKeyPressed. =>
             self'_birdVelocity = self'_jumpPower
         self'_birdVelocity += self'_gravity * dt
-        self'_birdPos'Y += (self'_birdVelocity * dt) toSingle.
+        self'_birdPos'Y += self'_birdVelocity * dt
 
     override fn Draw self (gameTime: GameTime): () =
         gameTime base'Draw.
