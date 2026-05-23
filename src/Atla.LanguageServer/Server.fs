@@ -606,10 +606,10 @@ type Server
                         [ Atla.Core.Semantics.Data.Diagnostic.Error(sprintf "Compiler internal error: %s" ex.Message, Span.Empty) ]
                         |> toLspDiagnostics "atla-lsp"
 
-                    publish displayUri fallback
+                    try publish displayUri fallback with _ -> ()
         elif isAvailablePublishDiagnostics then
             if isLatestRevision () then
-                publish displayUri []
+                try publish displayUri [] with _ -> ()
 
     /// 指定 key のドキュメントに関連するペンディング CTS をキャンセル・破棄する。
     /// この関数はメインスレッドからのみ呼ばれるため、pendingCancellations への追加のロックは不要。
