@@ -265,6 +265,8 @@ module Ast =
         type CompoundAssignOp =
             | Add
             | Sub
+            | Mul
+            | Div
 
         type CompoundAssign(op: CompoundAssignOp, target: Expr, value: Expr, span: Span) =
             member this.op = op
