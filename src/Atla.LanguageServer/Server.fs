@@ -439,7 +439,7 @@ type Server
                     text
                 else
                     File.ReadAllText(path)
-            { moduleName = toModuleName path; source = moduleText })
+            { moduleName = toModuleName path; source = moduleText; filePath = Some (Path.GetRelativePath(projectRoot, path)) })
 
     let inferSingleDocumentModuleName (normalizedUri: string) : string =
         normalizedUri
@@ -475,7 +475,7 @@ type Server
             // Windows では normalizedPath がキー正規化で小文字化されているため使用できない。
             let moduleName = inferSingleDocumentModuleName displayPath
             { asmName = asmName
-              modules = [ { moduleName = moduleName; source = text } ]
+              modules = [ { moduleName = moduleName; source = text; filePath = None } ]
               entryModuleName = moduleName
               outDir = outputDir
               dependencies = dependencies }
@@ -568,7 +568,7 @@ type Server
                                 let entryModuleName = inferSingleDocumentModuleName displayPath
                                 compile {
                                     asmName = asmName
-                                    modules = [ { moduleName = entryModuleName; source = text } ]
+                                    modules = [ { moduleName = entryModuleName; source = text; filePath = None } ]
                                     entryModuleName = entryModuleName
                                     outDir = outputDir
                                     dependencies = dependencies
@@ -576,7 +576,7 @@ type Server
                         | None ->
                             compile {
                                 asmName = asmName
-                                modules = [ { moduleName = "main"; source = text } ]
+                                modules = [ { moduleName = "main"; source = text; filePath = None } ]
                                 entryModuleName = "main"
                                 outDir = outputDir
                                 dependencies = dependencies

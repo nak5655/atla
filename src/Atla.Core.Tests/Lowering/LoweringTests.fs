@@ -17,7 +17,7 @@ module LoweringTests =
     let private compileSingle (request: SingleCompileRequest) : Compiler.CompileResult =
         Compiler.compileModules {
             asmName = request.asmName
-            modules = [ { moduleName = "main"; source = request.source } ]
+            modules = [ { moduleName = "main"; source = request.source; filePath = None } ]
             entryModuleName = "main"
             outDir = request.outDir
             dependencies = request.dependencies
@@ -841,9 +841,9 @@ fn main: () = do
             Compiler.compileModules {
                 asmName = "ImportModulePriority"
                 modules =
-                    [ { moduleName = "main"; source = mainSource }
-                      { moduleName = "Foo.Bar"; source = fooBarSource }
-                      { moduleName = "Foo"; source = fooSource } ]
+                    [ { moduleName = "main"; source = mainSource; filePath = None }
+                      { moduleName = "Foo.Bar"; source = fooBarSource; filePath = None }
+                      { moduleName = "Foo"; source = fooSource; filePath = None } ]
                 entryModuleName = "main"
                 outDir = outDir
                 dependencies = []
@@ -864,8 +864,8 @@ fn main: () = do
             Compiler.compileModules {
                 asmName = "ImportTypeFallback"
                 modules =
-                    [ { moduleName = "main"; source = mainSource }
-                      { moduleName = "Foo"; source = fooSource } ]
+                    [ { moduleName = "main"; source = mainSource; filePath = None }
+                      { moduleName = "Foo"; source = fooSource; filePath = None } ]
                 entryModuleName = "main"
                 outDir = outDir
                 dependencies = []
@@ -886,8 +886,8 @@ fn main: () = do
             Compiler.compileModules {
                 asmName = "ImportSubPersonDataInit"
                 modules =
-                    [ { moduleName = "main"; source = mainSource }
-                      { moduleName = "sub"; source = subSource } ]
+                    [ { moduleName = "main"; source = mainSource; filePath = None }
+                      { moduleName = "sub"; source = subSource; filePath = None } ]
                 entryModuleName = "main"
                 outDir = outDir
                 dependencies = []
@@ -913,8 +913,8 @@ fn main: () = do
             Compiler.compileModules {
                 asmName = "ImportSubPersonMethodCall"
                 modules =
-                    [ { moduleName = "main"; source = mainSource }
-                      { moduleName = "sub"; source = subSource } ]
+                    [ { moduleName = "main"; source = mainSource; filePath = None }
+                      { moduleName = "sub"; source = subSource; filePath = None } ]
                 entryModuleName = "main"
                 outDir = outDir
                 dependencies = []
@@ -1226,8 +1226,8 @@ impl Color
             Compiler.compileModules {
                 asmName = "ImportEnumMethodCall"
                 modules =
-                    [ { moduleName = "main"; source = mainSource.Trim() }
-                      { moduleName = "sub"; source = subSource.Trim() } ]
+                    [ { moduleName = "main"; source = mainSource.Trim(); filePath = None }
+                      { moduleName = "sub"; source = subSource.Trim(); filePath = None } ]
                 entryModuleName = "main"
                 outDir = outDir
                 dependencies = []

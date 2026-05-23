@@ -11,4 +11,4 @@ type Position =
         else { this with Column = this.Column + 1 }
 
     override this.ToString (): string =
-        sprintf "%d:%d" this.Line this.Column
+        sprintf "%d:%d" (this.Line + 1) (this.Column + 1)

@@ -21,7 +21,10 @@ module Compiler =
 
     type ModuleSource =
         { moduleName: string
-          source: string }
+          source: string
+          /// ソースファイルの表示用パス（エラーメッセージに使用）。
+          /// 省略時はモジュール名を代わりに使用する。
+          filePath: string option }
 
     type CompileModulesRequest =
         { asmName: string
@@ -77,7 +80,8 @@ module Compiler =
           moduleAsts  = moduleAsts }
 
     /// 1 モジュール分のソース文字列を AST へ解析する。
-    let private parseModuleSource (moduleName: string) (source: string) : Result<Ast.Module, Diagnostic list> =
+    let private parseModuleSource (moduleName: string) (filePath: string option) (source: string) : Result<Ast.Module, Diagnostic list> =
+        let sourceLabel = filePath |> Option.defaultValue moduleName
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
         | Success (tokens, _) ->
@@ -85,9 +89,9 @@ module Compiler =
             let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
             match Parser.fileModule tokenInput start with
             | Success (moduleAst, _) -> Ok moduleAst
-            | Failure (reason, span) -> Result.Error [ Diagnostic.Error($"Parsing failed in module '{moduleName}': {reason}", span) ]
+            | Failure (reason, span) -> Result.Error [ Diagnostic.Error($"{sourceLabel}: {reason}", span) ]
         | Failure (reason, span) ->
-            Result.Error [ Diagnostic.Error($"Lexing failed in module '{moduleName}': {reason}", span) ]
+            Result.Error [ Diagnostic.Error($"{sourceLabel}: {reason}", span) ]
 
     /// import 依存グラフを DFS で辿り、エントリモジュールから必要なモジュールのトポロジカル順序を返す。
     let private topoSortModulesFromEntry
@@ -255,6 +259,11 @@ module Compiler =
                 // 各モジュールのソースを AST へ解析する。
                 // Std などの標準ライブラリは依存関係（atlalib）として供給され、
                 // 埋め込みソースの自動注入は行わない。
+                let moduleFilePaths =
+                    request.modules
+                    |> List.choose (fun m -> m.filePath |> Option.map (fun fp -> m.moduleName, fp))
+                    |> Map.ofList
+
                 let parsedModulesResult =
                     request.modules
                     |> List.fold
@@ -262,7 +271,7 @@ module Compiler =
                             match state with
                             | Result.Error diagnostics -> Result.Error diagnostics
                             | Ok modules ->
-                                match parseModuleSource moduleSource.moduleName moduleSource.source with
+                                match parseModuleSource moduleSource.moduleName moduleSource.filePath moduleSource.source with
                                 | Ok moduleAst -> Ok(Map.add moduleSource.moduleName moduleAst modules)
                                 | Result.Error diagnostics -> Result.Error diagnostics)
                         (Ok Map.empty)
@@ -353,6 +362,9 @@ module Compiler =
                                             dependencyIndex.typeDefsByFullName
                                         )
 
+                                    let sourceLabel = Map.tryFind moduleName moduleFilePaths |> Option.defaultValue moduleName
+                                    let taggedDiagnostics = analyzeResult.diagnostics |> List.map (fun d -> d.WithSource(sourceLabel))
+
                                     match analyzeResult.value with
                                     | Some hirModule ->
                                         let ownExports = collectModuleExports symbolTable hirModule
@@ -371,9 +383,9 @@ module Compiler =
                                             |> Map.ofList
                                         let finalExports =
                                             Map.fold (fun acc k v -> Map.add k v acc) ownExports reExportedTypes
-                                        hirModules @ [ hirModule ], Map.add moduleName finalExports moduleExports, diagnostics @ analyzeResult.diagnostics
+                                        hirModules @ [ hirModule ], Map.add moduleName finalExports moduleExports, diagnostics @ taggedDiagnostics
                                     | None ->
-                                        hirModules, moduleExports, diagnostics @ analyzeResult.diagnostics
+                                        hirModules, moduleExports, diagnostics @ taggedDiagnostics
 
                                 let hirModules, _, allDiagnostics =
                                     orderedModuleNames
