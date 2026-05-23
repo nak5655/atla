@@ -547,6 +547,7 @@ module ExprAnalyze =
                 | SymbolKind.External(ExternalBinding.ConstructorGroup ctorInfos) -> Some (Hir.Callable.NativeConstructorGroup ctorInfos)
                 | SymbolKind.BuiltinOperator op -> Some (Hir.Callable.BuiltinOperator op)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.Array -> Some (Hir.Callable.BuiltinArray)
+                | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.List -> Some (Hir.Callable.BuiltinList)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToFloat -> Some (Hir.Callable.BuiltinConvert TypeId.Float)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToDouble -> Some (Hir.Callable.BuiltinConvert TypeId.Double)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToInt -> Some (Hir.Callable.BuiltinConvert TypeId.Int)
@@ -1225,6 +1226,8 @@ module ExprAnalyze =
                                 None
                     | Hir.Callable.BuiltinArray ->
                         Some (Hir.Callable.BuiltinArray, typeEnv.resolveType callRetType)
+                    | Hir.Callable.BuiltinList ->
+                        Some (Hir.Callable.BuiltinList, typeEnv.resolveType callRetType)
                     | Hir.Callable.BuiltinConvert targetTid ->
                         // 変換組込関数: 引数1個・戻り型は変換先の数値型。
                         if allArgs.Length = 1 then Some (resolvedCallable, targetTid)

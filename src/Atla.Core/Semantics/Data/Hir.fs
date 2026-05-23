@@ -15,6 +15,8 @@ module Hir =
         | DataConstructor of typeSid: SymbolId * fieldSids: SymbolId list
         | BuiltinOperator of Builtins.Operators
         | BuiltinArray
+        /// 空の List<T> を構築する組込呼び出し（`List.`）。要素型は Call ノードの tid に保持される。
+        | BuiltinList
         /// 数値型変換組込関数（toFloat/toDouble/toInt）。target は変換先の数値型。
         | BuiltinConvert of target: TypeId
         | NativeMethod of MethodInfo

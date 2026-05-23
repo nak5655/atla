@@ -152,6 +152,10 @@ module Mir =
         /// `base'X` 由来の非仮想呼び出し（戻り値あり）。Gen で `OpCodes.Call` として発行する。
         | CallAssignBase of dst: Reg * method: MethodInfo * args: Value list
         | New of dst: Reg * ctor: ConstructorInfo * args: Value list
+        /// `typ`（閉じたジェネリックネイティブ型、例: List<Vector2>）を Gen で resolveType して具体型へ解決し、
+        /// 引数個数の一致するコンストラクタを `newobj` する。要素型に `TypeId.Name`（import 型）を含む場合でも
+        /// Gen の resolveName 経由で解決できるため、Layout で ConstructorInfo を確定できないケースに用いる。
+        | NewGenericNative of dst: Reg * typ: TypeId * args: Value list
         | NewArr of dst: Reg * elemType: System.Type * values: Value list
         /// 数値型変換（toFloat/toDouble/toInt）。src を target 数値型へ変換して dst へ格納する。
         /// Gen で conv.r4/conv.r8/conv.i4 等を発行する。
@@ -198,6 +202,7 @@ module Mir =
             | CallBase(method, args) -> sprintf "call_base %A(%s)" method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | CallAssignBase(dst, method, args) -> sprintf "%A = base.%A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | New(dst, ctor, args) -> sprintf "%A = %A(%s)" dst ctor (String.Join(", ", args |> List.map (fun a -> a.ToString())))
+            | NewGenericNative(dst, typ, args) -> sprintf "%A = new %A(%s)" dst typ (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | NewArr(dst, elemType, values) -> sprintf "%A = new %s[]{%s}" dst elemType.Name (String.Join(", ", values |> List.map (fun v -> v.ToString())))
             | Convert(dst, src, target) -> sprintf "%A = (%s)%s" dst target.Name (src.ToString())
             | StoreNativeField(receiver, field, value) -> sprintf "%s.%s = %s" (receiver.ToString()) field.Name (value.ToString())
