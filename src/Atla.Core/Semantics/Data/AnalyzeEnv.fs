@@ -89,6 +89,12 @@ module AnalyzeEnv =
                     | Some message, _ -> TypeId.Error message
                     | None, [elemType] -> TypeId.App(TypeId.Native typeof<System.Array>, [ elemType ])
                     | None, _ -> TypeId.Error("Array type expects exactly one type argument")
+                | :? Ast.TypeExpr.Id as headId when headId.name = "List" ->
+                    let resolvedArgs, firstArgError = resolveArgs ()
+                    match firstArgError, resolvedArgs with
+                    | Some message, _ -> TypeId.Error message
+                    | None, [elemType] -> TypeId.App(TypeId.Native typedefof<System.Collections.Generic.List<_>>, [ elemType ])
+                    | None, _ -> TypeId.Error("List type expects exactly one type argument")
                 | _ ->
                     let resolvedHead = this.resolveTypeExpr applyTypeExpr.head
                     let resolvedArgs, firstArgError = resolveArgs ()

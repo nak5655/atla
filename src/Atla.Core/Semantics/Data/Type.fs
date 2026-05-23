@@ -117,6 +117,16 @@ module TypeId =
         | App (Native t, [ elem ]) when t = typeof<System.Array> ->
             tryToRuntimeSystemType elem
             |> Option.map (fun elementType -> elementType.MakeArrayType())
+        | App (Native head, args) when head.IsGenericTypeDefinition ->
+            args
+            |> List.map tryToRuntimeSystemType
+            |> List.fold (fun acc opt ->
+                match acc, opt with
+                | Some xs, Some x -> Some (xs @ [ x ])
+                | _ -> None) (Some [])
+            |> Option.bind (fun argTypes ->
+                try Some (head.MakeGenericType(List.toArray argTypes))
+                with _ -> None)
         | App _ -> None
         | Native t -> Some t
         // TypeId.Fn は対応するデリゲート型（Func<>/Action<>）へ変換する。
