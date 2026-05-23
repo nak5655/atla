@@ -14,6 +14,7 @@ module Mir =
         | Bool of bool
         | Int of int
         | Float of float
+        | Single of float32
         | String of string
         | Null
         /// Nullable<T> 型のパラメータに対するデフォルト値（null nullable）。
@@ -24,6 +25,7 @@ module Mir =
             | Bool v -> sprintf "Bool(%b)" v
             | Int v -> sprintf "Int(%d)" v
             | Float v -> sprintf "Float(%f)" v
+            | Single v -> sprintf "Single(%f)" v
             | String s -> sprintf "String(%s)" s
             | Null -> "Null"
             | NullableDefault t -> sprintf "NullableDefault(%s)" t.FullName
@@ -149,6 +151,15 @@ module Mir =
         | CallAssignBase of dst: Reg * method: MethodInfo * args: Value list
         | New of dst: Reg * ctor: ConstructorInfo * args: Value list
         | NewArr of dst: Reg * elemType: System.Type * values: Value list
+        /// 数値型変換（toSingle/toFloat/toInt）。src を target 数値型へ変換して dst へ格納する。
+        /// Gen で conv.r4/conv.r8/conv.i4 等を発行する。
+        | Convert of dst: Reg * src: Value * target: System.Type
+        /// ネイティブ（.NET）フィールドへの書き込み（`stfld`）。
+        /// receiver はオブジェクト参照（class）または構造体へのマネージドポインタ（struct のアドレス）。
+        | StoreNativeField of receiver: Value * field: FieldInfo * value: Value
+        /// ネイティブ（.NET）インスタンスフィールドの読み出し（`ldfld`）。
+        /// instance はオブジェクト参照・マネージドポインタ・値型インスタンスのいずれでもよい。
+        | LoadNativeField of dst: Reg * instance: Value * field: FieldInfo
         // env-class インスタンスを新規生成する（デフォルトコンストラクタ使用。typeSid で型を SymbolId 解決する）。
         | NewEnv of dst: Reg * typeSid: SymbolId
         // env-class インスタンスのフィールドへ値を書き込む（typeSid・fieldSid で解決）。
@@ -186,6 +197,9 @@ module Mir =
             | CallAssignBase(dst, method, args) -> sprintf "%A = base.%A(%s)" dst method (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | New(dst, ctor, args) -> sprintf "%A = %A(%s)" dst ctor (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | NewArr(dst, elemType, values) -> sprintf "%A = new %s[]{%s}" dst elemType.Name (String.Join(", ", values |> List.map (fun v -> v.ToString())))
+            | Convert(dst, src, target) -> sprintf "%A = (%s)%s" dst target.Name (src.ToString())
+            | StoreNativeField(receiver, field, value) -> sprintf "%s.%s = %s" (receiver.ToString()) field.Name (value.ToString())
+            | LoadNativeField(dst, instance, field) -> sprintf "%A = %s.%s" dst (instance.ToString()) field.Name
             | NewEnv(dst, typeSid) -> sprintf "%A = new_env(typeSid=%d)" dst typeSid.id
             | StoreEnvField(inst, typeSid, fieldSid, value) -> sprintf "%A.field_%d(typeSid=%d) = %s" inst fieldSid.id typeSid.id (value.ToString())
             | LoadEnvField(dst, inst, typeSid, fieldSid) -> sprintf "%A = %A.field_%d(typeSid=%d)" dst inst fieldSid.id typeSid.id

@@ -15,3 +15,6 @@ module Builtins =
 
     type BuiltinFunctions =
         | Array
+        | ToSingle
+        | ToFloat
+        | ToInt

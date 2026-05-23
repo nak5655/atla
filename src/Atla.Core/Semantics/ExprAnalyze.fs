@@ -76,6 +76,7 @@ module ExprAnalyze =
         | TypeId.Bool -> "bool"
         | TypeId.Int -> "int"
         | TypeId.Float -> "float"
+        | TypeId.Single -> "single"
         | TypeId.String -> "string"
         | TypeId.Native t -> t.FullName
         | TypeId.Fn (args, ret) ->
@@ -546,6 +547,9 @@ module ExprAnalyze =
                 | SymbolKind.External(ExternalBinding.ConstructorGroup ctorInfos) -> Some (Hir.Callable.NativeConstructorGroup ctorInfos)
                 | SymbolKind.BuiltinOperator op -> Some (Hir.Callable.BuiltinOperator op)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.Array -> Some (Hir.Callable.BuiltinArray)
+                | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToSingle -> Some (Hir.Callable.BuiltinConvert TypeId.Single)
+                | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToFloat -> Some (Hir.Callable.BuiltinConvert TypeId.Float)
+                | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToInt -> Some (Hir.Callable.BuiltinConvert TypeId.Int)
                 | SymbolKind.Local ()
                 | SymbolKind.Arg () ->
                     match typeEnv.resolveType symInfo.typ with
@@ -1217,6 +1221,10 @@ module ExprAnalyze =
                                 None
                     | Hir.Callable.BuiltinArray ->
                         Some (Hir.Callable.BuiltinArray, typeEnv.resolveType callRetType)
+                    | Hir.Callable.BuiltinConvert targetTid ->
+                        // 変換組込関数: 引数1個・戻り型は変換先の数値型。
+                        if allArgs.Length = 1 then Some (resolvedCallable, targetTid)
+                        else None
                     | _ -> Some (resolvedCallable, typeEnv.resolveType callRetType)
 
                 match resolvedCall with
@@ -2044,72 +2052,98 @@ module ExprAnalyze =
                     let message = sprintf "Ambiguous variable '%s'" idTarget.name
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
             | :? Ast.Expr.MemberAccess as memberTarget ->
-                let receiverExpr = analyzeExpr nameEnv typeEnv memberTarget.receiver (typeEnv.freshMeta ())
-                match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverExpr.typ with
-                | None ->
-                    let message = "Event compound assignment requires a native receiver type"
-                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
-                | Some receiverType ->
-                    let flags = BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic
-                    match receiverType.GetEvent(memberTarget.memberName, flags) with
-                    | null ->
-                        // イベントでない場合、プロパティへの複合代入を試みる（例: string プロパティの += 連結）。
-                        match receiverType.GetProperty(memberTarget.memberName, flags) with
+                let analyzedTarget = analyzeExpr nameEnv typeEnv memberTarget (typeEnv.freshMeta ())
+                match analyzedTarget with
+                | Hir.Expr.MemberAccess (Hir.Member.DataField (typeSid, fieldSid), Some instanceExpr, fieldTid, _) ->
+                    // ユーザー定義データ型フィールドへの複合代入を `field = field op rhs` 相当に lower する。
+                    let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value fieldTid
+                    let opExpr =
+                        Hir.Expr.Call(
+                            Hir.Callable.BuiltinOperator(match compoundAssignStmt.op with | Ast.Stmt.CompoundAssignOp.Add -> Builtins.Operators.OpAdd | Ast.Stmt.CompoundAssignOp.Sub -> Builtins.Operators.OpSub | Ast.Stmt.CompoundAssignOp.Mul -> Builtins.Operators.OpMul | Ast.Stmt.CompoundAssignOp.Div -> Builtins.Operators.OpDiv),
+                            None,
+                            [ analyzedTarget; rhs ],
+                            fieldTid,
+                            compoundAssignStmt.span)
+                    Hir.Stmt.StoreField(instanceExpr, typeSid, fieldSid, opExpr, compoundAssignStmt.span)
+                | Hir.Expr.MemberAccess (Hir.Member.NativeField fieldInfo, Some fieldReceiver, fieldTid, _) ->
+                    // ネイティブ（.NET）フィールドへの複合代入を `field = field op rhs` 相当に lower する。
+                    // 値型（struct）フィールドは Layout でアドレス経由の read-modify-write に下る。
+                    let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value fieldTid
+                    let opExpr =
+                        Hir.Expr.Call(
+                            Hir.Callable.BuiltinOperator(match compoundAssignStmt.op with | Ast.Stmt.CompoundAssignOp.Add -> Builtins.Operators.OpAdd | Ast.Stmt.CompoundAssignOp.Sub -> Builtins.Operators.OpSub | Ast.Stmt.CompoundAssignOp.Mul -> Builtins.Operators.OpMul | Ast.Stmt.CompoundAssignOp.Div -> Builtins.Operators.OpDiv),
+                            None,
+                            [ analyzedTarget; rhs ],
+                            fieldTid,
+                            compoundAssignStmt.span)
+                    Hir.Stmt.StoreNativeField(fieldReceiver, fieldInfo, opExpr, compoundAssignStmt.span)
+                | _ ->
+                    let receiverExpr = analyzeExpr nameEnv typeEnv memberTarget.receiver (typeEnv.freshMeta ())
+                    match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv receiverExpr.typ with
+                    | None ->
+                        let message = "Event compound assignment requires a native receiver type"
+                        Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+                    | Some receiverType ->
+                        let flags = BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic
+                        match receiverType.GetEvent(memberTarget.memberName, flags) with
                         | null ->
-                            let message = sprintf "Member '%s' does not support compound assignment" memberTarget.memberName
-                            Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
-                        | propInfo ->
-                            let getter = propInfo.GetGetMethod(true)
-                            let setter = propInfo.GetSetMethod(true)
-                            if isNull getter || isNull setter then
-                                let message = sprintf "Property '%s' must have both getter and setter for compound assignment" propInfo.Name
+                            // イベントでない場合、プロパティへの複合代入を試みる（例: string プロパティの += 連結）。
+                            match receiverType.GetProperty(memberTarget.memberName, flags) with
+                            | null ->
+                                let message = sprintf "Member '%s' does not support compound assignment" memberTarget.memberName
                                 Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
-                            else
-                                let propTid = TypeId.fromSystemType propInfo.PropertyType
-                                let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value propTid
-                                // 現在の値を getter で取得し、rhs と合成して setter で書き戻す。
-                                let currentVal =
-                                    Hir.Expr.Call(Hir.Callable.NativeMethod getter, Some receiverExpr, [], propTid, compoundAssignStmt.span)
-                                // += の場合: String.Concat で連結する（String プロパティを想定）。
-                                let newVal =
-                                    match compoundAssignStmt.op with
-                                    | Ast.Stmt.CompoundAssignOp.Add ->
-                                        let concatMethod = typeof<string>.GetMethod("Concat", [| typeof<string>; typeof<string> |])
-                                        if not (isNull concatMethod) && propInfo.PropertyType = typeof<string> then
-                                            Hir.Expr.Call(Hir.Callable.NativeMethod concatMethod, None, [ currentVal; rhs ], propTid, compoundAssignStmt.span)
-                                        else
-                                            Hir.Expr.ExprError(sprintf "Unsupported += on property type %s" propInfo.PropertyType.Name, TypeId.Error "unsupported", compoundAssignStmt.span)
-                                    | Ast.Stmt.CompoundAssignOp.Sub ->
-                                        Hir.Expr.ExprError("Compound -= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
-                                    | Ast.Stmt.CompoundAssignOp.Mul ->
-                                       Hir.Expr.ExprError("Compound *= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
-                                    | Ast.Stmt.CompoundAssignOp.Div ->
-                                       Hir.Expr.ExprError("Compound /= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
-                                let callExpr =
-                                    Hir.Expr.Call(Hir.Callable.NativeMethod setter, Some receiverExpr, [ newVal ], TypeId.Unit, compoundAssignStmt.span)
-                                Hir.Stmt.ExprStmt(callExpr, compoundAssignStmt.span)
-                    | eventInfo ->
-                        let accessorOpt =
-                            match compoundAssignStmt.op with
-                            | Ast.Stmt.CompoundAssignOp.Add -> Option.ofObj (eventInfo.GetAddMethod(true))
-                            | Ast.Stmt.CompoundAssignOp.Sub -> Option.ofObj (eventInfo.GetRemoveMethod(true))
-                            | Ast.Stmt.CompoundAssignOp.Mul | Ast.Stmt.CompoundAssignOp.Div -> None
+                            | propInfo ->
+                                let getter = propInfo.GetGetMethod(true)
+                                let setter = propInfo.GetSetMethod(true)
+                                if isNull getter || isNull setter then
+                                    let message = sprintf "Property '%s' must have both getter and setter for compound assignment" propInfo.Name
+                                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+                                else
+                                    let propTid = TypeId.fromSystemType propInfo.PropertyType
+                                    let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value propTid
+                                    // 現在の値を getter で取得し、rhs と合成して setter で書き戻す。
+                                    let currentVal =
+                                        Hir.Expr.Call(Hir.Callable.NativeMethod getter, Some receiverExpr, [], propTid, compoundAssignStmt.span)
+                                    // += の場合: String.Concat で連結する（String プロパティを想定）。
+                                    let newVal =
+                                        match compoundAssignStmt.op with
+                                        | Ast.Stmt.CompoundAssignOp.Add ->
+                                            let concatMethod = typeof<string>.GetMethod("Concat", [| typeof<string>; typeof<string> |])
+                                            if not (isNull concatMethod) && propInfo.PropertyType = typeof<string> then
+                                                Hir.Expr.Call(Hir.Callable.NativeMethod concatMethod, None, [ currentVal; rhs ], propTid, compoundAssignStmt.span)
+                                            else
+                                                Hir.Expr.ExprError(sprintf "Unsupported += on property type %s" propInfo.PropertyType.Name, TypeId.Error "unsupported", compoundAssignStmt.span)
+                                        | Ast.Stmt.CompoundAssignOp.Sub ->
+                                            Hir.Expr.ExprError("Compound -= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
+                                        | Ast.Stmt.CompoundAssignOp.Mul ->
+                                           Hir.Expr.ExprError("Compound *= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
+                                        | Ast.Stmt.CompoundAssignOp.Div ->
+                                           Hir.Expr.ExprError("Compound /= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
+                                    let callExpr =
+                                        Hir.Expr.Call(Hir.Callable.NativeMethod setter, Some receiverExpr, [ newVal ], TypeId.Unit, compoundAssignStmt.span)
+                                    Hir.Stmt.ExprStmt(callExpr, compoundAssignStmt.span)
+                        | eventInfo ->
+                            let accessorOpt =
+                                match compoundAssignStmt.op with
+                                | Ast.Stmt.CompoundAssignOp.Add -> Option.ofObj (eventInfo.GetAddMethod(true))
+                                | Ast.Stmt.CompoundAssignOp.Sub -> Option.ofObj (eventInfo.GetRemoveMethod(true))
+                                | Ast.Stmt.CompoundAssignOp.Mul | Ast.Stmt.CompoundAssignOp.Div -> None
 
-                        match accessorOpt with
-                        | None ->
-                            let message = sprintf "Event '%s' does not have a required accessor" eventInfo.Name
-                            Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
-                        | Some accessor ->
-                            let handlerType = TypeId.fromSystemType eventInfo.EventHandlerType
-                            let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value handlerType
-                            let callExpr =
-                                Hir.Expr.Call(
-                                    Hir.Callable.NativeMethod accessor,
-                                    Some receiverExpr,
-                                    [ rhs ],
-                                    TypeId.Unit,
-                                    compoundAssignStmt.span)
-                            Hir.Stmt.ExprStmt(callExpr, compoundAssignStmt.span)
+                            match accessorOpt with
+                            | None ->
+                                let message = sprintf "Event '%s' does not have a required accessor" eventInfo.Name
+                                Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+                            | Some accessor ->
+                                let handlerType = TypeId.fromSystemType eventInfo.EventHandlerType
+                                let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value handlerType
+                                let callExpr =
+                                    Hir.Expr.Call(
+                                        Hir.Callable.NativeMethod accessor,
+                                        Some receiverExpr,
+                                        [ rhs ],
+                                        TypeId.Unit,
+                                        compoundAssignStmt.span)
+                                Hir.Stmt.ExprStmt(callExpr, compoundAssignStmt.span)
             | _ ->
                 let message = "Invalid assignment target"
                 Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
@@ -2151,8 +2185,13 @@ module ExprAnalyze =
                                 TypeId.Unit,
                                 assignStmt.span)
                         Hir.Stmt.ExprStmt(callExpr, assignStmt.span)
-                | Hir.Expr.MemberAccess (Hir.Member.NativeField fieldInfo, _, _, _) ->
-                    let message = sprintf "Field assignment is not supported for member '%s'" fieldInfo.Name
+                | Hir.Expr.MemberAccess (Hir.Member.NativeField fieldInfo, Some fieldReceiver, fieldTid, _) ->
+                    // ネイティブ（.NET）フィールドへの代入を StoreNativeField に lower する。
+                    // 値型（struct）フィールドは Layout でアドレス経由の書き込みに下る。
+                    let rhs = analyzeExpr nameEnv typeEnv assignStmt.value fieldTid
+                    Hir.Stmt.StoreNativeField(fieldReceiver, fieldInfo, rhs, assignStmt.span)
+                | Hir.Expr.MemberAccess (Hir.Member.NativeField fieldInfo, None, _, _) ->
+                    let message = sprintf "Field assignment requires an instance receiver for member '%s'" fieldInfo.Name
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.DataField (typeSid, fieldSid), Some instanceExpr, fieldTid, _) ->
                     // データ型フィールドへの代入を StoreField に lower する。

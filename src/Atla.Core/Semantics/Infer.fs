@@ -48,6 +48,8 @@ module Infer =
             Hir.Stmt.Assign(sid, inferExpr typeSubst value, span)
         | Hir.Stmt.StoreField (instanceExpr, typeSid, fieldSid, value, span) ->
             Hir.Stmt.StoreField(inferExpr typeSubst instanceExpr, typeSid, fieldSid, inferExpr typeSubst value, span)
+        | Hir.Stmt.StoreNativeField (receiver, field, value, span) ->
+            Hir.Stmt.StoreNativeField(inferExpr typeSubst receiver, field, inferExpr typeSubst value, span)
         | Hir.Stmt.ExprStmt (expr, span) ->
             Hir.Stmt.ExprStmt(inferExpr typeSubst expr, span)
         | Hir.Stmt.For (sid, tid, iterable, body, span) ->

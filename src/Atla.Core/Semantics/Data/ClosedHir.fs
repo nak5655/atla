@@ -94,6 +94,8 @@ module ClosedHir =
         | Let of sid: SymbolId * isMutable: bool * value: Expr * span: Span
         | Assign of sid: SymbolId * value: Expr * span: Span
         | StoreField of instanceExpr: Expr * typeSid: SymbolId * fieldSid: SymbolId * value: Expr * span: Span
+        /// ネイティブ（.NET）フィールドへの書き込み。`Hir.Stmt.StoreNativeField` と同構造。
+        | StoreNativeField of receiver: Expr * field: FieldInfo * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
         | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
         | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
@@ -204,6 +206,8 @@ module ClosedHir =
         | Assign (sid, value, span) -> Assign(sid, mapExpr f value, span)
         | StoreField (instanceExpr, typeSid, fieldSid, value, span) ->
             StoreField(mapExpr f instanceExpr, typeSid, fieldSid, mapExpr f value, span)
+        | StoreNativeField (receiver, field, value, span) ->
+            StoreNativeField(mapExpr f receiver, field, mapExpr f value, span)
         | ExprStmt (expr, span) -> ExprStmt(mapExpr f expr, span)
         | For (sid, tid, iterable, body, span) ->
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
@@ -253,6 +257,8 @@ module ClosedHir =
         | ExprStmt (value, _) -> foldExpr f acc value
         | StoreField (instanceExpr, _, _, value, _) ->
             foldExpr f (foldExpr f acc instanceExpr) value
+        | StoreNativeField (receiver, _, value, _) ->
+            foldExpr f (foldExpr f acc receiver) value
         | For (_, _, iterable, body, _) ->
             let acc' = foldExpr f acc iterable
             body |> List.fold (foldStmt f) acc'
@@ -344,6 +350,10 @@ module ClosedHir =
         | StoreField (instanceExpr, _, _, value, _) ->
             merge
                 (foldExprWithCtx descend afterStmt leaf merge zero ctx instanceExpr)
+                (foldExprWithCtx descend afterStmt leaf merge zero ctx value)
+        | StoreNativeField (receiver, _, value, _) ->
+            merge
+                (foldExprWithCtx descend afterStmt leaf merge zero ctx receiver)
                 (foldExprWithCtx descend afterStmt leaf merge zero ctx value)
         | For (sid, _, iterable, body, span) ->
             let iterAcc = foldExprWithCtx descend afterStmt leaf merge zero ctx iterable

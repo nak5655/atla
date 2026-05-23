@@ -112,7 +112,24 @@ module Layout =
                     Ok ({ state with frame = newFrame }, { ins = []; res = Some(Mir.Value.RegVal argReg) })
         | ClosedHir.Expr.MemberAccess (mem, instance, tid, span) ->
             match mem with
-            | Hir.Member.NativeField fi -> Ok (state, { ins = []; res = Some(Mir.Value.FieldVal fi) })
+            | Hir.Member.NativeField fi ->
+                if fi.IsStatic then
+                    // 静的フィールド（例: Color'White）は FieldVal（ldsfld）で読む。
+                    Ok (state, { ins = []; res = Some(Mir.Value.FieldVal fi) })
+                else
+                    // インスタンスフィールドはレシーバーを評価して ldfld で読む。
+                    match instance with
+                    | None -> Result.Error (Diagnostic.Error(sprintf "Instance field '%s' access requires a receiver" fi.Name, span))
+                    | Some instanceExpr ->
+                        match layoutExpr state instanceExpr with
+                        | Result.Error e -> Result.Error e
+                        | Ok (state1, instanceKn) ->
+                            match instanceKn.res with
+                            | Some instVal ->
+                                let dst, state2 = declareTemp state1 tid
+                                Ok (state2, { ins = instanceKn.ins @ [ Mir.Ins.LoadNativeField(dst, instVal, fi) ]; res = Some(Mir.Value.RegVal dst) })
+                            | None ->
+                                Result.Error (Diagnostic.Error(sprintf "Instance field '%s' receiver did not produce a value" fi.Name, span))
             | Hir.Member.NativeMethod mi -> Ok (state, { ins = []; res = Some(Mir.Value.MethodVal mi) })
             | Hir.Member.NativeMethodGroup _ ->
                 Result.Error (Diagnostic.Error("First-class native method group value is not supported", span))
@@ -251,6 +268,7 @@ module Layout =
                                     | Some operand ->
                                         let zeroImm =
                                             if tid = TypeId.Float then Mir.Value.ImmVal(Mir.Imm.Float 0.0)
+                                            elif tid = TypeId.Single then Mir.Value.ImmVal(Mir.Imm.Single 0.0f)
                                             else Mir.Value.ImmVal(Mir.Imm.Int 0)
                                         Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.TAC(dst, zeroImm, Mir.OpCode.Sub, operand) ]; res = Some(Mir.Value.RegVal dst) })
                                     | None -> Result.Error (Diagnostic.Error("Missing operand for unary negation", callSpan))
@@ -284,6 +302,14 @@ module Layout =
                                 | Some elemSysType ->
                                     let dst, state3 = declareTemp state2 tid
                                     Ok (state3, { ins = argIns @ [ Mir.Ins.NewArr(dst, elemSysType, argValues) ]; res = Some(Mir.Value.RegVal dst) })
+                            | Hir.Callable.BuiltinConvert targetTid ->
+                                // 数値変換組込関数（toSingle/toFloat/toInt）を Convert 命令へ下す。
+                                match TypeId.tryToRuntimeSystemType targetTid, argValues with
+                                | Some targetSysType, [ srcVal ] ->
+                                    let dst, state3 = declareTemp state2 tid
+                                    Ok (state3, { ins = argIns @ [ Mir.Ins.Convert(dst, srcVal, targetSysType) ]; res = Some(Mir.Value.RegVal dst) })
+                                | None, _ -> Result.Error (Diagnostic.Error("Cannot resolve target type for numeric conversion", callSpan))
+                                | _, _ -> Result.Error (Diagnostic.Error("Numeric conversion expects exactly one argument", callSpan))
                             | Hir.Callable.Fn sid ->
                                 match Mir.Frame.get sid state2.frame with
                                 | Some delegateReg ->
@@ -529,6 +555,25 @@ module Layout =
                         // StoreEnvField は Reg を要求するため、インスタンス値を一時レジスタへ格納する。
                         let instReg, state3 = declareTemp state2 instanceExpr.typ
                         Ok (state3, instKn.ins @ [ Mir.Ins.Assign(instReg, instVal) ] @ valueKn.ins @ [ Mir.Ins.StoreEnvField(instReg, typeSid, fieldSid, valueVal) ])
+        | ClosedHir.Stmt.StoreNativeField (receiverExpr, field, value, span) ->
+            // 値型（struct）レシーバーはアドレス経由で in-place 書き込みする（AddrOf 経路を再利用）。
+            // 参照型（class）レシーバーはオブジェクト参照値をそのまま stfld のレシーバーに使う。
+            let receiverLayout =
+                if field.DeclaringType.IsValueType then
+                    layoutExpr state (ClosedHir.Expr.AddrOf(receiverExpr, TypeId.ByRef receiverExpr.typ, span))
+                else
+                    layoutExpr state receiverExpr
+            match receiverLayout with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, recvKn) ->
+                match layoutExpr state1 value with
+                | Result.Error e -> Result.Error e
+                | Ok (state2, valueKn) ->
+                    match recvKn.res, valueKn.res with
+                    | None, _ -> Result.Error (Diagnostic.Error("StoreNativeField: receiver expression produced no value", span))
+                    | _, None -> Result.Error (Diagnostic.Error("StoreNativeField: value expression produced no value", span))
+                    | Some recvVal, Some valueVal ->
+                        Ok (state2, recvKn.ins @ valueKn.ins @ [ Mir.Ins.StoreNativeField(recvVal, field, valueVal) ])
         | ClosedHir.Stmt.For (sid, tid, iterable, body, span) ->
             match layoutExpr state iterable with
             | Result.Error e -> Result.Error e
@@ -844,6 +889,8 @@ module Layout =
         | ClosedHir.Stmt.ExprStmt (value, _) -> hasLambdaExpr value
         | ClosedHir.Stmt.StoreField (instanceExpr, _, _, value, _) ->
             hasLambdaExpr instanceExpr || hasLambdaExpr value
+        | ClosedHir.Stmt.StoreNativeField (receiver, _, value, _) ->
+            hasLambdaExpr receiver || hasLambdaExpr value
         | ClosedHir.Stmt.For (_, _, iterable, body, _) ->
             hasLambdaExpr iterable || (body |> List.exists hasLambdaStmt)
         | ClosedHir.Stmt.If (cond, thenBody, elseBody, _) ->

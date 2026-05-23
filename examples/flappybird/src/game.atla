@@ -50,7 +50,7 @@ impl FlappyGame as Game
         |? Keys'Space self'Input'IsKeyPressed. =>
             self'_birdVelocity = self'_jumpPower
         self'_birdVelocity += self'_gravity * dt
-        self'_birdPos'Y += self'_birdVelocity * dt
+        self'_birdPos'Y += (self'_birdVelocity * dt) toSingle.
 
     override fn Draw self (gameTime: GameTime): () =
         gameTime base'Draw.
