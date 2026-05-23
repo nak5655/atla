@@ -476,6 +476,22 @@ module Gen =
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        | Mir.Ins.NewGenericNative (dst, typ, args) ->
+            // typ を具体型へ解決する（要素型が import 型 = TypeId.Name でも resolveName で解決される）。
+            let resolvedType = resolveType env typ
+            match resolvedType.GetConstructors() |> Array.tryFind (fun c -> c.GetParameters().Length = args.Length) with
+            | Some ctor ->
+                let ctorParams = ctor.GetParameters()
+                args |> List.iteri (fun i arg ->
+                    genValue env gen arg
+                    if i < ctorParams.Length then
+                        emitNumericCoercionIfNeeded gen ctorParams.[i].ParameterType (getValueStackType frame arg))
+                gen.Emit(OpCodes.Newobj, ctor)
+                match dst with
+                | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+                | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+            | None ->
+                failwithf "No constructor with %d argument(s) for type %s" args.Length resolvedType.FullName
         | Mir.Ins.NewArr (dst, elemType, values) ->
             gen.Emit(OpCodes.Ldc_I4, values.Length)
             gen.Emit(OpCodes.Newarr, elemType)

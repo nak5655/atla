@@ -58,6 +58,13 @@ type SymbolTable() =
                    [],
                    TypeId.TypeVar "T",
                    TypeId.App(TypeId.Native typeof<System.Array>, [ TypeId.TypeVar "T" ]))))
+          // 空の List<T> を構築する組込関数。0 引数呼び出し（`List.`）で、
+          // 戻り型 List<T> の T を呼び出し文脈の期待型から単一化で確定させる。
+          ("List",
+           addBuiltinFn "List" Builtins.BuiltinFunctions.List
+               (TypeId.Fn(
+                   [],
+                   TypeId.App(TypeId.Native typedefof<System.Collections.Generic.List<_>>, [ TypeId.TypeVar "T" ]))))
           // 数値型変換組込関数。同名で複数のソース型を宣言し、引数型でオーバーロード解決する。
           ("toFloat", addBuiltinFn "toFloat" Builtins.BuiltinFunctions.ToFloat (TypeId.Fn([ TypeId.Double ], TypeId.Float)))
           ("toFloat", addBuiltinFn "toFloat" Builtins.BuiltinFunctions.ToFloat (TypeId.Fn([ TypeId.Int ], TypeId.Float)))

@@ -303,6 +303,15 @@ module Layout =
                                 | Some elemSysType ->
                                     let dst, state3 = declareTemp state2 tid
                                     Ok (state3, { ins = argIns @ [ Mir.Ins.NewArr(dst, elemSysType, argValues) ]; res = Some(Mir.Value.RegVal dst) })
+                            | Hir.Callable.BuiltinList ->
+                                // tid は閉じた List<elem>（例: App(Native List<>, [Vector2])）。
+                                // 要素型に import 型（Name）を含み得るため、ctor 解決は Gen の resolveName に委ねる。
+                                match tid with
+                                | TypeId.App(TypeId.Native listDef, [_]) when listDef = typedefof<System.Collections.Generic.List<_>> ->
+                                    let dst, state3 = declareTemp state2 tid
+                                    Ok (state3, { ins = argIns @ [ Mir.Ins.NewGenericNative(dst, tid, argValues) ]; res = Some(Mir.Value.RegVal dst) })
+                                | _ ->
+                                    Result.Error(Diagnostic.Error("Cannot resolve element type for 'List' builtin", callSpan))
                             | Hir.Callable.BuiltinConvert targetTid ->
                                 // 数値変換組込関数（toFloat/toDouble/toInt）を Convert 命令へ下す。
                                 match TypeId.tryToRuntimeSystemType targetTid, argValues with

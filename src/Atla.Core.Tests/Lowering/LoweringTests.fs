@@ -59,6 +59,51 @@ fn main: () = do
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
         Assert.Equal("Hello, World!", stdout.Trim())
 
+    [<Fact>]
+    let ``List builtin constructs closed generic and runs without TypeLoadException`` () =
+        // import なしで List Int（型位置）と List.（空構築）が使え、
+        // 実行時に閉じた List<int> が構築されることを検証する回帰テスト。
+        // 旧実装は開いたジェネリック List`1 で newobj を発行し TypeLoadException で落ちていた。
+        let program = """
+import System'Console
+
+data Bag = { items: List Int }
+
+fn main: () =
+    let b = Bag { items = List. }
+    1 b'items'Add.
+    2 b'items'Add.
+    3 b'items'Add.
+    b'items'Count Console'WriteLine.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "ListBuiltin"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded)
+
+        let dllPath = Path.Join(outDir, "ListBuiltin.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("3", stdout.Trim())
+
 
 
     [<Fact>]
