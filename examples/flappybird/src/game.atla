@@ -8,12 +8,16 @@ import Stride'Graphics'SpriteBatch
 import Stride'Graphics'Texture
 import Stride'Graphics'PixelFormat
 import System'Threading'Tasks'Task
+import Stride'Input'Keys
 
 data FlappyGame =
     { _spriteBatch: Opt SpriteBatch
     , _whiteTexture: Opt Texture
     , _birdPos: Vector2
-    , _birdSize: Int }
+    , _birdVelocity: Float
+    , _birdSize: Int
+    , _jumpPower: Float
+    , _gravity: Float }
 
 impl FlappyGame as Game
     fn new: FlappyGame =
@@ -21,8 +25,10 @@ impl FlappyGame as Game
             { _spriteBatch = Opt'None
             , _whiteTexture = Opt'None
             , _birdPos = 200 300 Vector2.
-            , _birdSize = 32 }
-
+            , _birdVelocity = 0.0
+            , _birdSize = 32
+            , _jumpPower = 350.0
+            , _gravity = 900.0 }
     override fn Initialize self: () =
         base'Initialize.
 
@@ -37,6 +43,14 @@ impl FlappyGame as Game
 
     override fn Update self (gameTime: GameTime): () =
         gameTime base'Update.
+
+        let dt = gameTime'Elapsed'TotalSeconds
+
+        # Bird
+        |? Keys'Space self'Input'IsKeyPressed. =>
+            self'_birdVelocity = self'_jumpPower
+        self'_birdVelocity += self'_gravity * dt
+        self'_birdPos'Y += self'_birdVelocity * dt
 
     override fn Draw self (gameTime: GameTime): () =
         gameTime base'Draw.
