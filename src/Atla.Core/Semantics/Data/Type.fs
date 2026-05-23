@@ -138,9 +138,25 @@ module TypeId =
             |> Option.map (fun t -> t.MakeByRefType())
         | _ -> None
 
-    let tryResolveToSystemType (resolveName: SymbolId -> System.Type option) (tid: TypeId) : System.Type option =
+    let rec tryResolveToSystemType (resolveName: SymbolId -> System.Type option) (tid: TypeId) : System.Type option =
         match tid with
         | Name sid -> resolveName sid
+        | App (Native t, [ elem ]) when t = typeof<System.Array> ->
+            tryResolveToSystemType resolveName elem
+            |> Option.map (fun elementType -> elementType.MakeArrayType())
+        | App (Native head, args) when head.IsGenericTypeDefinition ->
+            args
+            |> List.map (tryResolveToSystemType resolveName)
+            |> List.fold (fun acc opt ->
+                match acc, opt with
+                | Some xs, Some x -> Some (xs @ [ x ])
+                | _ -> None) (Some [])
+            |> Option.bind (fun argTypes ->
+                try Some (head.MakeGenericType(List.toArray argTypes))
+                with _ -> None)
+        | ByRef inner ->
+            tryResolveToSystemType resolveName inner
+            |> Option.map (fun t -> t.MakeByRefType())
         | _ -> tryToRuntimeSystemType tid
 
 type TypeSubst = Dictionary<TypeMeta, TypeId>
