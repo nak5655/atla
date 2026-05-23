@@ -499,8 +499,9 @@ module Ast =
             /// `override` 修飾子の有無。`impl A as B` 内のメソッドでのみ意味があり、
             /// 他の文脈では Resolve フェーズでエラー扱いされる。
             member this.isOverride = isOverride
-            /// `async` 修飾子の有無。本体内で `await` を使用でき、戻り値型は
-            /// `Task` または `Task T` でなければならない（Analyze フェーズで検査）。
+            /// `async` 修飾子の有無。本体内で `await` を使用できる。戻り値注釈は
+            /// 「本体が返す内側の型」とみなし、Analyze フェーズで暗黙に Task で包む
+            /// （Unit→Task, T→Task<T>）。
             member this.isAsync = isAsync
             member this.span = span
             interface Decl with

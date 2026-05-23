@@ -158,8 +158,8 @@ module Hir =
         /// `override` 付きメソッドの場合、上書き対象となる親 .NET クラスの MethodInfo。
         /// Resolve フェーズで確定し、CIL Gen で `DefineMethodOverride` に渡される。
         member this.overrideTarget = overrideTarget
-        /// `async` 修飾子が付いていたかどうか。本体内で `await` を許可し、
-        /// 戻り値型は Task または Task<T>。状態機械生成は PR-3 で行う（現状は素通し）。
+        /// `async` 修飾子が付いていたかどうか。本体内で `await` を許可する。
+        /// シグネチャ型（typ）の戻り値は暗黙に Task で包まれている（Unit→Task, T→Task<T>）。
         member this.isAsync = isAsync
         member this.span = span
         member this.hasError = body.hasError

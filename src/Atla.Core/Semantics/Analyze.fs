@@ -681,7 +681,9 @@ module Analyze =
                                                     methodDecl.args
                                                     |> List.map (resolveArgTypeWithSelf (TypeId.Name typeSid))
                                                     |> List.filter (fun t -> t <> TypeId.Unit)
-                                                let retType = implNameEnv.resolveTypeExpr methodDecl.ret
+                                                let retType =
+                                                    let declared = implNameEnv.resolveTypeExpr methodDecl.ret
+                                                    if methodDecl.isAsync then TypeId.wrapInTask declared else declared
                                                 let methodType = TypeId.Fn(argTypes, retType)
                                                 let methodSid = symbolTable.NextId()
                                                 symbolTable.Add(methodSid, { name = $"{targetTypeName}.{methodDecl.name}"; typ = methodType; kind = SymbolKind.Local() })
