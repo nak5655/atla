@@ -12,7 +12,7 @@ import Avalonia'Layout'HorizontalAlignment
 data CalculatorWindow = 
     { _grid: Grid
     , _display: TextBox
-    , _currentValue: Float
+    , _currentValue: Double
     , _pendingOperator: String
     , _clearOnNextDigit: Bool
     }
@@ -108,7 +108,7 @@ impl CalculatorWindow as Window
 
     fn onOperator self (operator: String): () -> () =
         fn () ->
-            let value = self'_display'Text Float'Parse.
+            let value = self'_display'Text Double'Parse.
 
             |? self'_pendingOperator != "" =>
                 self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
@@ -119,7 +119,7 @@ impl CalculatorWindow as Window
             self'_pendingOperator = operator
             self'_clearOnNextDigit = True
 
-    fn applyOperator self (left: Float) (right: Float) (operator: String): Float =
+    fn applyOperator self (left: Double) (right: Double) (operator: String): Double =
         |? operator == "+" => left + right
         |: operator == "-" => left - right
         |: operator == "*" => left * right
@@ -128,7 +128,7 @@ impl CalculatorWindow as Window
 
     fn onEquals self: () -> () =
         fn () ->
-            let value = self'_display'Text Float'Parse.
+            let value = self'_display'Text Double'Parse.
 
             |? self'_pendingOperator == "" =>
                 ()
@@ -158,7 +158,7 @@ impl CalculatorWindow as Window
 
     fn onToggleSign self: () -> () =
         fn () ->
-            let value = self'_display'Text Float'Parse.
+            let value = self'_display'Text Double'Parse.
             let invertedValue = -value
             
             self'_display'Text = invertedValue'ToString.

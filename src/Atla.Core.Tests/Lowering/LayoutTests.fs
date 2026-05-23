@@ -31,6 +31,7 @@ module LayoutTests =
         | Hir.Expr.Int _ -> "Int"
         | Hir.Expr.Bool _ -> "Bool"
         | Hir.Expr.Float _ -> "Float"
+        | Hir.Expr.Double _ -> "Double"
         | Hir.Expr.String _ -> "String"
         | Hir.Expr.Unit _ -> "Unit"
         | Hir.Expr.Null _ -> "Null"

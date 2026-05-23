@@ -141,6 +141,7 @@ module Parser =
         |>> fun (name, span) -> Ast.Expr.Id (name, span)
     let int: PackratParser<Token, Ast.Expr.Int> = AcceptMatch (fun t -> match t with :? Token.Int as st -> Some(Ast.Expr.Int(st.value, st.span)) | _ -> None)
     let float: PackratParser<Token, Ast.Expr.Float> = AcceptMatch (fun t -> match t with :? Token.Float as st -> Some(Ast.Expr.Float(st.value, st.span)) | _ -> None)
+    let double: PackratParser<Token, Ast.Expr.Double> = AcceptMatch (fun t -> match t with :? Token.Double as st -> Some(Ast.Expr.Double(st.value, st.span)) | _ -> None)
     let str: PackratParser<Token, Ast.Expr.String> = AcceptMatch (fun t -> match t with :? Token.String as st -> Some(Ast.Expr.String(st.value, st.span)) | _ -> None)
     /// `true` / `false` キーワードを Bool リテラルとして解析する。
     let bool: PackratParser<Token, Ast.Expr.Bool> =
@@ -266,7 +267,7 @@ module Parser =
                 Ast.Expr.Match(scrutinee, arms, { left = scrutinee.span.left; right = (List.last arms).span.right }) :> Ast.Expr)
 
     and factor: PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> paren <|> ifExpr <|> matchExpr <|> doExpr <|> enumInitExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))
+        Delay (fun () -> paren <|> ifExpr <|> matchExpr <|> doExpr <|> enumInitExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr double) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))
 
     and postfixMemberAccess: PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
         Delay (fun () -> fun input pos ->
@@ -320,6 +321,8 @@ module Parser =
                         Success (Ast.Expr.Int(-intExpr.value, { left = minusToken.span.left; right = intExpr.span.right }) :> Ast.Expr, nextPos)
                     | :? Ast.Expr.Float as floatExpr ->
                         Success (Ast.Expr.Float(-floatExpr.value, { left = minusToken.span.left; right = floatExpr.span.right }) :> Ast.Expr, nextPos)
+                    | :? Ast.Expr.Double as doubleExpr ->
+                        Success (Ast.Expr.Double(-doubleExpr.value, { left = minusToken.span.left; right = doubleExpr.span.right }) :> Ast.Expr, nextPos)
                     | _ ->
                         let negatedExpr =
                             Ast.Expr.Apply(

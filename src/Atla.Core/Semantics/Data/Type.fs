@@ -18,8 +18,10 @@ type TypeId =
     | Unit
     | Bool
     | Int
+    /// 単精度浮動小数点（System.Single / .NET float32）。ユーザー言語の型名は `Float`、リテラルは `1.0f`。
     | Float
-    | Single
+    /// 倍精度浮動小数点（System.Double / .NET float）。ユーザー言語の型名は `Double`、リテラルは `1.0`。
+    | Double
     | String
     | App of head: TypeId * args: TypeId list
     | Name of sid: SymbolId
@@ -52,8 +54,8 @@ module TypeId =
         elif t = typeof<System.Void> then Native typeof<System.Void>
         elif t = typeof<bool> then Bool
         elif t = typeof<int> then Int
-        elif t = typeof<float> then Float
-        elif t = typeof<float32> then Single
+        elif t = typeof<float> then Double
+        elif t = typeof<float32> then Float
         elif t = typeof<string> then String
         elif t.IsArray then
             if t.GetArrayRank() = 1 then
@@ -109,8 +111,8 @@ module TypeId =
         | Unit -> Some typeof<unit>
         | Bool -> Some typeof<bool>
         | Int -> Some typeof<int>
-        | Float -> Some typeof<float>
-        | Single -> Some typeof<float32>
+        | Double -> Some typeof<float>
+        | Float -> Some typeof<float32>
         | String -> Some typeof<string>
         | App (Native t, [ elem ]) when t = typeof<System.Array> ->
             tryToRuntimeSystemType elem
@@ -162,7 +164,7 @@ module Type =
         | Bool, Bool -> true
         | Int, Int -> true
         | Float, Float -> true
-        | Single, Single -> true
+        | Double, Double -> true
         | String, String -> true
         | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
             List.length leftArgs = List.length rightArgs
@@ -236,7 +238,7 @@ module Type =
         | Bool, Bool -> Result.Ok Bool
         | Int, Int -> Result.Ok Int
         | Float, Float -> Result.Ok Float
-        | Single, Single -> Result.Ok Single
+        | Double, Double -> Result.Ok Double
         | String, String -> Result.Ok String
         | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
             if List.length leftArgs <> List.length rightArgs then

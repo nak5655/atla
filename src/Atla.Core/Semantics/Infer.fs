@@ -11,6 +11,7 @@ module Infer =
         | Hir.Expr.Bool _
         | Hir.Expr.Int _
         | Hir.Expr.Float _
+        | Hir.Expr.Double _
         | Hir.Expr.String _ -> expr
         | Hir.Expr.Null (tid, span) -> Hir.Expr.Null(inferType tid, span)
         | Hir.Expr.Id (sid, tid, span) -> Hir.Expr.Id(sid, inferType tid, span)

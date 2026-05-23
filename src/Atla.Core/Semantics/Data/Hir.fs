@@ -15,7 +15,7 @@ module Hir =
         | DataConstructor of typeSid: SymbolId * fieldSids: SymbolId list
         | BuiltinOperator of Builtins.Operators
         | BuiltinArray
-        /// 数値型変換組込関数（toSingle/toFloat/toInt）。target は変換先の数値型。
+        /// 数値型変換組込関数（toFloat/toDouble/toInt）。target は変換先の数値型。
         | BuiltinConvert of target: TypeId
         | NativeMethod of MethodInfo
         | NativeMethodGroup of MethodInfo list
@@ -45,7 +45,8 @@ module Hir =
         | Unit of span: Span
         | Bool of value: bool * span: Span
         | Int of value: int * span: Span
-        | Float of value: float * span: Span
+        | Float of value: float32 * span: Span
+        | Double of value: float * span: Span
         | String of value: string * span: Span
         | Null of tid: TypeId * span: Span
         | Id of sid: SymbolId * tid: TypeId * span: Span
@@ -65,6 +66,7 @@ module Hir =
             | Bool _ -> TypeId.Bool
             | Int _ -> TypeId.Int
             | Float _ -> TypeId.Float
+            | Double _ -> TypeId.Double
             | String _ -> TypeId.String
             | Null (t, _) -> t
             | Id (_, t, _) -> t
@@ -82,6 +84,7 @@ module Hir =
             | Bool (_, span) -> span
             | Int (_, span) -> span
             | Float (_, span) -> span
+            | Double (_, span) -> span
             | String (_, span) -> span
             | Null (_, span) -> span
             | Id (_, _, span) -> span
@@ -223,6 +226,7 @@ module Hir =
             | Bool _
             | Int _
             | Float _
+            | Double _
             | String _
             | Null _
             | Id _
@@ -266,6 +270,7 @@ module Hir =
         | Bool _
         | Int _
         | Float _
+        | Double _
         | String _
         | Null _
         | Id _
@@ -325,7 +330,7 @@ module Hir =
         (expr: Expr) : 'acc =
         let ctx' = descend ctx expr
         match expr with
-        | Unit _ | Bool _ | Int _ | Float _ | String _ | Null _ | Id _ | ExprError _ ->
+        | Unit _ | Bool _ | Int _ | Float _ | Double _ | String _ | Null _ | Id _ | ExprError _ ->
             leaf ctx' expr
         | Call (_, instance, args, _, _) ->
             // `leaf` を Call ノード自体にも適用し、Callable.Fn sid など

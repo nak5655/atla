@@ -17,7 +17,15 @@ module Token =
         interface Token with
             member this.span = span
 
-    type Float(value: float, span: Span) =
+    /// 単精度浮動小数点リテラル（`1.0f`）。値は float32。
+    type Float(value: float32, span: Span) =
+        member this.value = value
+        member this.span = span
+        interface Token with
+            member this.span = span
+
+    /// 倍精度浮動小数点リテラル（`1.0`）。値は float。
+    type Double(value: float, span: Span) =
         member this.value = value
         member this.span = span
         interface Token with

@@ -97,7 +97,10 @@ module Lexer =
         Many1 (AcceptIf (fun c -> opSigns |> List.contains c.char)) |>> fun chars -> let s = SourceString.join(chars) in Token.Symbol(s.string, s.span)
     let id = alpha_ <&> Many alphaNum_ |>> fun (first, rest) -> let s = SourceString.join(first :: rest) in Token.Id(s.string, s.span)
     let int = intRaw |>> fun s -> Token.Int(System.Int32.Parse(s.string), s.span)
-    let float = floatRaw |>> fun s -> Token.Float(System.Double.Parse(s.string), s.span)
+    // `1.0f` は単精度（Token.Float / float32）。末尾の `f` まで span に含める。
+    let single = floatRaw <&> AcceptIf (fun c -> c.char = 'f') |>> fun (s, fChar) -> Token.Float(System.Single.Parse(s.string), { left = s.span.left; right = fChar.span.right })
+    // `1.0`（接尾辞なし）は倍精度（Token.Double / float）。
+    let float = floatRaw |>> fun s -> Token.Double(System.Double.Parse(s.string), s.span)
     let stringEscape: PackratParser<SourceChar, Token.String> =
         AcceptIf (fun c -> c.char = '\\') <&> AcceptIf (fun c -> c.char = '\\') |>> fun (a, b) -> Token.String("\\", { left = a.span.left; right = b.span.right })
         <|> (AcceptIf (fun c -> c.char = '\\') <&> AcceptIf (fun c -> c.char = '"') |>> fun (a, b) -> Token.String("\"", { left = a.span.left; right = b.span.right }))
@@ -110,4 +113,4 @@ module Lexer =
             Token.String(strContent, { left = openQuote.span.left; right = closeQuote.span.right })
 
     let tokenize : PackratParser<SourceChar, Token list> = 
-        Many (trivia) &> SepBy ((asToken keyword) <|> (asToken string) <|> (asToken delim) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many trivia) <& Many trivia <& Eoi |>> fun tokens -> tokens
+        Many (trivia) &> SepBy ((asToken keyword) <|> (asToken string) <|> (asToken delim) <|> (asToken single) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many trivia) <& Many trivia <& Eoi |>> fun tokens -> tokens

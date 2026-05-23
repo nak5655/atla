@@ -153,8 +153,8 @@ module Gen =
             match imm with
             | Mir.Imm.Bool b -> if b then gen.Emit(OpCodes.Ldc_I4_1) else gen.Emit(OpCodes.Ldc_I4_0)
             | Mir.Imm.Int i -> gen.Emit(OpCodes.Ldc_I4, i)
-            | Mir.Imm.Float f -> gen.Emit(OpCodes.Ldc_R8, f)
-            | Mir.Imm.Single f -> gen.Emit(OpCodes.Ldc_R4, f)
+            | Mir.Imm.Double f -> gen.Emit(OpCodes.Ldc_R8, f)
+            | Mir.Imm.Float f -> gen.Emit(OpCodes.Ldc_R4, f)
             | Mir.Imm.String s -> gen.Emit(OpCodes.Ldstr, s)
             // null リテラル: 参照型のオプショナル引数デフォルト値として CIL の ldnull を発行する
             | Mir.Imm.Null -> gen.Emit(OpCodes.Ldnull)
@@ -233,8 +233,8 @@ module Gen =
             match imm with
             | Mir.Imm.Bool _   -> Some typeof<bool>
             | Mir.Imm.Int _    -> Some typeof<int32>
-            | Mir.Imm.Float _  -> Some typeof<float>
-            | Mir.Imm.Single _ -> Some typeof<float32>
+            | Mir.Imm.Double _ -> Some typeof<float>
+            | Mir.Imm.Float _  -> Some typeof<float32>
             | Mir.Imm.String _ -> Some typeof<string>
             | Mir.Imm.Null           -> None
             | Mir.Imm.NullableDefault t -> Some t
@@ -279,7 +279,7 @@ module Gen =
     ///   int32  → uint64  (conv.u8)  widening
     ///   int64  → float64 (conv.r8)  widening
     ///   float32 → float64 (conv.r8) widening
-    ///   float64 → float32 (conv.r4) narrowing（Atla の Float は float64 だが、
+    ///   float64 → float32 (conv.r4) narrowing（Atla の Double は float64 だが、
     ///                                           ネイティブ API が float32 を要求する場合に必要）
     /// 型が一致するか非数値型の場合は何も発行しない。
     let private emitNumericCoercionIfNeeded (gen: ILGenerator) (expectedType: Type) (actualTypeOpt: Type option) =
@@ -294,7 +294,7 @@ module Gen =
             | t, e when t = typeof<int32>   && e = typeof<uint64>  -> gen.Emit(OpCodes.Conv_U8)
             | t, e when t = typeof<int64>   && e = typeof<float>   -> gen.Emit(OpCodes.Conv_R8)
             | t, e when t = typeof<float32> && e = typeof<float>   -> gen.Emit(OpCodes.Conv_R8)
-            // float64 → float32: Atla の Float は float64 だが、ネイティブ API が float32 を
+            // float64 → float32: Atla の Double は float64 だが、ネイティブ API が float32 を
             // 要求する場合は精度を落として変換する（CIL の型検証を通すために必要）。
             | t, e when t = typeof<float>   && e = typeof<float32> -> gen.Emit(OpCodes.Conv_R4)
             | _ ->

@@ -76,7 +76,7 @@ module ExprAnalyze =
         | TypeId.Bool -> "bool"
         | TypeId.Int -> "int"
         | TypeId.Float -> "float"
-        | TypeId.Single -> "single"
+        | TypeId.Double -> "double"
         | TypeId.String -> "string"
         | TypeId.Native t -> t.FullName
         | TypeId.Fn (args, ret) ->
@@ -547,8 +547,8 @@ module ExprAnalyze =
                 | SymbolKind.External(ExternalBinding.ConstructorGroup ctorInfos) -> Some (Hir.Callable.NativeConstructorGroup ctorInfos)
                 | SymbolKind.BuiltinOperator op -> Some (Hir.Callable.BuiltinOperator op)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.Array -> Some (Hir.Callable.BuiltinArray)
-                | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToSingle -> Some (Hir.Callable.BuiltinConvert TypeId.Single)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToFloat -> Some (Hir.Callable.BuiltinConvert TypeId.Float)
+                | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToDouble -> Some (Hir.Callable.BuiltinConvert TypeId.Double)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToInt -> Some (Hir.Callable.BuiltinConvert TypeId.Int)
                 | SymbolKind.Local ()
                 | SymbolKind.Arg () ->
@@ -587,6 +587,10 @@ module ExprAnalyze =
         | :? Ast.Expr.Float as floatExpr ->
             match unifyOrError nameEnv typeEnv tid TypeId.Float floatExpr.span with
             | Result.Ok _ -> Hir.Expr.Float(floatExpr.value, floatExpr.span)
+            | Result.Error exprErr -> exprErr
+        | :? Ast.Expr.Double as doubleExpr ->
+            match unifyOrError nameEnv typeEnv tid TypeId.Double doubleExpr.span with
+            | Result.Ok _ -> Hir.Expr.Double(doubleExpr.value, doubleExpr.span)
             | Result.Error exprErr -> exprErr
         | :? Ast.Expr.String as stringExpr ->
             match unifyOrError nameEnv typeEnv tid TypeId.String stringExpr.span with

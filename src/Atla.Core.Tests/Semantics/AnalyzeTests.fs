@@ -497,33 +497,33 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
     [<Fact>]
     let ``semantic analysis accepts impl method with self receiver and data member access`` () =
         let span = Span.Empty
-        let floatType = Ast.TypeExpr.Id("Float", span) :> Ast.TypeExpr
+        let doubleType = Ast.TypeExpr.Id("Double", span) :> Ast.TypeExpr
         let dataDecl =
             Ast.Decl.Data(
                 "Line",
                 [],
-                [ Ast.DataItem.Field("slope", floatType, span) :> Ast.DataItem
-                  Ast.DataItem.Field("intercept", floatType, span) :> Ast.DataItem ],
+                [ Ast.DataItem.Field("slope", doubleType, span) :> Ast.DataItem
+                  Ast.DataItem.Field("intercept", doubleType, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
         let thisArg = Ast.FnArg.Inferred("self", span) :> Ast.FnArg
-        let xArg = Ast.FnArg.Named("x", floatType, span) :> Ast.FnArg
+        let xArg = Ast.FnArg.Named("x", doubleType, span) :> Ast.FnArg
         let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("self", span) :> Ast.Expr, "slope", span) :> Ast.Expr
-        let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], floatType, evalBody, false, false, span)
+        let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], doubleType, evalBody, false, false, span)
         let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
             Ast.Expr.DataInit(
                 "Line",
-                [ Ast.DataInitField.Field("slope", Ast.Expr.Float(2.0, span) :> Ast.Expr, span) :> Ast.DataInitField
-                  Ast.DataInitField.Field("intercept", Ast.Expr.Float(-1.0, span) :> Ast.Expr, span) :> Ast.DataInitField ],
+                [ Ast.DataInitField.Field("slope", Ast.Expr.Double(2.0, span) :> Ast.Expr, span) :> Ast.DataInitField
+                  Ast.DataInitField.Field("intercept", Ast.Expr.Double(-1.0, span) :> Ast.Expr, span) :> Ast.DataInitField ],
                 span) :> Ast.Expr
         let callBody =
             Ast.Expr.Apply(
                 Ast.Expr.MemberAccess(lineInit, "evaluate", span) :> Ast.Expr,
-                [ Ast.Expr.Float(5.0, span) :> Ast.Expr ],
+                [ Ast.Expr.Double(5.0, span) :> Ast.Expr ],
                 span) :> Ast.Expr
-        let mainDecl = Ast.Decl.Fn("main", [], floatType, callBody, false, false, span) :> Ast.Decl
+        let mainDecl = Ast.Decl.Fn("main", [], doubleType, callBody, false, false, span) :> Ast.Decl
 
         let astModule = Ast.Module([ dataDecl; implDecl; mainDecl ])
         let symbolTable = SymbolTable()
@@ -2410,11 +2410,11 @@ fn main (): Int = MyClass.
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
-    /// Float 同士の四則演算がビルトイン演算子解決で成功することを確認する。
+    /// Float（単精度）同士の四則演算がビルトイン演算子解決で成功することを確認する。
     [<Fact>]
     let ``semantic analysis resolves float builtin arithmetic operators`` () =
         let program = """
-fn main (): Float = 2.0 * 3.0 + 1.0
+fn main (): Float = 2.0f * 3.0f + 1.0f
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -2520,12 +2520,12 @@ fn main (): Int = do
 import System'Console
 
 data Line =
-    { slope: Float
-    , intercept: Float
+    { slope: Double
+    , intercept: Double
     }
 
 impl Line
-    fn evaluate self (x: Float): Float =
+    fn evaluate self (x: Double): Double =
         x
 
 fn main (): () = do
@@ -3445,7 +3445,7 @@ fn test (domain: AppDomain): () =
     /// 回帰テスト: `Float'Parse` — ビルトイン型を静的メンバーアクセスのレシーバとして使う場合に
     /// "Undefined variable 'Float'" が誤報告されなかったことを検証する。
     [<Fact>]
-    let ``Float'Parse resolves to System.Double.Parse without error`` () =
+    let ``Float'Parse resolves to System.Single.Parse without error`` () =
         let program = """
 fn parse (s: String): Float = s Float'Parse.
 """

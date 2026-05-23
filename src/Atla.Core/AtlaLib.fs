@@ -266,6 +266,7 @@ module AtlaLib =
                             | Ok "Bool" -> Ok TypeId.Bool
                             | Ok "Int" -> Ok TypeId.Int
                             | Ok "Float" -> Ok TypeId.Float
+                            | Ok "Double" -> Ok TypeId.Double
                             | Ok "String" -> Ok TypeId.String
                             | Ok name -> Result.Error [ Diagnostic.Error($"unsupported builtin type `{name}` in `{path}`", Span.Empty) ]
                             | Result.Error diagnostics -> Result.Error diagnostics

@@ -152,7 +152,7 @@ module Resolve =
         moduleScope.DeclareType("Bool", TypeId.Bool)
         moduleScope.DeclareType("Int", TypeId.Int)
         moduleScope.DeclareType("Float", TypeId.Float)
-        moduleScope.DeclareType("Single", TypeId.Single)
+        moduleScope.DeclareType("Double", TypeId.Double)
         moduleScope.DeclareType("String", TypeId.String)
         declareSystemType symbolTable moduleScope "System.Int32" |> ignore
 

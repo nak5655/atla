@@ -46,6 +46,7 @@ module ClosureConversion =
         | Hir.Expr.Bool (v, span) -> ClosedHir.Expr.Bool(v, span)
         | Hir.Expr.Int (v, span) -> ClosedHir.Expr.Int(v, span)
         | Hir.Expr.Float (v, span) -> ClosedHir.Expr.Float(v, span)
+        | Hir.Expr.Double (v, span) -> ClosedHir.Expr.Double(v, span)
         | Hir.Expr.String (v, span) -> ClosedHir.Expr.String(v, span)
         | Hir.Expr.Null (tid, span) -> ClosedHir.Expr.Null(tid, span)
         | Hir.Expr.Id (sid, tid, span) -> ClosedHir.Expr.Id(sid, tid, span)
@@ -328,6 +329,7 @@ module ClosureConversion =
         | Hir.Expr.Bool (v, span) -> ClosedHir.Expr.Bool(v, span), state
         | Hir.Expr.Int (v, span) -> ClosedHir.Expr.Int(v, span), state
         | Hir.Expr.Float (v, span) -> ClosedHir.Expr.Float(v, span), state
+        | Hir.Expr.Double (v, span) -> ClosedHir.Expr.Double(v, span), state
         | Hir.Expr.String (v, span) -> ClosedHir.Expr.String(v, span), state
         | Hir.Expr.Null (tid, span) -> ClosedHir.Expr.Null(tid, span), state
         | Hir.Expr.Id (sid, tid, span) -> ClosedHir.Expr.Id(sid, tid, span), state
