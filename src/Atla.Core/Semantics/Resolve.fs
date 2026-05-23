@@ -156,6 +156,25 @@ module Resolve =
         moduleScope.DeclareType("String", TypeId.String)
         declareSystemType symbolTable moduleScope "System.Int32" |> ignore
 
+        // List<T> を暗黙登録する。typedefof で開いたジェネリック型を取得し、
+        // 型位置（List Vector2）と値位置（ctor 呼び出し）の両方で使えるようにする。
+        let listGenericType = typedefof<System.Collections.Generic.List<_>>
+        let listSid = symbolTable.NextId()
+        let listKind = SymbolKind.External(ExternalBinding.SystemTypeRef listGenericType)
+        symbolTable.Add(listSid, { name = "List"; typ = TypeId.Name listSid; kind = listKind })
+        moduleScope.DeclareType("List", TypeId.Name listSid)
+
+        let listCtorInfos =
+            listGenericType.GetConstructors(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
+            |> Array.toList
+
+        if not listCtorInfos.IsEmpty then
+            let listCtorSid = symbolTable.NextId()
+            let listCtorType = TypeId.Fn([], TypeId.Native listGenericType)
+            let listCtorKind = SymbolKind.External(ExternalBinding.ConstructorGroup listCtorInfos)
+            symbolTable.Add(listCtorSid, { name = "List"; typ = listCtorType; kind = listCtorKind })
+            moduleScope.DeclareVar("List", listCtorSid)
+
         symbolTable.BuiltinOperators
         |> List.iter (fun (name, sid) -> moduleScope.DeclareVar(name, sid))
 
