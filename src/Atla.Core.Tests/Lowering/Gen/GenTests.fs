@@ -393,15 +393,15 @@ module GenTests =
             typeof<Math>.GetMethod("Round", [| typeof<float>; typeof<int> |])
         Assert.NotNull(mathRoundMethod)
 
-        // frame: resultSid → Loc(0) : Float
-        let _, mainFrame = Mir.Frame.addLoc resultSid TypeId.Float Mir.Frame.empty
+        // frame: resultSid → Loc(0) : Double
+        let _, mainFrame = Mir.Frame.addLoc resultSid TypeId.Double Mir.Frame.empty
 
         let mainMethod =
             Mir.Method(
                 "main",
                 mainSym,
                 [],
-                TypeId.Float,
+                TypeId.Double,
                 // Math.Round(3 /*int32 → conv.r8 → float64*/, 2 /*int32 matches int param*/)
                 // Math.Round(3.0, 2) = 3.0（整数値を小数点以下 2 桁に丸めても変化しない）
                 [ Mir.Ins.CallAssign(Mir.Reg.Loc 0, mathRoundMethod,

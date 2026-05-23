@@ -15,6 +15,8 @@ module Builtins =
 
     type BuiltinFunctions =
         | Array
-        | ToSingle
+        /// 単精度（Float / float32）への変換組込関数 `toFloat`。
         | ToFloat
+        /// 倍精度（Double / float）への変換組込関数 `toDouble`。
+        | ToDouble
         | ToInt

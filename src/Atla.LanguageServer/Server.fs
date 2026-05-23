@@ -746,7 +746,8 @@ type Server
                     match token with
                     | :? Token.Keyword -> Some "keyword"
                     | :? Token.Int
-                    | :? Token.Float -> Some "number"
+                    | :? Token.Float
+                    | :? Token.Double -> Some "number"
                     | :? Token.String -> Some "string"
                     | :? Token.Id as id ->
                         if not (String.IsNullOrEmpty id.str) && Char.IsUpper(id.str.[0]) then Some "type" else Some "variable"

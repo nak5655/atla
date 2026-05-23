@@ -1056,6 +1056,49 @@ fn main: () = do
         Assert.Equal("-3.14", lines.[0].Trim())
 
     [<Fact>]
+    let ``single-precision Float literal with f suffix compiles and produces correct value`` () =
+        // `1.0f` 接尾辞リテラルが単精度 Float（float32）として字句解析・型付け・codegen され、
+        // Float 同士の加算が正しく実行されることを検証する。
+        let program = """
+import System'Console
+
+fn main: () = do
+    let a = 1.5f
+    let b = 2.0f
+    let c = a + b
+    c'ToString. Console'WriteLine.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "SinglePrecisionLiteral"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, String.concat Environment.NewLine (res.diagnostics |> List.map (fun d -> d.message)))
+
+        let dllPath = Path.Join(outDir, "SinglePrecisionLiteral.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        let lines = stdout.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
+        Assert.Equal(1, lines.Length)
+        Assert.Equal("3.5", lines.[0].Trim())
+
+    [<Fact>]
     let ``unary minus on Int variable compiles and produces correct value`` () =
         // 回帰テスト: `-value` で value が Int 変数の場合に正しく動作することを確認する。
         let program = """
@@ -1104,12 +1147,12 @@ fn main: () = do
 import System'Console
 
 role Geometry
-    fn area self: Float
+    fn area self: Double
 
-data Rectangle = { width: Float, height: Float }
+data Rectangle = { width: Double, height: Double }
 
 impl Geometry for Rectangle
-    fn area self: Float =
+    fn area self: Double =
         self'width * self'height
 
 fn main: () =

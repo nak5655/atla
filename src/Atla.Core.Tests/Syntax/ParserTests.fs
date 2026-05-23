@@ -497,10 +497,10 @@ fn main (): Line = Line { slope = 2.0, intercept = -1.0 }
                     match initExpr.fields |> List.tryFind (fun field -> match field with | :? Ast.DataInitField.Field as f -> f.name = "intercept" | _ -> false) with
                     | Some (:? Ast.DataInitField.Field as interceptField) ->
                         match interceptField.value with
-                        | :? Ast.Expr.Float as floatExpr ->
-                            Assert.Equal(-1.0, floatExpr.value)
+                        | :? Ast.Expr.Double as doubleExpr ->
+                            Assert.Equal(-1.0, doubleExpr.value)
                         | _ ->
-                            Assert.True(false, "intercept field was not parsed as Ast.Expr.Float")
+                            Assert.True(false, "intercept field was not parsed as Ast.Expr.Double")
                     | _ ->
                         Assert.True(false, "intercept field initializer was not found")
                 | _ ->

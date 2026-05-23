@@ -13,8 +13,10 @@ module Mir =
     type Imm =
         | Bool of bool
         | Int of int
-        | Float of float
-        | Single of float32
+        /// 単精度浮動小数点リテラル（float32）。Gen で Ldc_R4 を発行する。
+        | Float of float32
+        /// 倍精度浮動小数点リテラル（float）。Gen で Ldc_R8 を発行する。
+        | Double of float
         | String of string
         | Null
         /// Nullable<T> 型のパラメータに対するデフォルト値（null nullable）。
@@ -25,7 +27,7 @@ module Mir =
             | Bool v -> sprintf "Bool(%b)" v
             | Int v -> sprintf "Int(%d)" v
             | Float v -> sprintf "Float(%f)" v
-            | Single v -> sprintf "Single(%f)" v
+            | Double v -> sprintf "Double(%f)" v
             | String s -> sprintf "String(%s)" s
             | Null -> "Null"
             | NullableDefault t -> sprintf "NullableDefault(%s)" t.FullName
@@ -151,7 +153,7 @@ module Mir =
         | CallAssignBase of dst: Reg * method: MethodInfo * args: Value list
         | New of dst: Reg * ctor: ConstructorInfo * args: Value list
         | NewArr of dst: Reg * elemType: System.Type * values: Value list
-        /// 数値型変換（toSingle/toFloat/toInt）。src を target 数値型へ変換して dst へ格納する。
+        /// 数値型変換（toFloat/toDouble/toInt）。src を target 数値型へ変換して dst へ格納する。
         /// Gen で conv.r4/conv.r8/conv.i4 等を発行する。
         | Convert of dst: Reg * src: Value * target: System.Type
         /// ネイティブ（.NET）フィールドへの書き込み（`stfld`）。

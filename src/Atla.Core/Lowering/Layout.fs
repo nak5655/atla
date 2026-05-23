@@ -81,6 +81,7 @@ module Layout =
         | ClosedHir.Expr.Bool (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Bool value)) })
         | ClosedHir.Expr.Int (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Int value)) })
         | ClosedHir.Expr.Float (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Float value)) })
+        | ClosedHir.Expr.Double (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.Double value)) })
         | ClosedHir.Expr.String (value, _) -> Ok (state, { ins = []; res = Some(Mir.Value.ImmVal(Mir.Imm.String value)) })
         // null リテラル: 参照型は ldnull、Nullable<T> 値型は initobj+ldloc シーケンスで発行する。
         | ClosedHir.Expr.Null (tid, _) ->
@@ -267,8 +268,8 @@ module Layout =
                                     match argValues |> List.tryItem 0 with
                                     | Some operand ->
                                         let zeroImm =
-                                            if tid = TypeId.Float then Mir.Value.ImmVal(Mir.Imm.Float 0.0)
-                                            elif tid = TypeId.Single then Mir.Value.ImmVal(Mir.Imm.Single 0.0f)
+                                            if tid = TypeId.Double then Mir.Value.ImmVal(Mir.Imm.Double 0.0)
+                                            elif tid = TypeId.Float then Mir.Value.ImmVal(Mir.Imm.Float 0.0f)
                                             else Mir.Value.ImmVal(Mir.Imm.Int 0)
                                         Ok (state3, { ins = instanceIns @ argIns @ [ Mir.Ins.TAC(dst, zeroImm, Mir.OpCode.Sub, operand) ]; res = Some(Mir.Value.RegVal dst) })
                                     | None -> Result.Error (Diagnostic.Error("Missing operand for unary negation", callSpan))
@@ -303,7 +304,7 @@ module Layout =
                                     let dst, state3 = declareTemp state2 tid
                                     Ok (state3, { ins = argIns @ [ Mir.Ins.NewArr(dst, elemSysType, argValues) ]; res = Some(Mir.Value.RegVal dst) })
                             | Hir.Callable.BuiltinConvert targetTid ->
-                                // 数値変換組込関数（toSingle/toFloat/toInt）を Convert 命令へ下す。
+                                // 数値変換組込関数（toFloat/toDouble/toInt）を Convert 命令へ下す。
                                 match TypeId.tryToRuntimeSystemType targetTid, argValues with
                                 | Some targetSysType, [ srcVal ] ->
                                     let dst, state3 = declareTemp state2 tid

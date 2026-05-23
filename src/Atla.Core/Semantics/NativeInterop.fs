@@ -224,9 +224,9 @@ module NativeInterop =
             elif parameterType = typeof<bool> then
                 Some(Hir.Expr.Int((if unbox<bool> defaultValue then 1 else 0), span))
             elif parameterType = typeof<float> then
-                Some(Hir.Expr.Float(unbox<float> defaultValue, span))
+                Some(Hir.Expr.Double(unbox<float> defaultValue, span))
             elif parameterType = typeof<float32> then
-                Some(Hir.Expr.Float(float (unbox<float32> defaultValue), span))
+                Some(Hir.Expr.Float(unbox<float32> defaultValue, span))
             elif parameterType = typeof<byte> then
                 Some(Hir.Expr.Int(int (unbox<byte> defaultValue), span))
             elif parameterType = typeof<sbyte> then

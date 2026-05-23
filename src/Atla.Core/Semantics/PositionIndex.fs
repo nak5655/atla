@@ -16,7 +16,7 @@ let rec formatType (resolve: SymbolId -> string) (tid: TypeId) : string =
     | TypeId.Bool -> "Bool"
     | TypeId.Int -> "Int"
     | TypeId.Float -> "Float"
-    | TypeId.Single -> "Single"
+    | TypeId.Double -> "Double"
     | TypeId.String -> "String"
     | TypeId.App(TypeId.Native t, [ elem ]) when t = typeof<System.Array> ->
         sprintf "Array<%s>" (formatType resolve elem)
@@ -190,6 +190,7 @@ let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) 
     | Hir.Expr.Bool _
     | Hir.Expr.Int _
     | Hir.Expr.Float _
+    | Hir.Expr.Double _
     | Hir.Expr.String _
     | Hir.Expr.Null _
     | Hir.Expr.ExprError _ -> state

@@ -1,12 +1,12 @@
 import System'Console
 
 role Shape
-    fn area self: Float
+    fn area self: Double
 
-data Rectangle = { width: Float, height: Float }
+data Rectangle = { width: Double, height: Double }
 
 impl Shape for Rectangle
-    fn area self: Float =
+    fn area self: Double =
         self'width * self'height
 
 fn main: () =
