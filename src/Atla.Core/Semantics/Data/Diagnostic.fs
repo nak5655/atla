@@ -36,4 +36,10 @@ type Diagnostic =
         | Warning _
         | Info _ -> false
 
-    member this.toDisplayText() = $"{this.message} at {this.span}"
+    member this.WithSource (source: string) =
+        match this with
+        | Error (message, span) -> Error($"{source}: {message}", span)
+        | Warning (message, span) -> Warning($"{source}: {message}", span)
+        | Info (message, span) -> Info($"{source}: {message}", span)
+
+    member this.toDisplayText() = $"{this.span.left}: {this.message}"

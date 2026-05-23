@@ -192,7 +192,8 @@ module Console =
             files
             |> List.map (fun path ->
                 ({ moduleName = toModuleName path
-                   source = File.ReadAllText(path) }: Compiler.ModuleSource))
+                   source = File.ReadAllText(path)
+                   filePath = Some (Path.GetRelativePath(projectRoot, path)) }: Compiler.ModuleSource))
             |> Ok
 
     /// package.type に応じて compile 出力先を決定する。

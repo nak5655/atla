@@ -360,7 +360,7 @@ module IntelliSenseTests =
             "fn main (): () = ()"
         let compileResult = Atla.Compiler.Compiler.compileModules {
             asmName = "diag"
-            modules = [ { moduleName = "main"; source = source } ]
+            modules = [ { moduleName = "main"; source = source; filePath = None } ]
             entryModuleName = "main"
             outDir = System.IO.Path.GetTempPath()
             dependencies = []
@@ -392,7 +392,7 @@ module IntelliSenseTests =
             "  ()"
         let compileResult = Atla.Compiler.Compiler.compileModules {
             asmName = "diag3"
-            modules = [ { moduleName = "main"; source = source } ]
+            modules = [ { moduleName = "main"; source = source; filePath = None } ]
             entryModuleName = "main"
             outDir = System.IO.Path.GetTempPath()
             dependencies = []

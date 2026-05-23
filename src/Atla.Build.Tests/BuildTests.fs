@@ -139,7 +139,7 @@ package:
         let compileResult =
             Compiler.compileModules {
                 asmName = "HelloLibAsm"
-                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = "fn main: () = ()" } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = "fn main: () = ()"; filePath = None } ]
                 entryModuleName = "main"
                 outDir = compileOutDir
                 dependencies = []
@@ -233,7 +233,7 @@ dependencies:
         let compileResult =
             Compiler.compileModules {
                 asmName = "PeopleLibAsm"
-                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = "data Person = { name: String }\nfn greet (p: Person): String = p'name" } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = "data Person = { name: String }\nfn greet (p: Person): String = p'name"; filePath = None } ]
                 entryModuleName = "people"
                 outDir = libCompileOutDir
                 dependencies = []
@@ -284,7 +284,7 @@ impl Person
         let libraryResult =
             Compiler.compileModules {
                 asmName = "PeopleLibAsm"
-                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = librarySource.Trim() } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = librarySource.Trim(); filePath = None } ]
                 entryModuleName = "people"
                 outDir = libCompileOutDir
                 dependencies = []
@@ -327,7 +327,7 @@ fn main: () = do
         let appResult =
             Compiler.compileModules {
                 asmName = "PeopleApp"
-                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = appSource.Trim() } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = appSource.Trim(); filePath = None } ]
                 entryModuleName = "main"
                 outDir = appOutDir
                 dependencies = [ dependency ]
@@ -363,7 +363,7 @@ enum Opt T
         let libraryResult =
             Compiler.compileModules {
                 asmName = "OptLibAsm"
-                modules = [ { Compiler.ModuleSource.moduleName = "opt"; source = librarySource.Trim() } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "opt"; source = librarySource.Trim(); filePath = None } ]
                 entryModuleName = "opt"
                 outDir = libCompileOutDir
                 dependencies = []
@@ -416,7 +416,7 @@ fn main: () = do
         let appResult =
             Compiler.compileModules {
                 asmName = "OptApp"
-                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = appSource.Trim() } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = appSource.Trim(); filePath = None } ]
                 entryModuleName = "main"
                 outDir = appOutDir
                 dependencies = [ dependency ]
