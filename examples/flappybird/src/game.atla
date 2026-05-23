@@ -50,7 +50,9 @@ impl FlappyGame as Game
 
         # 初期パイプ生成
         for i in 0 4 Enumerable'Range.
-            ((600 + i * 250f) self'RandomGap. Vector2.) self'_pipes'Add.
+            let pipeX = 600.0f + (i toFloat.) * 250.0f
+            let gapY = self'RandomGap. toFloat.
+            (pipeX gapY Vector2.) self'_pipes'Add.
 
     override async fn LoadContent self: () =
         await base'LoadContent.
