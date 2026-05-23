@@ -26,7 +26,7 @@ impl FlappyGame as Game
     override fn Initialize self: () =
         base'Initialize.
 
-    override async fn LoadContent self: Task =
+    override async fn LoadContent self: () =
         await base'LoadContent.
 
         self'_spriteBatch = self'GraphicsDevice SpriteBatch. Opt'Some.
