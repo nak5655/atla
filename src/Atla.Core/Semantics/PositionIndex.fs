@@ -16,6 +16,7 @@ let rec formatType (resolve: SymbolId -> string) (tid: TypeId) : string =
     | TypeId.Bool -> "Bool"
     | TypeId.Int -> "Int"
     | TypeId.Float -> "Float"
+    | TypeId.Single -> "Single"
     | TypeId.String -> "String"
     | TypeId.App(TypeId.Native t, [ elem ]) when t = typeof<System.Array> ->
         sprintf "Array<%s>" (formatType resolve elem)
@@ -208,6 +209,8 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
         walkExpr scopeSpan value state
     | Hir.Stmt.StoreField(_, _, _, value, _) ->
         walkExpr scopeSpan value state
+    | Hir.Stmt.StoreNativeField(receiver, _, value, _) ->
+        state |> walkExpr scopeSpan receiver |> walkExpr scopeSpan value
     | Hir.Stmt.ExprStmt(expr, _) ->
         walkExpr scopeSpan expr state
     | Hir.Stmt.For(sid, _, iterable, body, span) ->
@@ -219,6 +222,7 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
                 | Hir.Stmt.Let (_, _, _, bodySpan)
                 | Hir.Stmt.Assign (_, _, bodySpan)
                 | Hir.Stmt.StoreField (_, _, _, _, bodySpan)
+                | Hir.Stmt.StoreNativeField (_, _, _, bodySpan)
                 | Hir.Stmt.ExprStmt (_, bodySpan)
                 | Hir.Stmt.For (_, _, _, _, bodySpan)
                 | Hir.Stmt.If (_, _, _, bodySpan)

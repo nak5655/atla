@@ -154,6 +154,7 @@ module Gen =
             | Mir.Imm.Bool b -> if b then gen.Emit(OpCodes.Ldc_I4_1) else gen.Emit(OpCodes.Ldc_I4_0)
             | Mir.Imm.Int i -> gen.Emit(OpCodes.Ldc_I4, i)
             | Mir.Imm.Float f -> gen.Emit(OpCodes.Ldc_R8, f)
+            | Mir.Imm.Single f -> gen.Emit(OpCodes.Ldc_R4, f)
             | Mir.Imm.String s -> gen.Emit(OpCodes.Ldstr, s)
             // null リテラル: 参照型のオプショナル引数デフォルト値として CIL の ldnull を発行する
             | Mir.Imm.Null -> gen.Emit(OpCodes.Ldnull)
@@ -233,6 +234,7 @@ module Gen =
             | Mir.Imm.Bool _   -> Some typeof<bool>
             | Mir.Imm.Int _    -> Some typeof<int32>
             | Mir.Imm.Float _  -> Some typeof<float>
+            | Mir.Imm.Single _ -> Some typeof<float32>
             | Mir.Imm.String _ -> Some typeof<string>
             | Mir.Imm.Null           -> None
             | Mir.Imm.NullableDefault t -> Some t
@@ -482,6 +484,30 @@ module Gen =
                 gen.Emit(OpCodes.Ldc_I4, i)
                 genValue env gen value
                 gen.Emit(OpCodes.Stelem, elemType))
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        // 数値型変換: ソース値をスタックへ積み、変換先に応じた conv 命令を発行する。
+        | Mir.Ins.Convert (dst, src, target) ->
+            genValue env gen src
+            if target = typeof<float32> then gen.Emit(OpCodes.Conv_R4)
+            elif target = typeof<float> then gen.Emit(OpCodes.Conv_R8)
+            elif target = typeof<int> then gen.Emit(OpCodes.Conv_I4)
+            else ()
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        // ネイティブフィールドへの書き込み: receiver（参照 or アドレス）と value を積み、
+        // 数値型の不一致があれば変換してから stfld を発行する。
+        | Mir.Ins.StoreNativeField (receiver, field, value) ->
+            genValue env gen receiver
+            genValue env gen value
+            emitNumericCoercionIfNeeded gen field.FieldType (getValueStackType frame value)
+            gen.Emit(OpCodes.Stfld, field)
+        // ネイティブインスタンスフィールドの読み出し: instance（参照・ポインタ・値型）を積み、ldfld して dst へ格納する。
+        | Mir.Ins.LoadNativeField (dst, instance, field) ->
+            genValue env gen instance
+            gen.Emit(OpCodes.Ldfld, field)
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)

@@ -508,6 +508,7 @@ module BuildSystem =
         | TypeId.Bool -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Bool" |})
         | TypeId.Int -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Int" |})
         | TypeId.Float -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Float" |})
+        | TypeId.Single -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "Single" |})
         | TypeId.String -> JsonSerializer.SerializeToNode({| kind = "builtin"; name = "String" |})
         | TypeId.Native systemType ->
             JsonSerializer.SerializeToNode(

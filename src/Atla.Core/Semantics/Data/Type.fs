@@ -19,6 +19,7 @@ type TypeId =
     | Bool
     | Int
     | Float
+    | Single
     | String
     | App of head: TypeId * args: TypeId list
     | Name of sid: SymbolId
@@ -52,6 +53,7 @@ module TypeId =
         elif t = typeof<bool> then Bool
         elif t = typeof<int> then Int
         elif t = typeof<float> then Float
+        elif t = typeof<float32> then Single
         elif t = typeof<string> then String
         elif t.IsArray then
             if t.GetArrayRank() = 1 then
@@ -108,6 +110,7 @@ module TypeId =
         | Bool -> Some typeof<bool>
         | Int -> Some typeof<int>
         | Float -> Some typeof<float>
+        | Single -> Some typeof<float32>
         | String -> Some typeof<string>
         | App (Native t, [ elem ]) when t = typeof<System.Array> ->
             tryToRuntimeSystemType elem
@@ -159,6 +162,7 @@ module Type =
         | Bool, Bool -> true
         | Int, Int -> true
         | Float, Float -> true
+        | Single, Single -> true
         | String, String -> true
         | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
             List.length leftArgs = List.length rightArgs
@@ -232,6 +236,7 @@ module Type =
         | Bool, Bool -> Result.Ok Bool
         | Int, Int -> Result.Ok Int
         | Float, Float -> Result.Ok Float
+        | Single, Single -> Result.Ok Single
         | String, String -> Result.Ok String
         | App (leftHead, leftArgs), App (rightHead, rightArgs) ->
             if List.length leftArgs <> List.length rightArgs then

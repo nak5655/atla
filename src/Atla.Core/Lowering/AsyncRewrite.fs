@@ -274,6 +274,8 @@ module AsyncRewrite =
         | ClosedHir.Stmt.ExprStmt (value, _) -> collectLetSids value
         | ClosedHir.Stmt.StoreField (instanceExpr, _, _, value, _) ->
             collectLetSids instanceExpr @ collectLetSids value
+        | ClosedHir.Stmt.StoreNativeField (receiver, _, value, _) ->
+            collectLetSids receiver @ collectLetSids value
         | ClosedHir.Stmt.For (_, _, iterable, body, _) ->
             collectLetSids iterable @ (body |> List.collect collectLetSidsStmt)
         | ClosedHir.Stmt.If (cond, thenBody, elseBody, _) ->
@@ -338,6 +340,8 @@ module AsyncRewrite =
                 ClosedHir.Stmt.Assign(sid, value', span)
         | ClosedHir.Stmt.StoreField (instanceExpr, typeSid, fieldSid, value, span) ->
             ClosedHir.Stmt.StoreField(hoistExpr ctx instanceExpr, typeSid, fieldSid, hoistExpr ctx value, span)
+        | ClosedHir.Stmt.StoreNativeField (receiver, field, value, span) ->
+            ClosedHir.Stmt.StoreNativeField(hoistExpr ctx receiver, field, hoistExpr ctx value, span)
         | ClosedHir.Stmt.ExprStmt (value, span) ->
             ClosedHir.Stmt.ExprStmt(hoistExpr ctx value, span)
         | ClosedHir.Stmt.For (sid, tid, iterable, body, span) ->
@@ -486,6 +490,7 @@ module AsyncRewrite =
             | ClosedHir.Stmt.Assign (sid, v, sp) -> [ ClosedHir.Stmt.Assign(sid, expandForExpr v, sp) ]
             | ClosedHir.Stmt.ExprStmt (v, sp) -> [ ClosedHir.Stmt.ExprStmt(expandForExpr v, sp) ]
             | ClosedHir.Stmt.StoreField (i, tSid, fSid, v, sp) -> [ ClosedHir.Stmt.StoreField(expandForExpr i, tSid, fSid, expandForExpr v, sp) ]
+            | ClosedHir.Stmt.StoreNativeField (r, fld, v, sp) -> [ ClosedHir.Stmt.StoreNativeField(expandForExpr r, fld, expandForExpr v, sp) ]
             | other -> [ other ]
 
         let expandedBody = expandForExpr method.body
@@ -601,6 +606,7 @@ module AsyncRewrite =
             match s with
             | ClosedHir.Stmt.Let (_, _, v, _) | ClosedHir.Stmt.Assign (_, v, _) | ClosedHir.Stmt.ExprStmt (v, _) -> containsAwait v
             | ClosedHir.Stmt.StoreField (i, _, _, v, _) -> containsAwait i || containsAwait v
+            | ClosedHir.Stmt.StoreNativeField (r, _, v, _) -> containsAwait r || containsAwait v
             | ClosedHir.Stmt.For (_, _, it, body, _) -> containsAwait it || (body |> List.exists containsAwaitStmt)
             | ClosedHir.Stmt.If (c, t, el, _) -> containsAwait c || (t |> List.exists containsAwaitStmt) || (el |> List.exists containsAwaitStmt)
             | _ -> false
@@ -688,6 +694,10 @@ module AsyncRewrite =
             | ClosedHir.Stmt.StoreField (inst, tSid, fSid, v, span) ->
                 match spillOperands [ inst; v ] with
                 | prefix, [ rInst; rV ] -> prefix @ [ ClosedHir.Stmt.StoreField(rInst, tSid, fSid, rV, span) ]
+                | _ -> [ stmt ]
+            | ClosedHir.Stmt.StoreNativeField (recv, fld, v, span) ->
+                match spillOperands [ recv; v ] with
+                | prefix, [ rRecv; rV ] -> prefix @ [ ClosedHir.Stmt.StoreNativeField(rRecv, fld, rV, span) ]
                 | _ -> [ stmt ]
             | ClosedHir.Stmt.Let (sid, isMut, v, span) ->
                 let p, r = spillExpr v
