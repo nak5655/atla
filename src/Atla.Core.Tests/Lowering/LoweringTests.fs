@@ -1541,7 +1541,7 @@ fn main: () =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (): Task = ()
+async fn run (): () = ()
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1580,7 +1580,7 @@ async fn run (): Task = ()
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): Task = await t
+async fn run (t: Task): () = await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1620,7 +1620,7 @@ async fn run (t: Task): Task = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): Task = await t
+async fn run (t: Task): () = await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1654,7 +1654,7 @@ async fn run (t: Task): Task = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn runT (t: Task Int): Task Int = await t
+async fn runT (t: Task Int): Int = await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1689,7 +1689,7 @@ async fn runT (t: Task Int): Task Int = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn compute (t: Task Int): Task Int =
+async fn compute (t: Task Int): Int =
     let x = await t
     x
 """
@@ -1726,7 +1726,7 @@ async fn compute (t: Task Int): Task Int =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): Task = await t
+async fn run (t: Task): () = await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1762,7 +1762,7 @@ async fn run (t: Task): Task = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn compute (t: Task Int): Task Int =
+async fn compute (t: Task Int): Int =
     let x = await t
     x
 """
@@ -1799,7 +1799,7 @@ async fn compute (t: Task Int): Task Int =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): Task = await t
+async fn run (t: Task): () = await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1836,7 +1836,7 @@ async fn run (t: Task): Task = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn two (a: Task) (b: Task Int): Task Int =
+async fn two (a: Task) (b: Task Int): Int =
     await a
     await b
 """
@@ -1880,7 +1880,7 @@ async fn two (a: Task) (b: Task Int): Task Int =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): Task = await t
+async fn run (t: Task): () = await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1918,7 +1918,7 @@ async fn run (t: Task): Task = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn compute (t: Task Int): Task Int =
+async fn compute (t: Task Int): Int =
     let x = await t
     x
 """
@@ -1954,7 +1954,7 @@ async fn compute (t: Task Int): Task Int =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): Task = await t
+async fn run (t: Task): () = await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1995,7 +1995,7 @@ async fn run (t: Task): Task = await t
 import System'Threading'Tasks'Task
 import System'Linq'Enumerable
 
-async fn loopAwait (t: Task): Task =
+async fn loopAwait (t: Task): () =
     for i in 1 3 Enumerable'Range.
         await t
 """
@@ -2039,9 +2039,9 @@ async fn loopAwait (t: Task): Task =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn inner (): Task Int = 42
+async fn inner (): Int = 42
 
-async fn outer (): Task Int = await (inner.)
+async fn outer (): Int = await (inner.)
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2072,9 +2072,9 @@ async fn outer (): Task Int = await (inner.)
         let program = """
 import System'Threading'Tasks'Task
 
-async fn inner (t: Task Int): Task Int = await t
+async fn inner (t: Task Int): Int = await t
 
-async fn outer (t: Task Int): Task Int = await (t inner.)
+async fn outer (t: Task Int): Int = await (t inner.)
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2112,9 +2112,9 @@ async fn outer (t: Task Int): Task Int = await (t inner.)
         let program = """
 import System'Threading'Tasks'Task
 
-async fn id (x: Int): Task Int = x
+async fn id (x: Int): Int = x
 
-async fn outer (t: Task Int): Task Int = await ((await t) id.)
+async fn outer (t: Task Int): Int = await ((await t) id.)
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2154,9 +2154,9 @@ async fn outer (t: Task Int): Task Int = await ((await t) id.)
         let program = """
 import System'Threading'Tasks'Task
 
-async fn pick (x: Int) (y: Int): Task Int = y
+async fn pick (x: Int) (y: Int): Int = y
 
-async fn outer (a: Task Int) (b: Task Int): Task Int = await ((await a) (await b) pick.)
+async fn outer (a: Task Int) (b: Task Int): Int = await ((await a) (await b) pick.)
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2198,7 +2198,7 @@ async fn outer (a: Task Int) (b: Task Int): Task Int = await ((await a) (await b
         let program = """
 import System'Threading'Tasks'Task
 
-async fn choose (c: Bool) (a: Task Int) (b: Task Int): Task Int =
+async fn choose (c: Bool) (a: Task Int) (b: Task Int): Int =
     |? c => await a
     |: else => await b
 """

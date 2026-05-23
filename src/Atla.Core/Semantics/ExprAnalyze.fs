@@ -2239,33 +2239,17 @@ module ExprAnalyze =
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
     let analyzeMethodCoreWithOverride (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) (overrideTarget: MethodInfo option) : Hir.Method =
-        // `async fn` の場合は本体を async 文脈で解析し、戻り値型 Task / Task<T> から
-        // 内側の型（Unit / T）を「期待される本体の型」として使う。PR-3 で本体の Task 化を行う。
+        // `async fn` の場合は本体を async 文脈で解析する。戻り値注釈は「本体が返す内側の型」
+        // とみなし、シグネチャ型（Hir.Method.typ）では暗黙に Task で包む（Unit→Task, T→Task<T>）。
+        // 本体は包む前の内側の型（effectiveBodyRet）に対して型検査する。
         let bodyNameEnv =
             if fnDecl.isAsync then nameEnv.subAsync() else nameEnv.sub()
-        let retType = nameEnv.resolveTypeExpr fnDecl.ret
+        let declaredInner = nameEnv.resolveTypeExpr fnDecl.ret
 
-        // `async fn` の戻り値型が Task / Task<T> でなければ診断エラー。
-        // 戻り値型として宣言された値はそのまま Hir.Method.typ に保持し、
-        // 本体は effectiveBodyRet（Unit / T）に対して型検査する。
-        // 非 Task の場合は本体エラーとして包む。
-        let asyncReturnDiagnostic : string option =
-            if fnDecl.isAsync then
-                match tryUnwrapTaskType nameEnv typeEnv retType with
-                | Some _ -> None
-                | None ->
-                    let actual = formatTypeForDisplay nameEnv typeEnv retType
-                    Some (sprintf "'async fn' must return Task or Task<T>, got '%s'" actual)
-            else
-                None
+        let effectiveBodyRet : TypeId = declaredInner
 
-        let effectiveBodyRet : TypeId =
-            if fnDecl.isAsync then
-                match tryUnwrapTaskType nameEnv typeEnv retType with
-                | Some inner -> inner
-                | None -> retType
-            else
-                retType
+        let retType : TypeId =
+            if fnDecl.isAsync then TypeId.wrapInTask declaredInner else declaredInner
 
         let rawArgTypes =
             let nonUnitArgCount =
@@ -2302,15 +2286,7 @@ module ExprAnalyze =
             |> List.choose id
 
         let tid = TypeId.Fn(argTypes, retType)
-        let analyzedBody = analyzeExpr bodyNameEnv typeEnv fnDecl.body effectiveBodyRet
-
-        // 戻り値型診断がある場合、本体の先頭に ErrorStmt を仕込んで診断を浮上させる。
-        let body =
-            match asyncReturnDiagnostic with
-            | Some msg ->
-                let errStmt = Hir.Stmt.ErrorStmt(msg, fnDecl.span)
-                Hir.Expr.Block([ errStmt ], analyzedBody, analyzedBody.typ, fnDecl.span)
-            | None -> analyzedBody
+        let body = analyzeExpr bodyNameEnv typeEnv fnDecl.body effectiveBodyRet
 
         Hir.Method(sid, argSids, body, tid, overrideTarget, fnDecl.isAsync, fnDecl.span)
 
@@ -2325,6 +2301,8 @@ module ExprAnalyze =
                 match fnDecl.args, raw with
                 | [ (:? Ast.FnArg.Unit) ], [ TypeId.Unit ] -> []
                 | _ -> raw)
-        let retType = nameEnv.resolveTypeExpr fnDecl.ret
+        let retType =
+            let declared = nameEnv.resolveTypeExpr fnDecl.ret
+            if fnDecl.isAsync then TypeId.wrapInTask declared else declared
         let sid = nameEnv.declareLocal fnDecl.name (TypeId.Fn(argTypes, retType))
         analyzeMethodCore nameEnv typeEnv sid fnDecl

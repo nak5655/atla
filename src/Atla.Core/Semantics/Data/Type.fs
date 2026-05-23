@@ -38,6 +38,14 @@ type TypeId =
     | ByRef of inner: TypeId
 
 module TypeId =
+    /// `async fn` の戻り値型を暗黙に Task で包む。`Unit -> Task`, `T -> Task<T>`。
+    /// `App(Native typeof<Task>, [t])` は `Task t` をユーザーが書いたときと構造的に同一で、
+    /// tryUnwrapTaskType / AsyncRewrite.tryClassifyTaskType・codegen がそのまま処理できる。
+    let wrapInTask (inner: TypeId) : TypeId =
+        match inner with
+        | Unit -> Native typeof<System.Threading.Tasks.Task>
+        | t -> App(Native typeof<System.Threading.Tasks.Task>, [ t ])
+
     let rec fromSystemType (t: System.Type) : TypeId =
         if t = typeof<unit> then Unit
         elif t = typeof<System.Void> then Native typeof<System.Void>

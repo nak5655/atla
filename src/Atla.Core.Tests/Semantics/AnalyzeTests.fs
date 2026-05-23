@@ -3615,11 +3615,9 @@ impl Opt T
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``async fn returning Task is accepted`` () =
+    let ``async fn returning Unit wraps to Task`` () =
         let source = """
-import System'Threading'Tasks'Task
-
-async fn run (): Task = ()
+async fn run (): () = ()
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3634,7 +3632,11 @@ async fn run (): Task = ()
                 | { succeeded = true; value = Some hirModule } ->
                     let runMethod = hirModule.methods |> List.find (fun m -> m.isAsync)
                     Assert.True(runMethod.isAsync, "method should be flagged isAsync")
-                    Assert.False(runMethod.hasError, "async fn returning Task should have no diagnostics")
+                    Assert.False(runMethod.hasError, "async fn returning Unit should have no diagnostics")
+                    match Type.resolve subst runMethod.typ with
+                    | TypeId.Fn(_, ret) ->
+                        Assert.Equal(TypeId.Native typeof<System.Threading.Tasks.Task>, ret)
+                    | other -> Assert.True(false, $"expected Fn type, got {other}")
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
@@ -3644,9 +3646,9 @@ async fn run (): Task = ()
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``async fn returning non-Task type produces diagnostic`` () =
+    let ``async fn returning Int wraps to Task of Int`` () =
         let source = """
-async fn bad (): Int = 1
+async fn good (): Int = 1
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3657,20 +3659,19 @@ async fn bad (): Int = 1
             | Success (astModule, _) ->
                 let symbolTable = SymbolTable()
                 let subst = TypeSubst()
-                let result = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
-                let hasError =
-                    match result.value with
-                    | Some hirModule -> hirModule.hasError
-                    | None -> not (List.isEmpty result.diagnostics)
-                Assert.True(hasError, "async fn returning Int should produce a diagnostic")
-                let combinedText =
-                    let modDiagText =
-                        result.value
-                        |> Option.map (fun m -> m.getDiagnostics |> List.map (fun d -> d.message) |> String.concat "; ")
-                        |> Option.defaultValue ""
-                    let topDiagText = result.diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
-                    modDiagText + ";" + topDiagText
-                Assert.Contains("Task", combinedText)
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    let runMethod = hirModule.methods |> List.find (fun m -> m.isAsync)
+                    Assert.False(runMethod.hasError, "async fn returning Int should have no diagnostics")
+                    match Type.resolve subst runMethod.typ with
+                    | TypeId.Fn(_, ret) ->
+                        Assert.Equal(
+                            TypeId.App(TypeId.Native typeof<System.Threading.Tasks.Task>, [ TypeId.Int ]),
+                            ret)
+                    | other -> Assert.True(false, $"expected Fn type, got {other}")
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
@@ -3716,7 +3717,7 @@ fn sync (t: Task): () = await t
         let source = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): Task =
+async fn run (t: Task): () =
     await t
 """
         let input: Input<SourceChar> = StringInput source
