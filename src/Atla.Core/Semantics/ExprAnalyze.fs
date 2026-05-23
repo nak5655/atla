@@ -2020,9 +2020,11 @@ module ExprAnalyze =
                     match compoundAssignStmt.op with
                     | Ast.Stmt.CompoundAssignOp.Add -> "+"
                     | Ast.Stmt.CompoundAssignOp.Sub -> "-"
+                    | Ast.Stmt.CompoundAssignOp.Mul -> "*"
+                    | Ast.Stmt.CompoundAssignOp.Div -> "/"
                 let opExpr =
                     Hir.Expr.Call(
-                        Hir.Callable.BuiltinOperator(match compoundAssignStmt.op with | Ast.Stmt.CompoundAssignOp.Add -> Builtins.Operators.OpAdd | Ast.Stmt.CompoundAssignOp.Sub -> Builtins.Operators.OpSub),
+                        Hir.Callable.BuiltinOperator(match compoundAssignStmt.op with | Ast.Stmt.CompoundAssignOp.Add -> Builtins.Operators.OpAdd | Ast.Stmt.CompoundAssignOp.Sub -> Builtins.Operators.OpSub | Ast.Stmt.CompoundAssignOp.Mul -> Builtins.Operators.OpMul | Ast.Stmt.CompoundAssignOp.Div -> Builtins.Operators.OpDiv),
                         None,
                         [ lhsExpr; rhs ],
                         targetType,
@@ -2079,6 +2081,10 @@ module ExprAnalyze =
                                             Hir.Expr.ExprError(sprintf "Unsupported += on property type %s" propInfo.PropertyType.Name, TypeId.Error "unsupported", compoundAssignStmt.span)
                                     | Ast.Stmt.CompoundAssignOp.Sub ->
                                         Hir.Expr.ExprError("Compound -= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
+                                    | Ast.Stmt.CompoundAssignOp.Mul ->
+                                       Hir.Expr.ExprError("Compound *= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
+                                    | Ast.Stmt.CompoundAssignOp.Div ->
+                                       Hir.Expr.ExprError("Compound /= on properties is not supported", TypeId.Error "unsupported", compoundAssignStmt.span)
                                 let callExpr =
                                     Hir.Expr.Call(Hir.Callable.NativeMethod setter, Some receiverExpr, [ newVal ], TypeId.Unit, compoundAssignStmt.span)
                                 Hir.Stmt.ExprStmt(callExpr, compoundAssignStmt.span)
@@ -2087,6 +2093,7 @@ module ExprAnalyze =
                             match compoundAssignStmt.op with
                             | Ast.Stmt.CompoundAssignOp.Add -> Option.ofObj (eventInfo.GetAddMethod(true))
                             | Ast.Stmt.CompoundAssignOp.Sub -> Option.ofObj (eventInfo.GetRemoveMethod(true))
+                            | Ast.Stmt.CompoundAssignOp.Mul | Ast.Stmt.CompoundAssignOp.Div -> None
 
                         match accessorOpt with
                         | None ->

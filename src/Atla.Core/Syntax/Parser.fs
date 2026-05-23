@@ -504,7 +504,13 @@ module Parser =
              |>> fun ((target: Ast.Expr), (rhs: Ast.Expr)) -> Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Add, target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt)
             <|>
             (assignLValueExpr <& symbol "-=" <&> expr
-             |>> fun ((target: Ast.Expr), (rhs: Ast.Expr)) -> Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Sub, target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt))
+             |>> fun ((target: Ast.Expr), (rhs: Ast.Expr)) -> Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Sub, target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt)
+            <|>
+            (assignLValueExpr <& symbol "*=" <&> expr
+             |>> fun ((target: Ast.Expr), (rhs: Ast.Expr)) -> Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Mul, target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt)
+            <|>
+            (assignLValueExpr <& symbol "/=" <&> expr
+             |>> fun ((target: Ast.Expr), (rhs: Ast.Expr)) -> Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Div, target, rhs, { left = target.span.left; right = rhs.span.right }) :> Ast.Stmt))
 
     and exprStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () -> expr |>> fun e -> Ast.Stmt.ExprStmt (e, e.span) :> Ast.Stmt)

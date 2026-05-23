@@ -1496,6 +1496,58 @@ fn main (): Unit =
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses compound multiply assignment`` () =
+        let program = """
+fn main (): Unit =
+    var x = 3
+    x *= 2
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl -> match decl with | :? Ast.Decl.Fn as fn -> Some fn | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    match blockExpr.stmts |> List.tryLast with
+                    | Some (:? Ast.Stmt.CompoundAssign as compoundAssignStmt) ->
+                        Assert.Equal(Ast.Stmt.CompoundAssignOp.Mul, compoundAssignStmt.op)
+                    | _ -> Assert.True(false, "expected compound assignment statement")
+                | _ -> Assert.True(false, "expected block body")
+            | None -> Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses compound divide assignment`` () =
+        let program = """
+fn main (): Unit =
+    var x = 10
+    x /= 2
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl -> match decl with | :? Ast.Decl.Fn as fn -> Some fn | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    match blockExpr.stmts |> List.tryLast with
+                    | Some (:? Ast.Stmt.CompoundAssign as compoundAssignStmt) ->
+                        Assert.Equal(Ast.Stmt.CompoundAssignOp.Div, compoundAssignStmt.op)
+                    | _ -> Assert.True(false, "expected compound assignment statement")
+                | _ -> Assert.True(false, "expected block body")
+            | None -> Assert.True(false, "no fn declaration found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses generic enum declaration with one type parameter`` () =
         let program = """
 enum Opt T

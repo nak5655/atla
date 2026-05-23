@@ -3392,6 +3392,56 @@ fn test (domain: AppDomain): () =
             let message = diagnostics |> List.map (fun err -> err.toDisplayText()) |> String.concat "; "
             Assert.True(false, $"semantic analysis failed: {message}")
 
+    [<Fact>]
+    let ``compound mul assignment lowers to builtin operator and assign`` () =
+        let span = Span.Empty
+        let body =
+            Ast.Expr.Block([
+                Ast.Stmt.Var("x", Ast.Expr.Int(3, span) :> Ast.Expr, span) :> Ast.Stmt
+                Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Mul, Ast.Expr.Id("x", span) :> Ast.Expr, Ast.Expr.Int(4, span) :> Ast.Expr, span) :> Ast.Stmt
+            ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], Ast.TypeExpr.Unit(span) :> Ast.TypeExpr, body, false, false, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Block(stmts, _, _, _) ->
+                match stmts |> List.tryLast with
+                | Some (Hir.Stmt.Assign(_, Hir.Expr.Call(Hir.Callable.BuiltinOperator Builtins.Operators.OpMul, _, _, _, _), _)) -> Assert.True(true)
+                | _ -> Assert.True(false, "expected compound *= to become OpMul builtin operator assign")
+            | _ -> Assert.True(false, "expected block body")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun err -> err.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")
+
+    [<Fact>]
+    let ``compound div assignment lowers to builtin operator and assign`` () =
+        let span = Span.Empty
+        let body =
+            Ast.Expr.Block([
+                Ast.Stmt.Var("x", Ast.Expr.Int(10, span) :> Ast.Expr, span) :> Ast.Stmt
+                Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Div, Ast.Expr.Id("x", span) :> Ast.Expr, Ast.Expr.Int(2, span) :> Ast.Expr, span) :> Ast.Stmt
+            ], span) :> Ast.Expr
+        let fnDecl = Ast.Decl.Fn("main", [], Ast.TypeExpr.Unit(span) :> Ast.TypeExpr, body, false, false, span) :> Ast.Decl
+        let astModule = Ast.Module([ fnDecl ])
+
+        let symbolTable = SymbolTable()
+        let subst = TypeSubst()
+        match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+        | { succeeded = true; value = Some hirModule } ->
+            match hirModule.methods.Head.body with
+            | Hir.Expr.Block(stmts, _, _, _) ->
+                match stmts |> List.tryLast with
+                | Some (Hir.Stmt.Assign(_, Hir.Expr.Call(Hir.Callable.BuiltinOperator Builtins.Operators.OpDiv, _, _, _, _), _)) -> Assert.True(true)
+                | _ -> Assert.True(false, "expected compound /= to become OpDiv builtin operator assign")
+            | _ -> Assert.True(false, "expected block body")
+        | { diagnostics = diagnostics } ->
+            let message = diagnostics |> List.map (fun err -> err.toDisplayText()) |> String.concat "; "
+            Assert.True(false, $"semantic analysis failed: {message}")
+
     /// 回帰テスト: `Float'Parse` — ビルトイン型を静的メンバーアクセスのレシーバとして使う場合に
     /// "Undefined variable 'Float'" が誤報告されなかったことを検証する。
     [<Fact>]
