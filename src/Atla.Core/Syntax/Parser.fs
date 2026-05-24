@@ -486,17 +486,29 @@ module Parser =
                             | head :: _ -> head.span.left
                         Ast.Expr.Lambda (nonUnitArgs, body, { left = leftSpan; right = body.span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr)))
 
+    // 後置の型注釈（ascription）`binopExpr : typeExpr` を解析する。
+    // `.` ドット呼び出しは term2 層（binopExpr より下）で処理されるため、
+    // `List.` 全体を取り込むには binop より上で注釈を付ける必要がある。
+    // よって注釈は二項演算より緩く結合し、`a + b : T` は `(a + b) : T` となる。
+    and ascriptionExpr: PackratParser<Token, Ast.Expr> =
+        Delay (fun () ->
+            binopExpr <&> Optional (delim ':' &> typeExpr)
+            |>> fun (e, typeOpt) ->
+                match typeOpt with
+                | None -> e
+                | Some te -> Ast.Expr.TypeAscription(e, te, { left = e.span.left; right = te.span.right }) :> Ast.Expr)
+
     and expr: PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> lambdaExpr <|> binopExpr)
+        Delay (fun () -> lambdaExpr <|> ascriptionExpr)
 
     // 文
     and letStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () ->
-            block (asToken (keyword "let")) (Once (tid <& symbol "=" <&> expr |>> fun (id, rhs) -> Ast.Stmt.Let (id.str, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt)))
+            block (asToken (keyword "let")) (Once (tid <&> Optional (delim ':' &> typeExpr) <& symbol "=" <&> expr |>> fun ((id, typeAnnOpt), rhs) -> Ast.Stmt.Let (id.str, typeAnnOpt, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt)))
 
     and varStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () ->
-            block (asToken (keyword "var")) (Once (tid <& symbol "=" <&> expr |>> fun (id, rhs) -> Ast.Stmt.Var (id.str, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt)))
+            block (asToken (keyword "var")) (Once (tid <&> Optional (delim ':' &> typeExpr) <& symbol "=" <&> expr |>> fun ((id, typeAnnOpt), rhs) -> Ast.Stmt.Var (id.str, typeAnnOpt, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt)))
 
     and assignStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () ->

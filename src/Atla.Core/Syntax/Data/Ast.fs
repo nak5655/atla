@@ -210,6 +210,17 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        /// `expr : TypeExpr` 形式の型注釈（ascription）。推論される型を注釈型へ
+        /// 固定する制約のみを表し、キャスト・変換は行わない。
+        type TypeAscription(expr: Expr, typeExpr: TypeExpr, span: Span) =
+            member this.expr = expr
+            member this.typeExpr = typeExpr
+            member this.span = span
+            interface Expr with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         /// `TypeName { field = value, ... }` 形式の data 初期化式。
         type DataInit(typeName: string, fields: DataInitField list, span: Span) =
             member this.typeName = typeName
@@ -242,8 +253,9 @@ module Ast =
                 member this.span = span
     
     module Stmt =
-        type Let(name: string, value: Expr, span: Span) =
+        type Let(name: string, typeAnnotation: TypeExpr option, value: Expr, span: Span) =
             member this.name = name
+            member this.typeAnnotation = typeAnnotation
             member this.value = value
             member this.span = span
             interface Stmt with
@@ -251,8 +263,9 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Var(name: string, value: Expr, span: Span) =
+        type Var(name: string, typeAnnotation: TypeExpr option, value: Expr, span: Span) =
             member this.name = name
+            member this.typeAnnotation = typeAnnotation
             member this.value = value
             member this.span = span
             interface Stmt with
