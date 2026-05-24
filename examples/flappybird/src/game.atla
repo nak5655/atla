@@ -24,7 +24,7 @@ data FlappyGame =
     , _pipes: List Vector2
     , _pipeWidth: Float
     , _pipeGap: Float
-    , _pipeSpeed: Int }
+    , _pipeSpeed: Float }
 
 impl FlappyGame as Game
     fn new: FlappyGame =
@@ -40,7 +40,7 @@ impl FlappyGame as Game
             , _pipes = List.
             , _pipeWidth = 60.0f
             , _pipeGap = 180.0f
-            , _pipeSpeed = 200 }
+            , _pipeSpeed = 200.0f }
 
     fn RandomGap self: Int =
         200 450 self'_rand'Next.
@@ -72,7 +72,7 @@ impl FlappyGame as Game
 
         let whiteTexture = self'GraphicsDevice 1 1 PixelFormat'R8G8B8A8_UNorm Texture'New2D.
         self'_whiteTexture = whiteTexture Opt'Some.
-        self'GraphicsContext'CommandList (Color'White array.) whiteTexture'SetData[Color].
+        self'GraphicsContext'CommandList (Color'White array.) whiteTexture'SetData<Color>.
 
     override fn Update self (gameTime: GameTime): () =
         gameTime base'Update.
@@ -85,10 +85,21 @@ impl FlappyGame as Game
         self'_birdVelocity += self'_gravity * dt
         self'_birdPos'Y += self'_birdVelocity * dt
 
+        # Pipes
+        for i in 0 (self'_pipes'Count - 1) Enumerable'Range.
+            let pipe = self'_pipes[i]
+            pipe'X -= self'_pipeSpeed * dt
+
+            # 画面外に出たパイプはリセット
+            |? pipe'X < -self'_pipeWidth =>
+                pipe = 800.0f (self'RandomGap. toFloat.) Vector2.
+
+            self'_pipes[i] = pipe
+
         var shouldReset = False
 
         # 地面と天井の当たり判定
-        |? self'_birdPos'Y < 0.0f =>
+        |? self'_birdPos'Y < 0.0f || self'_birdPos'Y > 720.0f =>
             shouldReset = True
         
         |? shouldReset =>

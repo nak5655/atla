@@ -2238,6 +2238,31 @@ module ExprAnalyze =
                 | _ ->
                     let message = "Invalid assignment target"
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+            | :? Ast.Expr.IndexAccess as indexTarget ->
+                // 添字代入 `receiver[index] = value` をインデクサ setter 呼び出しへ lower する。
+                // List<T> → set_Item(index, value)、1次元配列 → SetValue(value, index)。
+                let receiver = analyzeExpr nameEnv typeEnv indexTarget.receiver (typeEnv.freshMeta ())
+                let indexExpr = analyzeExpr nameEnv typeEnv indexTarget.index TypeId.Int
+                let resolvedReceiverType = typeEnv.resolveType receiver.typ
+                match NativeInterop.resolveRuntimeSystemType nameEnv typeEnv resolvedReceiverType with
+                | Some systemType ->
+                    match NativeInterop.tryResolveIndexerSetterMethod systemType with
+                    | Some setMethod ->
+                        let ps = setMethod.GetParameters()
+                        // SetValue(value, index) は value が第1引数。set_Item(index, value) は value が第2引数。
+                        let isArraySetter = (setMethod.Name = "SetValue")
+                        let valueParamType = if isArraySetter then ps.[0].ParameterType else ps.[1].ParameterType
+                        let rhs = analyzeExpr nameEnv typeEnv assignStmt.value (TypeId.fromSystemType valueParamType)
+                        let callArgs = if isArraySetter then [ receiver; rhs; indexExpr ] else [ receiver; indexExpr; rhs ]
+                        let callExpr =
+                            Hir.Expr.Call(Hir.Callable.NativeMethod setMethod, None, callArgs, TypeId.Unit, assignStmt.span)
+                        Hir.Stmt.ExprStmt(callExpr, assignStmt.span)
+                    | None ->
+                        let message = sprintf "Type '%s' does not support index assignment" systemType.FullName
+                        Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                | None ->
+                    let message = sprintf "Type '%s' does not support indexing" (formatTypeForDisplay nameEnv typeEnv resolvedReceiverType)
+                    Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
             | _ ->
                 let message = "Invalid assignment target"
                 Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)

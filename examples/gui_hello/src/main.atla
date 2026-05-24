@@ -14,5 +14,5 @@ fn appMain (app: Application) (args: Array String): () =
     app window DesktopApplicationExtensions'Run.
 
 fn main (args: Array String): () =
-    let config = (AppBuilder'Configure[Application].)'UsePlatformDetect.
+    let config = (AppBuilder'Configure<Application>.)'UsePlatformDetect.
     appMain args config'Start.

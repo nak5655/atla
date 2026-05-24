@@ -203,14 +203,14 @@ fn main: () =
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses index access expression with bang-bang operator`` () =
+    let ``fileModule parses index access expression with bracket syntax`` () =
         let program = """
 import System'Console
 
 fn main: () =
     let line = Console'ReadLine.
     let a = " " line'Split.
-    a !! 0 Console'WriteLine.
+    a[0] Console'WriteLine.
 """
 
         match parseModule program with
@@ -263,7 +263,7 @@ import Avalonia'Controls'AppBuilder
 import Avalonia'Application
 
 fn main: () =
-    let config = AppBuilder'Configure[Application].
+    let config = AppBuilder'Configure<Application>.
     config
 """
 
