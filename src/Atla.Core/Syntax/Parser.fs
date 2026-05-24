@@ -103,13 +103,12 @@ module Parser =
                 | Failure (reason, span) -> Failure (reason, span)
         )
 
-    // `|` / `|?` / `|@` は if/match ブランチ区切り専用で二項中置演算子ではない。`!!` はインデックスアクセス専用。
-    // いずれも infixOp から除外する。
+    // `|` / `|?` / `|@` は if/match ブランチ区切り専用で二項中置演算子ではない。infixOp から除外する。
     // `|:` の `:` は opSign でないため Token.Symbol として出現しない（2トークン: | と :）ので除外不要。
     let infixOp prec : PackratParser<Token, Token.Symbol> =
         AcceptMatch (fun t ->
             match t with
-            | :? Token.Symbol as sym when sym.precedence = prec && sym.str <> "!!" && sym.str <> "|" && sym.str <> "|?" && sym.str <> "|@" -> Some(sym)
+            | :? Token.Symbol as sym when sym.precedence = prec && sym.str <> "|" && sym.str <> "|?" && sym.str <> "|@" -> Some(sym)
             | _ -> None)
 
     let tid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id -> Some(id) | _ -> None)
@@ -286,24 +285,34 @@ module Parser =
                             Ast.Expr.Error("Expected member identifier after apostrophe.", { left = receiver.span.left; right = quote.span.right }) :> Ast.Expr),
                          afterQuotePos))
 
-    // 型引数付き呼び出しの postfix を受理する（例: receiver[Application]）。
+    // 型引数付き呼び出しの postfix を受理する（例: receiver<Application>.）。
+    // `<` は比較演算子でもあるため、`<...>` の直後に呼び出し `.` が続く場合のみジェネリック適用とみなす。
+    // （ジェネリック適用は常に `<T>.` の形になる。実引数は callee の前に置かれるため。）
+    // `Not (Not (symbol "."))` は `.` の非消費先読み（正の先読み）。
     and postfixGenericApply: PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
         Delay (fun () ->
-            delim '[' &> SepBy1 typeExpr (delim ',') <&> delim ']' |>> fun (typeArgs, closeBracket) ->
+            (symbol "<" &> SepBy1 typeExpr (delim ',') <&> symbol ">") <& Not (Not (symbol ".")) |>> fun (typeArgs, closeBracket) ->
                 fun receiver ->
                     Ast.Expr.GenericApply(receiver, typeArgs, { left = receiver.span.left; right = closeBracket.span.right }) :> Ast.Expr)
 
+    // 添字アクセスの postfix を受理する（例: receiver[index]）。索引は任意の式。
+    and postfixIndexAccess: PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
+        Delay (fun () ->
+            delim '[' &> expr <&> delim ']' |>> fun (index, closeBracket) ->
+                fun receiver ->
+                    Ast.Expr.IndexAccess(receiver, index, { left = receiver.span.left; right = closeBracket.span.right }) :> Ast.Expr)
+
     and postfixExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            factor <&> Many (postfixMemberAccess <|> postfixGenericApply)
+            factor <&> Many (postfixGenericApply <|> postfixIndexAccess <|> postfixMemberAccess)
             |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes)
 
     // 代入左辺として許可される式を解析する。
-    // 許可: 識別子、アポストロフィによるメンバーアクセス連鎖（例: a'b'c）。
-    // 非許可: 呼び出し結果、リテラル、型引数適用、添字アクセス。
+    // 許可: 識別子、アポストロフィによるメンバーアクセス連鎖（例: a'b'c）、添字アクセス（例: a[i]、a'b[i]）。
+    // 非許可: 呼び出し結果、リテラル、型引数適用。
     and assignLValueExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            (asExpr id) <&> Many postfixMemberAccess
+            (asExpr id) <&> Many (postfixMemberAccess <|> postfixIndexAccess)
             |>> fun (headExpr, postfixes) -> List.fold (fun current applyPostfix -> applyPostfix current) headExpr postfixes)
 
     // 単項マイナスを解析し、AST の既存 Apply 形状へ正規化する。
@@ -334,18 +343,9 @@ module Parser =
             | Failure _ ->
                 postfixExpr input pos)
 
-    // 呼び出し式の項
+    // 呼び出し式の項。添字アクセスは postfixExpr の `[i]` で扱う。
     and term1: PackratParser<Token, Ast.Expr> =
-        Delay (fun () ->
-            // TODO: 将来的には `!!` を通常の演算子解決（Id("!!") 経由）へ統一し、
-            //       term1 での IndexAccess 特別扱いを削除する。
-            unaryTerm <&> Optional (symbol "!!" &> unaryTerm)
-            |>> fun (receiver, optIndex) ->
-                match optIndex with
-                | Some index ->
-                    Ast.Expr.IndexAccess(receiver, index, { left = receiver.span.left; right = index.span.right }) :> Ast.Expr
-                | None ->
-                    receiver)
+        Delay (fun () -> unaryTerm)
 
     // Dot-only 呼び出し式を解析する。
     // 仕様:
@@ -377,7 +377,7 @@ module Parser =
                             // 二項演算子位置では dot-call 引数収集を打ち切り、binop 解析へ制御を戻す。
                             // これにより `n - 2` の `-` を誤って unary 引数として取り込むことを防ぐ。
                             match callInput.get tailPos with
-                            | Some (:? Token.Symbol as sym) when sym.str <> "!!" && sym.str <> "." ->
+                            | Some (:? Token.Symbol as sym) when sym.str <> "." ->
                                 List.rev acc, tailPos
                             | _ ->
                                 match term1 callInput tailPos with

@@ -270,6 +270,31 @@ module NativeInterop =
         |> Option.orElseWith (fun () -> pickByName "get_Item")
         |> Option.orElseWith (fun () -> pickByName "get_Chars")
 
+    // 添字代入 `receiver[index] = value` のセッターを解決する。
+    // List<T> 等のインデクサは `void set_Item(int index, T value)`、1次元配列は `void SetValue(object value, int index)`。
+    let tryResolveIndexerSetterMethod (receiverType: System.Type) : MethodInfo option =
+        let tryResolveSingleDimArraySetter () =
+            if receiverType.IsArray && receiverType.GetArrayRank() = 1 then
+                receiverType.GetMethod("SetValue", BindingFlags.Public ||| BindingFlags.Instance, null, [| typeof<obj>; typeof<int> |], null)
+                |> Option.ofObj
+            else
+                None
+
+        let allTypes = receiverType :: (receiverType.GetInterfaces() |> Array.toList)
+        let candidates =
+            allTypes
+            |> List.collect (fun t ->
+                t.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+                |> Array.filter (fun methodInfo ->
+                    let ps = methodInfo.GetParameters()
+                    ps.Length = 2 && ps.[0].ParameterType = typeof<int>)
+                |> Array.toList)
+        let pickByName name =
+            candidates |> List.tryFind (fun methodInfo -> methodInfo.Name = name)
+
+        tryResolveSingleDimArraySetter ()
+        |> Option.orElseWith (fun () -> pickByName "set_Item")
+
     // 拡張メソッド判定を一箇所に集約する。
     let private isExtensionMethod (methodInfo: MethodInfo) : bool =
         methodInfo.IsDefined(extensionAttributeType, false)

@@ -94,7 +94,17 @@ module Lexer =
             |> List.map (fun d -> AcceptIf (fun (c: SourceChar) -> c.char = d) |>> fun c -> Token.Delim (c.char, c.span))
             |> List.fold (<|>) (Fail "No delimiters")
     let symbol: PackratParser<SourceChar, Token.Symbol> =
-        Many1 (AcceptIf (fun c -> opSigns |> List.contains c.char)) |>> fun chars -> let s = SourceString.join(chars) in Token.Symbol(s.string, s.span)
+        // `<` `>` は単独トークン（`<=` `>=` のみ2文字）として切り出し、後続の `.`/`>` 等と貪欲結合しない。
+        // これにより比較演算子と、ジェネリック呼び出し `f<T>.`（閉じ `>` と呼び出し `.` を別トークンに保つ）を両立する。
+        let isAngle c = c = '<' || c = '>'
+        let angleSymbol =
+            AcceptIf (fun c -> isAngle c.char) <&> Optional (AcceptIf (fun c -> c.char = '='))
+            |>> fun (a, eqOpt) ->
+                let chars = match eqOpt with | Some eq -> [ a; eq ] | None -> [ a ]
+                let s = SourceString.join(chars) in Token.Symbol(s.string, s.span)
+        let otherSymbol =
+            Many1 (AcceptIf (fun c -> (opSigns |> List.contains c.char) && not (isAngle c.char))) |>> fun chars -> let s = SourceString.join(chars) in Token.Symbol(s.string, s.span)
+        angleSymbol <|> otherSymbol
     let id = alpha_ <&> Many alphaNum_ |>> fun (first, rest) -> let s = SourceString.join(first :: rest) in Token.Id(s.string, s.span)
     let int = intRaw |>> fun s -> Token.Int(System.Int32.Parse(s.string), s.span)
     // `1.0f` は単精度（Token.Float / float32）。末尾の `f` まで span に含める。

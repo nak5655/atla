@@ -323,7 +323,7 @@ import System'Console
 
 fn main: () = do
     let a = Console'ReadLine.
-    a !! 1 Console'WriteLine.
+    a[1] Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -365,7 +365,7 @@ import System'Console
 fn main: () = do
     let line = Console'ReadLine.
     let a = " " line'Split.
-    a !! 0 Console'WriteLine.
+    a[0] Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -454,7 +454,7 @@ fn main: () = do
     let line = Console'ReadLine.
     let a = " " line'Split.
     for i in 0 a'Length Enumerable'Range.
-        a !! i Console'WriteLine.
+        a[i] Console'WriteLine.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -2425,3 +2425,67 @@ fn main: () = do
         // 1つ目: True || → rhs 評価されない（"R" なし）、条件 true → "A"
         // 2つ目: False || rhs. → rhs 評価され "R"、結果 true → "B"
         Assert.Equal("ARBz", runForStdout "ShortCircuitOr" program)
+
+    // ──────────────────────────────────────────────────────────────
+    // 添字アクセス [i]・添字代入 [i] = x・ジェネリック <T>
+    // ──────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    let ``index access with bracket syntax reads list element`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    let xs: List Int = List.
+    10 xs'Add.
+    20 xs'Add.
+    30 xs'Add.
+    xs[1] Console'Write.
+"""
+        Assert.Equal("20", runForStdout "IndexRead" program)
+
+    [<Fact>]
+    let ``index assignment writes list element`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    let xs: List Int = List.
+    10 xs'Add.
+    20 xs'Add.
+    xs[0] = 99
+    xs[0] Console'Write.
+    xs[1] Console'Write.
+"""
+        // 添字代入後に読み出して検証: xs[0] は 99 に更新、xs[1] は 20 のまま。
+        Assert.Equal("9920", runForStdout "IndexAssign" program)
+
+    [<Fact>]
+    let ``generic call with angle-bracket syntax`` () =
+        let program = """
+import System'Activator
+import System'Console
+
+fn main: () = do
+    let x = Activator'CreateInstance<Int>.
+    x Console'Write.
+"""
+        // CreateInstance<Int> は int の既定値 0 を返す。
+        Assert.Equal("0", runForStdout "GenericAngle" program)
+
+    [<Fact>]
+    let ``comparison operators are not misparsed as generics`` () =
+        let program = """
+import System'Console
+
+fn cmp (a: Int) (b: Int): () = do
+    |? a < b => "L" Console'Write.
+    |? a > b => "G" Console'Write.
+
+fn main: () = do
+    3 5 cmp.
+    5 3 cmp.
+    |? 1 < 2 && 2 > 1 => "B" Console'Write.
+"""
+        // cmp(3,5)→"L"、cmp(5,3)→"G"、`1<2 && 2>1`→"B"。`<`/`>` がジェネリックに誤認されないことの回帰確認。
+        Assert.Equal("LGB", runForStdout "CmpNotGeneric" program)
