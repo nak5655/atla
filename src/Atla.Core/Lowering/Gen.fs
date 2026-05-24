@@ -388,6 +388,18 @@ module Gen =
             | Mir.OpCode.Or -> gen.Emit(OpCodes.Or)
             | Mir.OpCode.And -> gen.Emit(OpCodes.And)
             | Mir.OpCode.Eq -> gen.Emit(OpCodes.Ceq)
+            | Mir.OpCode.Lt -> gen.Emit(OpCodes.Clt)
+            | Mir.OpCode.Gt -> gen.Emit(OpCodes.Cgt)
+            | Mir.OpCode.Le ->
+                // <= は (a > b) の結果を論理反転する（cgt; ldc.i4.0; ceq）。
+                gen.Emit(OpCodes.Cgt)
+                gen.Emit(OpCodes.Ldc_I4_0)
+                gen.Emit(OpCodes.Ceq)
+            | Mir.OpCode.Ge ->
+                // >= は (a < b) の結果を論理反転する（clt; ldc.i4.0; ceq）。
+                gen.Emit(OpCodes.Clt)
+                gen.Emit(OpCodes.Ldc_I4_0)
+                gen.Emit(OpCodes.Ceq)
             match dest with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)

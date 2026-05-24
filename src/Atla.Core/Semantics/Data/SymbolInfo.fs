@@ -103,7 +103,19 @@ type SymbolTable() =
           ("!=", addNativeMethodOp "!=" (TypeId.Fn([ TypeId.String; TypeId.String ], TypeId.Bool)) (if isNull strNe then [] else [ strNe ]))
           ("+", addNativeMethodOp "+" (TypeId.Fn([ TypeId.String; TypeId.String ], TypeId.String)) (if isNull strConcat then [] else [ strConcat ]))
           ("&&", addBuiltinOperator "&&" (TypeId.Fn([ TypeId.Bool; TypeId.Bool ], TypeId.Bool)) Builtins.Operators.OpAnd)
-          ("||", addBuiltinOperator "||" (TypeId.Fn([ TypeId.Bool; TypeId.Bool ], TypeId.Bool)) Builtins.Operators.OpOr) ]
+          ("||", addBuiltinOperator "||" (TypeId.Fn([ TypeId.Bool; TypeId.Bool ], TypeId.Bool)) Builtins.Operators.OpOr)
+          ("<", addBuiltinOperator "<" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpLt)
+          ("<", addBuiltinOperator "<" (TypeId.Fn([ TypeId.Double; TypeId.Double ], TypeId.Bool)) Builtins.Operators.OpLt)
+          ("<", addBuiltinOperator "<" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Bool)) Builtins.Operators.OpLt)
+          (">", addBuiltinOperator ">" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpGt)
+          (">", addBuiltinOperator ">" (TypeId.Fn([ TypeId.Double; TypeId.Double ], TypeId.Bool)) Builtins.Operators.OpGt)
+          (">", addBuiltinOperator ">" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Bool)) Builtins.Operators.OpGt)
+          ("<=", addBuiltinOperator "<=" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpLe)
+          ("<=", addBuiltinOperator "<=" (TypeId.Fn([ TypeId.Double; TypeId.Double ], TypeId.Bool)) Builtins.Operators.OpLe)
+          ("<=", addBuiltinOperator "<=" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Bool)) Builtins.Operators.OpLe)
+          (">=", addBuiltinOperator ">=" (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Bool)) Builtins.Operators.OpGe)
+          (">=", addBuiltinOperator ">=" (TypeId.Fn([ TypeId.Double; TypeId.Double ], TypeId.Bool)) Builtins.Operators.OpGe)
+          (">=", addBuiltinOperator ">=" (TypeId.Fn([ TypeId.Float; TypeId.Float ], TypeId.Bool)) Builtins.Operators.OpGe) ]
 
     member this.BuiltinOperators = builtinOperators
     member this.BuiltinFunctions = builtinFunctions

@@ -127,6 +127,10 @@ module Mir =
         | And
         | Eq
         | Ne
+        | Lt
+        | Gt
+        | Le
+        | Ge
 
     /// 分岐先ラベルの識別子。Layout フェーズで連番で払い出し、Gen フェーズで ILGenerator.Label へ解決する。
     [<Struct>]

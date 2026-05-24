@@ -160,6 +160,32 @@ module Layout =
                 Result.Error (Diagnostic.Error("First-class native base method value is not supported", span))
             | Hir.Member.NativeBaseMethodGroup _ ->
                 Result.Error (Diagnostic.Error("First-class native base method group value is not supported", span))
+        // 論理演算子 && / || は短絡評価する。a && b ≡ if a then b else false、a || b ≡ if a then true else b。
+        // 両オペランドを一括 lowering する前に横取りし、右辺は分岐後に評価する（If lowering と同じ JumpTrue/JumpFalse パターン）。
+        | ClosedHir.Expr.Call (Hir.Callable.BuiltinOperator ((Builtins.OpAnd | Builtins.OpOr) as op), None, [ lhsExpr; rhsExpr ], tid, callSpan) ->
+            match layoutExpr state lhsExpr with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, lhsKn) ->
+                match layoutExpr state1 rhsExpr with
+                | Result.Error e -> Result.Error e
+                | Ok (state2, rhsKn) ->
+                    match lhsKn.res, rhsKn.res with
+                    | Some lhsVal, Some rhsVal ->
+                        let dst, state3 = declareTemp state2 tid
+                        let endLabel, state4 = freshLabel state3
+                        // OpAnd: 左辺が false なら右辺を評価せず end へ。OpOr: 左辺が true なら end へ。
+                        let shortCircuitJump =
+                            match op with
+                            | Builtins.OpAnd -> Mir.Ins.JumpFalse(lhsVal, endLabel)
+                            | _ -> Mir.Ins.JumpTrue(lhsVal, endLabel)
+                        let ins =
+                            lhsKn.ins
+                            @ [ Mir.Ins.Assign(dst, lhsVal); shortCircuitJump ]
+                            @ rhsKn.ins
+                            @ [ Mir.Ins.Assign(dst, rhsVal); Mir.Ins.MarkLabel endLabel ]
+                        Ok (state4, { ins = ins; res = Some(Mir.Value.RegVal dst) })
+                    | None, _ -> Result.Error (Diagnostic.Error("Missing lhs operand for logical operator", callSpan))
+                    | _, None -> Result.Error (Diagnostic.Error("Missing rhs operand for logical operator", callSpan))
         | ClosedHir.Expr.Call (func, instanceOpt, args, tid, callSpan) ->
             // instance call の receiver を必ず先頭に載せ、Gen 側の call/callvirt 規約（receiver :: args）を満たす。
             let instanceLayoutResult =
@@ -285,6 +311,10 @@ module Layout =
                                             | Builtins.OpMod -> Mir.OpCode.Mod
                                             | Builtins.OpEq -> Mir.OpCode.Eq
                                             | Builtins.OpNe -> Mir.OpCode.Ne
+                                            | Builtins.OpLt -> Mir.OpCode.Lt
+                                            | Builtins.OpGt -> Mir.OpCode.Gt
+                                            | Builtins.OpLe -> Mir.OpCode.Le
+                                            | Builtins.OpGe -> Mir.OpCode.Ge
                                             | Builtins.OpAnd -> Mir.OpCode.And
                                             | Builtins.OpOr -> Mir.OpCode.Or
                                             | Builtins.OpNeg -> failwith "OpNeg must be handled as unary before this match"
