@@ -1547,6 +1547,94 @@ fn main (): Unit =
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
+    let private firstLetStmt (astModule: Ast.Module) (name: string) : Ast.Stmt.Let option =
+        astModule.decls
+        |> List.tryPick (fun decl -> match decl with | :? Ast.Decl.Fn as fn -> Some fn | _ -> None)
+        |> Option.bind (fun fn ->
+            match fn.body with
+            | :? Ast.Expr.Block as blockExpr ->
+                blockExpr.stmts
+                |> List.tryPick (fun stmt -> match stmt with | :? Ast.Stmt.Let as letStmt when letStmt.name = name -> Some letStmt | _ -> None)
+            | _ -> None)
+
+    [<Fact>]
+    let ``fileModule parses let binding type annotation`` () =
+        let program = """
+fn main: () =
+    let x: List Int = List.
+    x
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            match firstLetStmt astModule "x" with
+            | Some letStmt ->
+                match letStmt.typeAnnotation with
+                | Some (:? Ast.TypeExpr.Apply as applyType) ->
+                    match applyType.head with
+                    | :? Ast.TypeExpr.Id as headId -> Assert.Equal("List", headId.name)
+                    | _ -> Assert.True(false, "expected List head in type annotation")
+                    match applyType.args with
+                    | [ (:? Ast.TypeExpr.Id as argId) ] -> Assert.Equal("Int", argId.name)
+                    | _ -> Assert.True(false, "expected single Int type argument")
+                | _ -> Assert.True(false, "expected Some Apply type annotation on let binding")
+            | None -> Assert.True(false, "let binding 'x' was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses var binding type annotation`` () =
+        let program = """
+fn main: () =
+    var x: Int = 0
+    x
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let varStmt =
+                astModule.decls
+                |> List.tryPick (fun decl -> match decl with | :? Ast.Decl.Fn as fn -> Some fn | _ -> None)
+                |> Option.bind (fun fn ->
+                    match fn.body with
+                    | :? Ast.Expr.Block as blockExpr ->
+                        blockExpr.stmts |> List.tryPick (fun stmt -> match stmt with | :? Ast.Stmt.Var as v -> Some v | _ -> None)
+                    | _ -> None)
+            match varStmt with
+            | Some v ->
+                match v.typeAnnotation with
+                | Some (:? Ast.TypeExpr.Id as idType) -> Assert.Equal("Int", idType.name)
+                | _ -> Assert.True(false, "expected Some Int type annotation on var binding")
+            | None -> Assert.True(false, "var binding 'x' was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses expression type ascription`` () =
+        let program = """
+fn main: () =
+    let y = List. : List Int
+    y
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            match firstLetStmt astModule "y" with
+            | Some letStmt ->
+                Assert.True(letStmt.typeAnnotation.IsNone, "let binding 'y' should have no binding annotation")
+                match letStmt.value with
+                | :? Ast.Expr.TypeAscription as asc ->
+                    match asc.typeExpr with
+                    | :? Ast.TypeExpr.Apply as applyType ->
+                        match applyType.head with
+                        | :? Ast.TypeExpr.Id as headId -> Assert.Equal("List", headId.name)
+                        | _ -> Assert.True(false, "expected List head in ascription type")
+                    | _ -> Assert.True(false, "expected Apply ascription type")
+                | _ -> Assert.True(false, "expected let value to be a TypeAscription")
+            | None -> Assert.True(false, "let binding 'y' was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
     [<Fact>]
     let ``fileModule parses generic enum declaration with one type parameter`` () =
         let program = """

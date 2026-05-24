@@ -2010,6 +2010,13 @@ module ExprAnalyze =
                     let actualTypeStr = formatTypeForDisplay nameEnv typeEnv analyzedOperand.typ
                     errorExpr tid awaitExpr.span
                         (sprintf "'await' expects Task or Task<T>, got '%s'" actualTypeStr)
+        | :? Ast.Expr.TypeAscription as ascExpr ->
+            // 型注釈は推論を注釈型へ固定する制約のみ。キャストはしない。
+            // 注釈型を期待型 tid と単一化し、内側式をその型を期待して解析する。
+            let annotTid = nameEnv.resolveTypeExpr ascExpr.typeExpr
+            match unifyOrError nameEnv typeEnv tid annotTid ascExpr.span with
+            | Result.Ok _ -> analyzeExpr nameEnv typeEnv ascExpr.expr annotTid
+            | Result.Error exprErr -> exprErr
         | _ -> errorExpr tid expr.span "Unsupported expression type"
 
     and private analyzeStmt (nameEnv: NameEnv) (typeEnv: TypeEnv) (stmt: Ast.Stmt) : Hir.Stmt =
@@ -2018,12 +2025,18 @@ module ExprAnalyze =
             // Parser 由来の文エラーは ErrorStmt として後段へ渡す。
             Hir.Stmt.ErrorStmt(errorStmt.message, errorStmt.span)
         | :? Ast.Stmt.Let as letStmt ->
-            let tid = typeEnv.freshMeta ()
+            let tid =
+                match letStmt.typeAnnotation with
+                | Some te -> nameEnv.resolveTypeExpr te
+                | None -> typeEnv.freshMeta ()
             let rhs = analyzeExpr nameEnv typeEnv letStmt.value tid
             let sid = nameEnv.declareLocal letStmt.name tid
             Hir.Stmt.Let(sid, false, rhs, letStmt.span)
         | :? Ast.Stmt.Var as varStmt ->
-            let tid = typeEnv.freshMeta ()
+            let tid =
+                match varStmt.typeAnnotation with
+                | Some te -> nameEnv.resolveTypeExpr te
+                | None -> typeEnv.freshMeta ()
             let rhs = analyzeExpr nameEnv typeEnv varStmt.value tid
             let sid = nameEnv.declareLocal varStmt.name tid
             Hir.Stmt.Let(sid, true, rhs, varStmt.span)

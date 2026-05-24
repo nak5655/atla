@@ -1054,7 +1054,7 @@ fn main (): Int = ping.
         let writeLineExpr = Ast.Expr.StaticAccess("Console", "WriteLine", span) :> Ast.Expr
         let helloArg = Ast.Expr.String("Hello, World!", span) :> Ast.Expr
         let callExpr = Ast.Expr.Apply(writeLineExpr, [ helloArg ], span) :> Ast.Expr
-        let letStmt = Ast.Stmt.Let("x", callExpr, span) :> Ast.Stmt
+        let letStmt = Ast.Stmt.Let("x", None, callExpr, span) :> Ast.Stmt
         let valueStmt = Ast.Stmt.ExprStmt(Ast.Expr.Id("x", span) :> Ast.Expr, span) :> Ast.Stmt
         let body = Ast.Expr.Block([ letStmt; valueStmt ], span) :> Ast.Expr
         let fnDecl = Ast.Decl.Fn("main", [], retType, body, false, false, span) :> Ast.Decl
@@ -3372,7 +3372,7 @@ fn test (domain: AppDomain): () =
         let span = Span.Empty
         let body =
             Ast.Expr.Block([
-                Ast.Stmt.Var("x", Ast.Expr.Int(1, span) :> Ast.Expr, span) :> Ast.Stmt
+                Ast.Stmt.Var("x", None, Ast.Expr.Int(1, span) :> Ast.Expr, span) :> Ast.Stmt
                 Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Add, Ast.Expr.Id("x", span) :> Ast.Expr, Ast.Expr.Int(2, span) :> Ast.Expr, span) :> Ast.Stmt
             ], span) :> Ast.Expr
         let fnDecl = Ast.Decl.Fn("main", [], Ast.TypeExpr.Unit(span) :> Ast.TypeExpr, body, false, false, span) :> Ast.Decl
@@ -3397,7 +3397,7 @@ fn test (domain: AppDomain): () =
         let span = Span.Empty
         let body =
             Ast.Expr.Block([
-                Ast.Stmt.Var("x", Ast.Expr.Int(3, span) :> Ast.Expr, span) :> Ast.Stmt
+                Ast.Stmt.Var("x", None, Ast.Expr.Int(3, span) :> Ast.Expr, span) :> Ast.Stmt
                 Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Mul, Ast.Expr.Id("x", span) :> Ast.Expr, Ast.Expr.Int(4, span) :> Ast.Expr, span) :> Ast.Stmt
             ], span) :> Ast.Expr
         let fnDecl = Ast.Decl.Fn("main", [], Ast.TypeExpr.Unit(span) :> Ast.TypeExpr, body, false, false, span) :> Ast.Decl
@@ -3422,7 +3422,7 @@ fn test (domain: AppDomain): () =
         let span = Span.Empty
         let body =
             Ast.Expr.Block([
-                Ast.Stmt.Var("x", Ast.Expr.Int(10, span) :> Ast.Expr, span) :> Ast.Stmt
+                Ast.Stmt.Var("x", None, Ast.Expr.Int(10, span) :> Ast.Expr, span) :> Ast.Stmt
                 Ast.Stmt.CompoundAssign(Ast.Stmt.CompoundAssignOp.Div, Ast.Expr.Id("x", span) :> Ast.Expr, Ast.Expr.Int(2, span) :> Ast.Expr, span) :> Ast.Stmt
             ], span) :> Ast.Expr
         let fnDecl = Ast.Decl.Fn("main", [], Ast.TypeExpr.Unit(span) :> Ast.TypeExpr, body, false, false, span) :> Ast.Decl
@@ -3830,6 +3830,103 @@ async fn bad (x: Int): Int = await x
                     | Some hirModule -> hirModule.hasError
                     | None -> not (List.isEmpty result.diagnostics)
                 Assert.True(hasError, "await on a non-Task operand should produce a diagnostic")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    /// メソッド本体ブロックの先頭の let 文の束縛シンボル型を解決して返す。
+    let private firstLetBindingType (symbolTable: SymbolTable) (subst: TypeSubst) (hirModule: Hir.Module) : TypeId option =
+        match hirModule.methods.Head.body with
+        | Hir.Expr.Block(stmts, _, _, _) ->
+            stmts
+            |> List.tryPick (fun s -> match s with | Hir.Stmt.Let(sid, _, _, _) -> Some sid | _ -> None)
+            |> Option.bind symbolTable.Get
+            |> Option.map (fun info -> Type.resolve subst info.typ)
+        | _ -> None
+
+    let private assertListInt (typOpt: TypeId option) =
+        match typOpt with
+        | Some (TypeId.App(TypeId.Native t, [ TypeId.Int ])) when t = typedefof<System.Collections.Generic.List<_>> ->
+            Assert.True(true)
+        | other -> Assert.True(false, $"expected let binding type List<Int>, got {other}")
+
+    [<Fact>]
+    let ``let binding type annotation makes inferred type concrete`` () =
+        let source = """
+fn main: List Int =
+    let x: List Int = List.
+    x
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    assertListInt (firstLetBindingType symbolTable subst hirModule)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``expression type ascription makes inferred type concrete`` () =
+        let source = """
+fn main: List Int =
+    let y = List. : List Int
+    y
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
+                | { succeeded = true; value = Some hirModule } ->
+                    assertListInt (firstLetBindingType symbolTable subst hirModule)
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Semantic analysis failed: {message}")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``type annotation mismatch produces diagnostic`` () =
+        let source = """
+fn main: Int =
+    let x: Int = List.
+    x
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (astModule, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                let result = Analyze.analyzeModule(symbolTable, subst, "main", astModule)
+                let hasError =
+                    match result.value with
+                    | Some hirModule -> hirModule.hasError
+                    | None -> not (List.isEmpty result.diagnostics)
+                Assert.True(hasError, "annotation/expression type mismatch should produce a diagnostic")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
