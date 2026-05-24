@@ -22,8 +22,8 @@ data FlappyGame =
     , _gravity: Float
     , _rand: Random
     , _pipes: List Vector2
-    , _pipeWidth: Int
-    , _pipeGap: Int
+    , _pipeWidth: Float
+    , _pipeGap: Float
     , _pipeSpeed: Int }
 
 impl FlappyGame as Game
@@ -38,12 +38,23 @@ impl FlappyGame as Game
             , _gravity = 900.0f
             , _rand = Random.
             , _pipes = List.
-            , _pipeWidth = 60
-            , _pipeGap = 180
+            , _pipeWidth = 60.0f
+            , _pipeGap = 180.0f
             , _pipeSpeed = 200 }
 
     fn RandomGap self: Int =
         200 450 self'_rand'Next.
+
+    fn ResetGame self: () =
+        self'_birdPos = 200.0f 300.0f Vector2.
+        self'_birdVelocity = 0.0f
+        self'_pipes'Clear.
+
+        # 初期パイプ生成
+        for i in 0 4 Enumerable'Range.
+            let pipeX = 600.0f + (i toFloat.) * 250.0f
+            let gapY = self'RandomGap. toFloat.
+            (pipeX gapY Vector2.) self'_pipes'Add.
 
     override fn Initialize self: () =
         base'Initialize.
@@ -74,6 +85,15 @@ impl FlappyGame as Game
         self'_birdVelocity += self'_gravity * dt
         self'_birdPos'Y += self'_birdVelocity * dt
 
+        var shouldReset = False
+
+        # 地面と天井の当たり判定
+        |? self'_birdPos'Y < 0.0f =>
+            shouldReset = True
+        
+        |? shouldReset =>
+            self'ResetGame.
+
     override fn Draw self (gameTime: GameTime): () =
         gameTime base'Draw.
 
@@ -88,6 +108,16 @@ impl FlappyGame as Game
             |@ self'_whiteTexture
             |: Opt'Some whiteTexture =>
                 whiteTexture (self'_birdPos'X self'_birdPos'Y self'_birdSize self'_birdSize RectangleF.) Color'Yellow spriteBatch'Draw.
+
+                for pipe in self'_pipes
+                    let topY = pipe'Y - self'_pipeGap / 2.0f
+                    let bottomY = pipe'Y + self'_pipeGap / 2.0f
+
+                    # 上のパイプ
+                    whiteTexture (pipe'X 0.0f self'_pipeWidth topY RectangleF.) Color'Green spriteBatch'Draw.
+
+                    # 下のパイプ
+                    whiteTexture (pipe'X bottomY self'_pipeWidth (720.0f - bottomY) RectangleF.) Color'Green spriteBatch'Draw.
             |: Opt'None => ()
 
             spriteBatch'End.

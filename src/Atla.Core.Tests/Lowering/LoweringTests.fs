@@ -2323,3 +2323,105 @@ async fn choose (c: Bool) (a: Task Int) (b: Task Int): Int =
             Assert.Equal(22, rFalse.Result)
         | None ->
             Assert.True(false, "'choose' method not found in generated assembly")
+
+    // ──────────────────────────────────────────────────────────────
+    // 比較演算子 < > <= >= と && / || の短絡評価
+    // ──────────────────────────────────────────────────────────────
+
+    let private runForStdout (asmName: string) (program: string) : string =
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = asmName; source = program.Trim(); outDir = outDir; dependencies = [] }
+        if not res.succeeded then
+            let message = res.diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "\n"
+            Assert.True(false, $"compile failed: {message}")
+
+        let dllPath = Path.Join(outDir, asmName + ".dll")
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+        use proc = Process.Start(psi)
+        proc.StandardInput.Close()
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        stdout.Trim()
+
+    [<Fact>]
+    let ``comparison operators on Int produce correct Bool results`` () =
+        let program = """
+import System'Console
+
+fn check (a: Int) (b: Int): () = do
+    |? a < b => "lt" Console'Write.
+    |? a > b => "gt" Console'Write.
+    |? a <= b => "le" Console'Write.
+    |? a >= b => "ge" Console'Write.
+
+fn main: () = do
+    3 5 check.
+    5 3 check.
+    4 4 check.
+"""
+        // 3<5: lt,le / 5>3: gt,ge / 4==4: le,ge
+        Assert.Equal("ltlegtgelege", runForStdout "CmpInt" program)
+
+    [<Fact>]
+    let ``comparison operators on Float produce correct Bool results`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    |? 0.5f < 1.0f => "a" Console'Write.
+    |? 2.0f > 1.0f => "b" Console'Write.
+    |? 1.0f <= 1.0f => "c" Console'Write.
+    |? 1.0f >= 2.0f => "d" Console'Write.
+    "z" Console'Write.
+"""
+        // a,b,c が真、d は偽
+        Assert.Equal("abcz", runForStdout "CmpFloat" program)
+
+    [<Fact>]
+    let ``logical && short-circuits the right operand when left is false`` () =
+        let program = """
+import System'Console
+
+fn rhs: Bool = do
+    "R" Console'Write.
+    True
+
+fn main: () = do
+    |? False && rhs. => "A" Console'Write.
+    |? True && rhs. => "B" Console'Write.
+    "z" Console'Write.
+"""
+        // 1つ目: False && → rhs 評価されない（"R" なし）、条件 false（"A" なし）
+        // 2つ目: True && rhs. → rhs 評価され "R"、結果 true → "B"
+        Assert.Equal("RBz", runForStdout "ShortCircuitAnd" program)
+
+    [<Fact>]
+    let ``logical || short-circuits the right operand when left is true`` () =
+        let program = """
+import System'Console
+
+fn rhs: Bool = do
+    "R" Console'Write.
+    True
+
+fn main: () = do
+    |? True || rhs. => "A" Console'Write.
+    |? False || rhs. => "B" Console'Write.
+    "z" Console'Write.
+"""
+        // 1つ目: True || → rhs 評価されない（"R" なし）、条件 true → "A"
+        // 2つ目: False || rhs. → rhs 評価され "R"、結果 true → "B"
+        Assert.Equal("ARBz", runForStdout "ShortCircuitOr" program)

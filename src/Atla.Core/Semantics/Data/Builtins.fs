@@ -12,6 +12,10 @@ module Builtins =
         | OpAnd
         | OpOr
         | OpNeg
+        | OpLt
+        | OpGt
+        | OpLe
+        | OpGe
 
     type BuiltinFunctions =
         | Array
