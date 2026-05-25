@@ -536,6 +536,9 @@ module Parser =
     and breakStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () -> keyword "break" |>> fun kw -> Ast.Stmt.Break (kw.span) :> Ast.Stmt)
 
+    and continueStmt: PackratParser<Token, Ast.Stmt> =
+        Delay (fun () -> keyword "continue" |>> fun kw -> Ast.Stmt.Continue (kw.span) :> Ast.Stmt)
+
     and forStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () -> fun input pos ->
             match (keyword "for") input pos with
@@ -579,7 +582,7 @@ module Parser =
 
     // else あり |? はまず exprStmt (ifExpr) として試みる。else なしの場合のみ ifStmt にフォールバック。
     and stmt: PackratParser<Token, Ast.Stmt> =
-        Delay (fun () -> letStmt <|> varStmt <|> returnStmt <|> breakStmt <|> forStmt <|> assignStmt <|> exprStmt <|> ifStmt)
+        Delay (fun () -> letStmt <|> varStmt <|> returnStmt <|> breakStmt <|> continueStmt <|> forStmt <|> assignStmt <|> exprStmt <|> ifStmt)
 
     and typeExprUnit: PackratParser<Token, Ast.TypeExpr> =
         Delay (fun () ->

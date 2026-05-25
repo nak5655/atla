@@ -104,6 +104,8 @@ module ClosedHir =
         | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
         /// for ループからの早期脱出（Layout で内側ループの脱出ラベルへの `Mir.Ins.Jump` へ下す）。
         | Break of span: Span
+        /// for ループの次の反復へスキップ（Layout で内側ループの先頭ラベルへの `Mir.Ins.Jump` へ下す）。
+        | Continue of span: Span
         /// 非構造化制御フロー用のラベル定義（Layout で `Mir.Ins.MarkLabel` へ下す）。
         /// AsyncRewrite の状態機械生成（resume ポイント等）が導入する。labelId はメソッド内で一意。
         | Label of labelId: int * span: Span
@@ -221,7 +223,7 @@ module ClosedHir =
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
         | TryCatch (tryBody, catchType, catchVarSid, catchBody, span) ->
             TryCatch(tryBody |> List.map (mapStmt f), catchType, catchVarSid, catchBody |> List.map (mapStmt f), span)
-        | Break _ | Label _ | Goto _ | Return _ | Leave _ -> stmt
+        | Break _ | Continue _ | Label _ | Goto _ | Return _ | Leave _ -> stmt
         | ErrorStmt _ -> stmt
 
     /// `Expr` ツリー全体を pre-order（トップダウン）で畳み込む。
@@ -276,7 +278,7 @@ module ClosedHir =
         | TryCatch (tryBody, _, _, catchBody, _) ->
             let acc' = tryBody |> List.fold (foldStmt f) acc
             catchBody |> List.fold (foldStmt f) acc'
-        | Break _ | Label _ | Goto _ | Return _ | Leave _ -> acc
+        | Break _ | Continue _ | Label _ | Goto _ | Return _ | Leave _ -> acc
         | ErrorStmt _ -> acc
 
     // ─────────────────────────────────────────────
@@ -403,5 +405,5 @@ module ClosedHir =
                 |> List.fold (fun (acc, c) s -> merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s) (zero, ctx)
                 |> fst
             merge tryAcc catchAcc
-        | Break _ | Label _ | Goto _ | Return _ | Leave _ -> zero
+        | Break _ | Continue _ | Label _ | Goto _ | Return _ | Leave _ -> zero
         | ErrorStmt _ -> zero
