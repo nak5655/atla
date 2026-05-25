@@ -203,6 +203,63 @@ fn main: () =
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses break statement in for body`` () =
+        let program = """
+fn main: () =
+    for i in values
+        |? i == 3 =>
+            break
+        i
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None
+                )
+
+            match fnDecl with
+            | Some fn ->
+                match terminalBodyExpr fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let forStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.For as forStmt -> Some forStmt
+                            | _ -> None
+                        )
+
+                    match forStmt with
+                    | Some stmt ->
+                        let rec containsBreak (s: Ast.Stmt) : bool =
+                            match s with
+                            | :? Ast.Stmt.Break -> true
+                            | :? Ast.Stmt.If as ifStmt ->
+                                ifStmt.branches
+                                |> List.exists (fun branch ->
+                                    match branch with
+                                    | :? Ast.IfBranch.Then as t ->
+                                        match t.body with
+                                        | :? Ast.Expr.Block as b -> b.stmts |> List.exists containsBreak
+                                        | _ -> false
+                                    | _ -> false)
+                            | _ -> false
+                        Assert.True(stmt.body |> List.exists containsBreak, "for body does not contain a break statement")
+                    | None ->
+                        Assert.True(false, "for statement was not parsed into Ast.Stmt.For")
+                | _ ->
+                    Assert.True(false, "function body was not parsed into a block expression")
+            | None ->
+                Assert.True(false, "function declaration was not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses index access expression with bracket syntax`` () =
         let program = """
 import System'Console

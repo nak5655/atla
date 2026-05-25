@@ -60,6 +60,63 @@ fn main: () = do
         Assert.Equal("Hello, World!", stdout.Trim())
 
     [<Fact>]
+    let ``break exits for loop early`` () =
+        // 0..9 を反復し i == 3 で break する。break は出力の前に判定されるため 0,1,2 のみ出力される。
+        let program = """
+import System'Console
+import System'Linq'Enumerable
+
+fn main: () = do
+    for i in 0 10 Enumerable'Range.
+        |? i == 3 =>
+            break
+        i Console'WriteLine.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "BreakLoop"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, res.diagnostics |> List.map (fun d -> d.message) |> String.concat "; ")
+
+        let dllPath = Path.Join(outDir, "BreakLoop.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("0\n1\n2", stdout.Trim().Replace("\r\n", "\n"))
+
+    [<Fact>]
+    let ``break outside loop fails to compile`` () =
+        let program = """
+fn main: () = do
+    break
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "BreakOutsideLoop"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.False(res.succeeded)
+        Assert.True(
+            res.diagnostics |> List.exists (fun d -> d.message.Contains("break")),
+            res.diagnostics |> List.map (fun d -> d.message) |> String.concat "; ")
+
+    [<Fact>]
     let ``List builtin constructs closed generic and runs without TypeLoadException`` () =
         // import なしで List Int（型位置）と List.（空構築）が使え、
         // 実行時に閉じた List<int> が構築されることを検証する回帰テスト。

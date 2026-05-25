@@ -284,7 +284,7 @@ module AsyncRewrite =
             @ (elseBody |> List.collect collectLetSidsStmt)
         | ClosedHir.Stmt.TryCatch (tryBody, _, _, catchBody, _) ->
             (tryBody |> List.collect collectLetSidsStmt) @ (catchBody |> List.collect collectLetSidsStmt)
-        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> []
+        | ClosedHir.Stmt.Break _ | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> []
         | ClosedHir.Stmt.ErrorStmt _ -> []
 
     // ─────────────────────────────────────────────
@@ -350,7 +350,7 @@ module AsyncRewrite =
             ClosedHir.Stmt.If(hoistExpr ctx cond, thenBody |> List.map (hoistStmt ctx), elseBody |> List.map (hoistStmt ctx), span)
         | ClosedHir.Stmt.TryCatch (tryBody, catchType, catchVarSid, catchBody, span) ->
             ClosedHir.Stmt.TryCatch(tryBody |> List.map (hoistStmt ctx), catchType, catchVarSid, catchBody |> List.map (hoistStmt ctx), span)
-        | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> stmt
+        | ClosedHir.Stmt.Break _ | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> stmt
         | ClosedHir.Stmt.ErrorStmt _ -> stmt
 
     // ─────────────────────────────────────────────
@@ -471,13 +471,23 @@ module AsyncRewrite =
                     let loopBody = freshLabelId ()
                     let loopEnd = freshLabelId ()
                     let itExpr = ClosedHir.Expr.Id(itSid, iterable'.typ, fSpan)
+                    // この for は Label/Goto 列へ潰れて脱出ラベルが消えるため、本体内の break を
+                    // この loopEnd への Goto に置き換える。ネストした for には踏み込まない（内側ループ所有）。
+                    let rec remapBreak (s: ClosedHir.Stmt) : ClosedHir.Stmt list =
+                        match s with
+                        | ClosedHir.Stmt.Break sp -> [ ClosedHir.Stmt.Goto(loopEnd, sp) ]
+                        | ClosedHir.Stmt.If (c, t, e, sp) ->
+                            [ ClosedHir.Stmt.If(c, t |> List.collect remapBreak, e |> List.collect remapBreak, sp) ]
+                        | ClosedHir.Stmt.For _ -> [ s ]
+                        | other -> [ other ]
+                    let body'' = body' |> List.collect remapBreak
                     [ ClosedHir.Stmt.Let(itSid, false, iterable', fSpan)
                       ClosedHir.Stmt.Label(loopStart, fSpan)
                       ClosedHir.Stmt.Let(condSid, false, ClosedHir.Expr.Call(Hir.Callable.NativeMethod moveNextMi, Some itExpr, [], TypeId.Bool, fSpan), fSpan)
                       ClosedHir.Stmt.If(ClosedHir.Expr.Id(condSid, TypeId.Bool, fSpan), [ ClosedHir.Stmt.Goto(loopBody, fSpan) ], [ ClosedHir.Stmt.Goto(loopEnd, fSpan) ], fSpan)
                       ClosedHir.Stmt.Label(loopBody, fSpan)
                       ClosedHir.Stmt.Let(sid, false, ClosedHir.Expr.Call(Hir.Callable.NativeMethod currentGetterMi, Some itExpr, [], tid, fSpan), fSpan) ]
-                    @ body'
+                    @ body''
                     @ [ ClosedHir.Stmt.Goto(loopStart, fSpan); ClosedHir.Stmt.Label(loopEnd, fSpan) ]
                 | None ->
                     // 列挙子を解決できない場合は展開せず Layout に委ねる（await ループは未対応のまま）。

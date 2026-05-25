@@ -63,6 +63,7 @@ module Infer =
             let inferredThen = thenBody |> List.map (inferStmt typeSubst)
             let inferredElse = elseBody |> List.map (inferStmt typeSubst)
             Hir.Stmt.If(inferredCond, inferredThen, inferredElse, span)
+        | Hir.Stmt.Break _ -> stmt
         | Hir.Stmt.ErrorStmt _ -> stmt
 
     let inferModule (typeSubst: TypeSubst, hirModule: Hir.Module) : Result<Hir.Module, Diagnostic list> =
