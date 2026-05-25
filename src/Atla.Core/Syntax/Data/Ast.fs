@@ -322,6 +322,13 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        type Continue(span: Span) =
+            member this.span = span
+            interface Stmt with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type For(varName: string, iterable: Expr, body: Stmt list, span: Span) =
             member this.varName = varName
             member this.iterable = iterable

@@ -17,13 +17,14 @@ module Layout =
         /// ClosedHir の Label/Goto の labelId（メソッド内一意な int）から Mir.LabelId への対応表。
         /// 状態機械 MoveNext の resume ラベル等、前方参照されるラベルを安定して同一 Mir.LabelId へ解決する。
         gotoLabels: Map<int, Mir.LabelId>
-        /// 現在ネストしているループの脱出ラベルスタック（先頭が最も内側）。
-        /// `break` 下げ時に先頭の脱出ラベルへ `Mir.Ins.Jump` する。
-        loopExitLabels: Mir.LabelId list
+        /// 現在ネストしているループのラベルスタック（先頭が最も内側）。
+        /// 各要素は (continueTarget, breakTarget)。`continue` は前者（ループ先頭）へ、
+        /// `break` は後者（ループ脱出）へ `Mir.Ins.Jump` する。
+        loopLabels: (Mir.LabelId * Mir.LabelId) list
     }
 
     /// 初期レイアウト状態（空フレーム、ラベルカウンタ 0）を返す。
-    let private emptyState: LayoutState = { frame = Mir.Frame.empty; nextLabel = 0; gotoLabels = Map.empty; loopExitLabels = [] }
+    let private emptyState: LayoutState = { frame = Mir.Frame.empty; nextLabel = 0; gotoLabels = Map.empty; loopLabels = [] }
 
     /// 一意なラベル ID を払い出し、更新後の状態と共に返す。
     let private freshLabel (state: LayoutState) : Mir.LabelId * LayoutState =
@@ -666,12 +667,12 @@ module Layout =
                             let loopStartId, state6 = freshLabel state5
                             let loopBodyId, state7 = freshLabel state6
                             let loopEndId, state8 = freshLabel state7
-                            // ボディ内の break が参照できるよう脱出ラベルを push し、fold 後に pop する。
-                            let bodyState = { state8 with loopExitLabels = loopEndId :: state8.loopExitLabels }
+                            // ボディ内の break/continue が参照できるよう (loopStart, loopEnd) を push し、fold 後に pop する。
+                            let bodyState = { state8 with loopLabels = (loopStartId, loopEndId) :: state8.loopLabels }
                             match mapFoldResult layoutStmt bodyState body with
                             | Result.Error e -> Result.Error e
                             | Ok (state9pushed, bodyInsList) ->
-                                let state9 = { state9pushed with loopExitLabels = state8.loopExitLabels }
+                                let state9 = { state9pushed with loopLabels = state8.loopLabels }
                                 let bodyIns = List.concat bodyInsList
                                 Ok (state9, (
                                     iterableKn.ins
@@ -714,9 +715,13 @@ module Layout =
             let lbl, state1 = gotoLabel state clId
             Ok (state1, [ Mir.Ins.Jump lbl ])
         | ClosedHir.Stmt.Break span ->
-            match state.loopExitLabels with
-            | loopEndId :: _ -> Ok (state, [ Mir.Ins.Jump loopEndId ])
+            match state.loopLabels with
+            | (_, loopEndId) :: _ -> Ok (state, [ Mir.Ins.Jump loopEndId ])
             | [] -> Result.Error (Diagnostic.Error("'break' used outside of a loop", span))
+        | ClosedHir.Stmt.Continue span ->
+            match state.loopLabels with
+            | (loopStartId, _) :: _ -> Ok (state, [ Mir.Ins.Jump loopStartId ])
+            | [] -> Result.Error (Diagnostic.Error("'continue' used outside of a loop", span))
         | ClosedHir.Stmt.Return _ ->
             Ok (state, [ Mir.Ins.Ret ])
         | ClosedHir.Stmt.Leave (clId, _) ->
@@ -949,7 +954,7 @@ module Layout =
             || (elseBody |> List.exists hasLambdaStmt)
         | ClosedHir.Stmt.TryCatch (tryBody, _, _, catchBody, _) ->
             (tryBody |> List.exists hasLambdaStmt) || (catchBody |> List.exists hasLambdaStmt)
-        | ClosedHir.Stmt.Break _ | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> false
+        | ClosedHir.Stmt.Break _ | ClosedHir.Stmt.Continue _ | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> false
         | ClosedHir.Stmt.ErrorStmt _ -> false
 
     /// クロージャー変換済み `ClosedHir.Assembly` を受け取り、MIR へ変換する。
