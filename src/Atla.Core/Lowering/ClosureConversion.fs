@@ -78,6 +78,7 @@ module ClosureConversion =
             ClosedHir.Stmt.For(sid, tid, convertHirExpr iterable, body |> List.map convertHirStmt, span)
         | Hir.Stmt.If (cond, thenBody, elseBody, span) ->
             ClosedHir.Stmt.If(convertHirExpr cond, thenBody |> List.map convertHirStmt, elseBody |> List.map convertHirStmt, span)
+        | Hir.Stmt.Break span -> ClosedHir.Stmt.Break span
         | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span)
 
     // ─────────────────────────────────────────────
@@ -296,6 +297,7 @@ module ClosureConversion =
                 let m' = traverseExpr ctx captureMap cond
                 let m'' = thenBody |> List.fold (fun m s -> traverseStmt ctx m s) m'
                 elseBody |> List.fold (fun m s -> traverseStmt ctx m s) m''
+            | Hir.Stmt.Break _ -> captureMap
             | Hir.Stmt.ErrorStmt _ -> captureMap
 
         and afterStmtCtx (ctx: AnalysisCtx) (stmt: Hir.Stmt) : AnalysisCtx =
@@ -484,6 +486,7 @@ module ClosureConversion =
             let rewrittenThen, state2 = rewriteStmts symbolTable ownerMethod captureMap thenBody state1
             let rewrittenElse, state3 = rewriteStmts symbolTable ownerMethod captureMap elseBody state2
             ClosedHir.Stmt.If(rewrittenCond, rewrittenThen, rewrittenElse, span), state3
+        | Hir.Stmt.Break span -> ClosedHir.Stmt.Break span, state
         | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span), state
 
     /// Phase 2: 文列を逐次変換し、最終 state を返す。

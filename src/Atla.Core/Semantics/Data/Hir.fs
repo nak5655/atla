@@ -132,6 +132,7 @@ module Hir =
         | ExprStmt of expr: Expr * span: Span
         | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
         | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
+        | Break of span: Span
         | ErrorStmt of message: string * span: Span
 
         member this.hasError =
@@ -151,6 +152,7 @@ module Hir =
                 cond.getDiagnostics
                 @ (thenBody |> List.collect (fun stmt -> stmt.getDiagnostics))
                 @ (elseBody |> List.collect (fun stmt -> stmt.getDiagnostics))
+            | Break _ -> []
 
     type Field(sid: SymbolId, tid: TypeId, body: Expr, span: Span) =
         member this.sym = sid
@@ -261,6 +263,7 @@ module Hir =
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
         | Stmt.If (cond, thenBody, elseBody, span) ->
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
+        | Break _ -> stmt
         | ErrorStmt _ -> stmt
 
     /// `Expr` ツリー全体を pre-order（トップダウン）で畳み込む。
@@ -309,6 +312,7 @@ module Hir =
             let acc' = foldExpr f acc cond
             let acc'' = thenBody |> List.fold (foldStmt f) acc'
             elseBody |> List.fold (foldStmt f) acc''
+        | Break _ -> acc
         | ErrorStmt _ -> acc
 
     // ─────────────────────────────────────────────
@@ -424,4 +428,5 @@ module Hir =
                     (zero, ctx)
                 |> fst
             merge condAcc (merge thenAcc elseAcc)
+        | Break _ -> zero
         | ErrorStmt _ -> zero

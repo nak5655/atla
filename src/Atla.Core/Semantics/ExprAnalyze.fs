@@ -2327,6 +2327,8 @@ module ExprAnalyze =
             match analyzeIfStmtBranches ifStmt.branches with
             | [stmt] -> stmt
             | stmts -> Hir.Stmt.ErrorStmt(sprintf "Unexpected if stmt branch count: %d" stmts.Length, ifStmt.span)
+        | :? Ast.Stmt.Break as breakStmt ->
+            Hir.Stmt.Break(breakStmt.span)
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
 
     let analyzeMethodCoreWithOverride (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) (overrideTarget: MethodInfo option) : Hir.Method =
