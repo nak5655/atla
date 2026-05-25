@@ -17,7 +17,7 @@ data FlappyGame =
     , _whiteTexture: Opt Texture
     , _birdPos: Vector2
     , _birdVelocity: Float
-    , _birdSize: Int
+    , _birdSize: Float
     , _jumpPower: Float
     , _gravity: Float
     , _rand: Random
@@ -33,7 +33,7 @@ impl FlappyGame as Game
             , _whiteTexture = Opt'None
             , _birdPos = 200.0f 300.0f Vector2.
             , _birdVelocity = 0.0f
-            , _birdSize = 32
+            , _birdSize = 32.0f
             , _jumpPower = -350.0f
             , _gravity = 900.0f
             , _rand = Random.
@@ -51,8 +51,8 @@ impl FlappyGame as Game
         self'_pipes'Clear.
 
         # 初期パイプ生成
-        for i in 0 4 Enumerable'Range.
-            let pipeX = 600.0f + (i toFloat.) * 250.0f
+        for i in 0 7 Enumerable'Range.
+            let pipeX = 750.0f + (i toFloat.) * 250.0f
             let gapY = self'RandomGap. toFloat.
             (pipeX gapY Vector2.) self'_pipes'Add.
 
@@ -60,8 +60,8 @@ impl FlappyGame as Game
         base'Initialize.
 
         # 初期パイプ生成
-        for i in 0 4 Enumerable'Range.
-            let pipeX = 600.0f + (i toFloat.) * 250.0f
+        for i in 0 7 Enumerable'Range.
+            let pipeX = 750.0f + (i toFloat.) * 250.0f
             let gapY = self'RandomGap. toFloat.
             (pipeX gapY Vector2.) self'_pipes'Add.
 
@@ -92,11 +92,21 @@ impl FlappyGame as Game
 
             # 画面外に出たパイプはリセット
             |? pipe'X < -self'_pipeWidth =>
-                pipe = 800.0f (self'RandomGap. toFloat.) Vector2.
+                pipe = (6.0f * 250.0f - self'_pipeWidth) (self'RandomGap. toFloat.) Vector2.
 
             self'_pipes[i] = pipe
 
         var shouldReset = False
+
+        # パイプとの当たり判定
+        for pipe in self'_pipes
+            let topY = pipe'Y - self'_pipeGap / 2.0f
+            let bottomY = pipe'Y + self'_pipeGap / 2.0f
+
+            |? self'_birdPos'X + self'_birdSize > pipe'X && self'_birdPos'X < pipe'X + self'_pipeWidth =>
+                |? self'_birdPos'Y < topY || self'_birdPos'Y + self'_birdSize > bottomY =>
+                    shouldReset = True
+                    break
 
         # 地面と天井の当たり判定
         |? self'_birdPos'Y < 0.0f || self'_birdPos'Y > 720.0f =>
