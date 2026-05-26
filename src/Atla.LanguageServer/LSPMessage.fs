@@ -3,10 +3,16 @@ module Atla.LanguageServer.LSPMessage
 
 open System
 open System.Collections.Generic
+open System.IO
 open System.Text
 open Newtonsoft.Json
 open Newtonsoft.Json.Linq
 open Atla.LanguageServer.LSPTypes
+
+/// UTF-8 without BOM. The LSP wire protocol mandates UTF-8 and counts
+/// ``Content-Length`` in BYTES (not characters); see the byte-accurate
+/// reader/writer below.
+let private utf8NoBom = UTF8Encoding(false)
 
 // ---------------------------------------------------------------------------
 // Message discriminated union
@@ -26,17 +32,22 @@ type LSPMessage =
 /// main message-loop thread.
 let private stdoutLock = obj()
 
-/// Low-level writer: adds the ``jsonrpc`` field, computes Content-Length, and
-/// writes headers + body to stdout.
+/// Raw stdout stream. We write bytes directly (not via Console text APIs) so
+/// the emitted byte count always matches the Content-Length header regardless
+/// of the host's Console.OutputEncoding.
+let private stdoutStream = Console.OpenStandardOutput()
+
+/// Low-level writer: adds the ``jsonrpc`` field, computes the Content-Length in
+/// UTF-8 BYTES, and writes header + body bytes to stdout.
 let private sendRaw (content: JObject) =
     content.["jsonrpc"] <- JValue "2.0"
     let body = content.ToString(Formatting.None)
-    let bodyBytes = Encoding.UTF8.GetBytes body
+    let bodyBytes = utf8NoBom.GetBytes body
+    let headerBytes = Encoding.ASCII.GetBytes(sprintf "Content-Length: %d\r\n\r\n" bodyBytes.Length)
     lock stdoutLock (fun () ->
-        Console.WriteLine(sprintf "Content-Length: %d" bodyBytes.Length)
-        Console.WriteLine()
-        Console.Write body
-        Console.Out.Flush())
+        stdoutStream.Write(headerBytes, 0, headerBytes.Length)
+        stdoutStream.Write(bodyBytes, 0, bodyBytes.Length)
+        stdoutStream.Flush())
 
 /// Send an LSP response (has an ``id`` and a ``result`` field).
 let sendResponse (id: int) (result: obj) =
@@ -66,54 +77,57 @@ let private tryParseHeaderLine (line: string) : (string * string) option =
     let parts = line.Split([| ": " |], 2, StringSplitOptions.None)
     if parts.Length = 2 then Some(parts.[0], parts.[1]) else None
 
-let private readHeaders () : Dictionary<string, string> option =
+/// 1 行をバイト単位で読む（行末 ``\n`` まで、末尾 ``\r`` は除去）。ヘッダは ASCII。
+/// ストリーム終端で 1 バイトも読めなければ ``None``。
+let private readHeaderLine (stream: Stream) : string option =
+    let buf = ResizeArray<byte>()
+    let mutable b = stream.ReadByte()
+    if b < 0 then None
+    else
+        while b >= 0 && b <> 10 do
+            buf.Add(byte b)
+            b <- stream.ReadByte()
+        let arr = buf.ToArray()
+        let len = if arr.Length > 0 && arr.[arr.Length - 1] = 13uy then arr.Length - 1 else arr.Length
+        Some(Encoding.ASCII.GetString(arr, 0, len))
+
+/// 本文を「文字数」ではなく「バイト数」ぴったり読み込む。
+/// Content-Length は UTF-8 バイト数なので、マルチバイト文字を含む本文でも
+/// フレーミングがずれないようにする（旧実装は char 単位で読みストリームが破綻していた）。
+let private readBodyBytes (stream: Stream) (contentLength: int) : byte[] option =
+    let buf = Array.zeroCreate contentLength
+    let mutable offset = 0
+    let mutable ok = true
+    while ok && offset < contentLength do
+        let read = stream.Read(buf, offset, contentLength - offset)
+        if read <= 0 then ok <- false
+        else offset <- offset + read
+    if ok then Some buf else None
+
+/// 指定ストリームから 1 メッセージを読み取る（バイト正確・UTF-8）。テスト可能。
+let waitMessageFromStream (stream: Stream) : LSPMessage option =
+    // ヘッダ行を空行（区切り）まで読む。先頭の空行は読み飛ばす。
     let headers = Dictionary<string, string>()
-
-    let rec readFirstHeader () =
-        let line = Console.ReadLine()
-        if isNull line then None
-        elif line.Length = 0 then readFirstHeader ()
-        else Some line
-
-    match readFirstHeader () with
-    | None -> None
-    | Some first ->
-        let mutable valid = true
-        match tryParseHeaderLine first with
-        | Some(k, v) -> headers.[k] <- v
-        | None -> valid <- false
-
-        while valid do
-            let line = Console.ReadLine()
-            if isNull line || line.Length = 0 then
-                valid <- false
+    let mutable sawHeader = false
+    let mutable finished = false
+    let mutable eof = false
+    while not finished do
+        match readHeaderLine stream with
+        | None ->
+            finished <- true
+            eof <- true
+        | Some line ->
+            if line.Length = 0 then
+                // 区切りの空行。ただしヘッダ未取得なら先頭空行として読み飛ばす。
+                if sawHeader then finished <- true
             else
+                sawHeader <- true
                 match tryParseHeaderLine line with
                 | Some(k, v) -> headers.[k] <- v
-                | None -> valid <- false
+                | None -> ()
 
-        if headers.Count = 0 then None else Some headers
-
-let private readBody (contentLength: int) : string option =
-    let sb = StringBuilder(contentLength)
-    let mutable ok = true
-    let mutable i = 0
-    while ok && i < contentLength do
-        let ch = Console.Read()
-        if ch < 0 then
-            ok <- false
-        else
-            sb.Append(char ch) |> ignore
-            i <- i + 1
-
-    if ok then Some(sb.ToString()) else None
-
-/// Block until a complete LSP message arrives on stdin, then return it.
-/// Returns ``None`` if stream ended or message framing/content is invalid.
-let waitMessage () : LSPMessage option =
-    match readHeaders () with
-    | None -> None
-    | Some headers ->
+    if eof || headers.Count = 0 then None
+    else
         let contentLength =
             match headers.TryGetValue "Content-Length" with
             | true, value ->
@@ -125,15 +139,24 @@ let waitMessage () : LSPMessage option =
         match contentLength with
         | None -> None
         | Some len ->
-            match readBody len with
+            match readBodyBytes stream len with
             | None -> None
-            | Some body ->
+            | Some bodyBytes ->
                 try
-                    let json = JObject.Parse(body)
+                    let json = JObject.Parse(utf8NoBom.GetString bodyBytes)
                     if json.ContainsKey "id" then Some(RequestMsg(headers, json))
                     else Some(NotificationMsg(headers, json))
                 with _ ->
                     None
+
+/// 標準入力ストリーム（バッファ付き）。バイト単位で読むため Console のテキスト
+/// API（InputEncoding 依存）は使わない。
+let private stdinStream : Stream = new BufferedStream(Console.OpenStandardInput())
+
+/// Block until a complete LSP message arrives on stdin, then return it.
+/// Returns ``None`` if stream ended or message framing/content is invalid.
+let waitMessage () : LSPMessage option =
+    waitMessageFromStream stdinStream
 
 // ---------------------------------------------------------------------------
 // Accessors that work on the raw JObject (used in Program.fs)
