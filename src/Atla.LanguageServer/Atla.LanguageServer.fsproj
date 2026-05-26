@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <Compile Include="LSPTypes.fs" />
+    <Compile Include="Log.fs" />
     <Compile Include="LSPMessage.fs" />
     <Compile Include="Server.fs" />
     <Compile Include="Program.fs" />

@@ -8,6 +8,7 @@ open Atla.LanguageServer.Server
 
 let private methodNotFound = -32601
 let private invalidRequest = -32600
+let private internalError = -32603
 
 /// Pure shutdown state transition for request methods.
 let nextShutdownState (isShutdown: bool) (methodName: string) : bool =
@@ -17,21 +18,37 @@ let nextShutdownState (isShutdown: bool) (methodName: string) : bool =
 let exitCodeFromShutdownState (isShutdown: bool) : int =
     if isShutdown then 0 else 1
 
+/// 受信メッセージの簡潔な記述（method + uri + position）。クラッシュ直前の
+/// 「どの操作だったか」を残すための trace 用。
+let private describeMessage (content: JObject) : string =
+    let methodName = messageMethod content |> Option.defaultValue "<no-method>"
+    let detail =
+        match messageParams content with
+        | Some p ->
+            let uri =
+                let td = p.["textDocument"]
+                if not (isNull td) && not (isNull td.["uri"]) then " uri=" + td.["uri"].ToString() else ""
+            let pos =
+                let ps = p.["position"]
+                if not (isNull ps) then sprintf " pos=%s:%s" (string ps.["line"]) (string ps.["character"]) else ""
+            uri + pos
+        | None -> ""
+    methodName + detail
+
 [<EntryPoint>]
 let main _ =
+    Log.init ()
     let server = Server()
     let mutable isShutdown = false
 
-    while true do
-        match waitMessage () with
-
-        // EOF or invalid-framed message: terminate per shutdown state.
-        | None ->
-            System.Environment.Exit(exitCodeFromShutdownState isShutdown)
+    /// 単一メッセージを処理する。例外はメッセージループ側で捕捉・記録する。
+    let handleMessage (message: LSPMessage) =
+        match message with
 
         // ---- Requests (client expects a response with matching id) ----------
 
-        | Some(RequestMsg(_, content)) ->
+        | RequestMsg(_, content) ->
+            Log.info ("recv request " + describeMessage content)
             match tryRequestId content, messageMethod content with
             | Some id, Some methodName ->
                 match methodName with
@@ -107,10 +124,12 @@ let main _ =
 
         // ---- Notifications (no response expected) ---------------------------
 
-        | Some(NotificationMsg(_, content)) ->
+        | NotificationMsg(_, content) ->
+            Log.info ("recv notification " + describeMessage content)
             match messageMethod content with
             | Some "initialized" ->
                 windowLogMessage "initialized" MessageType.Info
+                windowLogMessage (sprintf "atla-lsp log file: %s" Log.logPath) MessageType.Info
 
                 if not server.IsAvailablePublishDiagnostics then
                     windowLogMessage "PublishDiagnostics is not available." MessageType.Info
@@ -147,10 +166,32 @@ let main _ =
             | Some "exit" ->
                 // The LSP spec requires the process to exit with code 0 after
                 // a preceding shutdown request, or code 1 otherwise.
+                Log.info "recv exit notification"
                 System.Environment.Exit(exitCodeFromShutdownState isShutdown)
 
             | Some _
             | None ->
                 ()   // ignore unhandled notification methods
+
+    while true do
+        match waitMessage () with
+
+        // EOF or invalid-framed message: terminate per shutdown state.
+        | None ->
+            Log.info "stdin closed or invalid frame; exiting"
+            System.Environment.Exit(exitCodeFromShutdownState isShutdown)
+
+        | Some message ->
+            try
+                handleMessage message
+            with ex ->
+                // キャッチ可能例外はここで記録し、サーバを落とさずループを継続する。
+                Log.logException ("message loop: " + describeMessage (messageContent message)) ex
+                match message with
+                | RequestMsg(_, content) ->
+                    match tryRequestId content with
+                    | Some id -> sendErrorResponse id internalError (sprintf "Internal error: %s" ex.Message)
+                    | None -> ()
+                | NotificationMsg _ -> ()
 
     0
