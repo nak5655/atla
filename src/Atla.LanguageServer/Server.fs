@@ -601,6 +601,8 @@ type Server
 
                         compileResult.diagnostics |> toLspDiagnostics "atla-compiler" |> publish displayUri
             with ex ->
+                // フルスタックトレースをログへ残す（診断メッセージは ex.Message のみのため）。
+                Log.logException (sprintf "compileAndPublish %s" displayUri) ex
                 if isLatestRevision () then
                     let fallback =
                         [ Atla.Core.Semantics.Data.Diagnostic.Error(sprintf "Compiler internal error: %s" ex.Message, Span.Empty) ]

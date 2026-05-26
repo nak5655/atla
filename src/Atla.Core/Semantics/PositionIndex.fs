@@ -11,6 +11,9 @@ open Atla.Core.Semantics.Data
 /// TypeId を人間が読める文字列にフォーマットする。
 /// シンボルIDの解決には `resolve` 関数を使う（外部から注入）。
 let rec formatType (resolve: SymbolId -> string) (tid: TypeId) : string =
+    // 循環/過深な型グラフでの StackOverflow を、キャッチ可能な
+    // InsufficientExecutionStackException に変換してログ捕捉を可能にする。
+    System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack()
     match tid with
     | TypeId.Unit -> "()"
     | TypeId.Bool -> "Bool"
@@ -152,6 +155,8 @@ let private addVarType (sid: SymbolId) (tid: TypeId) (state: BuildState) : Build
 
 /// 式ノードを再帰的に走査してアキュムレータを更新する。
 let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) : BuildState =
+    // 循環/過深な HIR での StackOverflow を、キャッチ可能な例外に変換する。
+    System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack()
     // エラーノードを除く全式の (span, TypeId) を収集する（position-based 型解決用）。
     let state =
         match expr with
@@ -197,6 +202,7 @@ let rec private walkExpr (scopeSpan: Span) (expr: Hir.Expr) (state: BuildState) 
 
 /// 文ノードを走査してアキュムレータを更新する。
 and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : BuildState =
+    System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack()
     match stmt with
     | Hir.Stmt.Let(sid, _, value, span) ->
         state
