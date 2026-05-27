@@ -1,9 +1,8 @@
 import System'Array
 import System'Console
-import System'Linq'Enumerable
 
 fn fizzbuzz (n: Int): () =
-    for i in 1 n Enumerable'Range.
+    for i in 1 (n + 1) range.
         let s =
             |? i % 15 == 0 => "FizzBuzz"
             |: i % 5 == 0 => "Buzz"
