@@ -551,6 +551,7 @@ module ExprAnalyze =
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToFloat -> Some (Hir.Callable.BuiltinConvert TypeId.Float)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToDouble -> Some (Hir.Callable.BuiltinConvert TypeId.Double)
                 | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.ToInt -> Some (Hir.Callable.BuiltinConvert TypeId.Int)
+                | SymbolKind.BuiltinFn Builtins.BuiltinFunctions.Range -> Some (Hir.Callable.BuiltinRange)
                 | SymbolKind.Local ()
                 | SymbolKind.Arg () ->
                     match typeEnv.resolveType symInfo.typ with
@@ -1228,6 +1229,8 @@ module ExprAnalyze =
                         Some (Hir.Callable.BuiltinArray, typeEnv.resolveType callRetType)
                     | Hir.Callable.BuiltinList ->
                         Some (Hir.Callable.BuiltinList, typeEnv.resolveType callRetType)
+                    | Hir.Callable.BuiltinRange ->
+                        Some (Hir.Callable.BuiltinRange, typeEnv.resolveType callRetType)
                     | Hir.Callable.BuiltinConvert targetTid ->
                         // 変換組込関数: 引数1個・戻り型は変換先の数値型。
                         if allArgs.Length = 1 then Some (resolvedCallable, targetTid)

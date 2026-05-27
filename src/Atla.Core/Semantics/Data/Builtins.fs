@@ -27,3 +27,6 @@ module Builtins =
         /// 倍精度（Double / float）への変換組込関数 `toDouble`。
         | ToDouble
         | ToInt
+        /// 整数範囲を生成する組込関数 `range`。`start end range` で start..end（終端を含まない）の
+        /// `IEnumerable<int>` を返す。内部で個数 = end - start を計算し Enumerable.Range へ下す。
+        | Range

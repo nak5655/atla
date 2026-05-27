@@ -346,6 +346,20 @@ module Layout =
                                     Ok (state3, { ins = argIns @ [ Mir.Ins.NewGenericNative(dst, tid, argValues) ]; res = Some(Mir.Value.RegVal dst) })
                                 | _ ->
                                     Result.Error(Diagnostic.Error("Cannot resolve element type for 'List' builtin", callSpan))
+                            | Hir.Callable.BuiltinRange ->
+                                // `start end range`（終端を含まない）。count = end - start を計算し
+                                // Enumerable.Range(start, count) を発行する。
+                                match argValues with
+                                | [ startVal; endVal ] ->
+                                    let countReg, state3 = declareTemp state2 TypeId.Int
+                                    let dst, state4 = declareTemp state3 tid
+                                    let rangeMi = typeof<System.Linq.Enumerable>.GetMethod("Range")
+                                    Ok (state4,
+                                        { ins = argIns
+                                                @ [ Mir.Ins.TAC(countReg, endVal, Mir.OpCode.Sub, startVal)
+                                                    Mir.Ins.CallAssign(dst, rangeMi, [ startVal; Mir.Value.RegVal countReg ]) ]
+                                          res = Some(Mir.Value.RegVal dst) })
+                                | _ -> Result.Error (Diagnostic.Error("'range' expects exactly two integer arguments", callSpan))
                             | Hir.Callable.BuiltinConvert targetTid ->
                                 // 数値変換組込関数（toFloat/toDouble/toInt）を Convert 命令へ下す。
                                 match TypeId.tryToRuntimeSystemType targetTid, argValues with
