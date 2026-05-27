@@ -158,6 +158,45 @@ fn main: () = do
         Assert.Equal("0\n2\n4", stdout.Trim().Replace("\r\n", "\n"))
 
     [<Fact>]
+    let ``range builtin iterates start to end exclusive`` () =
+        // 組込 range（終端を含まない）。import System'Linq'Enumerable なしで使えることも検証する。
+        // 2 7 range は 2,3,4,5,6（7 の手前で停止）。
+        let program = """
+import System'Console
+
+fn main: () = do
+    for i in 2 7 range.
+        i Console'WriteLine.
+"""
+
+        let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(outDir) |> ignore
+
+        let res = compileSingle { asmName = "RangeBuiltin"; source = program.Trim(); outDir = outDir; dependencies = [] }
+        Assert.True(res.succeeded, res.diagnostics |> List.map (fun d -> d.message) |> String.concat "; ")
+
+        let dllPath = Path.Join(outDir, "RangeBuiltin.dll")
+        Assert.True(File.Exists dllPath)
+
+        let psi =
+            ProcessStartInfo(
+                FileName = "dotnet",
+                Arguments = dllPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            )
+
+        use proc = Process.Start(psi)
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        Assert.Equal(0, proc.ExitCode)
+        Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
+        Assert.Equal("2\n3\n4\n5\n6", stdout.Trim().Replace("\r\n", "\n"))
+
+    [<Fact>]
     let ``continue outside loop fails to compile`` () =
         let program = """
 fn main: () = do

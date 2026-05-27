@@ -71,7 +71,12 @@ type SymbolTable() =
           ("toDouble", addBuiltinFn "toDouble" Builtins.BuiltinFunctions.ToDouble (TypeId.Fn([ TypeId.Float ], TypeId.Double)))
           ("toDouble", addBuiltinFn "toDouble" Builtins.BuiltinFunctions.ToDouble (TypeId.Fn([ TypeId.Int ], TypeId.Double)))
           ("toInt", addBuiltinFn "toInt" Builtins.BuiltinFunctions.ToInt (TypeId.Fn([ TypeId.Double ], TypeId.Int)))
-          ("toInt", addBuiltinFn "toInt" Builtins.BuiltinFunctions.ToInt (TypeId.Fn([ TypeId.Float ], TypeId.Int))) ]
+          ("toInt", addBuiltinFn "toInt" Builtins.BuiltinFunctions.ToInt (TypeId.Fn([ TypeId.Float ], TypeId.Int)))
+          // 整数範囲 `start end range`（終端を含まない）。戻り型 IEnumerable<int> は
+          // 既存の Enumerable'Range と同一表現で、for ループの列挙解決がそのまま機能する。
+          ("range",
+           addBuiltinFn "range" Builtins.BuiltinFunctions.Range
+               (TypeId.Fn([ TypeId.Int; TypeId.Int ], TypeId.Native typeof<IEnumerable<int>>))) ]
 
     let builtinOperators : (string * SymbolId) list =
         let strEq = typeof<string>.GetMethod("op_Equality", [| typeof<string>; typeof<string> |])

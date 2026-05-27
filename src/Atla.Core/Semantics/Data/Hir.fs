@@ -19,6 +19,8 @@ module Hir =
         | BuiltinList
         /// 数値型変換組込関数（toFloat/toDouble/toInt）。target は変換先の数値型。
         | BuiltinConvert of target: TypeId
+        /// 整数範囲生成組込関数 `range`（start end、終端を含まない）。Call ノードの引数は [start; end]。
+        | BuiltinRange
         | NativeMethod of MethodInfo
         | NativeMethodGroup of MethodInfo list
         /// ジェネリックメソッド定義を、解決時（Gen フェーズ）に `typeArgs` で `MakeGenericMethod` して
