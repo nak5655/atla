@@ -68,7 +68,7 @@ import System'Linq'Enumerable
 
 fn main: () = do
     for i in 0 10 Enumerable'Range.
-        |? i == 3 =>
+        if | i == 3 =>
             break
         i Console'WriteLine.
 """
@@ -125,7 +125,7 @@ import System'Linq'Enumerable
 
 fn main: () = do
     for i in 0 6 Enumerable'Range.
-        |? i % 2 == 1 =>
+        if | i % 2 == 1 =>
             continue
         i Console'WriteLine.
 """
@@ -322,10 +322,11 @@ import System'Linq'Enumerable
 fn fizzbuzz (n: Int): () =
     for i in 1 n Enumerable'Range.
         let s =
-            |? i % 15 == 0 => "FizzBuzz"
-            |: i % 5 == 0 => "Buzz"
-            |: i % 3 == 0 => "Fizz"
-            |: else => i'ToString.
+            if
+            | i % 15 == 0 => "FizzBuzz"
+            | i % 5 == 0 => "Buzz"
+            | i % 3 == 0 => "Fizz"
+            | else => i'ToString.
         s Console'WriteLine.
 
 
@@ -375,10 +376,11 @@ import System'Int32
 import System'Console
 
 fn fibonacci (n: Int): Int =
-    |? n == 0 => 0
-    |: n == 1 => 1
-    |: n == 2 => 1
-    |: else => (n - 2) fibonacci. + (n - 1) fibonacci.
+    if
+    | n == 0 => 0
+    | n == 1 => 1
+    | n == 2 => 1
+    | else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
 fn main: () = do
     let n = Console'ReadLine. Int32'Parse.
@@ -2440,8 +2442,9 @@ async fn outer (a: Task Int) (b: Task Int): Int = await ((await a) (await b) pic
 import System'Threading'Tasks'Task
 
 async fn choose (c: Bool) (a: Task Int) (b: Task Int): Int =
-    |? c => await a
-    |: else => await b
+    if
+    | c => await a
+    | else => await b
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2515,10 +2518,10 @@ async fn choose (c: Bool) (a: Task Int) (b: Task Int): Int =
 import System'Console
 
 fn check (a: Int) (b: Int): () = do
-    |? a < b => "lt" Console'Write.
-    |? a > b => "gt" Console'Write.
-    |? a <= b => "le" Console'Write.
-    |? a >= b => "ge" Console'Write.
+    if | a < b => "lt" Console'Write.
+    if | a > b => "gt" Console'Write.
+    if | a <= b => "le" Console'Write.
+    if | a >= b => "ge" Console'Write.
 
 fn main: () = do
     3 5 check.
@@ -2534,10 +2537,10 @@ fn main: () = do
 import System'Console
 
 fn main: () = do
-    |? 0.5f < 1.0f => "a" Console'Write.
-    |? 2.0f > 1.0f => "b" Console'Write.
-    |? 1.0f <= 1.0f => "c" Console'Write.
-    |? 1.0f >= 2.0f => "d" Console'Write.
+    if | 0.5f < 1.0f => "a" Console'Write.
+    if | 2.0f > 1.0f => "b" Console'Write.
+    if | 1.0f <= 1.0f => "c" Console'Write.
+    if | 1.0f >= 2.0f => "d" Console'Write.
     "z" Console'Write.
 """
         // a,b,c が真、d は偽
@@ -2553,8 +2556,8 @@ fn rhs: Bool = do
     True
 
 fn main: () = do
-    |? False && rhs. => "A" Console'Write.
-    |? True && rhs. => "B" Console'Write.
+    if | False && rhs. => "A" Console'Write.
+    if | True && rhs. => "B" Console'Write.
     "z" Console'Write.
 """
         // 1つ目: False && → rhs 評価されない（"R" なし）、条件 false（"A" なし）
@@ -2571,8 +2574,8 @@ fn rhs: Bool = do
     True
 
 fn main: () = do
-    |? True || rhs. => "A" Console'Write.
-    |? False || rhs. => "B" Console'Write.
+    if | True || rhs. => "A" Console'Write.
+    if | False || rhs. => "B" Console'Write.
     "z" Console'Write.
 """
         // 1つ目: True || → rhs 評価されない（"R" なし）、条件 true → "A"
@@ -2632,13 +2635,13 @@ fn main: () = do
 import System'Console
 
 fn cmp (a: Int) (b: Int): () = do
-    |? a < b => "L" Console'Write.
-    |? a > b => "G" Console'Write.
+    if | a < b => "L" Console'Write.
+    if | a > b => "G" Console'Write.
 
 fn main: () = do
     3 5 cmp.
     5 3 cmp.
-    |? 1 < 2 && 2 > 1 => "B" Console'Write.
+    if | 1 < 2 && 2 > 1 => "B" Console'Write.
 """
         // cmp(3,5)→"L"、cmp(5,3)→"G"、`1<2 && 2>1`→"B"。`<`/`>` がジェネリックに誤認されないことの回帰確認。
         Assert.Equal("LGB", runForStdout "CmpNotGeneric" program)

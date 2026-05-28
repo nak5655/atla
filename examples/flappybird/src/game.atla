@@ -79,7 +79,7 @@ impl FlappyGame as Game
         let dt = gameTime'Elapsed'TotalSeconds toFloat.
 
         # Bird
-        |? Keys'Space self'Input'IsKeyPressed. =>
+        if | Keys'Space self'Input'IsKeyPressed. =>
             self'_birdVelocity = self'_jumpPower
         self'_birdVelocity += self'_gravity * dt
         self'_birdPos'Y += self'_birdVelocity * dt
@@ -90,7 +90,7 @@ impl FlappyGame as Game
             pipe'X -= self'_pipeSpeed * dt
 
             # 画面外に出たパイプはリセット
-            |? pipe'X < -self'_pipeWidth =>
+            if | pipe'X < -self'_pipeWidth =>
                 pipe = (6.0f * 250.0f - self'_pipeWidth) (self'RandomGap. toFloat.) Vector2.
 
             self'_pipes[i] = pipe
@@ -102,16 +102,16 @@ impl FlappyGame as Game
             let topY = pipe'Y - self'_pipeGap / 2.0f
             let bottomY = pipe'Y + self'_pipeGap / 2.0f
 
-            |? self'_birdPos'X + self'_birdSize > pipe'X && self'_birdPos'X < pipe'X + self'_pipeWidth =>
-                |? self'_birdPos'Y < topY || self'_birdPos'Y + self'_birdSize > bottomY =>
+            if | self'_birdPos'X + self'_birdSize > pipe'X && self'_birdPos'X < pipe'X + self'_pipeWidth =>
+                if | self'_birdPos'Y < topY || self'_birdPos'Y + self'_birdSize > bottomY =>
                     shouldReset = True
                     break
 
         # 地面と天井の当たり判定
-        |? self'_birdPos'Y < 0.0f || self'_birdPos'Y > 720.0f =>
+        if | self'_birdPos'Y < 0.0f || self'_birdPos'Y > 720.0f =>
             shouldReset = True
-        
-        |? shouldReset =>
+
+        if | shouldReset =>
             self'ResetGame.
 
     override fn Draw self (gameTime: GameTime): () =

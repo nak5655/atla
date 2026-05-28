@@ -39,8 +39,9 @@ module ParserTests =
     let ``fileModule parses if expression`` () =
         let program = """
 fn main (): Int =
-    |? 1 == 1 => 1
-    |: else => 0
+    if
+    | 1 == 1 => 1
+    | else => 0
 """
 
         match parseModule program with
@@ -53,10 +54,11 @@ fn main (): Int =
     let ``fileModule parses multi-branch if without error nodes`` () =
         let program = """
 fn applyOp (op: String): Int =
-    |? op == "+" => 1
-    |: op == "-" => 2
-    |: op == "*" => 3
-    |: else => 0
+    if
+    | op == "+" => 1
+    | op == "-" => 2
+    | op == "*" => 3
+    | else => 0
 """
 
         let rec hasErrorNode (expr: Ast.Expr) =
@@ -157,10 +159,11 @@ fn main: () =
         let program = """
 fn fizzbuzz (n: Int): () =
     for i in n
-        |? i % 15 == 0 => "FizzBuzz"
-        |: i % 5 == 0 => "Buzz"
-        |: i % 3 == 0 => "Fizz"
-        |: else => i
+        if
+        | i % 15 == 0 => "FizzBuzz"
+        | i % 5 == 0 => "Buzz"
+        | i % 3 == 0 => "Fizz"
+        | else => i
 
 fn main: () =
     let n = 10
@@ -207,7 +210,7 @@ fn main: () =
         let program = """
 fn main: () =
     for i in values
-        |? i == 3 =>
+        if | i == 3 =>
             break
         i
 """
@@ -1757,7 +1760,7 @@ impl Opt T
     let ``fileModule parses if statement without else`` () =
         let program = """
 fn main (): Int =
-    |? True =>
+    if | True =>
         return 1
     2
 """
@@ -1795,12 +1798,13 @@ fn main (): Int =
 
     [<Fact>]
     let ``fileModule parses if-else statement`` () =
-        // else ありの |? ブロックは exprStmt (ifExpr) として解析される
+        // else あり `if` ブロックは exprStmt (ifExpr) として解析される
         let program = """
 fn main (): Int =
-    |? True =>
+    if
+    | True =>
         return 1
-    |: else =>
+    | else =>
         return 0
     2
 """
