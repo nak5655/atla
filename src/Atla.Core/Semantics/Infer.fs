@@ -63,6 +63,8 @@ module Infer =
             let inferredThen = thenBody |> List.map (inferStmt typeSubst)
             let inferredElse = elseBody |> List.map (inferStmt typeSubst)
             Hir.Stmt.If(inferredCond, inferredThen, inferredElse, span)
+        | Hir.Stmt.While (cond, body, span) ->
+            Hir.Stmt.While(inferExpr typeSubst cond, body |> List.map (inferStmt typeSubst), span)
         | Hir.Stmt.Break _ -> stmt
         | Hir.Stmt.Continue _ -> stmt
         | Hir.Stmt.Return (value, span) -> Hir.Stmt.Return(inferExpr typeSubst value, span)

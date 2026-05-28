@@ -702,6 +702,29 @@ module Layout =
                                     @ [ Mir.Ins.Jump loopStartId
                                         Mir.Ins.MarkLabel loopEndId ]
                                 ))
+        | ClosedHir.Stmt.While (cond, body, span) ->
+            let loopStartId, state1 = freshLabel state
+            let loopEndId, state2 = freshLabel state1
+            // ボディ内の break/continue が参照できるよう (loopStart, loopEnd) を push する。
+            let bodyState = { state2 with loopLabels = (loopStartId, loopEndId) :: state2.loopLabels }
+            match mapFoldResult layoutStmt bodyState body with
+            | Result.Error e -> Result.Error e
+            | Ok (state3pushed, bodyInsList) ->
+                let state3 = { state3pushed with loopLabels = state2.loopLabels }
+                match layoutExpr state3 cond with
+                | Result.Error e -> Result.Error e
+                | Ok (state4, condKn) ->
+                    match condKn.res with
+                    | None -> Result.Error (Diagnostic.Error("While condition did not produce a value", span))
+                    | Some condVal ->
+                        let bodyIns = List.concat bodyInsList
+                        Ok (state4,
+                            [ Mir.Ins.MarkLabel loopStartId ]
+                            @ condKn.ins
+                            @ [ Mir.Ins.JumpFalse(condVal, loopEndId) ]
+                            @ bodyIns
+                            @ [ Mir.Ins.Jump loopStartId
+                                Mir.Ins.MarkLabel loopEndId ])
         | ClosedHir.Stmt.If (cond, thenBody, elseBody, _) ->
             match layoutExpr state cond with
             | Result.Error e -> Result.Error e
@@ -969,6 +992,8 @@ module Layout =
             hasLambdaExpr receiver || hasLambdaExpr value
         | ClosedHir.Stmt.For (_, _, iterable, body, _) ->
             hasLambdaExpr iterable || (body |> List.exists hasLambdaStmt)
+        | ClosedHir.Stmt.While (cond, body, _) ->
+            hasLambdaExpr cond || (body |> List.exists hasLambdaStmt)
         | ClosedHir.Stmt.If (cond, thenBody, elseBody, _) ->
             hasLambdaExpr cond
             || (thenBody |> List.exists hasLambdaStmt)

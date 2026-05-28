@@ -547,6 +547,23 @@ module Parser =
     and continueStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () -> keyword "continue" |>> fun kw -> Ast.Stmt.Continue (kw.span) :> Ast.Stmt)
 
+    and whileStmt: PackratParser<Token, Ast.Stmt> =
+        Delay (fun () -> fun input pos ->
+            match (keyword "while") input pos with
+            | Success (whileKw, afterWhilePos) ->
+                let bodyInput = BlockInput(input, whileKw.span.left) :> Input<Token>
+                let condInput = LineInput(bodyInput, whileKw.span.left.Line) :> Input<Token>
+                match expr condInput afterWhilePos with
+                | Success (cond, afterCondPos) ->
+                    match Many1 stmt bodyInput afterCondPos with
+                    | Success (bodyStmts, nextPos) ->
+                        Success (Ast.Stmt.While(cond, bodyStmts, { left = whileKw.span.left; right = (List.last bodyStmts).span.right }) :> Ast.Stmt, nextPos)
+                    | Failure (msg, span) ->
+                        Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, afterCondPos)
+                | Failure (msg, span) ->
+                    Success (Ast.Stmt.Error(msg, span) :> Ast.Stmt, afterWhilePos)
+            | Failure (reason, span) -> Failure (reason, span))
+
     and forStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () -> fun input pos ->
             match (keyword "for") input pos with
@@ -592,7 +609,7 @@ module Parser =
     // else あり `if` はまず exprStmt (ifExpr) として試みる。else なしの場合のみ ifStmt にフォールバック。
     // letElseStmt / varElseStmt は enumPattern（`Type'Case`）で始まるため letStmt / varStmt と衝突しない。
     and stmt: PackratParser<Token, Ast.Stmt> =
-        Delay (fun () -> letElseStmt <|> varElseStmt <|> letStmt <|> varStmt <|> returnStmt <|> breakStmt <|> continueStmt <|> forStmt <|> assignStmt <|> exprStmt <|> ifStmt)
+        Delay (fun () -> letElseStmt <|> varElseStmt <|> letStmt <|> varStmt <|> returnStmt <|> breakStmt <|> continueStmt <|> whileStmt <|> forStmt <|> assignStmt <|> exprStmt <|> ifStmt)
 
     and typeExprUnit: PackratParser<Token, Ast.TypeExpr> =
         Delay (fun () ->

@@ -76,6 +76,8 @@ module ClosureConversion =
         | Hir.Stmt.ExprStmt (expr, span) -> ClosedHir.Stmt.ExprStmt(convertHirExpr expr, span)
         | Hir.Stmt.For (sid, tid, iterable, body, span) ->
             ClosedHir.Stmt.For(sid, tid, convertHirExpr iterable, body |> List.map convertHirStmt, span)
+        | Hir.Stmt.While (cond, body, span) ->
+            ClosedHir.Stmt.While(convertHirExpr cond, body |> List.map convertHirStmt, span)
         | Hir.Stmt.If (cond, thenBody, elseBody, span) ->
             ClosedHir.Stmt.If(convertHirExpr cond, thenBody |> List.map convertHirStmt, elseBody |> List.map convertHirStmt, span)
         | Hir.Stmt.Break span -> ClosedHir.Stmt.Break span
@@ -299,6 +301,9 @@ module ClosureConversion =
                 let m' = traverseExpr ctx captureMap cond
                 let m'' = thenBody |> List.fold (fun m s -> traverseStmt ctx m s) m'
                 elseBody |> List.fold (fun m s -> traverseStmt ctx m s) m''
+            | Hir.Stmt.While (cond, body, _) ->
+                let m' = traverseExpr ctx captureMap cond
+                body |> List.fold (fun m s -> traverseStmt ctx m s) m'
             | Hir.Stmt.Break _ -> captureMap
             | Hir.Stmt.Continue _ -> captureMap
             | Hir.Stmt.Return (value, _) -> traverseExpr ctx captureMap value
@@ -485,6 +490,10 @@ module ClosureConversion =
             // for 反復変数 sid はボディ内で束縛済みとして扱い、ラムダからの捕捉候補となる（C#互換: 反復ごと新規束縛）。
             let rewrittenBody, bodyState = rewriteStmts symbolTable ownerMethod captureMap body iterableState
             ClosedHir.Stmt.For(sid, tid, rewrittenIterable, rewrittenBody, span), bodyState
+        | Hir.Stmt.While (cond, body, span) ->
+            let rewrittenCond, state1 = rewriteExpr symbolTable ownerMethod captureMap cond state
+            let rewrittenBody, state2 = rewriteStmts symbolTable ownerMethod captureMap body state1
+            ClosedHir.Stmt.While(rewrittenCond, rewrittenBody, span), state2
         | Hir.Stmt.If (cond, thenBody, elseBody, span) ->
             let rewrittenCond, state1 = rewriteExpr symbolTable ownerMethod captureMap cond state
             let rewrittenThen, state2 = rewriteStmts symbolTable ownerMethod captureMap thenBody state1
