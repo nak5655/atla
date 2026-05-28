@@ -9,7 +9,7 @@ import Avalonia'Controls'ColumnDefinitions
 import Avalonia'Layout'Orientation
 import Avalonia'Layout'HorizontalAlignment
 
-data CalculatorWindow = 
+data CalculatorWindow =
     { _grid: Grid
     , _display: TextBox
     , _currentValue: Double
@@ -32,7 +32,7 @@ impl CalculatorWindow as Window
         display'HorizontalContentAlignment = HorizontalAlignment'Right
 
         display root'Children'Add.
-    
+
         let grid = Grid.
         grid'RowDefinitions = "Auto,Auto,Auto,Auto,Auto" RowDefinitions.
         grid'ColumnDefinitions = "*,*,*,*" ColumnDefinitions.
@@ -47,7 +47,7 @@ impl CalculatorWindow as Window
             , _pendingOperator = ""
             , _clearOnNextDigit = False
             }
-        
+
         "C" 0 0 (window'onClear.) window'addButton.
         "BS" 0 1 (window'onBackspace.) window'addButton.
         "+-" 0 2 (window'onToggleSign.) window'addButton.
@@ -67,7 +67,7 @@ impl CalculatorWindow as Window
         2 3 1 window'addDigitButton.
         3 3 2 window'addDigitButton.
         "+" 3 3 window'addOperatorButton.
-        
+
         0 4 0 window'addDigitButton.
         "=" 4 3 (window'onEquals.) window'addButton.
 
@@ -94,13 +94,14 @@ impl CalculatorWindow as Window
 
     fn onDigit self (digit: Int): () -> () =
         fn () ->
-            |? self'_clearOnNextDigit =>
+            if | self'_clearOnNextDigit =>
                 self'_display'Text = "0"
                 self'_clearOnNextDigit = False
 
-            |? self'_display'Text == "0" && digit'ToString. != "." =>
+            if
+            | self'_display'Text == "0" && digit'ToString. != "." =>
                 self'_display'Text = digit'ToString.
-            |: else =>
+            | else =>
                 self'_display'Text += digit'ToString.
 
     fn addOperatorButton self (operator: String) (row: Int) (column: Int): () =
@@ -110,29 +111,32 @@ impl CalculatorWindow as Window
         fn () ->
             let value = self'_display'Text Double'Parse.
 
-            |? self'_pendingOperator != "" =>
+            if
+            | self'_pendingOperator != "" =>
                 self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
                 self'_display'Text = self'_currentValue'ToString.
-            |: else =>
+            | else =>
                 self'_currentValue = value
-            
+
             self'_pendingOperator = operator
             self'_clearOnNextDigit = True
 
     fn applyOperator self (left: Double) (right: Double) (operator: String): Double =
-        |? operator == "+" => left + right
-        |: operator == "-" => left - right
-        |: operator == "*" => left * right
-        |: operator == "/" => left / right
-        |: else => right
+        if
+        | operator == "+" => left + right
+        | operator == "-" => left - right
+        | operator == "*" => left * right
+        | operator == "/" => left / right
+        | else => right
 
     fn onEquals self: () -> () =
         fn () ->
             let value = self'_display'Text Double'Parse.
 
-            |? self'_pendingOperator == "" =>
+            if
+            | self'_pendingOperator == "" =>
                 ()
-            |: else =>
+            | else =>
                 self'_currentValue = self'_currentValue value self'_pendingOperator self'applyOperator.
                 self'_display'Text = self'_currentValue'ToString.
                 self'_pendingOperator = ""
@@ -147,18 +151,20 @@ impl CalculatorWindow as Window
 
     fn onBackspace self: () -> () =
         fn () ->
-            |? self'_clearOnNextDigit =>
+            if
+            | self'_clearOnNextDigit =>
                 ()
-            |: else =>
+            | else =>
                 let text = self'_display'Text
-                |? text'Length == 1 =>
+                if
+                | text'Length == 1 =>
                     self'_display'Text = "0"
-                |: else =>
+                | else =>
                     self'_display'Text = 0 (text'Length - 1) text'Substring.
 
     fn onToggleSign self: () -> () =
         fn () ->
             let value = self'_display'Text Double'Parse.
             let invertedValue = -value
-            
+
             self'_display'Text = invertedValue'ToString.

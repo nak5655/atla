@@ -4,11 +4,11 @@ enum Opt T
 
 impl Opt T
     fn isSome self: Bool =
-        |@ self
-        |: Opt'None => False
-        |: Opt'Some _ => True
+        match self
+        | Opt'None -> False
+        | Opt'Some _ -> True
 
     fn isNone self: Bool =
-        |@ self
-        |: Opt'None => True
-        |: Opt'Some _ => False
+        match self
+        | Opt'None -> True
+        | Opt'Some _ -> False
