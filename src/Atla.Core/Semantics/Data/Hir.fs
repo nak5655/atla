@@ -133,6 +133,7 @@ module Hir =
         | StoreNativeField of receiver: Expr * field: FieldInfo * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
         | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
+        | While of cond: Expr * body: Stmt list * span: Span
         | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
         | Break of span: Span
         | Continue of span: Span
@@ -153,6 +154,8 @@ module Hir =
             | StoreNativeField (receiver, _, value, _) -> receiver.getDiagnostics @ value.getDiagnostics
             | For (_, _, iterable, body, _) ->
                 iterable.getDiagnostics @ (body |> List.collect (fun stmt -> stmt.getDiagnostics))
+            | While (cond, body, _) ->
+                cond.getDiagnostics @ (body |> List.collect (fun stmt -> stmt.getDiagnostics))
             | If (cond, thenBody, elseBody, _) ->
                 cond.getDiagnostics
                 @ (thenBody |> List.collect (fun stmt -> stmt.getDiagnostics))
@@ -267,6 +270,8 @@ module Hir =
         | ExprStmt (expr, span) -> ExprStmt(mapExpr f expr, span)
         | For (sid, tid, iterable, body, span) ->
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
+        | While (cond, body, span) ->
+            While(mapExpr f cond, body |> List.map (mapStmt f), span)
         | Stmt.If (cond, thenBody, elseBody, span) ->
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
         | Return (value, span) -> Return(mapExpr f value, span)
@@ -314,6 +319,9 @@ module Hir =
             foldExpr f (foldExpr f acc receiver) value
         | For (_, _, iterable, body, _) ->
             let acc' = foldExpr f acc iterable
+            body |> List.fold (foldStmt f) acc'
+        | While (cond, body, _) ->
+            let acc' = foldExpr f acc cond
             body |> List.fold (foldStmt f) acc'
         | Stmt.If (cond, thenBody, elseBody, _) ->
             let acc' = foldExpr f acc cond
@@ -419,6 +427,16 @@ module Hir =
                     (zero, innerCtx)
                 |> fst
             merge iterAcc bodyAcc
+        | While (cond, body, _) ->
+            let condAcc = foldExprWithCtx descend afterStmt leaf merge zero ctx cond
+            let bodyAcc =
+                body
+                |> List.fold
+                    (fun (acc, c) s ->
+                        merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s)
+                    (zero, ctx)
+                |> fst
+            merge condAcc bodyAcc
         | Stmt.If (cond, thenBody, elseBody, _) ->
             let condAcc = foldExprWithCtx descend afterStmt leaf merge zero ctx cond
             let thenAcc =
