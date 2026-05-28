@@ -1843,3 +1843,92 @@ fn main (): Int =
                 Assert.True(false, "function declaration was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses let-else statement with positional binding`` () =
+        let program = """
+fn unwrap (o: Opt Int): Int =
+    let Opt'Some x = o
+    | else -> return -1
+    x
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "unwrap" -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let letElseStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.LetElse as s -> Some s
+                            | _ -> None)
+                    match letElseStmt with
+                    | Some s ->
+                        match s.pattern with
+                        | :? Ast.Pattern.Enum as p ->
+                            Assert.Equal("Opt", p.typeName)
+                            Assert.Equal("Some", p.caseName)
+                            Assert.Equal(1, p.fields.Length)
+                            Assert.True(p.fields.[0] :? Ast.PatternField.Positional)
+                        | _ -> Assert.True(false, "pattern should be Enum")
+                        Assert.Equal(1, s.elseBranch.Length)
+                    | None ->
+                        Assert.True(false, "let-else statement was not found")
+                | _ ->
+                    Assert.True(false, "function body was not a block")
+            | None ->
+                Assert.True(false, "function 'unwrap' not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses var-else statement with named field binding`` () =
+        let program = """
+fn test (o: Opt Int): Int =
+    var Opt'Some { value } = o
+    | else -> return 0
+    value
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "test" -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let varElseStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.VarElse as s -> Some s
+                            | _ -> None)
+                    match varElseStmt with
+                    | Some s ->
+                        match s.pattern with
+                        | :? Ast.Pattern.Enum as p ->
+                            Assert.Equal("Opt", p.typeName)
+                            Assert.Equal("Some", p.caseName)
+                        | _ -> Assert.True(false, "pattern should be Enum")
+                    | None ->
+                        Assert.True(false, "var-else statement was not found")
+                | _ ->
+                    Assert.True(false, "function body was not a block")
+            | None ->
+                Assert.True(false, "function 'test' not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

@@ -736,6 +736,13 @@ module Layout =
             match state.loopLabels with
             | (loopStartId, _) :: _ -> Ok (state, [ Mir.Ins.Jump loopStartId ])
             | [] -> Result.Error (Diagnostic.Error("'continue' used outside of a loop", span))
+        | ClosedHir.Stmt.ReturnValue (value, span) ->
+            match layoutExpr state value with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, valueKn) ->
+                match valueKn.res with
+                | None -> Result.Error (Diagnostic.Error("return expression did not produce a value", span))
+                | Some v -> Ok (state1, valueKn.ins @ [ Mir.Ins.RetValue v ])
         | ClosedHir.Stmt.Return _ ->
             Ok (state, [ Mir.Ins.Ret ])
         | ClosedHir.Stmt.Leave (clId, _) ->
@@ -968,6 +975,7 @@ module Layout =
             || (elseBody |> List.exists hasLambdaStmt)
         | ClosedHir.Stmt.TryCatch (tryBody, _, _, catchBody, _) ->
             (tryBody |> List.exists hasLambdaStmt) || (catchBody |> List.exists hasLambdaStmt)
+        | ClosedHir.Stmt.ReturnValue (value, _) -> hasLambdaExpr value
         | ClosedHir.Stmt.Break _ | ClosedHir.Stmt.Continue _ | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> false
         | ClosedHir.Stmt.ErrorStmt _ -> false
 

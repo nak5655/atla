@@ -483,6 +483,32 @@ module Parser =
     and expr: PackratParser<Token, Ast.Expr> =
         Delay (fun () -> lambdaExpr <|> ascriptionExpr)
 
+    // `| else -> stmt...` を解析する（let-else / var-else の else ブランチ）。
+    // blockAtOpener で `|` の列をオフサイド基準とし、ボディは `|` より右に字下げする。
+    and letElseElseBranch: PackratParser<Token, Ast.Stmt list> =
+        Delay (fun () ->
+            blockAtOpener (asToken (symbol "|")) (
+                keyword "else" &> keyword "->" &>
+                Once (Many1 stmt) (fun (msg, span) -> [ Ast.Stmt.Error(msg, span) :> Ast.Stmt ])))
+
+    // `let <enumPattern> = <expr> <letElseElseBranch>` を解析する。
+    and letElseStmt: PackratParser<Token, Ast.Stmt> =
+        Delay (fun () ->
+            block (asToken (keyword "let")) (enumPattern <& symbol "=" <&> expr)
+            <&> letElseElseBranch
+            |>> fun ((pattern, value), elseBranch) ->
+                let rightSpan = if elseBranch.IsEmpty then value.span.right else (List.last elseBranch).span.right
+                Ast.Stmt.LetElse(pattern, value, elseBranch, { left = pattern.span.left; right = rightSpan }) :> Ast.Stmt)
+
+    // `var <enumPattern> = <expr> <letElseElseBranch>` を解析する。
+    and varElseStmt: PackratParser<Token, Ast.Stmt> =
+        Delay (fun () ->
+            block (asToken (keyword "var")) (enumPattern <& symbol "=" <&> expr)
+            <&> letElseElseBranch
+            |>> fun ((pattern, value), elseBranch) ->
+                let rightSpan = if elseBranch.IsEmpty then value.span.right else (List.last elseBranch).span.right
+                Ast.Stmt.VarElse(pattern, value, elseBranch, { left = pattern.span.left; right = rightSpan }) :> Ast.Stmt)
+
     // 文
     and letStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () ->
@@ -564,8 +590,9 @@ module Parser =
                 Ast.Stmt.If(allBranches, span) :> Ast.Stmt)
 
     // else あり `if` はまず exprStmt (ifExpr) として試みる。else なしの場合のみ ifStmt にフォールバック。
+    // letElseStmt / varElseStmt は enumPattern（`Type'Case`）で始まるため letStmt / varStmt と衝突しない。
     and stmt: PackratParser<Token, Ast.Stmt> =
-        Delay (fun () -> letStmt <|> varStmt <|> returnStmt <|> breakStmt <|> continueStmt <|> forStmt <|> assignStmt <|> exprStmt <|> ifStmt)
+        Delay (fun () -> letElseStmt <|> varElseStmt <|> letStmt <|> varStmt <|> returnStmt <|> breakStmt <|> continueStmt <|> forStmt <|> assignStmt <|> exprStmt <|> ifStmt)
 
     and typeExprUnit: PackratParser<Token, Ast.TypeExpr> =
         Delay (fun () ->
