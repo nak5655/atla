@@ -103,12 +103,11 @@ module Parser =
                 | Failure (reason, span) -> Failure (reason, span)
         )
 
-    // `|` / `|@` は if/match ブランチ区切り専用で二項中置演算子ではない。infixOp から除外する。
-    // `|:` の `:` は opSign でないため Token.Symbol として出現しない（2トークン: | と :）ので除外不要。
+    // `|` は if/match ブランチ区切り専用で二項中置演算子ではない。infixOp から除外する。
     let infixOp prec : PackratParser<Token, Token.Symbol> =
         AcceptMatch (fun t ->
             match t with
-            | :? Token.Symbol as sym when sym.precedence = prec && sym.str <> "|" && sym.str <> "|@" -> Some(sym)
+            | :? Token.Symbol as sym when sym.precedence = prec && sym.str <> "|" -> Some(sym)
             | _ -> None)
 
     let tid: PackratParser<Token, Token.Id> = AcceptMatch (fun t -> match t with :? Token.Id as id -> Some(id) | _ -> None)
@@ -121,18 +120,6 @@ module Parser =
     let keyword kw: PackratParser<Token, Token.Keyword> = AcceptMatch (fun t -> match t with :? Token.Keyword as st when st.str = kw -> Some(st) | _ -> None)
     let delim d: PackratParser<Token, Token.Delim> = AcceptMatch (fun t -> match t with :? Token.Delim as st when st.char = d -> Some(st) | _ -> None)
     let symbol sym: PackratParser<Token, Token.Symbol> = AcceptMatch (fun t -> match t with :? Token.Symbol as st when st.str = sym -> Some(st) | _ -> None)
-
-    // `:` は opSign でないため `|:` は2トークン（Token.Symbol "|" + Token.Delim ':'）になる。
-    // blockAtOpener に渡す opener として、| を照合した後 : も消費し、
-    // | トークン（オフサイド列の基準）を返す合成パーサー。
-    let ifContOpener : PackratParser<Token, Token> =
-        fun input pos ->
-            match (symbol "|") input pos with
-            | Success (pipeToken, afterPipePos) ->
-                match (delim ':') input afterPipePos with
-                | Success (_, nextPos) -> Success (pipeToken :> Token, nextPos)
-                | Failure (reason, span) -> Failure (reason, span)
-            | Failure (reason, span) -> Failure (reason, span)
 
     // 式
     let id =
@@ -249,16 +236,16 @@ module Parser =
 
     and matchArm: PackratParser<Token, Ast.MatchArm> =
         Delay (fun () ->
-            blockAtOpener ifContOpener (enumPattern <& keyword "=>" <&>
+            blockAtOpener (asToken (symbol "|")) (enumPattern <& keyword "->" <&>
                 (Once (Many1 stmt |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr) (fun (msg, span) -> Ast.Expr.Error(msg, span) :> Ast.Expr))
             |>> fun (pattern, body) ->
                 Ast.MatchArm.Arm(pattern, body, { left = pattern.span.left; right = body.span.right }) :> Ast.MatchArm))
 
     and matchExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            blockAtOpener (asToken (symbol "|@")) expr <&> Many1 matchArm
-            |>> fun (scrutinee, arms) ->
-                Ast.Expr.Match(scrutinee, arms, { left = scrutinee.span.left; right = (List.last arms).span.right }) :> Ast.Expr)
+            keyword "match" <&> expr <&> Many1 matchArm
+            |>> fun ((matchKw, scrutinee), arms) ->
+                Ast.Expr.Match(scrutinee, arms, { left = matchKw.span.left; right = (List.last arms).span.right }) :> Ast.Expr)
 
     and factor: PackratParser<Token, Ast.Expr> =
         Delay (fun () -> paren <|> ifExpr <|> matchExpr <|> doExpr <|> enumInitExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr double) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))

@@ -34,7 +34,7 @@ module Lexer =
         // declarations
         "let"; "var"; "fn"; "mod"; "def"; "use"; "import"; "public"; "data"; "enum"; "self"; "role"; "impl"; "as"; "override"; "async"; "await";
         // control flows
-        "for"; "by"; "in"; "if"; "else"; "do"; "while";
+        "for"; "by"; "in"; "if"; "else"; "do"; "while"; "match";
         // block
         "return"; "continue"; "break";
         // boolean

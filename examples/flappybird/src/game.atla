@@ -121,12 +121,12 @@ impl FlappyGame as Game
         self'GraphicsDevice'Presenter'DepthStencilBuffer DepthStencilClearOptions'DepthBuffer self'GraphicsContext'CommandList'Clear.
         self'GraphicsDevice'Presenter'DepthStencilBuffer self'GraphicsDevice'Presenter'BackBuffer self'GraphicsContext'CommandList'SetRenderTargetAndViewport.
 
-        |@ self'_spriteBatch
-        |: Opt'Some spriteBatch =>
+        match self'_spriteBatch
+        | Opt'Some spriteBatch ->
             self'GraphicsContext spriteBatch'Begin.
 
-            |@ self'_whiteTexture
-            |: Opt'Some whiteTexture =>
+            match self'_whiteTexture
+            | Opt'Some whiteTexture ->
                 whiteTexture (self'_birdPos'X self'_birdPos'Y self'_birdSize self'_birdSize RectangleF.) Color'Yellow spriteBatch'Draw.
 
                 for pipe in self'_pipes
@@ -138,7 +138,7 @@ impl FlappyGame as Game
 
                     # 下のパイプ
                     whiteTexture (pipe'X bottomY self'_pipeWidth (720.0f - bottomY) RectangleF.) Color'Green spriteBatch'Draw.
-            |: Opt'None => ()
+            | Opt'None -> ()
 
             spriteBatch'End.
-        |: Opt'None => ()
+        | Opt'None -> ()

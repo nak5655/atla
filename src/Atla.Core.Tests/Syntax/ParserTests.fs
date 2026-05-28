@@ -483,9 +483,9 @@ fn main (): Color = Color'Rgb { r = 255, g = 0, b = 0 }
     let ``fileModule parses match expression with enum patterns`` () =
         let program = """
 fn main (color: Color): Int =
-    |@ color
-    |: Color'Black => 0
-    |: Color'Rgb { r, .. } => r
+    match color
+    | Color'Black -> 0
+    | Color'Rgb { r, .. } -> r
 """
 
         match parseModule program with

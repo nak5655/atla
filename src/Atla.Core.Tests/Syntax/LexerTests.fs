@@ -81,8 +81,8 @@ module LexerTests =
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``tokenize recognizes enum keyword and pipe-at symbol`` () =
-        let program = "enum Color |@ value"
+    let ``tokenize recognizes enum and match keywords`` () =
+        let program = "enum Color match value"
         let input: Input<SourceChar> = StringInput program
 
         match Lexer.tokenize input Position.Zero with
@@ -93,7 +93,7 @@ module LexerTests =
                 | _ -> false)
             Assert.Contains(tokens, fun token ->
                 match token with
-                | :? Token.Symbol as sym -> sym.str = "|@"
+                | :? Token.Keyword as kw -> kw.str = "match"
                 | _ -> false)
         | Failure(reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
