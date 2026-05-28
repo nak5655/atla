@@ -80,6 +80,7 @@ module ClosureConversion =
             ClosedHir.Stmt.If(convertHirExpr cond, thenBody |> List.map convertHirStmt, elseBody |> List.map convertHirStmt, span)
         | Hir.Stmt.Break span -> ClosedHir.Stmt.Break span
         | Hir.Stmt.Continue span -> ClosedHir.Stmt.Continue span
+        | Hir.Stmt.Return (value, span) -> ClosedHir.Stmt.ReturnValue(convertHirExpr value, span)
         | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span)
 
     // ─────────────────────────────────────────────
@@ -300,6 +301,7 @@ module ClosureConversion =
                 elseBody |> List.fold (fun m s -> traverseStmt ctx m s) m''
             | Hir.Stmt.Break _ -> captureMap
             | Hir.Stmt.Continue _ -> captureMap
+            | Hir.Stmt.Return (value, _) -> traverseExpr ctx captureMap value
             | Hir.Stmt.ErrorStmt _ -> captureMap
 
         and afterStmtCtx (ctx: AnalysisCtx) (stmt: Hir.Stmt) : AnalysisCtx =
@@ -490,6 +492,9 @@ module ClosureConversion =
             ClosedHir.Stmt.If(rewrittenCond, rewrittenThen, rewrittenElse, span), state3
         | Hir.Stmt.Break span -> ClosedHir.Stmt.Break span, state
         | Hir.Stmt.Continue span -> ClosedHir.Stmt.Continue span, state
+        | Hir.Stmt.Return (value, span) ->
+            let rewrittenValue, nextState = rewriteExpr symbolTable ownerMethod captureMap value state
+            ClosedHir.Stmt.ReturnValue(rewrittenValue, span), nextState
         | Hir.Stmt.ErrorStmt (msg, span) -> ClosedHir.Stmt.ErrorStmt(msg, span), state
 
     /// Phase 2: 文列を逐次変換し、最終 state を返す。

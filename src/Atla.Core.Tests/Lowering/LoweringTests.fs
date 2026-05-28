@@ -2645,3 +2645,48 @@ fn main: () = do
 """
         // cmp(3,5)→"L"、cmp(5,3)→"G"、`1<2 && 2>1`→"B"。`<`/`>` がジェネリックに誤認されないことの回帰確認。
         Assert.Equal("LGB", runForStdout "CmpNotGeneric" program)
+
+    [<Fact>]
+    let ``let-else with positional binding unwraps Opt'Some and falls through on None`` () =
+        let program = """
+import System'Console
+
+enum Opt T
+    | None
+    | Some { value: T }
+
+fn unwrapOr (o: Opt Int) (default: Int): Int =
+    let Opt'Some v = o
+    | else -> return default
+    v
+
+fn main: () = do
+    let some = Opt'Some { value = 42 }
+    let none = Opt'None
+    (some 0 unwrapOr.) Console'WriteLine.
+    let negOne = -1
+    (none negOne unwrapOr.) Console'WriteLine.
+"""
+        Assert.Equal("42\n-1", runForStdout "LetElseOpt" program)
+
+    [<Fact>]
+    let ``let-else with named field binding extracts struct field`` () =
+        let program = """
+import System'Console
+
+enum Opt T
+    | None
+    | Some { value: T }
+
+fn getValueOrZero (o: Opt Int): Int =
+    let Opt'Some { value } = o
+    | else -> return 0
+    value
+
+fn main: () = do
+    let some = Opt'Some { value = 99 }
+    let none = Opt'None
+    (some getValueOrZero.) Console'WriteLine.
+    (none getValueOrZero.) Console'WriteLine.
+"""
+        Assert.Equal("99\n0", runForStdout "LetElseNamedField" program)

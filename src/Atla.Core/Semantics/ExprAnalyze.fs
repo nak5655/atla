@@ -2334,7 +2334,106 @@ module ExprAnalyze =
             Hir.Stmt.Break(breakStmt.span)
         | :? Ast.Stmt.Continue as continueStmt ->
             Hir.Stmt.Continue(continueStmt.span)
+        | :? Ast.Stmt.Return as returnStmt ->
+            let analyzedExpr = analyzeExpr nameEnv typeEnv returnStmt.expr (typeEnv.freshMeta ())
+            Hir.Stmt.Return(analyzedExpr, returnStmt.span)
+        | :? Ast.Stmt.LetElse as s ->
+            analyzeLetVarElseStmt nameEnv typeEnv s.pattern s.value s.elseBranch false s.span
+        | :? Ast.Stmt.VarElse as s ->
+            analyzeLetVarElseStmt nameEnv typeEnv s.pattern s.value s.elseBranch true s.span
         | _ -> Hir.Stmt.ErrorStmt("Unsupported statement type", stmt.span)
+
+    and private analyzeLetVarElseStmt (nameEnv: NameEnv) (typeEnv: TypeEnv) (pattern: Ast.Pattern) (value: Ast.Expr) (elseBranch: Ast.Stmt list) (isMutable: bool) (span: Atla.Core.Data.Span) : Hir.Stmt =
+        let analyzedRHS = analyzeExpr nameEnv typeEnv value (typeEnv.freshMeta ())
+        match pattern with
+        | :? Ast.Pattern.Enum as enumPattern ->
+            match tryGetRootTypeSid typeEnv analyzedRHS.typ with
+            | None ->
+                Hir.Stmt.ErrorStmt(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedRHS.typ), span)
+            | Some scrutineeTypeSid ->
+                match tryFindTypeDefBySid nameEnv scrutineeTypeSid with
+                | None ->
+                    Hir.Stmt.ErrorStmt(sprintf "Type '%s' is not defined" (formatTypeForDisplay nameEnv typeEnv analyzedRHS.typ), span)
+                | Some scrutineeTypeDef ->
+                    match scrutineeTypeDef.enumInfo with
+                    | None ->
+                        Hir.Stmt.ErrorStmt(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedRHS.typ), span)
+                    | Some enumDef ->
+                        match enumDef.cases |> List.tryFind (fun c -> c.name = enumPattern.caseName) with
+                        | None ->
+                            Hir.Stmt.ErrorStmt(sprintf "Unknown enum case '%s' for type '%s'" enumPattern.caseName enumPattern.typeName, span)
+                        | Some caseDef ->
+                            let scrutineeSubEnv = nameEnv.sub()
+                            let scrutineeSid = scrutineeSubEnv.declareLocal "__le_scrutinee" analyzedRHS.typ
+                            let scrutineeRef = Hir.Expr.Id(scrutineeSid, analyzedRHS.typ, value.span)
+
+                            let scrutineeRootType = instantiateEnumRootType typeEnv scrutineeTypeDef analyzedRHS.typ
+                            let typeVarSubst = buildTypeVarSubst typeEnv scrutineeTypeDef scrutineeRootType
+
+                            // フィールドバインディング（外側の nameEnv に宣言してスコープ外からも参照可能）
+                            let bindingStmts =
+                                match caseDef.payloadTypeSid, caseDef.payloadFieldSid with
+                                | Some payloadTypeSid, Some payloadFieldSid ->
+                                    let payloadExpr =
+                                        Hir.Expr.MemberAccess(Hir.Member.DataField(scrutineeTypeDef.typeSid, payloadFieldSid), Some scrutineeRef, TypeId.Name payloadTypeSid, span)
+                                    let positionalFields =
+                                        enumPattern.fields
+                                        |> List.choose (fun f -> match f with | :? Ast.PatternField.Positional as pf -> Some pf | _ -> None)
+                                    let namedBindings =
+                                        enumPattern.fields
+                                        |> List.choose (fun f ->
+                                            match f with
+                                            | :? Ast.PatternField.Named as nf ->
+                                                caseDef.fields
+                                                |> List.tryFind (fun fd -> fd.name = nf.name)
+                                                |> Option.map (fun fieldDef ->
+                                                    let boundType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                    let sid = nameEnv.declareLocal nf.name boundType
+                                                    let valueExpr = Hir.Expr.MemberAccess(Hir.Member.DataField(payloadTypeSid, fieldDef.sid), Some payloadExpr, boundType, span)
+                                                    Hir.Stmt.Let(sid, isMutable, valueExpr, span))
+                                            | _ -> None)
+                                    let positionalBindings =
+                                        positionalFields
+                                        |> List.mapi (fun i pf ->
+                                            if pf.varName = "_" then None
+                                            else
+                                                caseDef.fields
+                                                |> List.tryItem i
+                                                |> Option.map (fun fieldDef ->
+                                                    let boundType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                    let sid = nameEnv.declareLocal pf.varName boundType
+                                                    let valueExpr = Hir.Expr.MemberAccess(Hir.Member.DataField(payloadTypeSid, fieldDef.sid), Some payloadExpr, boundType, span)
+                                                    Hir.Stmt.Let(sid, isMutable, valueExpr, span)))
+                                        |> List.choose id
+                                    namedBindings @ positionalBindings
+                                | _ -> []
+
+                            let tagAccessExpr =
+                                Hir.Expr.MemberAccess(Hir.Member.DataField(scrutineeTypeDef.typeSid, enumDef.hiddenTagField.sid), Some scrutineeRef, enumDef.hiddenTagField.typ, span)
+                            let tagCheckExpr =
+                                Hir.Expr.Call(Hir.Callable.BuiltinOperator Builtins.Operators.OpEq, None,
+                                    [ tagAccessExpr; Hir.Expr.Int(caseDef.tag, span) ], TypeId.Bool, span)
+
+                            // 条件式: RHS を一時変数に束縛しつつタグを確認
+                            let condExpr =
+                                Hir.Expr.Block([ Hir.Stmt.Let(scrutineeSid, false, analyzedRHS, span) ], tagCheckExpr, TypeId.Bool, span)
+
+                            let elseBodyStmts = elseBranch |> List.map (analyzeStmt nameEnv typeEnv)
+
+                            // else ブランチは必ず発散（return/break/continue で終わる）こと
+                            let diverges =
+                                match List.tryLast elseBodyStmts with
+                                | Some(Hir.Stmt.Return _) | Some(Hir.Stmt.Break _) | Some(Hir.Stmt.Continue _) -> true
+                                | _ -> false
+                            let finalElseBody =
+                                if not diverges then
+                                    elseBodyStmts @ [ Hir.Stmt.ErrorStmt("'else' branch of 'let-else' must end with 'return', 'break', or 'continue'", span) ]
+                                else
+                                    elseBodyStmts
+
+                            Hir.Stmt.If(condExpr, bindingStmts, finalElseBody, span)
+        | _ ->
+            Hir.Stmt.ErrorStmt("let-else requires an enum pattern (e.g. 'Type'Case x')", span)
 
     let analyzeMethodCoreWithOverride (nameEnv: NameEnv) (typeEnv: TypeEnv) (sid: SymbolId) (fnDecl: Ast.Decl.Fn) (overrideTarget: MethodInfo option) : Hir.Method =
         // `async fn` の場合は本体を async 文脈で解析する。戻り値注釈は「本体が返す内側の型」

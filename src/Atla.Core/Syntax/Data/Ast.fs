@@ -347,6 +347,26 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
+        type LetElse(pattern: Pattern, value: Expr, elseBranch: Stmt list, span: Span) =
+            member this.pattern = pattern
+            member this.value = value
+            member this.elseBranch = elseBranch
+            member this.span = span
+            interface Stmt with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        type VarElse(pattern: Pattern, value: Expr, elseBranch: Stmt list, span: Span) =
+            member this.pattern = pattern
+            member this.value = value
+            member this.elseBranch = elseBranch
+            member this.span = span
+            interface Stmt with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
         type Error(message: string, span: Span) =
             member this.message = message
             member this.span = span

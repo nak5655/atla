@@ -284,6 +284,7 @@ module AsyncRewrite =
             @ (elseBody |> List.collect collectLetSidsStmt)
         | ClosedHir.Stmt.TryCatch (tryBody, _, _, catchBody, _) ->
             (tryBody |> List.collect collectLetSidsStmt) @ (catchBody |> List.collect collectLetSidsStmt)
+        | ClosedHir.Stmt.ReturnValue (value, _) -> collectLetSids value
         | ClosedHir.Stmt.Break _ | ClosedHir.Stmt.Continue _ | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> []
         | ClosedHir.Stmt.ErrorStmt _ -> []
 
@@ -350,6 +351,7 @@ module AsyncRewrite =
             ClosedHir.Stmt.If(hoistExpr ctx cond, thenBody |> List.map (hoistStmt ctx), elseBody |> List.map (hoistStmt ctx), span)
         | ClosedHir.Stmt.TryCatch (tryBody, catchType, catchVarSid, catchBody, span) ->
             ClosedHir.Stmt.TryCatch(tryBody |> List.map (hoistStmt ctx), catchType, catchVarSid, catchBody |> List.map (hoistStmt ctx), span)
+        | ClosedHir.Stmt.ReturnValue (value, span) -> ClosedHir.Stmt.ReturnValue(hoistExpr ctx value, span)
         | ClosedHir.Stmt.Break _ | ClosedHir.Stmt.Continue _ | ClosedHir.Stmt.Label _ | ClosedHir.Stmt.Goto _ | ClosedHir.Stmt.Return _ | ClosedHir.Stmt.Leave _ -> stmt
         | ClosedHir.Stmt.ErrorStmt _ -> stmt
 

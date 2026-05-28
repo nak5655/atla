@@ -136,6 +136,7 @@ module Hir =
         | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
         | Break of span: Span
         | Continue of span: Span
+        | Return of value: Expr * span: Span
         | ErrorStmt of message: string * span: Span
 
         member this.hasError =
@@ -147,6 +148,7 @@ module Hir =
             | Let (_, _, value, _)
             | Assign (_, value, _)
             | ExprStmt (value, _) -> value.getDiagnostics
+            | Return (value, _) -> value.getDiagnostics
             | StoreField (instanceExpr, _, _, value, _) -> instanceExpr.getDiagnostics @ value.getDiagnostics
             | StoreNativeField (receiver, _, value, _) -> receiver.getDiagnostics @ value.getDiagnostics
             | For (_, _, iterable, body, _) ->
@@ -267,6 +269,7 @@ module Hir =
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
         | Stmt.If (cond, thenBody, elseBody, span) ->
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
+        | Return (value, span) -> Return(mapExpr f value, span)
         | Break _ | Continue _ -> stmt
         | ErrorStmt _ -> stmt
 
@@ -316,6 +319,7 @@ module Hir =
             let acc' = foldExpr f acc cond
             let acc'' = thenBody |> List.fold (foldStmt f) acc'
             elseBody |> List.fold (foldStmt f) acc''
+        | Return (value, _) -> foldExpr f acc value
         | Break _ | Continue _ -> acc
         | ErrorStmt _ -> acc
 
@@ -432,5 +436,6 @@ module Hir =
                     (zero, ctx)
                 |> fst
             merge condAcc (merge thenAcc elseAcc)
+        | Return (value, _) -> foldExprWithCtx descend afterStmt leaf merge zero ctx value
         | Break _ | Continue _ -> zero
         | ErrorStmt _ -> zero

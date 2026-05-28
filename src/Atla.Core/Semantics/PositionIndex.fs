@@ -235,6 +235,7 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
                 | Hir.Stmt.If (_, _, _, bodySpan)
                 | Hir.Stmt.Break bodySpan
                 | Hir.Stmt.Continue bodySpan
+                | Hir.Stmt.Return (_, bodySpan)
                 | Hir.Stmt.ErrorStmt (_, bodySpan) -> bodySpan)
             |> Option.defaultValue span
         let state1 =
@@ -250,6 +251,7 @@ and private walkStmt (scopeSpan: Span) (stmt: Hir.Stmt) (state: BuildState) : Bu
         elseBody |> List.fold (fun s stmt -> walkStmt scopeSpan stmt s) state2
     | Hir.Stmt.Break _ -> state
     | Hir.Stmt.Continue _ -> state
+    | Hir.Stmt.Return (value, _) -> walkExpr scopeSpan value state
     | Hir.Stmt.ErrorStmt _ -> state
 
 /// 単一モジュールを走査してアキュムレータを更新する。

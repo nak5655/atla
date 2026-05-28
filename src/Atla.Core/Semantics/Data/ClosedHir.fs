@@ -114,6 +114,9 @@ module ClosedHir =
         /// メソッドからの即時 return（戻り値なし。Layout で `Mir.Ins.Ret` へ下す）。
         /// 状態機械 MoveNext の await 中断点で使用する。
         | Return of span: Span
+        /// メソッドから値を返す（Layout で値をスタックに積んで `Mir.Ins.Ret` へ下す）。
+        /// ユーザー言語の `return expr` 文から生成される。
+        | ReturnValue of value: Expr * span: Span
         /// 保護領域（try）から領域外ラベルへ脱出する（Layout で `Mir.Ins.Leave` へ下す）。
         /// CIL では try/catch の中から `ret`/`br` で抜けられないため、状態機械 MoveNext の
         /// await 中断点（try 内）からメソッド末尾へ抜けるのに使用する。
@@ -223,6 +226,7 @@ module ClosedHir =
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
         | TryCatch (tryBody, catchType, catchVarSid, catchBody, span) ->
             TryCatch(tryBody |> List.map (mapStmt f), catchType, catchVarSid, catchBody |> List.map (mapStmt f), span)
+        | ReturnValue (value, span) -> ReturnValue(mapExpr f value, span)
         | Break _ | Continue _ | Label _ | Goto _ | Return _ | Leave _ -> stmt
         | ErrorStmt _ -> stmt
 
@@ -278,6 +282,7 @@ module ClosedHir =
         | TryCatch (tryBody, _, _, catchBody, _) ->
             let acc' = tryBody |> List.fold (foldStmt f) acc
             catchBody |> List.fold (foldStmt f) acc'
+        | ReturnValue (value, _) -> foldExpr f acc value
         | Break _ | Continue _ | Label _ | Goto _ | Return _ | Leave _ -> acc
         | ErrorStmt _ -> acc
 
@@ -405,5 +410,6 @@ module ClosedHir =
                 |> List.fold (fun (acc, c) s -> merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s) (zero, ctx)
                 |> fst
             merge tryAcc catchAcc
+        | ReturnValue (value, _) -> foldExprWithCtx descend afterStmt leaf merge zero ctx value
         | Break _ | Continue _ | Label _ | Goto _ | Return _ | Leave _ -> zero
         | ErrorStmt _ -> zero

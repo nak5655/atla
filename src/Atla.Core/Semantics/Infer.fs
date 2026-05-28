@@ -65,6 +65,7 @@ module Infer =
             Hir.Stmt.If(inferredCond, inferredThen, inferredElse, span)
         | Hir.Stmt.Break _ -> stmt
         | Hir.Stmt.Continue _ -> stmt
+        | Hir.Stmt.Return (value, span) -> Hir.Stmt.Return(inferExpr typeSubst value, span)
         | Hir.Stmt.ErrorStmt _ -> stmt
 
     let inferModule (typeSubst: TypeSubst, hirModule: Hir.Module) : Result<Hir.Module, Diagnostic list> =
