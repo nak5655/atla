@@ -539,7 +539,17 @@ module Parser =
         Delay (fun () -> expr |>> fun e -> Ast.Stmt.ExprStmt (e, e.span) :> Ast.Stmt)
 
     and returnStmt: PackratParser<Token, Ast.Stmt> =
-        Delay (fun () -> keyword "return" &> expr |>> fun e -> Ast.Stmt.Return (e, e.span) :> Ast.Stmt)
+        Delay (fun () -> fun input pos ->
+            match keyword "return" input pos with
+            | Failure (msg, span) -> Failure (msg, span)
+            | Success (kw, afterKwPos) ->
+                let lineInput = LineInput(input, kw.span.left.Line) :> Input<Token>
+                match expr lineInput afterKwPos with
+                | Success (e, nextPos) ->
+                    Success (Ast.Stmt.Return (e, { left = kw.span.left; right = e.span.right }) :> Ast.Stmt, nextPos)
+                | Failure _ ->
+                    let unitExpr = Ast.Expr.Unit(kw.span) :> Ast.Expr
+                    Success (Ast.Stmt.Return (unitExpr, kw.span) :> Ast.Stmt, afterKwPos))
 
     and breakStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () -> keyword "break" |>> fun kw -> Ast.Stmt.Break (kw.span) :> Ast.Stmt)

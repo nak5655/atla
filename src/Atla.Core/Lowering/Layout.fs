@@ -764,7 +764,7 @@ module Layout =
             | Result.Error e -> Result.Error e
             | Ok (state1, valueKn) ->
                 match valueKn.res with
-                | None -> Result.Error (Diagnostic.Error("return expression did not produce a value", span))
+                | None -> Ok (state1, valueKn.ins @ [ Mir.Ins.Ret ])
                 | Some v -> Ok (state1, valueKn.ins @ [ Mir.Ins.RetValue v ])
         | ClosedHir.Stmt.Return _ ->
             Ok (state, [ Mir.Ins.Ret ])

@@ -1934,6 +1934,43 @@ fn test (o: Opt Int): Int =
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule parses bare return as return unit`` () =
+        let program = """
+fn doWork (): Unit =
+    return
+    42 print.
+"""
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn when fn.name = "doWork" -> Some fn
+                    | _ -> None)
+            match fnDecl with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let returnStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.Return as r -> Some r
+                            | _ -> None)
+                    match returnStmt with
+                    | Some r ->
+                        Assert.True(r.expr :? Ast.Expr.Unit, "bare return should have Unit expr")
+                    | None ->
+                        Assert.True(false, "return statement not found")
+                | _ ->
+                    Assert.True(false, "function body was not a block")
+            | None ->
+                Assert.True(false, "function 'doWork' not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``fileModule parses while statement`` () =
         let program = """
 fn main: () =
