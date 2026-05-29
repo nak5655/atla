@@ -2690,3 +2690,41 @@ fn main: () = do
     (none getValueOrZero.) Console'WriteLine.
 """
         Assert.Equal("99\n0", runForStdout "LetElseNamedField" program)
+
+    [<Fact>]
+    let ``bare return exits unit function early`` () =
+        let program = """
+import System'Console
+
+fn printIfPositive (n: Int): Unit =
+    if | n <= 0 =>
+        return
+    n Console'WriteLine.
+
+fn main: () = do
+    3 printIfPositive.
+    0 printIfPositive.
+    5 printIfPositive.
+"""
+        Assert.Equal("3\n5", runForStdout "BareReturn" program)
+
+    [<Fact>]
+    let ``bare return in let-else else branch`` () =
+        let program = """
+import System'Console
+
+enum Opt T
+    | None
+    | Some { value: T }
+
+fn printValue (o: Opt Int): Unit =
+    let Opt'Some x = o
+    | else -> return
+    x Console'WriteLine.
+
+fn main: () = do
+    (1 Opt'Some.) printValue.
+    Opt'None printValue.
+    (2 Opt'Some.) printValue.
+"""
+        Assert.Equal("1\n2", runForStdout "BareReturnLetElse" program)
