@@ -278,6 +278,8 @@ module AsyncRewrite =
             collectLetSids receiver @ collectLetSids value
         | ClosedHir.Stmt.For (_, _, iterable, body, _) ->
             collectLetSids iterable @ (body |> List.collect collectLetSidsStmt)
+        | ClosedHir.Stmt.While (cond, body, _) ->
+            collectLetSids cond @ (body |> List.collect collectLetSidsStmt)
         | ClosedHir.Stmt.If (cond, thenBody, elseBody, _) ->
             collectLetSids cond
             @ (thenBody |> List.collect collectLetSidsStmt)
@@ -347,6 +349,8 @@ module AsyncRewrite =
             ClosedHir.Stmt.ExprStmt(hoistExpr ctx value, span)
         | ClosedHir.Stmt.For (sid, tid, iterable, body, span) ->
             ClosedHir.Stmt.For(sid, tid, hoistExpr ctx iterable, body |> List.map (hoistStmt ctx), span)
+        | ClosedHir.Stmt.While (cond, body, span) ->
+            ClosedHir.Stmt.While(hoistExpr ctx cond, body |> List.map (hoistStmt ctx), span)
         | ClosedHir.Stmt.If (cond, thenBody, elseBody, span) ->
             ClosedHir.Stmt.If(hoistExpr ctx cond, thenBody |> List.map (hoistStmt ctx), elseBody |> List.map (hoistStmt ctx), span)
         | ClosedHir.Stmt.TryCatch (tryBody, catchType, catchVarSid, catchBody, span) ->
@@ -483,6 +487,7 @@ module AsyncRewrite =
                         | ClosedHir.Stmt.If (c, t, e, sp) ->
                             [ ClosedHir.Stmt.If(c, t |> List.collect remapLoopJumps, e |> List.collect remapLoopJumps, sp) ]
                         | ClosedHir.Stmt.For _ -> [ s ]
+                        | ClosedHir.Stmt.While _ -> [ s ]
                         | other -> [ other ]
                     let body'' = body' |> List.collect remapLoopJumps
                     [ ClosedHir.Stmt.Let(itSid, false, iterable', fSpan)
@@ -498,6 +503,27 @@ module AsyncRewrite =
                     [ ClosedHir.Stmt.For(sid, tid, iterable', body', fSpan) ]
             | ClosedHir.Stmt.For (sid, tid, iterable, body, fSpan) ->
                 [ ClosedHir.Stmt.For(sid, tid, expandForExpr iterable, body |> List.collect expandForStmt, fSpan) ]
+            | ClosedHir.Stmt.While (cond, body, wSpan) when stmtHasAwait stmt ->
+                let cond' = expandForExpr cond
+                let body' = body |> List.collect expandForStmt
+                let loopStart = freshLabelId ()
+                let loopEnd = freshLabelId ()
+                let rec remapWhileJumps (s: ClosedHir.Stmt) : ClosedHir.Stmt list =
+                    match s with
+                    | ClosedHir.Stmt.Break sp -> [ ClosedHir.Stmt.Goto(loopEnd, sp) ]
+                    | ClosedHir.Stmt.Continue sp -> [ ClosedHir.Stmt.Goto(loopStart, sp) ]
+                    | ClosedHir.Stmt.If (c, t, e, sp) ->
+                        [ ClosedHir.Stmt.If(c, t |> List.collect remapWhileJumps, e |> List.collect remapWhileJumps, sp) ]
+                    | ClosedHir.Stmt.For _ -> [ s ]
+                    | ClosedHir.Stmt.While _ -> [ s ]
+                    | other -> [ other ]
+                let body'' = body' |> List.collect remapWhileJumps
+                [ ClosedHir.Stmt.Label(loopStart, wSpan)
+                  ClosedHir.Stmt.If(cond', [], [ ClosedHir.Stmt.Goto(loopEnd, wSpan) ], wSpan) ]
+                @ body''
+                @ [ ClosedHir.Stmt.Goto(loopStart, wSpan); ClosedHir.Stmt.Label(loopEnd, wSpan) ]
+            | ClosedHir.Stmt.While (cond, body, wSpan) ->
+                [ ClosedHir.Stmt.While(expandForExpr cond, body |> List.collect expandForStmt, wSpan) ]
             | ClosedHir.Stmt.If (cond, thenB, elseB, ifSpan) ->
                 [ ClosedHir.Stmt.If(expandForExpr cond, thenB |> List.collect expandForStmt, elseB |> List.collect expandForStmt, ifSpan) ]
             | ClosedHir.Stmt.Let (sid, m, v, sp) -> [ ClosedHir.Stmt.Let(sid, m, expandForExpr v, sp) ]
@@ -622,6 +648,7 @@ module AsyncRewrite =
             | ClosedHir.Stmt.StoreField (i, _, _, v, _) -> containsAwait i || containsAwait v
             | ClosedHir.Stmt.StoreNativeField (r, _, v, _) -> containsAwait r || containsAwait v
             | ClosedHir.Stmt.For (_, _, it, body, _) -> containsAwait it || (body |> List.exists containsAwaitStmt)
+            | ClosedHir.Stmt.While (cond, body, _) -> containsAwait cond || (body |> List.exists containsAwaitStmt)
             | ClosedHir.Stmt.If (c, t, el, _) -> containsAwait c || (t |> List.exists containsAwaitStmt) || (el |> List.exists containsAwaitStmt)
             | _ -> false
 

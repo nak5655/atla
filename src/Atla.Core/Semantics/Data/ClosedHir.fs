@@ -101,10 +101,11 @@ module ClosedHir =
         | StoreNativeField of receiver: Expr * field: FieldInfo * value: Expr * span: Span
         | ExprStmt of expr: Expr * span: Span
         | For of sid: SymbolId * tid: TypeId * iterable: Expr * body: Stmt list * span: Span
+        | While of cond: Expr * body: Stmt list * span: Span
         | If of cond: Expr * thenBody: Stmt list * elseBody: Stmt list * span: Span
-        /// for ループからの早期脱出（Layout で内側ループの脱出ラベルへの `Mir.Ins.Jump` へ下す）。
+        /// ループからの早期脱出（Layout で内側ループの脱出ラベルへの `Mir.Ins.Jump` へ下す）。
         | Break of span: Span
-        /// for ループの次の反復へスキップ（Layout で内側ループの先頭ラベルへの `Mir.Ins.Jump` へ下す）。
+        /// ループの次の反復へスキップ（Layout で内側ループの先頭ラベルへの `Mir.Ins.Jump` へ下す）。
         | Continue of span: Span
         /// 非構造化制御フロー用のラベル定義（Layout で `Mir.Ins.MarkLabel` へ下す）。
         /// AsyncRewrite の状態機械生成（resume ポイント等）が導入する。labelId はメソッド内で一意。
@@ -222,6 +223,8 @@ module ClosedHir =
         | ExprStmt (expr, span) -> ExprStmt(mapExpr f expr, span)
         | For (sid, tid, iterable, body, span) ->
             For(sid, tid, mapExpr f iterable, body |> List.map (mapStmt f), span)
+        | While (cond, body, span) ->
+            While(mapExpr f cond, body |> List.map (mapStmt f), span)
         | Stmt.If (cond, thenBody, elseBody, span) ->
             Stmt.If(mapExpr f cond, thenBody |> List.map (mapStmt f), elseBody |> List.map (mapStmt f), span)
         | TryCatch (tryBody, catchType, catchVarSid, catchBody, span) ->
@@ -274,6 +277,9 @@ module ClosedHir =
             foldExpr f (foldExpr f acc receiver) value
         | For (_, _, iterable, body, _) ->
             let acc' = foldExpr f acc iterable
+            body |> List.fold (foldStmt f) acc'
+        | While (cond, body, _) ->
+            let acc' = foldExpr f acc cond
             body |> List.fold (foldStmt f) acc'
         | Stmt.If (cond, thenBody, elseBody, _) ->
             let acc' = foldExpr f acc cond
@@ -383,6 +389,16 @@ module ClosedHir =
                     (zero, innerCtx)
                 |> fst
             merge iterAcc bodyAcc
+        | While (cond, body, _) ->
+            let condAcc = foldExprWithCtx descend afterStmt leaf merge zero ctx cond
+            let bodyAcc =
+                body
+                |> List.fold
+                    (fun (acc, c) s ->
+                        merge acc (foldStmtWithCtx descend afterStmt leaf merge zero c s), afterStmt c s)
+                    (zero, ctx)
+                |> fst
+            merge condAcc bodyAcc
         | Stmt.If (cond, thenBody, elseBody, _) ->
             let condAcc = foldExprWithCtx descend afterStmt leaf merge zero ctx cond
             let thenAcc =

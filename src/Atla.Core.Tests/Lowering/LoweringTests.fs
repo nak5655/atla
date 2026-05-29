@@ -2728,3 +2728,61 @@ fn main: () = do
     (2 Opt'Some.) printValue.
 """
         Assert.Equal("1\n2", runForStdout "BareReturnLetElse" program)
+
+    [<Fact>]
+    let ``while loop counts to 5`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    var x = 0
+    while x < 5
+        x = x + 1
+    x Console'WriteLine.
+"""
+        Assert.Equal("5", runForStdout "WhileCount" program)
+
+    [<Fact>]
+    let ``while loop with break exits early`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    var x = 0
+    while x < 100
+        if | x == 3 =>
+            break
+        x = x + 1
+    x Console'WriteLine.
+"""
+        Assert.Equal("3", runForStdout "WhileBreak" program)
+
+    [<Fact>]
+    let ``while loop with continue skips iteration`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    var sum = 0
+    var i = 0
+    while i < 5
+        i = i + 1
+        if | i == 3 =>
+            continue
+        sum = sum + i
+    sum Console'WriteLine.
+"""
+        Assert.Equal("12", runForStdout "WhileContinue" program)
+
+    [<Fact>]
+    let ``while False body never executes`` () =
+        let program = """
+import System'Console
+
+fn main: () = do
+    var x = 42
+    while False
+        x = 0
+    x Console'WriteLine.
+"""
+        Assert.Equal("42", runForStdout "WhileFalse" program)

@@ -2330,6 +2330,10 @@ module ExprAnalyze =
             match analyzeIfStmtBranches ifStmt.branches with
             | [stmt] -> stmt
             | stmts -> Hir.Stmt.ErrorStmt(sprintf "Unexpected if stmt branch count: %d" stmts.Length, ifStmt.span)
+        | :? Ast.Stmt.While as whileStmt ->
+            let cond = analyzeExpr nameEnv typeEnv whileStmt.cond TypeId.Bool
+            let body = whileStmt.body |> List.map (analyzeStmt nameEnv typeEnv)
+            Hir.Stmt.While(cond, body, whileStmt.span)
         | :? Ast.Stmt.Break as breakStmt ->
             Hir.Stmt.Break(breakStmt.span)
         | :? Ast.Stmt.Continue as continueStmt ->

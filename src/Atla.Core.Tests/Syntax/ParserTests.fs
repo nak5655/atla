@@ -1969,3 +1969,116 @@ fn doWork (): Unit =
                 Assert.True(false, "function 'doWork' not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses while statement`` () =
+        let program = """
+fn main: () =
+    var x = 0
+    while x < 10
+        x = x + 1
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match terminalBodyExpr fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let whileStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.While as ws -> Some ws
+                            | _ -> None)
+
+                    match whileStmt with
+                    | Some ws ->
+                        Assert.Single(ws.body) |> ignore
+                    | None ->
+                        Assert.True(false, "while statement was not parsed into Ast.Stmt.While")
+                | _ ->
+                    Assert.True(false, "function body was not a block")
+            | None ->
+                Assert.True(false, "function 'main' not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses break and continue in while body`` () =
+        let program = """
+fn main: () =
+    var x = 0
+    while x < 100
+        if | x == 3 =>
+            break
+        if | x == 1 =>
+            continue
+        x = x + 1
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fnDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+
+            match fnDecl with
+            | Some fn ->
+                match terminalBodyExpr fn.body with
+                | :? Ast.Expr.Block as blockExpr ->
+                    let whileStmt =
+                        blockExpr.stmts
+                        |> List.tryPick (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.While as ws -> Some ws
+                            | _ -> None)
+
+                    match whileStmt with
+                    | Some ws ->
+                        let rec containsBreak (stmts: Ast.Stmt list) : bool =
+                            stmts |> List.exists (fun s ->
+                                match s with
+                                | :? Ast.Stmt.Break -> true
+                                | :? Ast.Stmt.If as ifS ->
+                                    ifS.branches |> List.exists (fun b ->
+                                        match b with
+                                        | :? Ast.IfBranch.Then as t ->
+                                            match t.body with
+                                            | :? Ast.Expr.Block as blk -> containsBreak blk.stmts
+                                            | _ -> false
+                                        | _ -> false)
+                                | _ -> false)
+                        let rec containsContinue (stmts: Ast.Stmt list) : bool =
+                            stmts |> List.exists (fun s ->
+                                match s with
+                                | :? Ast.Stmt.Continue -> true
+                                | :? Ast.Stmt.If as ifS ->
+                                    ifS.branches |> List.exists (fun b ->
+                                        match b with
+                                        | :? Ast.IfBranch.Then as t ->
+                                            match t.body with
+                                            | :? Ast.Expr.Block as blk -> containsContinue blk.stmts
+                                            | _ -> false
+                                        | _ -> false)
+                                | _ -> false)
+                        Assert.True(containsBreak ws.body, "while body should contain break")
+                        Assert.True(containsContinue ws.body, "while body should contain continue")
+                    | None ->
+                        Assert.True(false, "while statement was not parsed into Ast.Stmt.While")
+                | _ ->
+                    Assert.True(false, "function body was not a block")
+            | None ->
+                Assert.True(false, "function 'main' not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
