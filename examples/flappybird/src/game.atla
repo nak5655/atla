@@ -121,24 +121,24 @@ impl FlappyGame as Game
         self'GraphicsDevice'Presenter'DepthStencilBuffer DepthStencilClearOptions'DepthBuffer self'GraphicsContext'CommandList'Clear.
         self'GraphicsDevice'Presenter'DepthStencilBuffer self'GraphicsDevice'Presenter'BackBuffer self'GraphicsContext'CommandList'SetRenderTargetAndViewport.
 
-        match self'_spriteBatch
-        | Opt'Some spriteBatch ->
-            self'GraphicsContext spriteBatch'Begin.
+        let Opt'Some spriteBatch = self'_spriteBatch
+        | else -> return
+    
+        self'GraphicsContext spriteBatch'Begin.
 
-            match self'_whiteTexture
-            | Opt'Some whiteTexture ->
-                whiteTexture (self'_birdPos'X self'_birdPos'Y self'_birdSize self'_birdSize RectangleF.) Color'Yellow spriteBatch'Draw.
+        let Opt'Some whiteTexture = self'_whiteTexture
+        | else -> return
+        
+        whiteTexture (self'_birdPos'X self'_birdPos'Y self'_birdSize self'_birdSize RectangleF.) Color'Yellow spriteBatch'Draw.
 
-                for pipe in self'_pipes
-                    let topY = pipe'Y - self'_pipeGap / 2.0f
-                    let bottomY = pipe'Y + self'_pipeGap / 2.0f
+        for pipe in self'_pipes
+            let topY = pipe'Y - self'_pipeGap / 2.0f
+            let bottomY = pipe'Y + self'_pipeGap / 2.0f
 
-                    # 上のパイプ
-                    whiteTexture (pipe'X 0.0f self'_pipeWidth topY RectangleF.) Color'Green spriteBatch'Draw.
+            # 上のパイプ
+            whiteTexture (pipe'X 0.0f self'_pipeWidth topY RectangleF.) Color'Green spriteBatch'Draw.
 
-                    # 下のパイプ
-                    whiteTexture (pipe'X bottomY self'_pipeWidth (720.0f - bottomY) RectangleF.) Color'Green spriteBatch'Draw.
-            | Opt'None -> ()
+            # 下のパイプ
+            whiteTexture (pipe'X bottomY self'_pipeWidth (720.0f - bottomY) RectangleF.) Color'Green spriteBatch'Draw.
 
-            spriteBatch'End.
-        | Opt'None -> ()
+        spriteBatch'End.
