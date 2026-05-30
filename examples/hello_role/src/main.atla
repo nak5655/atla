@@ -3,12 +3,14 @@ import System'Console
 role Shape
     fn area self: Double
 
-data Rectangle = { width: Double, height: Double }
+struct Rectangle
+    val width: Double
+    val height: Double
 
 impl Shape for Rectangle
     fn area self: Double =
         self'width * self'height
 
 fn main: () =
-    let rect = Rectangle { width = 5.0, height = 10.0 }
+    let rect = { width = 5.0, height = 10.0 } Rectangle.
     rect'area. Console'WriteLine.

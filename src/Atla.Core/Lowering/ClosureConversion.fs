@@ -573,18 +573,23 @@ module ClosureConversion =
                 // 元の HIR 型定義を ClosedHir.Type へ変換する。
                 // role 型（isInterface=true）の抽象メソッドは convertHirExpr で構造変換するだけでよい。
                 // インスタンス impl メソッド（isInterface=false かつ body あり）はクロージャー変換を適用する。
-                let convertedTypes, typeConversionDiagnostics =
+                // クロージャー変換は env-class 型・lifted method・invoke 写像を副産物として生成する。
+                // モジュールレベルメソッドの分は rewriteMethods が返す generatedTypes / closureInvokeMethods で
+                // すでに収集済み。インスタンス impl メソッドの分も同じ集約バケツへ流す必要がある。
+                // ここで漏らすと ClosureCreate(envTypeSid, ...) が参照する型/メソッドが Hir 上に現れず、
+                // Gen.fs で "Unknown type symbol" として失敗する（gui_calc の再現原因）。
+                let convertedTypes, (extraTypes, extraMethods, extraInvokeMap, typeConversionDiagnostics) =
                     hirModule.types
-                    |> List.mapFold (fun diagAcc hirType ->
-                        let convertedTypeMethods, methodDiags =
+                    |> List.mapFold (fun (typesAcc, methodsAcc, invokeAcc, diagAcc) hirType ->
+                        let convertedTypeMethods, (typesAcc', methodsAcc', invokeAcc', methodDiags) =
                             hirType.methods
-                            |> List.mapFold (fun acc methodInfo ->
+                            |> List.mapFold (fun (ts, ms, im, ds) methodInfo ->
                                 if hirType.isInterface then
                                     // abstract メソッド（role）: 構造変換のみ
-                                    ClosedHir.Method(methodInfo.sym, methodInfo.args, convertHirExpr methodInfo.body, methodInfo.typ, methodInfo.overrideTarget, methodInfo.isAsync, methodInfo.span), acc
+                                    ClosedHir.Method(methodInfo.sym, methodInfo.args, convertHirExpr methodInfo.body, methodInfo.typ, methodInfo.overrideTarget, methodInfo.isAsync, methodInfo.span),
+                                    (ts, ms, im, ds)
                                 else
                                     // インスタンス impl メソッド: クロージャー変換を適用する。
-                                    // initialState を毎回リセットし、生成メソッド/型は型変換後に追加する。
                                     let methodInitState =
                                         { generatedMethods = []
                                           generatedTypes = []
@@ -594,8 +599,15 @@ module ClosureConversion =
                                     let captureMap = buildCaptureMap symbolTable globalSymbols methodInfo
                                     let rewrittenBody, methodFinalState = rewriteExpr symbolTable methodInfo captureMap methodInfo.body methodInitState
                                     let converted = ClosedHir.Method(methodInfo.sym, methodInfo.args, rewrittenBody, methodInfo.typ, methodInfo.overrideTarget, methodInfo.isAsync, methodInfo.span)
-                                    converted, acc @ methodFinalState.diagnostics)
-                                []
+                                    let mergedInvoke =
+                                        methodFinalState.closureInvokeMethods
+                                        |> Map.fold (fun acc k v -> Map.add k v acc) im
+                                    converted,
+                                    (ts @ methodFinalState.generatedTypes,
+                                     ms @ methodFinalState.generatedMethods,
+                                     mergedInvoke,
+                                     ds @ methodFinalState.diagnostics))
+                                (typesAcc, methodsAcc, invokeAcc, diagAcc)
                         let closedHirType =
                             ClosedHir.Type(
                                 hirType.sym,
@@ -604,8 +616,12 @@ module ClosureConversion =
                                 hirType.typeParams,
                                 hirType.fields |> List.map (fun f -> ClosedHir.Field(f.sym, f.typ, convertHirExpr f.body, f.span)),
                                 convertedTypeMethods)
-                        closedHirType, diagAcc @ methodDiags) []
-                let allTypes = convertedTypes @ generatedTypes
+                        closedHirType, (typesAcc', methodsAcc', invokeAcc', methodDiags)) ([], [], Map.empty, [])
+                let allTypes = convertedTypes @ generatedTypes @ extraTypes
+                let allMethods = rewrittenMethods @ extraMethods
+                let allClosureInvokeMethods =
+                    extraInvokeMap
+                    |> Map.fold (fun acc k v -> Map.add k v acc) closureInvokeMethods
                 // 元の HIR モジュールフィールドを ClosedHir.Field へ構造的に変換する。
                 let convertedFields =
                     hirModule.fields
@@ -615,9 +631,9 @@ module ClosureConversion =
                         hirModule.name,
                         allTypes,
                         convertedFields,
-                        rewrittenMethods,
+                        allMethods,
                         hirModule.scope,
-                        closureInvokeMethods)
+                        allClosureInvokeMethods)
                 modules @ [ rewrittenModule ], allDiagnostics @ moduleDiagnostics @ typeConversionDiagnostics) ([], [])
 
         match diagnostics with

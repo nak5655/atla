@@ -220,10 +220,11 @@ fn main: () = do
         let program = """
 import System'Console
 
-data Bag = { items: List Int }
+struct Bag
+    val items: List Int
 
 fn main: () =
-    let b = Bag { items = List. }
+    let b = { items = List. } Bag.
     1 b'items'Add.
     2 b'items'Add.
     3 b'items'Add.
@@ -1035,7 +1036,7 @@ fn main: () = do
 
         let mainSource = "import Foo'Bar\n\nfn main: Int = 7 Foo'Bar'make."
         let fooBarSource = "fn make (x: Int): Int = x"
-        let fooSource = "data Bar = { val: Int }"
+        let fooSource = "struct Bar\n    val value: Int"
 
         let result =
             Compiler.compileModules {
@@ -1057,8 +1058,8 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import Foo'Bar\n\nfn id (x: Bar): Bar = x\n\nfn main: () = do\n    let v = Bar { val = 42 }\n    let _ = v id."
-        let fooSource = "data Bar = { val: Int }"
+            "import Foo'Bar\n\nfn id (x: Bar): Bar = x\n\nfn main: () = do\n    let v = { value = 42 } Bar.\n    let _ = v id."
+        let fooSource = "struct Bar\n    val value: Int"
 
         let result =
             Compiler.compileModules {
@@ -1079,8 +1080,8 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import sub'Person\n\nfn main: () = do\n    let p = Person { name = \"alice\" }\n    let _ = p"
-        let subSource = "data Person = { name: String }"
+            "import sub'Person\n\nfn main: () = do\n    let p = { name = \"alice\" } Person.\n    let _ = p"
+        let subSource = "struct Person\n    val name: String"
 
         let result =
             Compiler.compileModules {
@@ -1104,10 +1105,10 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import sub\nimport sub'Person\n\nfn main: () = do\n    let p = Person { name = \"alice\" }\n    p'greet."
+            "import sub\nimport sub'Person\n\nfn main: () = do\n    let p = { name = \"alice\" } Person.\n    p'greet."
 
         let subSource =
-            "import System'Console\n\ndata Person = { name: String }\n\nimpl Person\n    fn greet self: () = do\n        self'name Console'WriteLine."
+            "import System'Console\n\nstruct Person\n    val name: String\n\nimpl Person\n    fn greet self: () = do\n        self'name Console'WriteLine."
 
         let result =
             Compiler.compileModules {
@@ -1349,14 +1350,16 @@ import System'Console
 role Geometry
     fn area self: Double
 
-data Rectangle = { width: Double, height: Double }
+struct Rectangle
+    val width: Double
+    val height: Double
 
 impl Geometry for Rectangle
     fn area self: Double =
         self'width * self'height
 
 fn main: () =
-    let rect = Rectangle { width = 5.0, height = 10.0 }
+    let rect = { width = 5.0, height = 10.0 } Rectangle.
     rect'area. Console'WriteLine.
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -1513,12 +1516,12 @@ enum Opt T
     | None
     | Some { value: T }
 
-data Box =
-    { _value: Opt Int }
+struct Box
+    val _value: Opt Int
 
 impl Box
     fn new: Box =
-        Box { _value = Opt'None }
+        { _value = Opt'None } Box.
 
     fn get self: Int =
         match self'_value
@@ -1568,12 +1571,12 @@ enum Opt T
     | None
     | Some { value: T }
 
-data Box =
-    { _value: Opt Int }
+struct Box
+    val _value: Opt Int
 
 impl Box
     fn new (n: Int): Box =
-        Box { _value = n Opt'Some. }
+        { _value = n Opt'Some. } Box.
 
     fn get self: Int =
         match self'_value
@@ -1679,13 +1682,15 @@ fn main: () = ()
         let source = """
 import System'Console
 
-data Point = { x: Int, y: Int }
+struct Point
+    val x: Int
+    val y: Int
 
 impl Point
     fn sum self: Int = self'x + self'y
 
 fn main: () =
-    let p = Point { x = 3, y = 4 }
+    let p = { x = 3, y = 4 } Point.
     p'sum. Console'WriteLine.
 """
 
@@ -1738,10 +1743,11 @@ fn main: () =
 import System'Console
 import System'Exception
 
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 
 impl MyError as Exception
-    fn new (c: Int): MyError = MyError { code = c }
+    fn new (c: Int): MyError = { code = c } MyError.
     override fn ToString self: String = base'ToString.
 
 fn main: () =

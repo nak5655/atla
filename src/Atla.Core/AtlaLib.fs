@@ -528,6 +528,14 @@ module AtlaLib =
                                                     let mutable hiddenNode = Unchecked.defaultof<JsonElement>
                                                     fieldNode.TryGetProperty("isHidden", &hiddenNode)
                                                     && hiddenNode.ValueKind = JsonValueKind.True
+                                                let isMutable =
+                                                    let mutable mutableNode = Unchecked.defaultof<JsonElement>
+                                                    if fieldNode.TryGetProperty("isMutable", &mutableNode) then
+                                                        mutableNode.ValueKind = JsonValueKind.True
+                                                    else
+                                                        // 旧形式の exports.json には isMutable が無い。
+                                                        // 互換のため mutable 扱い（強制しない）にフォールバックする。
+                                                        true
                                                 match parseTypeNode (predeclaredTypes |> Map.map (fun _ value -> value.typeSid)) $"field `{fullTypeName}.{fieldName}`" (fieldNode.GetProperty("type")) with
                                                 | Result.Error errs ->
                                                     publicFields, hiddenFields, fieldErrs @ errs
@@ -548,6 +556,7 @@ module AtlaLib =
                                                         { name = fieldName
                                                           sid = fieldSid
                                                           typ = fieldType
+                                                          isMutable = isMutable
                                                           span = Span.Empty }
                                                     if isHidden then
                                                         publicFields, hiddenFields @ [ fieldDef ], fieldErrs
@@ -686,6 +695,7 @@ module AtlaLib =
                                                                                 { name = fieldName
                                                                                   sid = fieldSid
                                                                                   typ = fieldType
+                                                                                  isMutable = false
                                                                                   span = Span.Empty })
                                                                     |> Seq.toList
                                                                 else

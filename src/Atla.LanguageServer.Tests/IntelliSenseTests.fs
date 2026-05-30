@@ -194,7 +194,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetCompletions on apostrophe after Atla data type variable returns field names`` () =
-        // `data Person = { name: String, age: Int }` があるとき、
+        // `struct Person\n    val name: String\n    val age: Int` があるとき、
         // `person'` とすると `name` と `age` が補完候補として返されることを検証する。
         //
         // Line 3: "  person'"
@@ -203,14 +203,14 @@ module IntelliSenseTests =
         //   fallback path 2b: visibleVarMap["person"].typ = TypeId.Name personTypeSid →
         //   dataTypeFields からフィールド候補 ["name", "age"] が返される。
         let source =
-            "data Person = { name: String, age: Int }\n" +
+            "struct Person\n    val name: String\n    val age: Int\n" +
             "fn main (): () = do\n" +
-            "  let person = Person { name = \"Alice\", age = 30 }\n" +
+            "  let person = { name = \"Alice\", age = 30 } Person.\n" +
             "  person'\n" +
             "  ()"
         let server = makeServerWithSource "file:///tmp/completion-data-fields.atla" source
-        // カーソルは行3・列9（"  person'" の apostrophe 直後、memberPrefix は空）。
-        let result = server.GetCompletions("file:///tmp/completion-data-fields.atla", 3, 9)
+        // カーソルは行5・列9（"  person'" の apostrophe 直後、memberPrefix は空）。
+        let result = server.GetCompletions("file:///tmp/completion-data-fields.atla", 5, 9)
         let names = result.items |> List.map (fun i -> i.label)
         Assert.NotEmpty(names)
         Assert.Contains("name", names)
@@ -353,10 +353,10 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``PositionIndex dataTypeFields is populated for data type declarations`` () =
-        // data Person = { name: String, age: Int } を含むソースをコンパイルし、
+        // struct Person\n    val name: String\n    val age: Int を含むソースをコンパイルし、
         // PositionIndex.dataTypeFields に Person のフィールドが登録されていることを検証する。
         let source =
-            "data Person = { name: String, age: Int }\n" +
+            "struct Person\n    val name: String\n    val age: Int\n" +
             "fn main (): () = ()"
         let compileResult = Atla.Compiler.Compiler.compileModules {
             asmName = "diag"
@@ -385,9 +385,9 @@ module IntelliSenseTests =
         // dangling apostrophe があっても do ブロック内の person let 束縛が
         // PositionIndex.bindingSites に記録されることを検証する。
         let source =
-            "data Person = { name: String, age: Int }\n" +
+            "struct Person\n    val name: String\n    val age: Int\n" +
             "fn main (): () = do\n" +
-            "  let person = Person { name = \"Alice\", age = 30 }\n" +
+            "  let person = { name = \"Alice\", age = 30 } Person.\n" +
             "  person'\n" +
             "  ()"
         let compileResult = Atla.Compiler.Compiler.compileModules {
@@ -400,7 +400,8 @@ module IntelliSenseTests =
         match compileResult.hir, compileResult.symbolTable with
         | Some hirAsm, Some symTable ->
             let index = Atla.Core.Semantics.PositionIndex.build hirAsm symTable
-            let visibleAtCursor = Atla.Core.Semantics.PositionIndex.visibleSymbolIdsAt index 3 9
+            // line 5 = `  person'`, col 9 = just after apostrophe
+            let visibleAtCursor = Atla.Core.Semantics.PositionIndex.visibleSymbolIdsAt index 5 9
             let names =
                 visibleAtCursor
                 |> List.choose (fun sid -> symTable.Get sid |> Option.map (fun info -> info.name))
@@ -412,14 +413,14 @@ module IntelliSenseTests =
     let ``GetCompletions without apostrophe includes person variable in do block`` () =
         // データ型変数 person が do ブロック内の let 束縛として visibleVarMap に含まれることを検証する。
         let source =
-            "data Person = { name: String, age: Int }\n" +
+            "struct Person\n    val name: String\n    val age: Int\n" +
             "fn main (): () = do\n" +
-            "  let person = Person { name = \"Alice\", age = 30 }\n" +
+            "  let person = { name = \"Alice\", age = 30 } Person.\n" +
             "  per\n" +
             "  ()"
         let server = makeServerWithSource "file:///tmp/completion-person-var.atla" source
-        // line 3, col 4 → "  per" 位置で通常補完。person が候補に含まれること。
-        let result = server.GetCompletions("file:///tmp/completion-person-var.atla", 3, 4)
+        // line 5, col 4 → "  per" 位置で通常補完。person が候補に含まれること。
+        let result = server.GetCompletions("file:///tmp/completion-person-var.atla", 5, 4)
         let names = result.items |> List.map (fun i -> i.label)
         Assert.Contains("person", names)
 

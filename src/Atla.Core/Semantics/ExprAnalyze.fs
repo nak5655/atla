@@ -380,6 +380,16 @@ module ExprAnalyze =
         |> Seq.tryPick (fun (_, def) ->
             if def.typeSid.id = typeSid.id then Some def else None)
 
+    /// struct フィールドへの代入が `val`（不可変）でないことを検証する。
+    /// 対応する DataFieldDef が見つからない場合は許容する（後段で別エラーが出る）。
+    let private tryFindImmutableFieldName (nameEnv: NameEnv) (typeSid: SymbolId) (fieldSid: SymbolId) : string option =
+        tryFindTypeDefBySid nameEnv typeSid
+        |> Option.bind (fun def ->
+            def.fields
+            |> List.tryFind (fun fieldDef -> fieldDef.sid.id = fieldSid.id)
+            |> Option.bind (fun fieldDef ->
+                if fieldDef.isMutable then None else Some fieldDef.name))
+
     /// ジェネリック enum ルート型を期待型 tid から具体化する。
     /// tid = App(Name enumRootSid, concreteArgs) の場合はその型を返す。
     /// それ以外は typeParams 数分の新規メタを割り当てた App 型を返す。
@@ -598,85 +608,14 @@ module ExprAnalyze =
             match unifyOrError nameEnv typeEnv tid TypeId.String stringExpr.span with
             | Result.Ok _ -> Hir.Expr.String(stringExpr.value, stringExpr.span)
             | Result.Error exprErr -> exprErr
-        | :? Ast.Expr.DataInit as dataInitExpr ->
-            match Map.tryFind dataInitExpr.typeName nameEnv.dataTypeDefs with
-            | None ->
-                Hir.Expr.ExprError(sprintf "Undefined data type '%s'" dataInitExpr.typeName, tid, dataInitExpr.span)
-            | Some dataTypeDef ->
-                let fieldMap = dataTypeDef.fields |> List.map (fun fieldDef -> fieldDef.name, fieldDef) |> Map.ofList
-                let initFields =
-                    dataInitExpr.fields
-                    |> List.choose (fun field ->
-                        match field with
-                        | :? Ast.DataInitField.Field as namedField -> Some namedField
-                        | _ -> None)
-
-                let duplicateFieldName =
-                    initFields
-                    |> List.fold
-                        (fun (seen, dup) field ->
-                            match dup with
-                            | Some _ -> seen, dup
-                            | None when Set.contains field.name seen -> seen, Some field.name
-                            | None -> Set.add field.name seen, None)
-                        (Set.empty, None)
-                    |> snd
-
-                match duplicateFieldName with
-                | Some duplicatedName ->
-                    Hir.Expr.ExprError(sprintf "Duplicate field initializer '%s'" duplicatedName, tid, dataInitExpr.span)
-                | None ->
-                    let unknownFieldName =
-                        initFields
-                        |> List.tryPick (fun field ->
-                            if Map.containsKey field.name fieldMap then None else Some field.name)
-                    match unknownFieldName with
-                    | Some unknownName ->
-                        Hir.Expr.ExprError(sprintf "Unknown field '%s' for data type '%s'" unknownName dataInitExpr.typeName, tid, dataInitExpr.span)
-                    | None ->
-                        let providedFieldNames = initFields |> List.map (fun field -> field.name) |> Set.ofList
-                        let missingField =
-                            dataTypeDef.fields
-                            |> List.tryFind (fun fieldDef -> not (Set.contains fieldDef.name providedFieldNames))
-                        match missingField with
-                        | Some missing ->
-                            Hir.Expr.ExprError(sprintf "Missing required field '%s' for data type '%s'" missing.name dataInitExpr.typeName, tid, dataInitExpr.span)
-                        | None ->
-                            let initFieldMap =
-                                initFields
-                                |> List.map (fun field -> field.name, field.value)
-                                |> Map.ofList
-
-                            let typedArgsResult =
-                                dataTypeDef.fields
-                                |> List.fold
-                                    (fun acc fieldDef ->
-                                        match acc with
-                                        | Result.Error exprErr -> Result.Error exprErr
-                                        | Result.Ok typedArgs ->
-                                            match Map.tryFind fieldDef.name initFieldMap with
-                                            | None ->
-                                                Result.Error(Hir.Expr.ExprError(sprintf "Missing required field '%s' for data type '%s'" fieldDef.name dataInitExpr.typeName, tid, dataInitExpr.span))
-                                            | Some valueExpr ->
-                                                let typedExpr = analyzeExpr nameEnv typeEnv valueExpr fieldDef.typ
-                                                match typedExpr with
-                                                | Hir.Expr.ExprError _ as errExpr -> Result.Error errExpr
-                                                | _ -> Result.Ok (typedArgs @ [ typedExpr ]))
-                                    (Result.Ok [])
-
-                            match typedArgsResult with
-                            | Result.Error exprErr -> exprErr
-                            | Result.Ok typedArgs ->
-                                let dataType = TypeId.Name dataTypeDef.typeSid
-                                match unifyOrError nameEnv typeEnv tid dataType dataInitExpr.span with
-                                | Result.Error exprErr -> exprErr
-                                | Result.Ok _ ->
-                                    Hir.Expr.Call(
-                                        Hir.Callable.DataConstructor(dataTypeDef.typeSid, dataTypeDef.fields |> List.map (fun fieldDef -> fieldDef.sid)),
-                                        None,
-                                        typedArgs,
-                                        dataType,
-                                        dataInitExpr.span)
+        | :? Ast.Expr.RecordLit as recordLitExpr ->
+            // 連想配列リテラル `{ k = v, ... }` は単独では型を決められない。
+            // struct コンストラクタ `{...} TypeName.` の引数位置でのみ意味を持ち、
+            // その場合は Apply 解析の専用パスで構築される。
+            Hir.Expr.ExprError(
+                "Associative array literal '{ ... }' must be passed to a struct type constructor (e.g. `{ ... } TypeName.`)",
+                tid,
+                recordLitExpr.span)
         | :? Ast.Expr.EnumInit as enumInitExpr ->
             match Map.tryFind enumInitExpr.typeName nameEnv.dataTypeDefs with
             | None ->
@@ -891,6 +830,92 @@ module ExprAnalyze =
                 let unitExpr = Hir.Expr.Unit ({ left = blockExpr.span.right; right = blockExpr.span.right })
                 Hir.Expr.Block(stmts, unitExpr, tid, blockExpr.span)
         | :? Ast.Expr.Apply as applyExpr ->
+            // struct コンストラクター呼び出し検出:
+            //   `{ f = v, ... } TypeName.` を `TypeName { f = v, ... }` 相当として扱う。
+            // 関数が型名識別子で、唯一の引数が RecordLit のとき適用される。
+            let structCtorOpt =
+                match applyExpr.func, applyExpr.args with
+                | (:? Ast.Expr.Id as typeId), [ :? Ast.Expr.RecordLit as recordLit ] ->
+                    match Map.tryFind typeId.name nameEnv.dataTypeDefs with
+                    | Some dataTypeDef when dataTypeDef.enumInfo.IsNone -> Some (typeId.name, dataTypeDef, recordLit)
+                    | _ -> None
+                | _ -> None
+
+            match structCtorOpt with
+            | Some (typeName, dataTypeDef, recordLit) ->
+                let span = applyExpr.span
+                let fieldMap = dataTypeDef.fields |> List.map (fun fieldDef -> fieldDef.name, fieldDef) |> Map.ofList
+                let initFields =
+                    recordLit.fields
+                    |> List.choose (fun field ->
+                        match field with
+                        | :? Ast.DataInitField.Field as namedField -> Some namedField
+                        | _ -> None)
+                let duplicateFieldName =
+                    initFields
+                    |> List.fold
+                        (fun (seen, dup) field ->
+                            match dup with
+                            | Some _ -> seen, dup
+                            | None when Set.contains field.name seen -> seen, Some field.name
+                            | None -> Set.add field.name seen, None)
+                        (Set.empty, None)
+                    |> snd
+                match duplicateFieldName with
+                | Some duplicatedName ->
+                    Hir.Expr.ExprError(sprintf "Duplicate field initializer '%s'" duplicatedName, tid, span)
+                | None ->
+                    let unknownFieldName =
+                        initFields
+                        |> List.tryPick (fun field ->
+                            if Map.containsKey field.name fieldMap then None else Some field.name)
+                    match unknownFieldName with
+                    | Some unknownName ->
+                        Hir.Expr.ExprError(sprintf "Unknown field '%s' for struct type '%s'" unknownName typeName, tid, span)
+                    | None ->
+                        let providedFieldNames = initFields |> List.map (fun field -> field.name) |> Set.ofList
+                        let missingField =
+                            dataTypeDef.fields
+                            |> List.tryFind (fun fieldDef -> not (Set.contains fieldDef.name providedFieldNames))
+                        match missingField with
+                        | Some missing ->
+                            Hir.Expr.ExprError(sprintf "Missing required field '%s' for struct type '%s'" missing.name typeName, tid, span)
+                        | None ->
+                            let initFieldMap =
+                                initFields
+                                |> List.map (fun field -> field.name, field.value)
+                                |> Map.ofList
+                            let typedArgsResult =
+                                dataTypeDef.fields
+                                |> List.fold
+                                    (fun acc fieldDef ->
+                                        match acc with
+                                        | Result.Error exprErr -> Result.Error exprErr
+                                        | Result.Ok typedArgs ->
+                                            match Map.tryFind fieldDef.name initFieldMap with
+                                            | None ->
+                                                Result.Error(Hir.Expr.ExprError(sprintf "Missing required field '%s' for struct type '%s'" fieldDef.name typeName, tid, span))
+                                            | Some valueExpr ->
+                                                let typedExpr = analyzeExpr nameEnv typeEnv valueExpr fieldDef.typ
+                                                match typedExpr with
+                                                | Hir.Expr.ExprError _ as errExpr -> Result.Error errExpr
+                                                | _ -> Result.Ok (typedArgs @ [ typedExpr ]))
+                                    (Result.Ok [])
+                            match typedArgsResult with
+                            | Result.Error exprErr -> exprErr
+                            | Result.Ok typedArgs ->
+                                let dataType = TypeId.Name dataTypeDef.typeSid
+                                match unifyOrError nameEnv typeEnv tid dataType span with
+                                | Result.Error exprErr -> exprErr
+                                | Result.Ok _ ->
+                                    Hir.Expr.Call(
+                                        Hir.Callable.DataConstructor(dataTypeDef.typeSid, dataTypeDef.fields |> List.map (fun fieldDef -> fieldDef.sid)),
+                                        None,
+                                        typedArgs,
+                                        dataType,
+                                        span)
+            | None ->
+
             // 列挙型ケースコンストラクター呼び出し検出:
             //   arg1 ... argN Type'Case. を Type'Case { field1 = arg1, ..., fieldN = argN } として扱う。
             // レシーバーが型名識別子で、メンバー名が enum case であり、
@@ -2079,15 +2104,20 @@ module ExprAnalyze =
                 match analyzedTarget with
                 | Hir.Expr.MemberAccess (Hir.Member.DataField (typeSid, fieldSid), Some instanceExpr, fieldTid, _) ->
                     // ユーザー定義データ型フィールドへの複合代入を `field = field op rhs` 相当に lower する。
-                    let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value fieldTid
-                    let opExpr =
-                        Hir.Expr.Call(
-                            Hir.Callable.BuiltinOperator(match compoundAssignStmt.op with | Ast.Stmt.CompoundAssignOp.Add -> Builtins.Operators.OpAdd | Ast.Stmt.CompoundAssignOp.Sub -> Builtins.Operators.OpSub | Ast.Stmt.CompoundAssignOp.Mul -> Builtins.Operators.OpMul | Ast.Stmt.CompoundAssignOp.Div -> Builtins.Operators.OpDiv),
-                            None,
-                            [ analyzedTarget; rhs ],
-                            fieldTid,
-                            compoundAssignStmt.span)
-                    Hir.Stmt.StoreField(instanceExpr, typeSid, fieldSid, opExpr, compoundAssignStmt.span)
+                    match tryFindImmutableFieldName nameEnv typeSid fieldSid with
+                    | Some fieldName ->
+                        let message = sprintf "Cannot assign to immutable field '%s' (declared as val)" fieldName
+                        Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, compoundAssignStmt.span), compoundAssignStmt.span)
+                    | None ->
+                        let rhs = analyzeExpr nameEnv typeEnv compoundAssignStmt.value fieldTid
+                        let opExpr =
+                            Hir.Expr.Call(
+                                Hir.Callable.BuiltinOperator(match compoundAssignStmt.op with | Ast.Stmt.CompoundAssignOp.Add -> Builtins.Operators.OpAdd | Ast.Stmt.CompoundAssignOp.Sub -> Builtins.Operators.OpSub | Ast.Stmt.CompoundAssignOp.Mul -> Builtins.Operators.OpMul | Ast.Stmt.CompoundAssignOp.Div -> Builtins.Operators.OpDiv),
+                                None,
+                                [ analyzedTarget; rhs ],
+                                fieldTid,
+                                compoundAssignStmt.span)
+                        Hir.Stmt.StoreField(instanceExpr, typeSid, fieldSid, opExpr, compoundAssignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.NativeField fieldInfo, Some fieldReceiver, fieldTid, _) ->
                     // ネイティブ（.NET）フィールドへの複合代入を `field = field op rhs` 相当に lower する。
                     // 値型（struct）フィールドは Layout でアドレス経由の read-modify-write に下る。
@@ -2218,8 +2248,13 @@ module ExprAnalyze =
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.DataField (typeSid, fieldSid), Some instanceExpr, fieldTid, _) ->
                     // データ型フィールドへの代入を StoreField に lower する。
-                    let rhs = analyzeExpr nameEnv typeEnv assignStmt.value fieldTid
-                    Hir.Stmt.StoreField(instanceExpr, typeSid, fieldSid, rhs, assignStmt.span)
+                    match tryFindImmutableFieldName nameEnv typeSid fieldSid with
+                    | Some fieldName ->
+                        let message = sprintf "Cannot assign to immutable field '%s' (declared as val)" fieldName
+                        Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)
+                    | None ->
+                        let rhs = analyzeExpr nameEnv typeEnv assignStmt.value fieldTid
+                        Hir.Stmt.StoreField(instanceExpr, typeSid, fieldSid, rhs, assignStmt.span)
                 | Hir.Expr.MemberAccess (Hir.Member.DataField _, None, _, _) ->
                     let message = "Field assignment requires an instance receiver"
                     Hir.Stmt.ExprStmt(Hir.Expr.ExprError(message, TypeId.Error message, assignStmt.span), assignStmt.span)

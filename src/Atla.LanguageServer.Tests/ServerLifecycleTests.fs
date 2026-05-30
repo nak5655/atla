@@ -394,7 +394,7 @@ module ServerLifecycleTests =
         server.IsAvailablePublishDiagnostics <- true
 
         let openedUri = System.Uri(Path.Join(srcDir, "CalculatorWindow.atla")).AbsoluteUri
-        server.OpenDocument(openedUri, "data CalculatorWindow = { value: Int }")
+        server.OpenDocument(openedUri, "struct CalculatorWindow\n    val value: Int")
 
         let request = capturedRequests |> Seq.exactlyOne
         Assert.Equal("CalculatorWindow", request.entryModuleName)

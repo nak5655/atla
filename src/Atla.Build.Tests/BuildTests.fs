@@ -233,7 +233,7 @@ dependencies:
         let compileResult =
             Compiler.compileModules {
                 asmName = "PeopleLibAsm"
-                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = "data Person = { name: String }\nfn greet (p: Person): String = p'name"; filePath = None } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = "struct Person\n    val name: String\nfn greet (p: Person): String = p'name"; filePath = None } ]
                 entryModuleName = "people"
                 outDir = libCompileOutDir
                 dependencies = []
@@ -276,7 +276,8 @@ dependencies:
         let appOutDir = createTempProjectDir ()
 
         let librarySource = """
-data Person = { name: String }
+struct Person
+    val name: String
 impl Person
     fn greet self: String = self'name
 """
@@ -319,7 +320,7 @@ import System'Console
 import people'Person
 
 fn main: () = do
-    let p = Person { name = "alice" }
+    let p = { name = "alice" } Person.
     let message = p'greet.
     message Console'WriteLine.
 """

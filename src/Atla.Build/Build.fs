@@ -675,13 +675,14 @@ module BuildSystem =
                 let fieldsNode = JsonArray()
                 let methodsNode = JsonArray()
 
-                let addFieldNode (fieldSid: SymbolId) (fieldType: TypeId) (isHidden: bool) =
+                let addFieldNode (fieldSid: SymbolId) (fieldType: TypeId) (isHidden: bool) (isMutable: bool) =
                     let fieldName = lastNameSegment (symbolNameOrFallback symbolTable fieldSid)
                     let fieldNode = JsonObject()
                     fieldNode.Add("name", JsonValue.Create(fieldName))
                     fieldNode.Add("exportId", JsonValue.Create(buildFieldExportId hirModule.name typeName fieldName isHidden))
                     fieldNode.Add("type", typeIdToApiNode typeOwners symbolTable fieldType)
                     fieldNode.Add("isHidden", JsonValue.Create(isHidden))
+                    fieldNode.Add("isMutable", JsonValue.Create(isMutable))
                     fieldsNode.Add(fieldNode)
 
                 let addMethodNode (methodDecl: Ast.Decl.Fn) (methodSym: SymbolId) =
@@ -705,9 +706,19 @@ module BuildSystem =
 
                 match dataDeclOpt with
                 | Some dataDecl ->
+                    let mutabilityByName =
+                        dataDecl.items
+                        |> List.choose (fun item ->
+                            match item with
+                            | :? Ast.DataItem.Field as fieldItem -> Some (fieldItem.name, fieldItem.isMutable)
+                            | _ -> None)
+                        |> Map.ofList
                     hirType.fields
                     |> List.sortBy (fun field -> lastNameSegment (symbolNameOrFallback symbolTable field.sym))
-                    |> List.iter (fun field -> addFieldNode field.sym field.typ false)
+                    |> List.iter (fun field ->
+                        let fieldName = lastNameSegment (symbolNameOrFallback symbolTable field.sym)
+                        let isMutable = mutabilityByName |> Map.tryFind fieldName |> Option.defaultValue true
+                        addFieldNode field.sym field.typ false isMutable)
                     moduleAst.decls
                     |> List.choose (fun decl ->
                         match decl with
@@ -739,7 +750,7 @@ module BuildSystem =
                 match enumDeclOpt with
                 | Some enumDecl ->
                     hirType.fields
-                    |> List.iter (fun field -> addFieldNode field.sym field.typ true)
+                    |> List.iter (fun field -> addFieldNode field.sym field.typ true false)
                     let casesNode = JsonArray()
                     enumDecl.cases
                     |> List.mapi (fun tag caseDecl -> tag, caseDecl)

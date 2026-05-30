@@ -188,12 +188,13 @@ module Parser =
             |>> fun (fieldId, fieldValue) ->
                 Ast.DataInitField.Field(fieldId.str, fieldValue, { left = fieldId.span.left; right = fieldValue.span.right }) :> Ast.DataInitField)
 
-    // `TypeName { field = value, ... }` 形式の data 初期化式を解析する。
-    and dataInitExpr: PackratParser<Token, Ast.Expr> =
+    // `{ field = value, ... }` 形式の連想配列リテラル（型名を伴わない）。
+    // struct 初期化は `{...} TypeName.` の dot-call として、term2 で正規化される。
+    and recordLitExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            tid <& delim '{' <&> SepBy1 dataInitField (delim ',') <&> delim '}'
-            |>> fun ((typeId, fields), closeBrace) ->
-                Ast.Expr.DataInit(typeId.str, fields, { left = typeId.span.left; right = closeBrace.span.right }) :> Ast.Expr)
+            delim '{' <&> SepBy1 dataInitField (delim ',') <&> delim '}'
+            |>> fun ((openBrace, fields), closeBrace) ->
+                Ast.Expr.RecordLit(fields, { left = openBrace.span.left; right = closeBrace.span.right }) :> Ast.Expr)
 
     // `EnumType'CaseName { field = value, ... }` 形式の enum case 初期化式を解析する。
     and enumInitExpr: PackratParser<Token, Ast.Expr> =
@@ -248,7 +249,7 @@ module Parser =
                 Ast.Expr.Match(scrutinee, arms, { left = matchKw.span.left; right = (List.last arms).span.right }) :> Ast.Expr)
 
     and factor: PackratParser<Token, Ast.Expr> =
-        Delay (fun () -> paren <|> ifExpr <|> matchExpr <|> doExpr <|> enumInitExpr <|> dataInitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr double) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))
+        Delay (fun () -> paren <|> ifExpr <|> matchExpr <|> doExpr <|> enumInitExpr <|> recordLitExpr <|> (asExpr id) <|> (asExpr float) <|> (asExpr double) <|> (asExpr int) <|> (asExpr str) <|> (asExpr bool))
 
     and postfixMemberAccess: PackratParser<Token, (Ast.Expr -> Ast.Expr)> =
         Delay (fun () -> fun input pos ->
@@ -655,13 +656,17 @@ module Parser =
                 | Some retType ->
                     Ast.TypeExpr.Arrow(argType, retType, { left = argType.span.left; right = retType.span.right }) :> Ast.TypeExpr)
 
-    // データ宣言
-    and dataField: PackratParser<Token, Ast.DataItem.Field> =
+    // struct 宣言のフィールド: `val name: Type` または `var name: Type`。
+    // val/var の欠落はパースエラーとし、可変性アノテーションを必須にする。
+    and structField: PackratParser<Token, Ast.DataItem.Field> =
         Delay (fun () ->
-            tid <& delim ':' <&> typeExpr |>> fun (id, typeExpr) -> Ast.DataItem.Field (id.str, typeExpr, { left = id.span.left; right = typeExpr.span.right }))
+            ((keyword "val" |>> fun kw -> kw, false) <|> (keyword "var" |>> fun kw -> kw, true))
+            <&> tid <& delim ':' <&> typeExpr
+            |>> fun (((kw, isMutable), id), typeExpr) ->
+                Ast.DataItem.Field(id.str, typeExpr, isMutable, { left = kw.span.left; right = typeExpr.span.right }))
 
-    and dataItem: PackratParser<Token, Ast.DataItem> =
-        Delay (fun () -> asDataItem dataField)
+    and structFieldItem: PackratParser<Token, Ast.DataItem> =
+        Delay (fun () -> asDataItem structField)
 
     and enumCaseField: PackratParser<Token, Ast.EnumCase.Field> =
         Delay (fun () ->
@@ -685,13 +690,17 @@ module Parser =
 
     and dataDecl: PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
-            keyword "data"
-            &> Once (
-                tid <&> Many tid <& symbol "=" <& delim '{' <&> SepBy1 dataItem (delim ',') <&> delim '}'
-                |>> fun (((id, typeParams), items), closeBrace) ->
-                    let typeParamNames = typeParams |> List.map (fun t -> t.str)
-                    Ast.Decl.Data (id.str, typeParamNames, items, { left = id.span.left; right = closeBrace.span.right }) :> Ast.Decl
-            ) (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
+            block (asToken (keyword "struct"))
+                (Once
+                    (tid <&> Many tid <&> Many1 structFieldItem
+                     |>> fun ((id, typeParams), items) ->
+                         let typeParamNames = typeParams |> List.map (fun t -> t.str)
+                         let rightSpan =
+                             match items |> List.tryLast with
+                             | Some lastItem -> lastItem.span.right
+                             | None -> id.span.right
+                         Ast.Decl.Data(id.str, typeParamNames, items, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
+                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     and enumDecl: PackratParser<Token, Ast.Decl> =
         Delay (fun () ->

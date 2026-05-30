@@ -1,6 +1,8 @@
 import System'Console
 
-data Person = { name: String, age: Int }
+struct Person
+    val name: String
+    val age: Int
 
 impl Person
     fn sayHello self: () =

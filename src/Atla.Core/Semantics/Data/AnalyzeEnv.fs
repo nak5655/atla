@@ -8,6 +8,7 @@ module AnalyzeEnv =
         { name: string
           sid: SymbolId
           typ: TypeId
+          isMutable: bool
           span: Atla.Core.Data.Span }
 
     type EnumCaseDef =
