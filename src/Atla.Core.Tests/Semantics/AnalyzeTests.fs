@@ -290,11 +290,13 @@ fn main (color: Color): Int =
     [<Fact>]
     let ``do block with non-unit last expression returns correct type`` () =
         let program = """
-data Point = { x: Int, y: Int }
+struct Point
+    val x: Int
+    val y: Int
 fn makePoint (): Point = do
     let xv = 1
     let yv = 2
-    Point { x = xv, y = yv }
+    { x = xv, y = yv } Point.
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -449,8 +451,10 @@ fn main (): () = "hello" Console'WriteLine.
     [<Fact>]
     let ``semantic analysis and lowering accept data declaration and named initialization`` () =
         let program = """
-data Person = { name: String, age: Int }
-fn buildPerson (): Person = Person { name = "Alice", age = 20 }
+struct Person
+    val name: String
+    val age: Int
+fn buildPerson (): Person = { name = "Alice", age = 20 } Person.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -502,8 +506,8 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Ast.Decl.Data(
                 "Line",
                 [],
-                [ Ast.DataItem.Field("slope", doubleType, span) :> Ast.DataItem
-                  Ast.DataItem.Field("intercept", doubleType, span) :> Ast.DataItem ],
+                [ Ast.DataItem.Field("slope", doubleType, false, span) :> Ast.DataItem
+                  Ast.DataItem.Field("intercept", doubleType, false, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
         let thisArg = Ast.FnArg.Inferred("self", span) :> Ast.FnArg
@@ -513,11 +517,12 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
         let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
-            Ast.Expr.DataInit(
-                "Line",
-                [ Ast.DataInitField.Field("slope", Ast.Expr.Double(2.0, span) :> Ast.Expr, span) :> Ast.DataInitField
-                  Ast.DataInitField.Field("intercept", Ast.Expr.Double(-1.0, span) :> Ast.Expr, span) :> Ast.DataInitField ],
-                span) :> Ast.Expr
+            let recordLit =
+                Ast.Expr.RecordLit(
+                    [ Ast.DataInitField.Field("slope", Ast.Expr.Double(2.0, span) :> Ast.Expr, span) :> Ast.DataInitField
+                      Ast.DataInitField.Field("intercept", Ast.Expr.Double(-1.0, span) :> Ast.Expr, span) :> Ast.DataInitField ],
+                    span) :> Ast.Expr
+            Ast.Expr.Apply(Ast.Expr.Id("Line", span) :> Ast.Expr, [ recordLit ], span) :> Ast.Expr
         let callBody =
             Ast.Expr.Apply(
                 Ast.Expr.MemberAccess(lineInit, "evaluate", span) :> Ast.Expr,
@@ -550,7 +555,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Ast.Decl.Data(
                 "Line",
                 [],
-                [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
+                [ Ast.DataItem.Field("value", intType, false, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, false, false, span)
@@ -581,7 +586,7 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Ast.Decl.Data(
                 "Line",
                 [],
-                [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
+                [ Ast.DataItem.Field("value", intType, false, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
         let helperFn = Ast.Decl.Fn("helper", [], intType, Ast.Expr.Int(42, span) :> Ast.Expr, false, false, span)
@@ -609,16 +614,17 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
             Ast.Decl.Data(
                 "Line",
                 [],
-                [ Ast.DataItem.Field("value", intType, span) :> Ast.DataItem ],
+                [ Ast.DataItem.Field("value", intType, false, span) :> Ast.DataItem ],
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, false, false, span)
         let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
         let lineInit =
-            Ast.Expr.DataInit(
-                "Line",
-                [ Ast.DataInitField.Field("value", Ast.Expr.Int(42, span) :> Ast.Expr, span) :> Ast.DataInitField ],
-                span) :> Ast.Expr
+            let recordLit =
+                Ast.Expr.RecordLit(
+                    [ Ast.DataInitField.Field("value", Ast.Expr.Int(42, span) :> Ast.Expr, span) :> Ast.DataInitField ],
+                    span) :> Ast.Expr
+            Ast.Expr.Apply(Ast.Expr.Id("Line", span) :> Ast.Expr, [ recordLit ], span) :> Ast.Expr
         let badCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(lineInit, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
         let mainDecl = Ast.Decl.Fn("main", [], intType, badCall, false, false, span) :> Ast.Decl
 
@@ -634,8 +640,10 @@ fn buildPerson (): Person = Person { name = "Alice", age = 20 }
     [<Fact>]
     let ``semantic analysis reports cyclic subtype relation declared by impl for`` () =
         let source = """
-data A = { value: Int }
-data B = { value: Int }
+struct A
+    val value: Int
+struct B
+    val value: Int
 impl A for B
     fn asInt self: Int = self'value
 impl B for A
@@ -668,7 +676,8 @@ impl B for A
     let ``semantic analysis resolves delegated native interface member via impl for by`` () =
         let source = """
 import System'IDisposable
-data Box = { items: IDisposable }
+struct Box
+    val items: IDisposable
 impl IDisposable for Box by items
 fn close (b: Box): () = b'Dispose.
 """
@@ -706,7 +715,8 @@ fn close (b: Box): () = b'Dispose.
     let ``semantic analysis reports error when impl for uses native class`` () =
         let source = """
 import System'DateTime
-data Clock = { dt: DateTime }
+struct Clock
+    val dt: DateTime
 impl DateTime for Clock by dt
 """
 
@@ -735,9 +745,12 @@ impl DateTime for Clock by dt
     [<Fact>]
     let ``semantic analysis allows multiple impl for blocks when roles differ`` () =
         let source = """
-data Shape = { value: Int }
-data Reader = { marker: Int }
-data Writer = { marker: Int }
+struct Shape
+    val value: Int
+struct Reader
+    val marker: Int
+struct Writer
+    val marker: Int
 impl Shape for Reader
     fn read self: Int = self'value
 impl Shape for Writer
@@ -770,7 +783,8 @@ impl Shape for Writer
     [<Fact>]
     let ``semantic analysis reports duplicate default impl blocks`` () =
         let source = """
-data Line = { value: Int }
+struct Line
+    val value: Int
 impl Line
     fn first self: Int = self'value
 impl Line
@@ -802,8 +816,10 @@ impl Line
     [<Fact>]
     let ``semantic analysis reports duplicate impl blocks for same role`` () =
         let source = """
-data Line = { value: Int }
-data Reader = { marker: Int }
+struct Line
+    val value: Int
+struct Reader
+    val marker: Int
 impl Line for Reader
     fn first self: Int = self'value
 impl Line for Reader
@@ -837,7 +853,8 @@ impl Line for Reader
         // IDisposable はインターフェイスなので impl ... as IDisposable は禁止。
         let source = """
 import System'IDisposable
-data Resource = { id: Int }
+struct Resource
+    val id: Int
 impl Resource as IDisposable
     fn dispose self: Unit = ()
 """
@@ -869,7 +886,8 @@ impl Resource as IDisposable
         // System.Math はシールドクラスなので impl ... as Math は禁止。
         let source = """
 import System'Math
-data Token = { value: Int }
+struct Token
+    val value: Int
 impl Token as Math
     fn run self: Unit = ()
 """
@@ -900,7 +918,8 @@ impl Token as Math
     let ``semantic analysis reports error for impl as with unimported type`` () =
         // import なしで as 句を使おうとした場合のエラー。
         let source = """
-data Widget = { id: Int }
+struct Widget
+    val id: Int
 impl Widget as UnknownBase
     fn run self: Unit = ()
 """
@@ -2483,14 +2502,15 @@ fn main: () = do
     [<Fact>]
     let ``semantic analysis auto-injects this for impl instance call`` () =
         let program = """
-data CalculatorWindow = { value: Int }
+struct CalculatorWindow
+    val value: Int
 
 impl CalculatorWindow
     fn addDigitButton self (digit: Int) (row: Int) (column: Int): Int =
         digit
 
 fn main (): Int = do
-    let window = CalculatorWindow { value = 0 }
+    let window = { value = 0 } CalculatorWindow.
     7 0 0 window'addDigitButton.
 """
         let input: Input<SourceChar> = StringInput program
@@ -2519,17 +2539,16 @@ fn main (): Int = do
         let program = """
 import System'Console
 
-data Line =
-    { slope: Double
-    , intercept: Double
-    }
+struct Line
+    val slope: Double
+    val intercept: Double
 
 impl Line
     fn evaluate self (x: Double): Double =
         x
 
 fn main (): () = do
-    let line = Line { slope = 2.0, intercept = -1.0 }
+    let line = { slope = 2.0, intercept = -1.0 } Line.
     5.0 line'evaluate. Console'WriteLine.
 """
         let input: Input<SourceChar> = StringInput program
@@ -2623,9 +2642,10 @@ fn main (): () = do
         // impl MyError as Exception により MyError 型の変数から .Message を読み取れる必要がある。
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
 fn getMessage (e: MyError): String = e'Message
 """
 
@@ -2664,9 +2684,10 @@ fn getMessage (e: MyError): String = e'Message
         // impl MyError as Exception により MyError 型の変数への .HelpLink 代入が通る必要がある。
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
 fn setLink (e: MyError): () = do
     e'HelpLink = "https://example.com"
 """
@@ -2706,7 +2727,8 @@ fn setLink (e: MyError): () = do
         // using current `this` and the declared native base type.
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
     fn baseText self: String = base'ToString.
 """
@@ -2749,9 +2771,10 @@ impl MyError as Exception
         // impl MyError as Exception でも存在しないメンバーへのアクセスはエラーになる必要がある。
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
 fn bad (e: MyError): String = e'NonExistentMember
 """
 
@@ -2786,9 +2809,10 @@ fn bad (e: MyError): String = e'NonExistentMember
         // System.Object.ToString は public virtual。MyError.ToString を override できる必要がある。
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
     override fn ToString self: String = "MyError"
 """
 
@@ -2819,9 +2843,10 @@ impl MyError as Exception
         // System.Exception には `NotARealMethod` というメソッドはないので override エラー。
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
     override fn NotARealMethod self: Unit = ()
 """
 
@@ -2851,9 +2876,10 @@ impl MyError as Exception
         // arity 0 で `GetType` を override しようとすると候補無しエラー。
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
     override fn GetType self: String = "MyError"
 """
 
@@ -2881,7 +2907,8 @@ impl MyError as Exception
     let ``semantic analysis rejects override modifier in plain impl block`` () =
         // `impl A`（as/for なし）の中での override はエラー。
         let source = """
-data Foo = { x: Int }
+struct Foo
+    val x: Int
 impl Foo
     override fn bar self: Unit = ()
 """
@@ -2911,7 +2938,8 @@ impl Foo
         // `impl Role for Type` 形式での override はエラー。
         let source = """
 import System'IDisposable
-data Box = { handle: Int }
+struct Box
+    val handle: Int
 impl IDisposable for Box
     override fn Dispose self: Unit = ()
 """
@@ -2941,7 +2969,8 @@ impl IDisposable for Box
         // self を取らない static メソッドへの override はインスタンスメソッド限定の制約に反する。
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
     override fn ToString (x: Int): String = "static"
 """
@@ -3030,9 +3059,10 @@ impl MyError as Exception
         // モジュール A: MyError を Exception のサブクラスとして定義する。
         let moduleASource = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
 """
         // モジュール B: ModuleA から MyError を import して Exception 由来の Message プロパティを読み取る。
         let moduleBSource = """
@@ -3126,9 +3156,10 @@ fn getMessage (e: MyError): String = e'Message
         // モジュール A: MyError を Exception のサブクラスとして定義する。
         let moduleASource = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
 """
         // モジュール B: ModuleA から MyError を import して HelpLink（読み書き可能）へ代入する。
         let moduleBSource = """
@@ -3222,12 +3253,13 @@ fn setLink (e: MyError): () = do
         // MyError の値を getMsg に渡せなければならない。
         let source = """
 import System'Exception
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
 fn getMsg (e: Exception): String = e'Message
 fn test (): String = do
-    let err = MyError { code = 42 }
+    let err = { code = 42 } MyError.
     err getMsg.
 """
         let input: Input<SourceChar> = StringInput source
@@ -3268,11 +3300,12 @@ fn test (): String = do
         let source = """
 import System'Exception
 import System'Runtime'ExceptionServices'ExceptionDispatchInfo
-data MyError = { code: Int }
+struct MyError
+    val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = MyError { code = code }
+    fn new (code: Int): MyError = { code = code } MyError.
 fn test (): ExceptionDispatchInfo = do
-    let err = MyError { code = 1 }
+    let err = { code = 1 } MyError.
     err ExceptionDispatchInfo'Capture.
 """
         let input: Input<SourceChar> = StringInput source
@@ -3541,7 +3574,9 @@ role Geometry
 role Geometry
     fn area self: Float
 
-data Rectangle = { width: Float, height: Float }
+struct Rectangle
+    val width: Float
+    val height: Float
 
 impl Geometry for Rectangle
     fn area self: Float =

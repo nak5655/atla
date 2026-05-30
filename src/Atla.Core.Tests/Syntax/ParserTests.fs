@@ -372,8 +372,12 @@ fn main: () =
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses record-style data declaration with comma-separated fields`` () =
-        let program = "data Person = { name: String, age: Int }"
+    let ``fileModule parses struct declaration with val and var fields`` () =
+        let program = """
+struct Person
+    val name: String
+    var age: Int
+"""
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -381,16 +385,46 @@ fn main: () =
             | [ (:? Ast.Decl.Data as dataDecl) ] ->
                 Assert.Equal("Person", dataDecl.name)
                 Assert.Equal(2, dataDecl.items.Length)
+                match dataDecl.items with
+                | [ (:? Ast.DataItem.Field as nameField); (:? Ast.DataItem.Field as ageField) ] ->
+                    Assert.Equal("name", nameField.name)
+                    Assert.False(nameField.isMutable)
+                    Assert.Equal("age", ageField.name)
+                    Assert.True(ageField.isMutable)
+                | _ ->
+                    Assert.True(false, "expected two Ast.DataItem.Field items")
             | _ ->
                 Assert.True(false, "expected a single Ast.Decl.Data declaration")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses named data initialization expression`` () =
+    let ``fileModule rejects struct field without val or var`` () =
         let program = """
-data Person = { name: String, age: Int }
-fn main (): Person = Person { name = "Alice", age = 20 }
+struct Person
+    name: String
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            // パースは成功しても、val/var 欠落により Decl.Error が混入することを許容する。
+            // 少なくとも正常な Decl.Data として登録されないことを確認する。
+            let hasValidStruct =
+                astModule.decls
+                |> List.exists (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Data as dd -> not dd.items.IsEmpty
+                    | _ -> false)
+            Assert.False(hasValidStruct, "expected val/var to be required on struct fields")
+        | Failure _ -> ()
+
+    [<Fact>]
+    let ``fileModule parses struct constructor via record literal applied to type`` () =
+        let program = """
+struct Person
+    val name: String
+    val age: Int
+fn main (): Person = { name = "Alice", age = 20 } Person.
 """
 
         match parseModule program with
@@ -405,11 +439,17 @@ fn main (): Person = Person { name = "Alice", age = 20 }
             match mainDecl with
             | Some fnDecl ->
                 match terminalBodyExpr fnDecl.body with
-                | :? Ast.Expr.DataInit as initExpr ->
-                    Assert.Equal("Person", initExpr.typeName)
-                    Assert.Equal(2, initExpr.fields.Length)
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.func with
+                    | :? Ast.Expr.Id as typeId -> Assert.Equal("Person", typeId.name)
+                    | _ -> Assert.True(false, "expected callee to be type identifier")
+                    match applyExpr.args with
+                    | [ (:? Ast.Expr.RecordLit as recordLit) ] ->
+                        Assert.Equal(2, recordLit.fields.Length)
+                    | _ ->
+                        Assert.True(false, "expected single RecordLit argument")
                 | _ ->
-                    Assert.True(false, "expected Ast.Expr.DataInit in main body")
+                    Assert.True(false, "expected Ast.Expr.Apply in main body")
             | None ->
                 Assert.True(false, "main declaration not found")
         | Failure (reason, span) ->
@@ -535,10 +575,12 @@ fn main: () = ()
             Assert.True(false, $"apostrophe import syntax should be accepted: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses unary minus float literal in data initialization`` () =
+    let ``fileModule parses unary minus float literal in struct initialization`` () =
         let program = """
-data Line = { slope: Float, intercept: Float }
-fn main (): Line = Line { slope = 2.0, intercept = -1.0 }
+struct Line
+    val slope: Float
+    val intercept: Float
+fn main (): Line = { slope = 2.0, intercept = -1.0 } Line.
 """
 
         match parseModule program with
@@ -553,18 +595,22 @@ fn main (): Line = Line { slope = 2.0, intercept = -1.0 }
             match mainDecl with
             | Some fnDecl ->
                 match terminalBodyExpr fnDecl.body with
-                | :? Ast.Expr.DataInit as initExpr ->
-                    match initExpr.fields |> List.tryFind (fun field -> match field with | :? Ast.DataInitField.Field as f -> f.name = "intercept" | _ -> false) with
-                    | Some (:? Ast.DataInitField.Field as interceptField) ->
-                        match interceptField.value with
-                        | :? Ast.Expr.Double as doubleExpr ->
-                            Assert.Equal(-1.0, doubleExpr.value)
+                | :? Ast.Expr.Apply as applyExpr ->
+                    match applyExpr.args with
+                    | [ (:? Ast.Expr.RecordLit as recordLit) ] ->
+                        match recordLit.fields |> List.tryFind (fun field -> match field with | :? Ast.DataInitField.Field as f -> f.name = "intercept" | _ -> false) with
+                        | Some (:? Ast.DataInitField.Field as interceptField) ->
+                            match interceptField.value with
+                            | :? Ast.Expr.Double as doubleExpr ->
+                                Assert.Equal(-1.0, doubleExpr.value)
+                            | _ ->
+                                Assert.True(false, "intercept field was not parsed as Ast.Expr.Double")
                         | _ ->
-                            Assert.True(false, "intercept field was not parsed as Ast.Expr.Double")
+                            Assert.True(false, "intercept field initializer was not found")
                     | _ ->
-                        Assert.True(false, "intercept field initializer was not found")
+                        Assert.True(false, "expected single RecordLit argument to Line constructor")
                 | _ ->
-                    Assert.True(false, "main body was not parsed as Ast.Expr.DataInit")
+                    Assert.True(false, "main body was not parsed as Ast.Expr.Apply")
             | None ->
                 Assert.True(false, "main function declaration was not found")
         | Failure (reason, span) ->
@@ -1078,10 +1124,9 @@ fn main (): () =
     [<Fact>]
     let ``fileModule parses impl declaration with self receiver argument`` () =
         let program = """
-data Line =
-    { slope: Float
-    , intercept: Float
-    }
+struct Line
+    val slope: Float
+    val intercept: Float
 impl Line
     fn evaluate self (x: Float): Float =
         self'slope * x + self'intercept
@@ -1110,8 +1155,8 @@ impl Line
     [<Fact>]
     let ``fileModule parses impl declaration with subtype for clause`` () =
         let program = """
-data B =
-    { value: Int }
+struct B
+    val value: Int
 impl B for A
     fn evaluate self: Int =
         self'value
@@ -1138,10 +1183,9 @@ impl B for A
     [<Fact>]
     let ``fileModule parses impl declaration with subtype for and by clause`` () =
         let program = """
-data Wrapper =
-    { value: Int
-    , inner: Base
-    }
+struct Wrapper
+    val value: Int
+    val inner: Base
 impl Base for Wrapper by inner
 """
 
@@ -1169,9 +1213,8 @@ impl Base for Wrapper by inner
     [<Fact>]
     let ``fileModule parses impl declaration with as clause`` () =
         let program = """
-data MyButton =
-    { label: String
-    }
+struct MyButton
+    val label: String
 impl MyButton as Button
     fn click self: Unit = ()
 """
@@ -1200,9 +1243,8 @@ impl MyButton as Button
     [<Fact>]
     let ``fileModule parses impl as clause with no methods`` () =
         let program = """
-data Widget =
-    { id: Int
-    }
+struct Widget
+    val id: Int
 impl Widget as Control
 """
 
@@ -1230,9 +1272,8 @@ impl Widget as Control
     [<Fact>]
     let ``fileModule parses override fn in impl as block`` () =
         let program = """
-data MyButton =
-    { label: String
-    }
+struct MyButton
+    val label: String
 impl MyButton as Button
     override fn click self: Unit = ()
     fn helper self: Unit = ()
@@ -1266,9 +1307,8 @@ impl MyButton as Button
         // override 修飾子は構文上はどの impl ブロックでも受理する。
         // `impl A as B` 以外でのエラーは Resolve フェーズで報告される。
         let program = """
-data Foo =
-    { x: Int
-    }
+struct Foo
+    val x: Int
 impl Foo
     override fn bar self: Unit = ()
 """
@@ -1317,9 +1357,8 @@ override fn main (): Unit = ()
     [<Fact>]
     let ``fileModule parses async fn in impl as block`` () =
         let program = """
-data MyTask =
-    { value: Int
-    }
+struct MyTask
+    val value: Int
 impl MyTask as Object
     async fn run self: Unit = ()
     fn sync self: Unit = ()
@@ -1350,9 +1389,8 @@ impl MyTask as Object
     [<Fact>]
     let ``fileModule parses override async fn in impl as block`` () =
         let program = """
-data MyTask =
-    { value: Int
-    }
+struct MyTask
+    val value: Int
 impl MyTask as Object
     override async fn run self: Unit = ()
 """

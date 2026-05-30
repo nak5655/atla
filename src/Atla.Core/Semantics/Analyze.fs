@@ -127,7 +127,7 @@ module Analyze =
                                     let fieldType = fieldNameEnv.resolveTypeExpr fieldItem.typeExpr
                                     let fieldSid = symbolTable.NextId()
                                     symbolTable.Add(fieldSid, { name = $"{resolvedDataDecl.decl.name}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
-                                    Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; span = fieldItem.span }
+                                    Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; isMutable = fieldItem.isMutable; span = fieldItem.span }
                                 | _ -> None)
 
                         let hirFields =
@@ -170,6 +170,7 @@ module Analyze =
                             { name = fieldName
                               sid = tagFieldSid
                               typ = TypeId.Int
+                              isMutable = false
                               span = resolvedEnumDecl.decl.span }
 
                         let enumCases, hiddenRootFields, payloadTypes =
@@ -189,6 +190,7 @@ module Analyze =
                                             { name = caseField.name
                                               sid = fieldSid
                                               typ = fieldType
+                                              isMutable = false
                                               span = caseField.span })
 
                                     match payloadFieldDefs with
@@ -213,6 +215,7 @@ module Analyze =
                                             { name = payloadFieldName
                                               sid = payloadRootFieldSid
                                               typ = TypeId.Name payloadTypeSid
+                                              isMutable = false
                                               span = enumCase.span }
 
                                         let payloadType =
@@ -394,7 +397,7 @@ module Analyze =
                                                         let newSid = symbolTable.NextId()
                                                         symbolTable.Add(newSid, { name = $"{aliasName}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
                                                         newSid
-                                                Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; span = fieldItem.span }
+                                                Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; isMutable = fieldItem.isMutable; span = fieldItem.span }
                                             | _ -> None)
 
                                     if not isReusingExistingType then
@@ -421,6 +424,7 @@ module Analyze =
                                             { name = tagFieldName
                                               sid = exportInfo.symbolId
                                               typ = exportInfo.typ
+                                              isMutable = false
                                               span = enumDecl.span }
                                         | None ->
                                             let sid = symbolTable.NextId()
@@ -428,6 +432,7 @@ module Analyze =
                                             { name = tagFieldName
                                               sid = sid
                                               typ = TypeId.Int
+                                              isMutable = false
                                               span = enumDecl.span }
 
                                     let enumCases, hiddenFields, payloadTypes =
@@ -456,6 +461,7 @@ module Analyze =
                                                         { name = caseField.name
                                                           sid = fieldSid
                                                           typ = fieldType
+                                                          isMutable = false
                                                           span = caseField.span })
 
                                                 match payloadFieldDefs with
@@ -482,6 +488,7 @@ module Analyze =
                                                             { name = payloadSlotName
                                                               sid = exportInfo.symbolId
                                                               typ = exportInfo.typ
+                                                              isMutable = false
                                                               span = enumCase.span }
                                                         | None ->
                                                             let sid = symbolTable.NextId()
@@ -489,6 +496,7 @@ module Analyze =
                                                             { name = payloadSlotName
                                                               sid = sid
                                                               typ = TypeId.Name payloadTypeSid
+                                                              isMutable = false
                                                               span = enumCase.span }
                                                     let payloadTypeOpt =
                                                         if isReusingExistingType then

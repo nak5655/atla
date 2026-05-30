@@ -2,5 +2,5 @@ import sub
 import sub'Person
 
 fn main: () =
-    let p = Person { name = "alice", age = 30 }
+    let p = { name = "alice", age = 30 } Person.
     p'sayHello.

@@ -221,9 +221,9 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        /// `TypeName { field = value, ... }` 形式の data 初期化式。
-        type DataInit(typeName: string, fields: DataInitField list, span: Span) =
-            member this.typeName = typeName
+        /// `{ field = value, ... }` 形式の連想配列リテラル。
+        /// 型は持たず、コンストラクタ呼び出し `{...} TypeName.` の引数位置でのみ意味を持つ。
+        type RecordLit(fields: DataInitField list, span: Span) =
             member this.fields = fields
             member this.span = span
             interface Expr with
@@ -421,9 +421,12 @@ module Ast =
                 member this.span = span
 
     module DataItem =
-        type Field(name:string, typeExpr: TypeExpr, span: Span) =
+        /// `struct` 宣言内のフィールド定義。
+        /// isMutable: true なら `var`（再代入可）、false なら `val`（再代入不可）。
+        type Field(name: string, typeExpr: TypeExpr, isMutable: bool, span: Span) =
             member this.name = name
             member this.typeExpr = typeExpr
+            member this.isMutable = isMutable
             member this.span = span
             interface DataItem with
                 member this.span = span
@@ -537,7 +540,7 @@ module Ast =
 
         type Data(name: string, typeParams: string list, items: DataItem list, span: Span) =
             member this.name = name
-            /// 型パラメータ名のリスト（例: `data Pair A B` では `["A"; "B"]`）。非ジェネリックの場合は空リスト。
+            /// 型パラメータ名のリスト（例: `struct Pair A B` では `["A"; "B"]`）。非ジェネリックの場合は空リスト。
             member this.typeParams = typeParams
             member this.items = items
             member this.span = span

@@ -9,13 +9,12 @@ import Avalonia'Controls'ColumnDefinitions
 import Avalonia'Layout'Orientation
 import Avalonia'Layout'HorizontalAlignment
 
-data CalculatorWindow =
-    { _grid: Grid
-    , _display: TextBox
-    , _currentValue: Double
-    , _pendingOperator: String
-    , _clearOnNextDigit: Bool
-    }
+struct CalculatorWindow
+    val _grid: Grid
+    val _display: TextBox
+    var _currentValue: Double
+    var _pendingOperator: String
+    var _clearOnNextDigit: Bool
 
 impl CalculatorWindow as Window
     fn new: CalculatorWindow =
@@ -40,13 +39,13 @@ impl CalculatorWindow as Window
 
         grid root'Children'Add.
 
-        let window = CalculatorWindow
+        let window =
             { _grid = grid
             , _display = display
             , _currentValue = 0.0
             , _pendingOperator = ""
             , _clearOnNextDigit = False
-            }
+            } CalculatorWindow.
 
         "C" 0 0 (window'onClear.) window'addButton.
         "BS" 0 1 (window'onBackspace.) window'addButton.

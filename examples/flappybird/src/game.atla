@@ -11,35 +11,38 @@ import System'Threading'Tasks'Task
 import Stride'Input'Keys
 import System'Random
 
-data FlappyGame =
-    { _spriteBatch: Opt SpriteBatch
-    , _whiteTexture: Opt Texture
-    , _birdPos: Vector2
-    , _birdVelocity: Float
-    , _birdSize: Float
-    , _jumpPower: Float
-    , _gravity: Float
-    , _rand: Random
-    , _pipes: List Vector2
-    , _pipeWidth: Float
-    , _pipeGap: Float
-    , _pipeSpeed: Float }
+struct FlappyGame
+    var _spriteBatch: Opt SpriteBatch
+    var _whiteTexture: Opt Texture
+
+    # Bird
+    var _birdPos: Vector2
+    var _birdVelocity: Float
+    val _birdSize: Float
+    val _jumpPower: Float
+    val _gravity: Float
+    
+    # Pipes
+    val _pipes: List Vector2
+    val _pipeWidth: Float
+    val _pipeGap: Float
+    val _pipeSpeed: Float
+    val _rand: Random
 
 impl FlappyGame as Game
     fn new: FlappyGame =
-        FlappyGame
-            { _spriteBatch = Opt'None
-            , _whiteTexture = Opt'None
-            , _birdPos = 200.0f 300.0f Vector2.
-            , _birdVelocity = 0.0f
-            , _birdSize = 32.0f
-            , _jumpPower = -350.0f
-            , _gravity = 900.0f
-            , _rand = Random.
-            , _pipes = List.
-            , _pipeWidth = 60.0f
-            , _pipeGap = 180.0f
-            , _pipeSpeed = 200.0f }
+        { _spriteBatch = Opt'None
+        , _whiteTexture = Opt'None
+        , _birdPos = 200.0f 300.0f Vector2.
+        , _birdVelocity = 0.0f
+        , _birdSize = 32.0f
+        , _jumpPower = -350.0f
+        , _gravity = 900.0f
+        , _pipes = List.
+        , _pipeWidth = 60.0f
+        , _pipeGap = 180.0f
+        , _pipeSpeed = 200.0f
+        , _rand = Random. } FlappyGame.
 
     fn RandomGap self: Int =
         200 450 self'_rand'Next.
