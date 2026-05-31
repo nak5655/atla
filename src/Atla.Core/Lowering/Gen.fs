@@ -825,6 +825,14 @@ module Gen =
                 // 基底型がインターフェイス、または指定なし/パラメータなしコンストラクタが存在しない場合は Object のコンストラクタを呼ぶ。
                 let baseCtorInfo =
                     match typ.baseType with
+                    // union バリアント等、Atla 生成型（TypeId.Name）を基底に持つ場合は、
+                    // 基底型 TypeBuilder の GetConstructor が CreateType 前で使えないため、
+                    // declareTypeMembers が登録した env.typeCtors のデフォルトコンストラクタを使う。
+                    // union ルートは modul.types 内でバリアントより前に出現するため、この時点で登録済み。
+                    | Some (TypeId.Name baseSid) ->
+                        match env.typeCtors.TryGetValue(baseSid) with
+                        | true, baseCtor -> baseCtor
+                        | false, _ -> typeof<obj>.GetConstructor([||])
                     | Some baseTid ->
                         let resolvedBase = resolveType env baseTid
                         if isNull resolvedBase || resolvedBase.IsInterface then

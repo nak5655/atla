@@ -15,6 +15,13 @@ module Resolve =
           typeParams: string list
           decl: Ast.Decl.Enum }
 
+    /// 解決済み union 宣言。variantSids は修飾なしバリアント名 → バリアント型 SymbolId のマップ。
+    type ResolvedUnionDecl =
+        { typeSid: SymbolId
+          typeParams: string list
+          variantSids: Map<string, SymbolId>
+          decl: Ast.Decl.Union }
+
     type ResolvedRoleDecl =
         { typeSid: SymbolId
           decl: Ast.Decl.Role }
@@ -27,6 +34,7 @@ module Resolve =
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
           enumDecls: ResolvedEnumDecl list
+          unionDecls: ResolvedUnionDecl list
           roleDecls: ResolvedRoleDecl list
           implDecls: (SymbolId * TypeId option * string option * Ast.Decl.Impl) list }
 
@@ -168,6 +176,7 @@ module Resolve =
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
         let enumDecls = ResizeArray<ResolvedEnumDecl>()
+        let unionDecls = ResizeArray<ResolvedUnionDecl>()
         let roleDecls = ResizeArray<ResolvedRoleDecl>()
         let implDecls = ResizeArray<SymbolId * TypeId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
@@ -195,6 +204,36 @@ module Resolve =
                     symbolTable.Add(typeSid, { name = enumDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
                     moduleScope.DeclareType(enumDecl.name, TypeId.Name typeSid)
                     enumDecls.Add({ typeSid = typeSid; typeParams = enumDecl.typeParams; decl = enumDecl })
+            | :? Ast.Decl.Union as unionDecl ->
+                match moduleScope.ResolveType(unionDecl.name) with
+                | Some _ ->
+                    diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" unionDecl.name, unionDecl.span))
+                | None ->
+                    // union ルート型を型スコープへ登録する。
+                    let typeSid = symbolTable.NextId()
+                    symbolTable.Add(typeSid, { name = unionDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
+                    moduleScope.DeclareType(unionDecl.name, TypeId.Name typeSid)
+
+                    // 各バリアントの型を修飾名（`Union'Variant`）で登録する。
+                    // Phase 1 は単層のみ対応し、ネスト union（Ast.Decl.Union）はバリアントとしてまだ扱わない。
+                    let variantSids =
+                        unionDecl.variants
+                        |> List.choose (fun variant ->
+                            let variantNameOpt =
+                                match variant with
+                                | :? Ast.Decl.Data as structVariant -> Some structVariant.name
+                                | :? Ast.Decl.Object as objVariant -> Some objVariant.name
+                                | _ -> None
+                            variantNameOpt
+                            |> Option.map (fun variantName ->
+                                let qualifiedName = sprintf "%s'%s" unionDecl.name variantName
+                                let variantSid = symbolTable.NextId()
+                                symbolTable.Add(variantSid, { name = qualifiedName; typ = TypeId.Name variantSid; kind = SymbolKind.Local() })
+                                moduleScope.DeclareType(qualifiedName, TypeId.Name variantSid)
+                                variantName, variantSid))
+                        |> Map.ofList
+
+                    unionDecls.Add({ typeSid = typeSid; typeParams = unionDecl.typeParams; variantSids = variantSids; decl = unionDecl })
             | :? Ast.Decl.Role as roleDecl ->
                 // role 型を型スコープへ事前登録し、同一モジュール内での型注釈で参照可能にする。
                 match moduleScope.ResolveType(roleDecl.name) with
@@ -226,6 +265,13 @@ module Resolve =
                 ()
             | :? Ast.Decl.Enum ->
                 ()
+            | :? Ast.Decl.Union ->
+                // union 宣言は第一パスで型名・バリアント名を登録済みのため、ここでは何もしない。
+                ()
+            | :? Ast.Decl.Object ->
+                // 外部 object バリアント宣言（union 本体外）は Phase 2 で対応する。
+                // Phase 1 では union 本体内の object のみを扱い、ここでは何もしない。
+                ()
             | :? Ast.Decl.Impl as implDecl ->
                 let implTargetTypeName = implDecl.forTypeName |> Option.defaultValue implDecl.typeName
                 let typeResolution = moduleScope.ResolveType(implTargetTypeName)
@@ -236,6 +282,8 @@ module Resolve =
                         |> Seq.exists (fun dataDecl -> dataDecl.typeSid.id = typeSid.id)
                         || enumDecls
                         |> Seq.exists (fun enumDecl -> enumDecl.typeSid.id = typeSid.id)
+                        || unionDecls
+                        |> Seq.exists (fun unionDecl -> unionDecl.typeSid.id = typeSid.id)
                     if not isNominalType then
                         diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data or enum type in this module" implTargetTypeName, implDecl.span))
                     else
@@ -448,6 +496,7 @@ module Resolve =
                   fnDecls = Seq.toList fnDecls
                   dataDecls = Seq.toList dataDecls
                   enumDecls = Seq.toList enumDecls
+                  unionDecls = Seq.toList unionDecls
                   roleDecls = Seq.toList roleDecls
                   implDecls = Seq.toList implDecls }
                 allDiagnostics

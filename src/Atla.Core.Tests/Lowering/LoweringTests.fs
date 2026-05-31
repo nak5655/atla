@@ -2824,3 +2824,33 @@ fn main: ()
     x Console'WriteLine.
 """
         Assert.Equal("42", runForStdout "WhileFalse" program)
+
+    [<Fact>]
+    let ``union struct variants with shared field compile and match correctly`` () =
+        let program = """
+import System'Console
+
+union Color
+    val alpha: Int
+
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
+
+    struct Gray: Color
+        val level: Int
+
+impl Color
+    fn brightness self: Int
+        match self
+        | Color'Rgb { r, g, b, .. } -> (r + g + b) / 3
+        | Color'Gray { level, .. } -> level
+
+fn main: ()
+    val c = Color'Rgb { r = 30, g = 60, b = 90, alpha = 255 }
+    c'brightness. Console'WriteLine.
+    val g = Color'Gray { level = 42, alpha = 255 }
+    g'brightness. Console'WriteLine.
+"""
+        Assert.Equal("60\n42", runForStdout "UnionStructVariants" program)

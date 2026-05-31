@@ -144,6 +144,7 @@ module Analyze =
                               fields = resolvedFields
                               hiddenFields = []
                               enumInfo = None
+                              unionInfo = None
                               methods = Map.empty }
                             defs)
                     Map.empty
@@ -271,8 +272,106 @@ module Analyze =
                                   Some
                                       { hiddenTagField = tagFieldDef
                                         cases = enumCases }
+                              unionInfo = None
                               methods = Map.empty }
                             defs)
+                    dataTypeDefs
+
+            // union 宣言を abstract class（ルート型）+ 派生クラス（バリアント）群へ正規化する。
+            // - ルート型: union 本体のフィールドを持つ abstract class（isAbstract=true）。
+            // - 各バリアント: baseType=ルート型 の具象クラス。自身のフィールドのみを保持し、
+            //   union フィールドは継承で共有する（メンバー解決が baseType 連鎖を辿る）。
+            let dataTypeDefs =
+                resolvedModule.unionDecls
+                |> List.fold
+                    (fun defs resolvedUnionDecl ->
+                        let unionName = resolvedUnionDecl.decl.name
+                        let unionSid = resolvedUnionDecl.typeSid
+
+                        // 型パラメータをサブスコープへ登録してフィールド型を解決する（Phase 1 では非ジェネリック中心）。
+                        let fieldNameEnv =
+                            if resolvedUnionDecl.typeParams.IsEmpty then
+                                bootstrapNameEnv
+                            else
+                                let sub = bootstrapNameEnv.sub()
+                                for paramName in resolvedUnionDecl.typeParams do
+                                    sub.scope.DeclareType(paramName, TypeId.TypeVar paramName)
+                                sub
+
+                        // union 本体直下のフィールド（全バリアントが継承する共有フィールド）。
+                        let unionFieldDefs =
+                            resolvedUnionDecl.decl.fields
+                            |> List.choose (fun item ->
+                                match item with
+                                | :? Ast.DataItem.Field as fieldItem ->
+                                    let fieldType = fieldNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                    let fieldSid = symbolTable.NextId()
+                                    symbolTable.Add(fieldSid, { name = $"{unionName}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
+                                    Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; isMutable = fieldItem.isMutable; span = fieldItem.span }
+                                | _ -> None)
+
+                        // ルート型（abstract class）を生成する。
+                        let unionRootHirFields =
+                            unionFieldDefs
+                            |> List.map (fun fieldDef -> Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                        types.Add(Hir.Type(unionSid, false, true, None, resolvedUnionDecl.typeParams, unionRootHirFields, []))
+
+                        // 各バリアントの DataTypeDef を構築し、defs へ追加する。
+                        let variantInfos, defsWithVariants =
+                            resolvedUnionDecl.decl.variants
+                            |> List.fold
+                                (fun (variantAcc, defsAcc) variant ->
+                                    let variantNameOpt, ownFieldItems =
+                                        match variant with
+                                        | :? Ast.Decl.Data as structVariant -> Some structVariant.name, structVariant.items
+                                        | :? Ast.Decl.Object as objVariant -> Some objVariant.name, []
+                                        | _ -> None, []
+                                    match variantNameOpt |> Option.bind (fun n -> resolvedUnionDecl.variantSids |> Map.tryFind n |> Option.map (fun sid -> n, sid)) with
+                                    | None -> variantAcc, defsAcc
+                                    | Some (variantName, variantSid) ->
+                                        let qualifiedName = sprintf "%s'%s" unionName variantName
+                                        // バリアント自身のフィールド（struct バリアントの items）を解決する。
+                                        let ownFieldDefs =
+                                            ownFieldItems
+                                            |> List.choose (fun item ->
+                                                match item with
+                                                | :? Ast.DataItem.Field as fieldItem ->
+                                                    let fieldType = fieldNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                                    let fieldSid = symbolTable.NextId()
+                                                    symbolTable.Add(fieldSid, { name = $"{qualifiedName}.{fieldItem.name}"; typ = fieldType; kind = SymbolKind.Local() })
+                                                    Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; isMutable = fieldItem.isMutable; span = fieldItem.span }
+                                                | _ -> None)
+                                        let variantHirFields =
+                                            ownFieldDefs
+                                            |> List.map (fun fieldDef -> Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
+                                        types.Add(Hir.Type(variantSid, false, false, Some(TypeId.Name unionSid), resolvedUnionDecl.typeParams, variantHirFields, []))
+                                        let variantDef =
+                                            { typeSid = variantSid
+                                              baseType = Some(TypeId.Name unionSid)
+                                              delegatedByFieldName = None
+                                              typeParams = resolvedUnionDecl.typeParams
+                                              fields = ownFieldDefs
+                                              hiddenFields = []
+                                              enumInfo = None
+                                              unionInfo = None
+                                              methods = Map.empty }
+                                        let variantInfo = { name = variantName; typeSid = variantSid; span = variant.span }
+                                        variantAcc @ [ variantInfo ], Map.add qualifiedName variantDef defsAcc)
+                                ([], defs)
+
+                        // ルート型の DataTypeDef を登録する。
+                        Map.add
+                            unionName
+                            { typeSid = unionSid
+                              baseType = None
+                              delegatedByFieldName = None
+                              typeParams = resolvedUnionDecl.typeParams
+                              fields = unionFieldDefs
+                              hiddenFields = []
+                              enumInfo = None
+                              unionInfo = Some { isExtendable = resolvedUnionDecl.decl.isExtendable; variants = variantInfos }
+                              methods = Map.empty }
+                            defsWithVariants)
                     dataTypeDefs
 
             // role 宣言を HIR インターフェイス型として処理する。
@@ -414,6 +513,7 @@ module Analyze =
                                       fields = resolvedFields
                                       hiddenFields = []
                                       enumInfo = None
+                                      unionInfo = None
                                       methods = Map.empty }
                                 | :? Ast.Decl.Enum as enumDecl ->
                                     let tagFieldName = enumTagFieldName typeNameForLookup
@@ -549,6 +649,7 @@ module Analyze =
                                           Some
                                               { hiddenTagField = hiddenTagField
                                                 cases = enumCases }
+                                      unionInfo = None
                                       methods = Map.empty }
                                 | _ ->
                                     { typeSid = typeSid
@@ -558,6 +659,7 @@ module Analyze =
                                       fields = []
                                       hiddenFields = []
                                       enumInfo = None
+                                      unionInfo = None
                                       methods = Map.empty }
                             let importedImplMethodMap, importedImplDiagnostics =
                                 let lastDot = fullTypePath.LastIndexOf('.')

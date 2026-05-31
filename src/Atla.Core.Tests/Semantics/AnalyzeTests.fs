@@ -285,6 +285,68 @@ fn main (color: Color): Int
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
+    [<Fact>]
+    let ``semantic analysis reports non exhaustive union match`` () =
+        let source = """
+union Shape
+    struct Sq: Shape
+        val side: Int
+    struct Ci: Shape
+        val rad: Int
+
+fn main (shape: Shape): Int
+    match shape
+    | Shape'Sq { side, .. } -> side
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Non-exhaustive match"))
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for non-exhaustive union match")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis allows non exhaustive match on extendable union`` () =
+        let source = """
+extendable union Shape
+    struct Sq: Shape
+        val side: Int
+    struct Ci: Shape
+        val rad: Int
+
+fn main (shape: Shape): Int
+    match shape
+    | Shape'Sq { side, .. } -> side
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { diagnostics = diagnostics } ->
+                    Assert.DoesNotContain(diagnostics, fun diagnostic -> diagnostic.message.Contains("Non-exhaustive match"))
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
     /// 回帰テスト: do ブロック末尾式の型が unit でない場合に
     /// "Cannot unify: unit and T" が誤報告されなかったことを検証する。
     /// DataInit（具体型を直接返す式）を末尾に置くパターン。

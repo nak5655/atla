@@ -23,6 +23,19 @@ module AnalyzeEnv =
         { hiddenTagField: DataFieldDef
           cases: EnumCaseDef list }
 
+    /// union バリアントの定義。name は修飾なしバリアント名、typeSid はバリアント型の SymbolId。
+    type UnionVariantDef =
+        { name: string
+          typeSid: SymbolId
+          span: Atla.Core.Data.Span }
+
+    /// union ルート型のメタデータ。
+    /// isExtendable=true のとき外部バリアント追加を許可し、match の網羅性チェックを行わない。
+    /// variants は宣言順のバリアント一覧（網羅性チェックの基準集合）。
+    type UnionTypeDef =
+        { isExtendable: bool
+          variants: UnionVariantDef list }
+
     type DataTypeDef =
         { typeSid: SymbolId
           baseType: TypeId option
@@ -32,6 +45,8 @@ module AnalyzeEnv =
           fields: DataFieldDef list
           hiddenFields: DataFieldDef list
           enumInfo: EnumTypeDef option
+          /// union ルート型の場合に設定されるメタデータ。バリアント DataTypeDef では None。
+          unionInfo: UnionTypeDef option
           methods: Map<string, SymbolId * TypeId * bool> }
 
     type ModuleExport =
