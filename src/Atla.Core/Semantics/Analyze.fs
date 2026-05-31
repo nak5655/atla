@@ -317,8 +317,10 @@ module Analyze =
                         types.Add(Hir.Type(unionSid, false, true, None, resolvedUnionDecl.typeParams, unionRootHirFields, []))
 
                         // 各バリアントの DataTypeDef を構築し、defs へ追加する。
+                        // 本体内バリアント（decl.variants）に加え、extendable union の外部バリアント
+                        // （externalVariants, union 本体外で宣言された struct/object）も同様に処理する。
                         let variantInfos, defsWithVariants =
-                            resolvedUnionDecl.decl.variants
+                            (resolvedUnionDecl.decl.variants @ resolvedUnionDecl.externalVariants)
                             |> List.fold
                                 (fun (variantAcc, defsAcc) variant ->
                                     let variantNameOpt, ownFieldItems, objectFieldInits =

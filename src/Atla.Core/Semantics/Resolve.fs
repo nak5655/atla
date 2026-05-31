@@ -15,11 +15,14 @@ module Resolve =
           typeParams: string list
           decl: Ast.Decl.Enum }
 
-    /// 解決済み union 宣言。variantSids は修飾なしバリアント名 → バリアント型 SymbolId のマップ。
+    /// 解決済み union 宣言。variantSids は修飾なしバリアント名 → バリアント型 SymbolId のマップ
+    /// （union 本体内バリアントと extendable union への外部バリアントの両方を含む）。
+    /// externalVariants は union 本体外で宣言された追加バリアント（struct/object）の AST。
     type ResolvedUnionDecl =
         { typeSid: SymbolId
           typeParams: string list
           variantSids: Map<string, SymbolId>
+          externalVariants: Ast.Decl list
           decl: Ast.Decl.Union }
 
     type ResolvedRoleDecl =
@@ -177,6 +180,12 @@ module Resolve =
         let dataDecls = ResizeArray<ResolvedDataDecl>()
         let enumDecls = ResizeArray<ResolvedEnumDecl>()
         let unionDecls = ResizeArray<ResolvedUnionDecl>()
+        // union 名 → (ルート型 SID, union 宣言 AST)。外部バリアント解決のため第一パスで構築する。
+        let unionRootsByName = System.Collections.Generic.Dictionary<string, SymbolId * Ast.Decl.Union>()
+        // union 名 → 修飾なしバリアント名 → バリアント型 SID。本体内・外部の両バリアントを蓄積する。
+        let unionVariantSids = System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, SymbolId>>()
+        // union 名 → 外部バリアント宣言（struct/object）の蓄積。
+        let unionExternalVariants = System.Collections.Generic.Dictionary<string, ResizeArray<Ast.Decl>>()
         let roleDecls = ResizeArray<ResolvedRoleDecl>()
         let implDecls = ResizeArray<SymbolId * TypeId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
@@ -186,7 +195,7 @@ module Resolve =
         // data / enum / role 型名を先に登録し、同一モジュール内で相互参照可能にする。
         for decl in moduleAst.decls do
             match decl with
-            | :? Ast.Decl.Data as dataDecl ->
+            | :? Ast.Decl.Data as dataDecl when dataDecl.baseUnionName.IsNone ->
                 match moduleScope.ResolveType(dataDecl.name) with
                 | Some _ ->
                     diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" dataDecl.name, dataDecl.span))
@@ -195,6 +204,10 @@ module Resolve =
                     symbolTable.Add(typeSid, { name = dataDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
                     moduleScope.DeclareType(dataDecl.name, TypeId.Name typeSid)
                     dataDecls.Add({ typeSid = typeSid; typeParams = dataDecl.typeParams; decl = dataDecl })
+            // `struct V: Union` / `object V: Union` 形式の外部バリアントは第一パスでは登録しない。
+            // union ルートの登録後に処理する必要があるため、後続の専用パスで扱う。
+            | :? Ast.Decl.Data -> ()
+            | :? Ast.Decl.Object -> ()
             | :? Ast.Decl.Enum as enumDecl ->
                 match moduleScope.ResolveType(enumDecl.name) with
                 | Some _ ->
@@ -216,24 +229,25 @@ module Resolve =
 
                     // 各バリアントの型を修飾名（`Union'Variant`）で登録する。
                     // Phase 1 は単層のみ対応し、ネスト union（Ast.Decl.Union）はバリアントとしてまだ扱わない。
-                    let variantSids =
-                        unionDecl.variants
-                        |> List.choose (fun variant ->
-                            let variantNameOpt =
-                                match variant with
-                                | :? Ast.Decl.Data as structVariant -> Some structVariant.name
-                                | :? Ast.Decl.Object as objVariant -> Some objVariant.name
-                                | _ -> None
-                            variantNameOpt
-                            |> Option.map (fun variantName ->
-                                let qualifiedName = sprintf "%s'%s" unionDecl.name variantName
-                                let variantSid = symbolTable.NextId()
-                                symbolTable.Add(variantSid, { name = qualifiedName; typ = TypeId.Name variantSid; kind = SymbolKind.Local() })
-                                moduleScope.DeclareType(qualifiedName, TypeId.Name variantSid)
-                                variantName, variantSid))
-                        |> Map.ofList
+                    let variantSids = System.Collections.Generic.Dictionary<string, SymbolId>()
+                    for variant in unionDecl.variants do
+                        let variantNameOpt =
+                            match variant with
+                            | :? Ast.Decl.Data as structVariant -> Some structVariant.name
+                            | :? Ast.Decl.Object as objVariant -> Some objVariant.name
+                            | _ -> None
+                        match variantNameOpt with
+                        | Some variantName ->
+                            let qualifiedName = sprintf "%s'%s" unionDecl.name variantName
+                            let variantSid = symbolTable.NextId()
+                            symbolTable.Add(variantSid, { name = qualifiedName; typ = TypeId.Name variantSid; kind = SymbolKind.Local() })
+                            moduleScope.DeclareType(qualifiedName, TypeId.Name variantSid)
+                            variantSids.[variantName] <- variantSid
+                        | None -> ()
 
-                    unionDecls.Add({ typeSid = typeSid; typeParams = unionDecl.typeParams; variantSids = variantSids; decl = unionDecl })
+                    unionRootsByName.[unionDecl.name] <- (typeSid, unionDecl)
+                    unionVariantSids.[unionDecl.name] <- variantSids
+                    unionExternalVariants.[unionDecl.name] <- ResizeArray<Ast.Decl>()
             | :? Ast.Decl.Role as roleDecl ->
                 // role 型を型スコープへ事前登録し、同一モジュール内での型注釈で参照可能にする。
                 match moduleScope.ResolveType(roleDecl.name) with
@@ -245,6 +259,46 @@ module Resolve =
                     moduleScope.DeclareType(roleDecl.name, TypeId.Name typeSid)
                     roleDecls.Add({ typeSid = typeSid; decl = roleDecl })
             | _ -> ()
+
+        // 外部バリアントパス: union 本体外で宣言された `struct V: Union` / `object V: Union` を処理する。
+        // - 対象 union が存在し、かつ extendable であることを検証する（sealed への外部追加はエラー）。
+        // - バリアント型を修飾名 `Union'V` で登録し、unionExternalVariants へ蓄積する。
+        let registerExternalVariant (unionName: string) (variantName: string) (span: Atla.Core.Data.Span) (variantDecl: Ast.Decl) =
+            match unionRootsByName.TryGetValue(unionName) with
+            | false, _ ->
+                diagnostics.Add(Diagnostic.Error(sprintf "Undefined union '%s' for variant '%s'" unionName variantName, span))
+            | true, (_, unionAst) ->
+                if not unionAst.isExtendable then
+                    diagnostics.Add(Diagnostic.Error(sprintf "Cannot add external variant '%s' to sealed union '%s'; mark the union 'extendable'" variantName unionName, span))
+                else
+                    let variantSids = unionVariantSids.[unionName]
+                    if variantSids.ContainsKey(variantName) then
+                        diagnostics.Add(Diagnostic.Error(sprintf "Variant '%s' is already defined for union '%s'" variantName unionName, span))
+                    else
+                        let qualifiedName = sprintf "%s'%s" unionName variantName
+                        let variantSid = symbolTable.NextId()
+                        symbolTable.Add(variantSid, { name = qualifiedName; typ = TypeId.Name variantSid; kind = SymbolKind.Local() })
+                        moduleScope.DeclareType(qualifiedName, TypeId.Name variantSid)
+                        variantSids.[variantName] <- variantSid
+                        unionExternalVariants.[unionName].Add(variantDecl)
+
+        for decl in moduleAst.decls do
+            match decl with
+            | :? Ast.Decl.Data as structVariant ->
+                match structVariant.baseUnionName with
+                | Some unionName -> registerExternalVariant unionName structVariant.name structVariant.span decl
+                | None -> ()
+            | :? Ast.Decl.Object as objVariant ->
+                registerExternalVariant objVariant.baseUnionName objVariant.name objVariant.span decl
+            | _ -> ()
+
+        // union 解決結果を確定する（本体内 + 外部バリアントの SID マップと外部バリアント AST を含む）。
+        for kvp in unionRootsByName do
+            let unionName = kvp.Key
+            let (typeSid, unionAst) = kvp.Value
+            let variantSids = unionVariantSids.[unionName] |> Seq.map (fun e -> e.Key, e.Value) |> Map.ofSeq
+            let externalVariants = unionExternalVariants.[unionName] |> List.ofSeq
+            unionDecls.Add({ typeSid = typeSid; typeParams = unionAst.typeParams; variantSids = variantSids; externalVariants = externalVariants; decl = unionAst })
 
         for decl in moduleAst.decls do
             match decl with
