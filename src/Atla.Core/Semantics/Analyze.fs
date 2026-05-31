@@ -321,11 +321,19 @@ module Analyze =
                             resolvedUnionDecl.decl.variants
                             |> List.fold
                                 (fun (variantAcc, defsAcc) variant ->
-                                    let variantNameOpt, ownFieldItems =
+                                    let variantNameOpt, ownFieldItems, objectFieldInits =
                                         match variant with
-                                        | :? Ast.Decl.Data as structVariant -> Some structVariant.name, structVariant.items
-                                        | :? Ast.Decl.Object as objVariant -> Some objVariant.name, []
-                                        | _ -> None, []
+                                        | :? Ast.Decl.Data as structVariant -> Some structVariant.name, structVariant.items, None
+                                        | :? Ast.Decl.Object as objVariant ->
+                                            // object バリアントは自身のフィールドを持たず、継承フィールドの初期値のみを供給する。
+                                            let inits =
+                                                objVariant.fieldInits
+                                                |> List.choose (fun init ->
+                                                    match init with
+                                                    | :? Ast.DataInitField.Field as f -> Some(f.name, f.value)
+                                                    | _ -> None)
+                                            Some objVariant.name, [], Some inits
+                                        | _ -> None, [], None
                                     match variantNameOpt |> Option.bind (fun n -> resolvedUnionDecl.variantSids |> Map.tryFind n |> Option.map (fun sid -> n, sid)) with
                                     | None -> variantAcc, defsAcc
                                     | Some (variantName, variantSid) ->
@@ -355,7 +363,7 @@ module Analyze =
                                               enumInfo = None
                                               unionInfo = None
                                               methods = Map.empty }
-                                        let variantInfo = { name = variantName; typeSid = variantSid; span = variant.span }
+                                        let variantInfo = { name = variantName; typeSid = variantSid; objectFieldInits = objectFieldInits; span = variant.span }
                                         variantAcc @ [ variantInfo ], Map.add qualifiedName variantDef defsAcc)
                                 ([], defs)
 

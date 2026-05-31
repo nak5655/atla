@@ -1478,6 +1478,47 @@ module ExprAnalyze =
                     | Some (_, caseDef) ->
                         Result.Error(sprintf "Enum case '%s' requires a payload initializer" caseDef.name)
                     | None ->
+                    // union バリアントの値構築（`Union'Variant` ブレースなし）。
+                    // object バリアント（自身フィールドなし）の単集合値、または全フィールドが
+                    // object 初期値で供給される場合に 0 引数構築へ lower する。
+                    match typeDef.unionInfo |> Option.bind (fun unionDef -> unionDef.variants |> List.tryFind (fun v -> v.name = memberAccessExpr.memberName)) with
+                    | Some variantInfo ->
+                        let qualifiedName = sprintf "%s'%s" receiverTypeName variantInfo.name
+                        match nameEnv.dataTypeDefs |> Map.tryFind qualifiedName with
+                        | None -> Result.Error(sprintf "Union variant type '%s' is not defined" qualifiedName)
+                        | Some variantDef ->
+                            let allFieldDefs = variantDef.fields @ typeDef.fields
+                            // object バリアントの初期値マップ（フィールド名 → AST 式）。
+                            let initMap = variantInfo.objectFieldInits |> Option.defaultValue [] |> Map.ofList
+                            // 全フィールドが初期値で供給されるか検査する。
+                            let missing = allFieldDefs |> List.tryFind (fun fd -> not (Map.containsKey fd.name initMap))
+                            match missing with
+                            | Some fd ->
+                                Result.Error(sprintf "Union variant '%s' requires a field initializer for '%s'" variantInfo.name fd.name)
+                            | None ->
+                                let variantType = TypeId.Name variantDef.typeSid
+                                let typedArgsResult =
+                                    allFieldDefs
+                                    |> List.fold (fun acc fd ->
+                                        match acc with
+                                        | Result.Error _ -> acc
+                                        | Result.Ok args ->
+                                            match Map.tryFind fd.name initMap with
+                                            | None -> Result.Error(sprintf "Missing field initializer '%s'" fd.name)
+                                            | Some valueAst ->
+                                                let typed = analyzeExpr nameEnv typeEnv valueAst fd.typ
+                                                match typed with
+                                                | Hir.Expr.ExprError(msg, _, _) -> Result.Error msg
+                                                | _ -> Result.Ok(args @ [ typed ])) (Result.Ok [])
+                                match typedArgsResult with
+                                | Result.Error msg -> Result.Error msg
+                                | Result.Ok typedArgs ->
+                                    match unifyOrError nameEnv typeEnv tid variantType memberAccessExpr.span with
+                                    | Result.Error e -> (match e with Hir.Expr.ExprError(m, _, _) -> Result.Error m | _ -> Result.Error "type mismatch")
+                                    | Result.Ok _ ->
+                                        let allFieldSids = allFieldDefs |> List.map (fun fd -> fd.sid)
+                                        Result.Ok(Hir.Expr.Call(Hir.Callable.DataConstructor(variantDef.typeSid, allFieldSids), None, typedArgs, variantType, memberAccessExpr.span))
+                    | None ->
                         match tryResolveDataStaticMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span with
                         | Result.Ok resolvedMember -> Result.Ok resolvedMember
                         | Result.Error _ ->

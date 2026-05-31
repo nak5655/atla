@@ -2854,3 +2854,37 @@ fn main: ()
     g'brightness. Console'WriteLine.
 """
         Assert.Equal("60\n42", runForStdout "UnionStructVariants" program)
+
+    [<Fact>]
+    let ``union object variants with shared field defaults compile and match correctly`` () =
+        let program = """
+import System'Console
+
+union Color
+    val alpha: Int
+
+    object RichBlack: Color
+        alpha = 255
+
+    object Gold: Color
+        alpha = 200
+
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
+
+impl Color
+    fn red self: Int
+        match self
+        | Color'RichBlack -> 0
+        | Color'Gold -> 255
+        | Color'Rgb { r, .. } -> r
+
+fn main: ()
+    Color'RichBlack'red. Console'WriteLine.
+    Color'Gold'red. Console'WriteLine.
+    val magenta = Color'Rgb { r = 255, g = 0, b = 255, alpha = 255 }
+    magenta'red. Console'WriteLine.
+"""
+        Assert.Equal("0\n255\n255", runForStdout "UnionObjectVariants" program)
