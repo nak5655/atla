@@ -62,6 +62,10 @@ module ClosureConversion =
             ClosedHir.Expr.If(convertHirExpr cond, convertHirExpr thenBranch, convertHirExpr elseBranch, tid, span)
         | Hir.Expr.Await (operand, tid, span) ->
             ClosedHir.Expr.Await(convertHirExpr operand, tid, span)
+        | Hir.Expr.TypeTest (e, testType, span) ->
+            ClosedHir.Expr.TypeTest(convertHirExpr e, testType, span)
+        | Hir.Expr.Cast (e, targetType, span) ->
+            ClosedHir.Expr.Cast(convertHirExpr e, targetType, span)
         | Hir.Expr.ExprError (msg, tid, span) -> ClosedHir.Expr.ExprError(msg, tid, span)
 
     /// `Hir.Stmt` を構造的に `ClosedHir.Stmt` へ変換する（クロージャー変換なし）。
@@ -382,6 +386,12 @@ module ClosureConversion =
             // PR-3 の AsyncRewrite で状態機械生成時に意味解釈される。
             let rewrittenOperand, nextState = rewriteExpr symbolTable ownerMethod captureMap operand state
             ClosedHir.Expr.Await(rewrittenOperand, tid, span), nextState
+        | Hir.Expr.TypeTest (e, testType, span) ->
+            let rewritten, nextState = rewriteExpr symbolTable ownerMethod captureMap e state
+            ClosedHir.Expr.TypeTest(rewritten, testType, span), nextState
+        | Hir.Expr.Cast (e, targetType, span) ->
+            let rewritten, nextState = rewriteExpr symbolTable ownerMethod captureMap e state
+            ClosedHir.Expr.Cast(rewritten, targetType, span), nextState
         | Hir.Expr.Lambda (args, ret, body, tid, span) ->
             // Phase 1 で構築済みの captureMap を参照して捕捉変数メタデータを取得する。
             let capturedMetadata, unknownSids =

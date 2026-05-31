@@ -623,7 +623,80 @@ module ExprAnalyze =
             | Some enumRootDef ->
                 match enumRootDef.enumInfo with
                 | None ->
-                    Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" enumInitExpr.typeName, tid, enumInitExpr.span)
+                    match enumRootDef.unionInfo with
+                    | Some unionDef ->
+                        // union バリアント構築: `Union'Variant { field = value, ... }`。
+                        // 提供フィールドはバリアント自身のフィールドと union 共有フィールドの和に対応する。
+                        match unionDef.variants |> List.tryFind (fun v -> v.name = enumInitExpr.caseName) with
+                        | None ->
+                            Hir.Expr.ExprError(sprintf "Unknown union variant '%s' for type '%s'" enumInitExpr.caseName enumInitExpr.typeName, tid, enumInitExpr.span)
+                        | Some variantInfo ->
+                            let qualifiedName = sprintf "%s'%s" enumInitExpr.typeName variantInfo.name
+                            match nameEnv.dataTypeDefs |> Map.tryFind qualifiedName with
+                            | None ->
+                                Hir.Expr.ExprError(sprintf "Union variant type '%s' is not defined" qualifiedName, tid, enumInitExpr.span)
+                            | Some variantDef ->
+                                // コンストラクタ引数の順序: バリアント自身のフィールド → union 共有フィールド。
+                                // Gen 側のバリアント ctor も同順でフィールドを受け取り、継承フィールドを含めて stfld する。
+                                let allFieldDefs = variantDef.fields @ enumRootDef.fields
+                                let initFields =
+                                    enumInitExpr.fields
+                                    |> List.choose (fun field ->
+                                        match field with
+                                        | :? Ast.DataInitField.Field as namedField -> Some namedField
+                                        | _ -> None)
+                                let initFieldMap = initFields |> List.map (fun f -> f.name, f.value) |> Map.ofList
+                                let allFieldNames = allFieldDefs |> List.map (fun fd -> fd.name) |> Set.ofList
+                                // 重複・未知・欠落フィールドを検査する。
+                                let duplicateName =
+                                    initFields
+                                    |> List.fold (fun (seen, dup) f ->
+                                        match dup with
+                                        | Some _ -> seen, dup
+                                        | None when Set.contains f.name seen -> seen, Some f.name
+                                        | None -> Set.add f.name seen, None) (Set.empty, None)
+                                    |> snd
+                                let unknownName = initFields |> List.tryFind (fun f -> not (Set.contains f.name allFieldNames)) |> Option.map (fun f -> f.name)
+                                let missingField = allFieldDefs |> List.tryFind (fun fd -> not (Map.containsKey fd.name initFieldMap))
+                                match duplicateName, unknownName, missingField with
+                                | Some dup, _, _ ->
+                                    Hir.Expr.ExprError(sprintf "Duplicate field initializer '%s'" dup, tid, enumInitExpr.span)
+                                | _, Some unknown, _ ->
+                                    Hir.Expr.ExprError(sprintf "Unknown field '%s' for union variant '%s'" unknown variantInfo.name, tid, enumInitExpr.span)
+                                | _, _, Some missing ->
+                                    Hir.Expr.ExprError(sprintf "Missing required field '%s' for union variant '%s'" missing.name variantInfo.name, tid, enumInitExpr.span)
+                                | None, None, None ->
+                                    let variantType = TypeId.Name variantDef.typeSid
+                                    // 各フィールド値を期待型で解析する。エラーは伝播。
+                                    let typedArgsResult =
+                                        allFieldDefs
+                                        |> List.fold (fun acc fieldDef ->
+                                            match acc with
+                                            | Result.Error _ -> acc
+                                            | Result.Ok args ->
+                                                match Map.tryFind fieldDef.name initFieldMap with
+                                                | None -> Result.Error(Hir.Expr.ExprError(sprintf "Missing required field '%s'" fieldDef.name, tid, enumInitExpr.span))
+                                                | Some valueExpr ->
+                                                    let typedExpr = analyzeExpr nameEnv typeEnv valueExpr fieldDef.typ
+                                                    match typedExpr with
+                                                    | Hir.Expr.ExprError _ as e -> Result.Error e
+                                                    | _ -> Result.Ok(args @ [ typedExpr ])) (Result.Ok [])
+                                    match typedArgsResult with
+                                    | Result.Error e -> e
+                                    | Result.Ok typedArgs ->
+                                        // バリアント型 tid と統一（サブタイプ: variant <: union を許容）。
+                                        match unifyOrError nameEnv typeEnv tid variantType enumInitExpr.span with
+                                        | Result.Error e -> e
+                                        | Result.Ok _ ->
+                                            let allFieldSids = allFieldDefs |> List.map (fun fd -> fd.sid)
+                                            Hir.Expr.Call(
+                                                Hir.Callable.DataConstructor(variantDef.typeSid, allFieldSids),
+                                                None,
+                                                typedArgs,
+                                                variantType,
+                                                enumInitExpr.span)
+                    | None ->
+                        Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" enumInitExpr.typeName, tid, enumInitExpr.span)
                 | Some enumDef ->
                     match enumDef.cases |> List.tryFind (fun caseDef -> caseDef.name = enumInitExpr.caseName) with
                     | None ->
@@ -989,8 +1062,16 @@ module ExprAnalyze =
                         | Some symInfo ->
                             match typeEnv.resolveType symInfo.typ with
                             | TypeId.Fn(expectedArgs, _) when expectedArgs.Length = analyzedArgs.Length + 1 ->
+                                // receiver が expectedThis のサブタイプ（union バリアント <: union ルート等）でも
+                                // 暗黙 this 注入を許可する。canUnify は別 SID の Name 同士を非互換とするため、
+                                // 名義サブタイプ判定 isSubtype を併用する。
+                                let isThisCompatible (expectedThis: TypeId) =
+                                    typeEnv.canUnify instance.typ expectedThis
+                                    || (match typeEnv.resolveType instance.typ, typeEnv.resolveType expectedThis with
+                                        | TypeId.Name actualSid, TypeId.Name expectedSid -> nameEnv.isSubtype actualSid expectedSid
+                                        | _ -> false)
                                 match expectedArgs with
-                                | expectedThis :: _ when typeEnv.canUnify instance.typ expectedThis ->
+                                | expectedThis :: _ when isThisCompatible expectedThis ->
                                     None, instance :: analyzedArgs
                                 | _ -> callInstance, analyzedArgs
                             | _ -> callInstance, analyzedArgs
@@ -1229,7 +1310,12 @@ module ExprAnalyze =
                             | TypeId.Fn(expectedArgs, expectedRet) when expectedArgs.Length = allArgs.Length ->
                                 let argsMatch =
                                     List.zip allArgs expectedArgs
-                                    |> List.forall (fun (actualArg, expectedArg) -> typeEnv.canUnify actualArg.typ expectedArg)
+                                    |> List.forall (fun (actualArg, expectedArg) ->
+                                        typeEnv.canUnify actualArg.typ expectedArg
+                                        // 名義サブタイプ（union バリアント <: union ルート等）も許容する。
+                                        || (match typeEnv.resolveType actualArg.typ, typeEnv.resolveType expectedArg with
+                                            | TypeId.Name actualSid, TypeId.Name expectedSid -> nameEnv.isSubtype actualSid expectedSid
+                                            | _ -> false))
                                 if argsMatch then
                                     Some (resolvedCallable, expectedRet)
                                 else
@@ -1391,6 +1477,47 @@ module ExprAnalyze =
                         Result.Ok(lowerEnumCaseConstructor typeDef enumDef caseDef rootType [] memberAccessExpr.span)
                     | Some (_, caseDef) ->
                         Result.Error(sprintf "Enum case '%s' requires a payload initializer" caseDef.name)
+                    | None ->
+                    // union バリアントの値構築（`Union'Variant` ブレースなし）。
+                    // object バリアント（自身フィールドなし）の単集合値、または全フィールドが
+                    // object 初期値で供給される場合に 0 引数構築へ lower する。
+                    match typeDef.unionInfo |> Option.bind (fun unionDef -> unionDef.variants |> List.tryFind (fun v -> v.name = memberAccessExpr.memberName)) with
+                    | Some variantInfo ->
+                        let qualifiedName = sprintf "%s'%s" receiverTypeName variantInfo.name
+                        match nameEnv.dataTypeDefs |> Map.tryFind qualifiedName with
+                        | None -> Result.Error(sprintf "Union variant type '%s' is not defined" qualifiedName)
+                        | Some variantDef ->
+                            let allFieldDefs = variantDef.fields @ typeDef.fields
+                            // object バリアントの初期値マップ（フィールド名 → AST 式）。
+                            let initMap = variantInfo.objectFieldInits |> Option.defaultValue [] |> Map.ofList
+                            // 全フィールドが初期値で供給されるか検査する。
+                            let missing = allFieldDefs |> List.tryFind (fun fd -> not (Map.containsKey fd.name initMap))
+                            match missing with
+                            | Some fd ->
+                                Result.Error(sprintf "Union variant '%s' requires a field initializer for '%s'" variantInfo.name fd.name)
+                            | None ->
+                                let variantType = TypeId.Name variantDef.typeSid
+                                let typedArgsResult =
+                                    allFieldDefs
+                                    |> List.fold (fun acc fd ->
+                                        match acc with
+                                        | Result.Error _ -> acc
+                                        | Result.Ok args ->
+                                            match Map.tryFind fd.name initMap with
+                                            | None -> Result.Error(sprintf "Missing field initializer '%s'" fd.name)
+                                            | Some valueAst ->
+                                                let typed = analyzeExpr nameEnv typeEnv valueAst fd.typ
+                                                match typed with
+                                                | Hir.Expr.ExprError(msg, _, _) -> Result.Error msg
+                                                | _ -> Result.Ok(args @ [ typed ])) (Result.Ok [])
+                                match typedArgsResult with
+                                | Result.Error msg -> Result.Error msg
+                                | Result.Ok typedArgs ->
+                                    match unifyOrError nameEnv typeEnv tid variantType memberAccessExpr.span with
+                                    | Result.Error e -> (match e with Hir.Expr.ExprError(m, _, _) -> Result.Error m | _ -> Result.Error "type mismatch")
+                                    | Result.Ok _ ->
+                                        let allFieldSids = allFieldDefs |> List.map (fun fd -> fd.sid)
+                                        Result.Ok(Hir.Expr.Call(Hir.Callable.DataConstructor(variantDef.typeSid, allFieldSids), None, typedArgs, variantType, memberAccessExpr.span))
                     | None ->
                         match tryResolveDataStaticMember nameEnv receiverTypeSid memberAccessExpr.memberName memberAccessExpr.span with
                         | Result.Ok resolvedMember -> Result.Ok resolvedMember
@@ -1732,7 +1859,129 @@ module ExprAnalyze =
                 | Some scrutineeTypeDef ->
                     match scrutineeTypeDef.enumInfo with
                     | None ->
-                        Hir.Expr.ExprError(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
+                        match scrutineeTypeDef.unionInfo with
+                        | None ->
+                            Hir.Expr.ExprError(sprintf "Type '%s' is not an enum or union" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
+                        | Some unionDef ->
+                            // union の match: 各 arm を isinst 型テストの if 連鎖へ lower する。
+                            let unionName =
+                                nameEnv.resolveSym scrutineeTypeDef.typeSid
+                                |> Option.map (fun symInfo -> symInfo.name)
+                                |> Option.defaultValue ""
+                            let matchNameEnv = nameEnv.sub()
+                            let scrutineeSid = matchNameEnv.declareLocal "__match_scrutinee" analyzedScrutinee.typ
+                            let scrutineeRef = Hir.Expr.Id(scrutineeSid, analyzedScrutinee.typ, matchExpr.scrutinee.span)
+
+                            // バリアント名 → (variantDef, variantInfo) の索引を作る。
+                            // バリアント DataTypeDef は修飾名 `Union'Variant` で dataTypeDefs に登録されている。
+                            let variantByName =
+                                unionDef.variants
+                                |> List.choose (fun variantInfo ->
+                                    let qualifiedName = sprintf "%s'%s" unionName variantInfo.name
+                                    nameEnv.dataTypeDefs
+                                    |> Map.tryFind qualifiedName
+                                    |> Option.map (fun variantDef -> variantInfo.name, (variantDef, variantInfo)))
+                                |> Map.ofList
+
+                            let analyzeUnionArm (arm: Ast.MatchArm) =
+                                match arm with
+                                | :? Ast.MatchArm.Arm as matchArm ->
+                                    match matchArm.pattern with
+                                    | :? Ast.Pattern.Enum as variantPattern ->
+                                        if variantPattern.typeName <> unionName then
+                                            Result.Error(Hir.Expr.ExprError(sprintf "Pattern type '%s' does not match union type '%s'" variantPattern.typeName unionName, tid, matchArm.span))
+                                        else
+                                            match variantByName |> Map.tryFind variantPattern.caseName with
+                                            | None ->
+                                                Result.Error(Hir.Expr.ExprError(sprintf "Unknown union variant '%s' for type '%s'" variantPattern.caseName unionName, tid, matchArm.span))
+                                            | Some (variantDef, variantInfo) ->
+                                                // フィールド束縛を構築する。`{ name, .. }` の各 name は
+                                                // バリアント自身のフィールド、または union 共有フィールドのいずれか。
+                                                let namedFieldNames =
+                                                    variantPattern.fields
+                                                    |> List.choose (fun field ->
+                                                        match field with
+                                                        | :? Ast.PatternField.Named as namedField -> Some namedField.name
+                                                        | _ -> None)
+                                                // フィールド名 → (定義型 SID, fieldDef) を own → union 共有の順に解決する。
+                                                let resolveField (fieldName: string) =
+                                                    variantDef.fields
+                                                    |> List.tryFind (fun fd -> fd.name = fieldName)
+                                                    |> Option.map (fun fd -> variantDef.typeSid, fd)
+                                                    |> Option.orElseWith (fun () ->
+                                                        scrutineeTypeDef.fields
+                                                        |> List.tryFind (fun fd -> fd.name = fieldName)
+                                                        |> Option.map (fun fd -> scrutineeTypeDef.typeSid, fd))
+                                                let unknownField =
+                                                    namedFieldNames |> List.tryFind (fun n -> (resolveField n).IsNone)
+                                                match unknownField with
+                                                | Some unknownName ->
+                                                    Result.Error(Hir.Expr.ExprError(sprintf "Unknown pattern field '%s' for union variant '%s'" unknownName variantPattern.caseName, tid, matchArm.span))
+                                                | None ->
+                                                    let armNameEnv = matchNameEnv.sub()
+                                                    let variantType = TypeId.Name variantDef.typeSid
+                                                    // scrutinee をバリアント型へダウンキャストした式（own フィールドアクセス用）。
+                                                    let castExpr = Hir.Expr.Cast(scrutineeRef, variantType, matchArm.span)
+                                                    let bindingStmts =
+                                                        namedFieldNames
+                                                        |> List.choose (fun fieldName ->
+                                                            resolveField fieldName
+                                                            |> Option.map (fun (ownerSid, fieldDef) ->
+                                                                let sid = armNameEnv.declareLocal fieldName fieldDef.typ
+                                                                let valueExpr =
+                                                                    Hir.Expr.MemberAccess(Hir.Member.DataField(ownerSid, fieldDef.sid), Some castExpr, fieldDef.typ, matchArm.span)
+                                                                Hir.Stmt.Let(sid, false, valueExpr, matchArm.span)))
+                                                    let bodyExpr = analyzeExpr armNameEnv typeEnv matchArm.body tid
+                                                    let thenExpr =
+                                                        if bindingStmts.IsEmpty then bodyExpr
+                                                        else Hir.Expr.Block(bindingStmts, bodyExpr, bodyExpr.typ, matchArm.span)
+                                                    Result.Ok(variantInfo.name, variantDef, thenExpr)
+                                    | _ ->
+                                        Result.Error(Hir.Expr.ExprError("Unsupported match pattern", tid, matchArm.span))
+                                | _ ->
+                                    Result.Error(Hir.Expr.ExprError("Unsupported match arm", tid, arm.span))
+
+                            let unionArmResults = matchExpr.arms |> List.map analyzeUnionArm
+                            match unionArmResults |> List.tryPick (function | Result.Error err -> Some err | _ -> None) with
+                            | Some errExpr -> errExpr
+                            | None ->
+                                let analyzedArms = unionArmResults |> List.choose (function | Result.Ok value -> Some value | _ -> None)
+                                let duplicateVariant =
+                                    analyzedArms
+                                    |> List.fold
+                                        (fun (seen, dup) (variantName, _, _) ->
+                                            match dup with
+                                            | Some _ -> seen, dup
+                                            | None when Set.contains variantName seen -> seen, Some variantName
+                                            | None -> Set.add variantName seen, None)
+                                        (Set.empty, None)
+                                    |> snd
+                                match duplicateVariant with
+                                | Some variantName ->
+                                    Hir.Expr.ExprError(sprintf "Duplicate match arm for union variant '%s'" variantName, tid, matchExpr.span)
+                                | None ->
+                                    // 網羅性チェック: sealed union のみ。extendable union は省略する。
+                                    let coveredVariants = analyzedArms |> List.map (fun (n, _, _) -> n) |> Set.ofList
+                                    let missingVariant =
+                                        if unionDef.isExtendable then None
+                                        else unionDef.variants |> List.tryFind (fun v -> not (Set.contains v.name coveredVariants))
+                                    match missingVariant with
+                                    | Some v ->
+                                        Hir.Expr.ExprError(sprintf "Non-exhaustive match: missing union variant '%s'" v.name, tid, matchExpr.span)
+                                    | None when analyzedArms.IsEmpty ->
+                                        Hir.Expr.ExprError("Match expression has no arms", tid, matchExpr.span)
+                                    | None ->
+                                        // isinst による if 連鎖。最後の arm を末端 else とする。
+                                        let lastThen = analyzedArms |> List.last |> (fun (_, _, e) -> e)
+                                        let ifChain =
+                                            analyzedArms
+                                            |> List.rev
+                                            |> List.fold
+                                                (fun elseExpr (_, variantDef, thenExpr) ->
+                                                    let condExpr = Hir.Expr.TypeTest(scrutineeRef, TypeId.Name variantDef.typeSid, matchExpr.span)
+                                                    Hir.Expr.If(condExpr, thenExpr, elseExpr, tid, matchExpr.span))
+                                                lastThen
+                                        Hir.Expr.Block([ Hir.Stmt.Let(scrutineeSid, false, analyzedScrutinee, matchExpr.scrutinee.span) ], ifChain, tid, matchExpr.span)
                     | Some enumDef ->
                         let matchNameEnv = nameEnv.sub()
                         let scrutineeSid = matchNameEnv.declareLocal "__match_scrutinee" analyzedScrutinee.typ

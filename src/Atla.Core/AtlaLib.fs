@@ -724,6 +724,7 @@ module AtlaLib =
                                           fields = fieldDefs
                                           hiddenFields = hiddenFieldDefs
                                           enumInfo = enumInfo
+                                          unionInfo = None
                                           methods = methodMap }
 
                                     Map.add fullTypeName dataTypeDef defs, diagnostics @ allDiagnostics)

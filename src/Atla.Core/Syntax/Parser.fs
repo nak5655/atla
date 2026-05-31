@@ -688,19 +688,66 @@ module Parser =
                          | None -> caseId.span.right
                      Ast.EnumCase.Case(caseId.str, fields, { left = caseId.span.left; right = rightSpan }) :> Ast.EnumCase))
 
+    // `struct Name [TypeParams...] [: ParentUnion]` に続けてフィールドを並べる。
+    // `: ParentUnion` を付けると union のバリアント（派生 struct）になる。
     and dataDecl: PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
             block (asToken (keyword "struct"))
                 (Once
-                    (tid <&> Many tid <&> Many1 structFieldItem
-                     |>> fun ((id, typeParams), items) ->
+                    (tid <&> Many tid <&> Optional (delim ':' &> tid) <&> Many1 structFieldItem
+                     |>> fun (((id, typeParams), baseUnionOpt), items) ->
                          let typeParamNames = typeParams |> List.map (fun t -> t.str)
+                         let baseUnionName = baseUnionOpt |> Option.map (fun t -> t.str)
                          let rightSpan =
                              match items |> List.tryLast with
                              | Some lastItem -> lastItem.span.right
                              | None -> id.span.right
-                         Ast.Decl.Data(id.str, typeParamNames, items, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
+                         Ast.Decl.Data(id.str, typeParamNames, items, baseUnionName, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
                     (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
+
+    // `object Name: ParentUnion` に続けて継承フィールドへの初期値代入 `field = expr` を並べる単集合バリアント。
+    and objectDecl: PackratParser<Token, Ast.Decl> =
+        Delay (fun () ->
+            block (asToken (keyword "object"))
+                (Once
+                    (tid <& delim ':' <&> tid <&> Many dataInitField
+                     |>> fun ((id, parentId), fieldInits) ->
+                         let rightSpan =
+                             match fieldInits |> List.tryLast with
+                             | Some lastInit -> lastInit.span.right
+                             | None -> parentId.span.right
+                         Ast.Decl.Object(id.str, parentId.str, fieldInits, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
+                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
+
+    // union 本体に現れる要素: フィールド宣言（val/var）またはバリアント宣言（struct/object/ネスト union）。
+    and unionMember: PackratParser<Token, Choice<Ast.DataItem, Ast.Decl>> =
+        Delay (fun () ->
+            (asDataItem structField |>> Choice1Of2)
+            <|> (variantDecl |>> Choice2Of2))
+
+    and variantDecl: PackratParser<Token, Ast.Decl> =
+        Delay (fun () -> dataDecl <|> objectDecl <|> unionDecl)
+
+    // `[extendable] union Name [TypeParams...]` に続けてフィールドとバリアントを並べる。
+    and unionDecl: PackratParser<Token, Ast.Decl> =
+        Delay (fun () ->
+            Optional (asToken (keyword "extendable"))
+            >>= fun extendableTokenOpt ->
+                let isExtendable = Option.isSome extendableTokenOpt
+                block (asToken (keyword "union"))
+                    (Once
+                        (tid <&> Many tid <&> Many unionMember
+                         |>> fun ((id, typeParams), members) ->
+                             let typeParamNames = typeParams |> List.map (fun t -> t.str)
+                             let fields = members |> List.choose (function Choice1Of2 f -> Some f | _ -> None)
+                             let variants = members |> List.choose (function Choice2Of2 d -> Some d | _ -> None)
+                             let rightSpan =
+                                 match List.tryLast members with
+                                 | Some (Choice1Of2 f) -> f.span.right
+                                 | Some (Choice2Of2 d) -> d.span.right
+                                 | None -> id.span.right
+                             Ast.Decl.Union(id.str, typeParamNames, isExtendable, fields, variants, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
+                        (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     and enumDecl: PackratParser<Token, Ast.Decl> =
         Delay (fun () ->
@@ -904,7 +951,7 @@ module Parser =
                     (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     and decl: PackratParser<Token, Ast.Decl> =
-        Delay (fun () -> dataDecl <|> enumDecl <|> importDecl <|> fnDecl <|> implDecl <|> roleDecl)
+        Delay (fun () -> dataDecl <|> objectDecl <|> unionDecl <|> enumDecl <|> importDecl <|> fnDecl <|> implDecl <|> roleDecl)
 
     // role 型宣言: `role TypeName` に続くインデントブロック内に抽象メソッドシグネチャを列挙する。
     and roleDecl: PackratParser<Token, Ast.Decl> =

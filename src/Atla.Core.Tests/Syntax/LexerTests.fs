@@ -99,6 +99,21 @@ module LexerTests =
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``tokenize recognizes union object and extendable keywords`` () =
+        let program = "extendable union Color object RichBlack"
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenize input Position.Zero with
+        | Success(tokens, _) ->
+            for expected in [ "extendable"; "union"; "object" ] do
+                Assert.Contains(tokens, fun token ->
+                    match token with
+                    | :? Token.Keyword as kw -> kw.str = expected
+                    | _ -> false)
+        | Failure(reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
     let ``tokenizeAll emits standalone and trailing comments with spans`` () =
         let program = "# file header\nval answer = 42 # trailing"
         let input: Input<SourceChar> = StringInput program

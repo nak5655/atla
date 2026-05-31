@@ -457,6 +457,26 @@ module Layout =
                                     @ [ Mir.Ins.MarkLabel endLabelId ]
                                 res = Some(Mir.Value.RegVal dst)
                             })
+        // 実行時型テスト: src を評価し、isinst による bool 結果を一時レジスタへ格納する。
+        | ClosedHir.Expr.TypeTest (inner, testType, _) ->
+            match layoutExpr state inner with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, innerKn) ->
+                match innerKn.res with
+                | None -> Result.Error (Diagnostic.Error("TypeTest operand produced no value", inner.span))
+                | Some srcVal ->
+                    let dst, state2 = declareTemp state1 TypeId.Bool
+                    Ok (state2, { ins = innerKn.ins @ [ Mir.Ins.TypeTest(dst, srcVal, testType) ]; res = Some(Mir.Value.RegVal dst) })
+        // ダウンキャスト: src を評価し、castclass 結果を targetType の一時レジスタへ格納する。
+        | ClosedHir.Expr.Cast (inner, targetType, _) ->
+            match layoutExpr state inner with
+            | Result.Error e -> Result.Error e
+            | Ok (state1, innerKn) ->
+                match innerKn.res with
+                | None -> Result.Error (Diagnostic.Error("Cast operand produced no value", inner.span))
+                | Some srcVal ->
+                    let dst, state2 = declareTemp state1 targetType
+                    Ok (state2, { ins = innerKn.ins @ [ Mir.Ins.Cast(dst, srcVal, targetType) ]; res = Some(Mir.Value.RegVal dst) })
         | ClosedHir.Expr.ExprError (message, _, span) ->
             Result.Error (Diagnostic.Error($"Cannot lower erroneous expression: {message}", span))
         | ClosedHir.Expr.Lambda (_, _, _, _, span) ->
@@ -853,7 +873,7 @@ module Layout =
                 | Result.Error e -> (e :: errs, oks)
                 | Ok m -> (errs, m :: oks)) ([], [])
         if List.isEmpty methodErrors then
-            Result.Ok(Mir.Type(typeName, hirType.sym, hirType.isInterface, hirType.baseType, hirType.typeParams, fields, [], List.rev methodSuccesses))
+            Result.Ok(Mir.Type(typeName, hirType.sym, hirType.isInterface, hirType.isAbstract, hirType.baseType, hirType.typeParams, fields, [], List.rev methodSuccesses))
         else
             Result.Error(List.rev methodErrors |> List.head)
 
@@ -928,7 +948,7 @@ module Layout =
                 match baseTypeResult with
                 | Result.Error e -> Result.Error [ e ]
                 | Result.Ok baseType when List.isEmpty invokeErrors ->
-                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.isInterface, baseType.baseType, baseType.typeParams, baseType.fields, baseType.ctors, baseType.methods @ (List.rev invokeSuccesses)))
+                    Ok (Mir.Type(baseType.name, baseType.sym, baseType.isInterface, baseType.isAbstract, baseType.baseType, baseType.typeParams, baseType.fields, baseType.ctors, baseType.methods @ (List.rev invokeSuccesses)))
                 | Result.Ok _ ->
                     Result.Error (List.rev invokeErrors))
 

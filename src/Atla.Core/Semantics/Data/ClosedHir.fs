@@ -35,6 +35,10 @@ module ClosedHir =
         | If of cond: Expr * thenBranch: Expr * elseBranch: Expr * tid: TypeId * span: Span
         /// `await operand` 式（ClosedHir 段階では Hir.Expr.Await を素通し）。状態機械生成は PR-3 で行う。
         | Await of operand: Expr * tid: TypeId * span: Span
+        /// 実行時型テスト（CIL `isinst` + null 比較）。型は Bool。union match ディスパッチで使用する。
+        | TypeTest of expr: Expr * testType: TypeId * span: Span
+        /// ダウンキャスト（CIL `castclass`）。型は targetType。union バリアントのフィールド束縛で使用する。
+        | Cast of expr: Expr * targetType: TypeId * span: Span
         | ExprError of message: string * errTyp: TypeId * span: Span
         // env-class クロージャーフィールド参照。lifted invoke method の第一引数（env インスタンス）からフィールドを読む。
         // envArgSid: env インスタンスが格納された引数の SymbolId（lifted method 内の Arg(0)）
@@ -66,6 +70,8 @@ module ClosedHir =
             | Block (_, _, t, _) -> t
             | If (_, _, _, t, _) -> t
             | Await (_, t, _) -> t
+            | TypeTest _ -> TypeId.Bool
+            | Cast (_, t, _) -> t
             | ExprError (_, t, _) -> t
             | EnvFieldLoad (_, _, t, _) -> t
             | ClosureCreate (_, _, _, t, _) -> t
@@ -87,6 +93,8 @@ module ClosedHir =
             | Block (_, _, _, span) -> span
             | If (_, _, _, _, span) -> span
             | Await (_, _, span) -> span
+            | TypeTest (_, _, span) -> span
+            | Cast (_, _, span) -> span
             | ExprError (_, _, span) -> span
             | EnvFieldLoad (_, _, _, span) -> span
             | ClosureCreate (_, _, _, _, span) -> span
@@ -148,10 +156,15 @@ module ClosedHir =
         member this.span = span
 
     /// クロージャー変換後の型定義。
-    type Type(sid: SymbolId, isInterface: bool, baseType: TypeId option, typeParams: string list, fields: Field list, methods: Method list) =
+    type Type(sid: SymbolId, isInterface: bool, isAbstract: bool, baseType: TypeId option, typeParams: string list, fields: Field list, methods: Method list) =
+        /// 後方互換コンストラクタ。`isAbstract = false` として構築する。
+        new(sid: SymbolId, isInterface: bool, baseType: TypeId option, typeParams: string list, fields: Field list, methods: Method list) =
+            Type(sid, isInterface, false, baseType, typeParams, fields, methods)
         member this.sym = sid
         /// この型がインターフェイス（role 宣言から生成）であるかを示す。
         member this.isInterface = isInterface
+        /// この型が abstract class（union ルート型）であるかを示す。
+        member this.isAbstract = isAbstract
         member this.baseType = baseType
         /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
         member this.typeParams = typeParams
@@ -207,6 +220,10 @@ module ClosedHir =
                 Expr.If(mapExpr f cond, mapExpr f thenBranch, mapExpr f elseBranch, tid, span)
             | Await (operand, tid, span) ->
                 Await(mapExpr f operand, tid, span)
+            | TypeTest (e, testType, span) ->
+                TypeTest(mapExpr f e, testType, span)
+            | Cast (e, targetType, span) ->
+                Cast(mapExpr f e, targetType, span)
             | AddrOf (target, tid, span) ->
                 AddrOf(mapExpr f target, tid, span)
         f mapped
@@ -263,6 +280,8 @@ module ClosedHir =
             let acc''' = foldExpr f acc'' thenBranch
             foldExpr f acc''' elseBranch
         | Await (operand, _, _) -> foldExpr f acc' operand
+        | TypeTest (e, _, _) -> foldExpr f acc' e
+        | Cast (e, _, _) -> foldExpr f acc' e
         | AddrOf (target, _, _) -> foldExpr f acc' target
 
     /// `Stmt` に含まれる全 `Expr` を pre-order で畳み込む。
@@ -351,6 +370,10 @@ module ClosedHir =
             |> List.fold merge zero
         | Await (operand, _, _) ->
             foldExprWithCtx descend afterStmt leaf merge zero ctx' operand
+        | TypeTest (e, _, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' e
+        | Cast (e, _, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' e
         | AddrOf (target, _, _) ->
             foldExprWithCtx descend afterStmt leaf merge zero ctx' target
 
