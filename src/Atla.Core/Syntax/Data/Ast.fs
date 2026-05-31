@@ -570,11 +570,17 @@ module Ast =
         /// `union Name` / `extendable union Name` 形式の直和型宣言。
         /// fields: union 本体直下のフィールド宣言（全バリアントが継承する）。
         /// variants: 本体内に宣言された派生バリアント（Data=struct, Object=object, Union=ネスト union）。
-        type Union(name: string, typeParams: string list, isExtendable: bool, fields: DataItem list, variants: Decl list, span: Span) =
+        type Union(name: string, typeParams: string list, isExtendable: bool, baseUnionName: string option, fields: DataItem list, variants: Decl list, span: Span) =
+            /// 後方互換コンストラクタ。派生元 union を持たないトップレベル union 用。
+            new(name: string, typeParams: string list, isExtendable: bool, fields: DataItem list, variants: Decl list, span: Span) =
+                Union(name, typeParams, isExtendable, None, fields, variants, span)
             member this.name = name
             member this.typeParams = typeParams
             /// `extendable` 修飾子の有無。true の場合、外部からのバリアント追加を許可し match の網羅性チェックを行わない。
             member this.isExtendable = isExtendable
+            /// `union HueColor: Color` のように `:` で派生元 union を指定したネスト union の親 union 名。
+            /// トップレベル union では `None`。
+            member this.baseUnionName = baseUnionName
             member this.fields = fields
             member this.variants = variants
             member this.span = span

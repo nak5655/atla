@@ -18,9 +18,13 @@ module Resolve =
     /// 解決済み union 宣言。variantSids は修飾なしバリアント名 → バリアント型 SymbolId のマップ
     /// （union 本体内バリアントと extendable union への外部バリアントの両方を含む）。
     /// externalVariants は union 本体外で宣言された追加バリアント（struct/object）の AST。
+    /// qualifiedName はネスト union を含む完全修飾名（例: トップは "Color"、ネストは "Color'HueColor"）。
+    /// baseUnionSid はネスト union の親 union 型 SID（トップレベルでは None）。
     type ResolvedUnionDecl =
         { typeSid: SymbolId
           typeParams: string list
+          qualifiedName: string
+          baseUnionSid: SymbolId option
           variantSids: Map<string, SymbolId>
           externalVariants: Ast.Decl list
           decl: Ast.Decl.Union }
@@ -180,17 +184,72 @@ module Resolve =
         let dataDecls = ResizeArray<ResolvedDataDecl>()
         let enumDecls = ResizeArray<ResolvedEnumDecl>()
         let unionDecls = ResizeArray<ResolvedUnionDecl>()
-        // union 名 → (ルート型 SID, union 宣言 AST)。外部バリアント解決のため第一パスで構築する。
-        let unionRootsByName = System.Collections.Generic.Dictionary<string, SymbolId * Ast.Decl.Union>()
-        // union 名 → 修飾なしバリアント名 → バリアント型 SID。本体内・外部の両バリアントを蓄積する。
+        // 完全修飾 union 名 → (ルート型 SID, 親 union SID option, union 宣言 AST)。
+        // ネスト union も含めて第一パスで再帰登録する。
+        let unionRootsByName = System.Collections.Generic.Dictionary<string, SymbolId * SymbolId option * Ast.Decl.Union>()
+        // 完全修飾 union 名 → 直下バリアントの単純名 → バリアント型 SID。本体内・外部の両バリアントを蓄積する。
         let unionVariantSids = System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, SymbolId>>()
-        // union 名 → 外部バリアント宣言（struct/object）の蓄積。
+        // 完全修飾 union 名 → 外部バリアント宣言（struct/object）の蓄積。
         let unionExternalVariants = System.Collections.Generic.Dictionary<string, ResizeArray<Ast.Decl>>()
+        // 単純 union 名 → 完全修飾名のリスト。外部バリアントが単純名で親 union を参照する際の解決に使う。
+        let unionQualifiedBySimple = System.Collections.Generic.Dictionary<string, ResizeArray<string>>()
         let roleDecls = ResizeArray<ResolvedRoleDecl>()
         let implDecls = ResizeArray<SymbolId * TypeId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
         let importedTypeAliases = ResizeArray<string * string>()
         let diagnostics = ResizeArray<Diagnostic>()
+
+        // union を再帰的に登録する。qualifiedPrefix は親までの修飾名（トップでは空文字）。
+        // baseUnionSidOpt はネスト union の親 union 型 SID（トップでは None）。
+        // ルート型と各直下バリアント（struct/object/ネスト union）を完全修飾名で型スコープへ登録し、
+        // ネスト union は再帰的に処理する。
+        let rec registerUnion (qualifiedPrefix: string) (baseUnionSidOpt: SymbolId option) (unionDecl: Ast.Decl.Union) =
+            let qualifiedName =
+                if qualifiedPrefix = "" then unionDecl.name
+                else sprintf "%s'%s" qualifiedPrefix unionDecl.name
+            let alreadyDefined =
+                if qualifiedPrefix = "" then moduleScope.ResolveType(unionDecl.name) |> Option.isSome
+                else unionRootsByName.ContainsKey(qualifiedName)
+            if alreadyDefined then
+                diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" qualifiedName, unionDecl.span))
+            else
+                let typeSid = symbolTable.NextId()
+                symbolTable.Add(typeSid, { name = qualifiedName; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
+                moduleScope.DeclareType(qualifiedName, TypeId.Name typeSid)
+
+                let variantSids = System.Collections.Generic.Dictionary<string, SymbolId>()
+                for variant in unionDecl.variants do
+                    match variant with
+                    | :? Ast.Decl.Data as structVariant ->
+                        let q = sprintf "%s'%s" qualifiedName structVariant.name
+                        let vSid = symbolTable.NextId()
+                        symbolTable.Add(vSid, { name = q; typ = TypeId.Name vSid; kind = SymbolKind.Local() })
+                        moduleScope.DeclareType(q, TypeId.Name vSid)
+                        variantSids.[structVariant.name] <- vSid
+                    | :? Ast.Decl.Object as objVariant ->
+                        let q = sprintf "%s'%s" qualifiedName objVariant.name
+                        let vSid = symbolTable.NextId()
+                        symbolTable.Add(vSid, { name = q; typ = TypeId.Name vSid; kind = SymbolKind.Local() })
+                        moduleScope.DeclareType(q, TypeId.Name vSid)
+                        variantSids.[objVariant.name] <- vSid
+                    | :? Ast.Decl.Union as nestedUnion ->
+                        // ネスト union は再帰登録する。バリアントとしての SID は登録後に取得する。
+                        registerUnion qualifiedName (Some typeSid) nestedUnion
+                        let nestedQ = sprintf "%s'%s" qualifiedName nestedUnion.name
+                        match unionRootsByName.TryGetValue(nestedQ) with
+                        | true, (nestedSid, _, _) -> variantSids.[nestedUnion.name] <- nestedSid
+                        | false, _ -> ()
+                    | _ -> ()
+
+                unionRootsByName.[qualifiedName] <- (typeSid, baseUnionSidOpt, unionDecl)
+                unionVariantSids.[qualifiedName] <- variantSids
+                unionExternalVariants.[qualifiedName] <- ResizeArray<Ast.Decl>()
+                match unionQualifiedBySimple.TryGetValue(unionDecl.name) with
+                | true, lst -> lst.Add(qualifiedName)
+                | false, _ ->
+                    let lst = ResizeArray<string>()
+                    lst.Add(qualifiedName)
+                    unionQualifiedBySimple.[unionDecl.name] <- lst
 
         // data / enum / role 型名を先に登録し、同一モジュール内で相互参照可能にする。
         for decl in moduleAst.decls do
@@ -218,36 +277,7 @@ module Resolve =
                     moduleScope.DeclareType(enumDecl.name, TypeId.Name typeSid)
                     enumDecls.Add({ typeSid = typeSid; typeParams = enumDecl.typeParams; decl = enumDecl })
             | :? Ast.Decl.Union as unionDecl ->
-                match moduleScope.ResolveType(unionDecl.name) with
-                | Some _ ->
-                    diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" unionDecl.name, unionDecl.span))
-                | None ->
-                    // union ルート型を型スコープへ登録する。
-                    let typeSid = symbolTable.NextId()
-                    symbolTable.Add(typeSid, { name = unionDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
-                    moduleScope.DeclareType(unionDecl.name, TypeId.Name typeSid)
-
-                    // 各バリアントの型を修飾名（`Union'Variant`）で登録する。
-                    // Phase 1 は単層のみ対応し、ネスト union（Ast.Decl.Union）はバリアントとしてまだ扱わない。
-                    let variantSids = System.Collections.Generic.Dictionary<string, SymbolId>()
-                    for variant in unionDecl.variants do
-                        let variantNameOpt =
-                            match variant with
-                            | :? Ast.Decl.Data as structVariant -> Some structVariant.name
-                            | :? Ast.Decl.Object as objVariant -> Some objVariant.name
-                            | _ -> None
-                        match variantNameOpt with
-                        | Some variantName ->
-                            let qualifiedName = sprintf "%s'%s" unionDecl.name variantName
-                            let variantSid = symbolTable.NextId()
-                            symbolTable.Add(variantSid, { name = qualifiedName; typ = TypeId.Name variantSid; kind = SymbolKind.Local() })
-                            moduleScope.DeclareType(qualifiedName, TypeId.Name variantSid)
-                            variantSids.[variantName] <- variantSid
-                        | None -> ()
-
-                    unionRootsByName.[unionDecl.name] <- (typeSid, unionDecl)
-                    unionVariantSids.[unionDecl.name] <- variantSids
-                    unionExternalVariants.[unionDecl.name] <- ResizeArray<Ast.Decl>()
+                registerUnion "" None unionDecl
             | :? Ast.Decl.Role as roleDecl ->
                 // role 型を型スコープへ事前登録し、同一モジュール内での型注釈で参照可能にする。
                 match moduleScope.ResolveType(roleDecl.name) with
@@ -263,11 +293,23 @@ module Resolve =
         // 外部バリアントパス: union 本体外で宣言された `struct V: Union` / `object V: Union` を処理する。
         // - 対象 union が存在し、かつ extendable であることを検証する（sealed への外部追加はエラー）。
         // - バリアント型を修飾名 `Union'V` で登録し、unionExternalVariants へ蓄積する。
-        let registerExternalVariant (unionName: string) (variantName: string) (span: Atla.Core.Data.Span) (variantDecl: Ast.Decl) =
-            match unionRootsByName.TryGetValue(unionName) with
-            | false, _ ->
-                diagnostics.Add(Diagnostic.Error(sprintf "Undefined union '%s' for variant '%s'" unionName variantName, span))
-            | true, (_, unionAst) ->
+        let registerExternalVariant (unionRef: string) (variantName: string) (span: Atla.Core.Data.Span) (variantDecl: Ast.Decl) =
+            // 親 union 参照は完全修飾名（"Color'HueColor"）か単純名（"Color"）のいずれか。
+            // 完全修飾で見つからない場合、単純名から一意な完全修飾名へ解決する。
+            let resolvedUnionName =
+                if unionRootsByName.ContainsKey(unionRef) then Some unionRef
+                else
+                    match unionQualifiedBySimple.TryGetValue(unionRef) with
+                    | true, lst when lst.Count = 1 -> Some lst.[0]
+                    | true, lst when lst.Count > 1 ->
+                        diagnostics.Add(Diagnostic.Error(sprintf "Ambiguous union '%s' for variant '%s'; use a fully-qualified name" unionRef variantName, span))
+                        None
+                    | _ -> None
+            match resolvedUnionName with
+            | None ->
+                diagnostics.Add(Diagnostic.Error(sprintf "Undefined union '%s' for variant '%s'" unionRef variantName, span))
+            | Some unionName ->
+                let (_, _, unionAst) = unionRootsByName.[unionName]
                 if not unionAst.isExtendable then
                     diagnostics.Add(Diagnostic.Error(sprintf "Cannot add external variant '%s' to sealed union '%s'; mark the union 'extendable'" variantName unionName, span))
                 else
@@ -293,12 +335,18 @@ module Resolve =
             | _ -> ()
 
         // union 解決結果を確定する（本体内 + 外部バリアントの SID マップと外部バリアント AST を含む）。
-        for kvp in unionRootsByName do
-            let unionName = kvp.Key
-            let (typeSid, unionAst) = kvp.Value
-            let variantSids = unionVariantSids.[unionName] |> Seq.map (fun e -> e.Key, e.Value) |> Map.ofSeq
-            let externalVariants = unionExternalVariants.[unionName] |> List.ofSeq
-            unionDecls.Add({ typeSid = typeSid; typeParams = unionAst.typeParams; variantSids = variantSids; externalVariants = externalVariants; decl = unionAst })
+        // 修飾名の深さ（'区切りセグメント数）昇順で確定することで、親 union が常にネスト union より
+        // 先に並ぶ。これにより後段の型生成（Gen.CreateType）で基底型が派生型より先に確定し、
+        // ネスト union の継承（Hsv -> HueColor -> Color）が正しく構築される。
+        let orderedUnionNames =
+            unionRootsByName.Keys
+            |> Seq.sortBy (fun q -> q.Split('\'').Length)
+            |> Seq.toList
+        for qualifiedName in orderedUnionNames do
+            let (typeSid, baseUnionSidOpt, unionAst) = unionRootsByName.[qualifiedName]
+            let variantSids = unionVariantSids.[qualifiedName] |> Seq.map (fun e -> e.Key, e.Value) |> Map.ofSeq
+            let externalVariants = unionExternalVariants.[qualifiedName] |> List.ofSeq
+            unionDecls.Add({ typeSid = typeSid; typeParams = unionAst.typeParams; qualifiedName = qualifiedName; baseUnionSid = baseUnionSidOpt; variantSids = variantSids; externalVariants = externalVariants; decl = unionAst })
 
         for decl in moduleAst.decls do
             match decl with

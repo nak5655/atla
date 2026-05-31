@@ -2923,3 +2923,40 @@ fn main: ()
     Color'RichBlack'red. Console'WriteLine.
 """
         Assert.Equal("42\n-1\n0", runForStdout "UnionExternalVariants" program)
+
+    [<Fact>]
+    let ``nested union with multi-segment variants compiles and matches correctly`` () =
+        let program = """
+import System'Console
+
+union Color
+    val alpha: Int
+
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
+
+    union HueColor: Color
+        val h: Int
+        val s: Int
+
+        struct Hsv: HueColor
+            val v: Int
+
+        struct Hsl: HueColor
+            val l: Int
+
+impl Color
+    fn red self: Int
+        match self
+        | Color'Rgb { r, .. } -> r
+        | Color'HueColor'Hsv { h, s, v, .. } -> (h * s * v) / 10000
+        | Color'HueColor'Hsl { h, s, l, .. } -> (h * s * l) / 10000
+
+fn main: ()
+    Color'HueColor'Hsv { h = 100, s = 100, v = 50, alpha = 255 }'red. Console'WriteLine.
+    Color'HueColor'Hsl { h = 100, s = 100, l = 30, alpha = 255 }'red. Console'WriteLine.
+    Color'Rgb { r = 7, g = 0, b = 0, alpha = 255 }'red. Console'WriteLine.
+"""
+        Assert.Equal("50\n30\n7", runForStdout "NestedUnion" program)

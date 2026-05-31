@@ -2226,3 +2226,70 @@ extendable union Shape
                 Assert.True(false, "expected a single extendable Ast.Decl.Union declaration")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses nested union with derived base`` () =
+        let program = """
+union Color
+    val alpha: Int
+
+    union HueColor: Color
+        val h: Int
+
+        struct Hsv: HueColor
+            val v: Int
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            match astModule.decls with
+            | [ (:? Ast.Decl.Union as colorUnion) ] ->
+                Assert.Equal("Color", colorUnion.name)
+                Assert.Equal(None, colorUnion.baseUnionName)
+                match colorUnion.variants with
+                | [ (:? Ast.Decl.Union as hueUnion) ] ->
+                    Assert.Equal("HueColor", hueUnion.name)
+                    Assert.Equal(Some "Color", hueUnion.baseUnionName)
+                    Assert.Equal(1, hueUnion.fields.Length)
+                    match hueUnion.variants with
+                    | [ (:? Ast.Decl.Data as hsv) ] ->
+                        Assert.Equal("Hsv", hsv.name)
+                        Assert.Equal(Some "HueColor", hsv.baseUnionName)
+                    | _ -> Assert.True(false, "expected a single Hsv struct variant inside HueColor")
+                | _ -> Assert.True(false, "expected a single nested HueColor union variant")
+            | _ -> Assert.True(false, "expected a single Ast.Decl.Union for Color")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses multi-segment variant pattern and init`` () =
+        let program = """
+fn pick (c: Color): Int
+    match c
+    | Color'HueColor'Hsv { v, .. } -> v
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let matchExpr =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn ->
+                        match terminalBodyExpr fn.body with
+                        | :? Ast.Expr.Match as m -> Some m
+                        | _ -> None
+                    | _ -> None)
+            match matchExpr with
+            | Some m ->
+                match m.arms with
+                | [ (:? Ast.MatchArm.Arm as arm) ] ->
+                    match arm.pattern with
+                    | :? Ast.Pattern.Enum as p ->
+                        Assert.Equal("Color", p.typeName)
+                        Assert.Equal("HueColor'Hsv", p.caseName)
+                    | _ -> Assert.True(false, "expected an enum/union pattern")
+                | _ -> Assert.True(false, "expected a single match arm")
+            | None -> Assert.True(false, "match expression not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")

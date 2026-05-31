@@ -285,8 +285,11 @@ module Analyze =
                 resolvedModule.unionDecls
                 |> List.fold
                     (fun defs resolvedUnionDecl ->
-                        let unionName = resolvedUnionDecl.decl.name
+                        // ネスト union を含む完全修飾名（例: "Color'HueColor"）をフィールド/型シンボル名の接頭辞に用いる。
+                        let unionName = resolvedUnionDecl.qualifiedName
                         let unionSid = resolvedUnionDecl.typeSid
+                        // ネスト union の場合は親 union を基底型とする（再帰的クラス階層）。
+                        let unionBaseType = resolvedUnionDecl.baseUnionSid |> Option.map TypeId.Name
 
                         // 型パラメータをサブスコープへ登録してフィールド型を解決する（Phase 1 では非ジェネリック中心）。
                         let fieldNameEnv =
@@ -310,11 +313,11 @@ module Analyze =
                                     Some { name = fieldItem.name; sid = fieldSid; typ = fieldType; isMutable = fieldItem.isMutable; span = fieldItem.span }
                                 | _ -> None)
 
-                        // ルート型（abstract class）を生成する。
+                        // ルート型（abstract class）を生成する。ネスト union は親 union を基底型に持つ。
                         let unionRootHirFields =
                             unionFieldDefs
                             |> List.map (fun fieldDef -> Hir.Field(fieldDef.sid, fieldDef.typ, Hir.Expr.Unit(fieldDef.span), fieldDef.span))
-                        types.Add(Hir.Type(unionSid, false, true, None, resolvedUnionDecl.typeParams, unionRootHirFields, []))
+                        types.Add(Hir.Type(unionSid, false, true, unionBaseType, resolvedUnionDecl.typeParams, unionRootHirFields, []))
 
                         // 各バリアントの DataTypeDef を構築し、defs へ追加する。
                         // 本体内バリアント（decl.variants）に加え、extendable union の外部バリアント
@@ -323,6 +326,17 @@ module Analyze =
                             (resolvedUnionDecl.decl.variants @ resolvedUnionDecl.externalVariants)
                             |> List.fold
                                 (fun (variantAcc, defsAcc) variant ->
+                                    // ネスト union バリアント（Ast.Decl.Union）は、それ自身が別の ResolvedUnionDecl として
+                                    // 独立に型・メタデータを生成する。ここでは UnionVariantDef{isUnion=true} として記録するのみで、
+                                    // Hir.Type や DataTypeDef の再生成は行わない。
+                                    match variant with
+                                    | :? Ast.Decl.Union as nestedUnion ->
+                                        match resolvedUnionDecl.variantSids |> Map.tryFind nestedUnion.name with
+                                        | Some nestedSid ->
+                                            let variantInfo = { name = nestedUnion.name; typeSid = nestedSid; isUnion = true; objectFieldInits = None; span = variant.span }
+                                            variantAcc @ [ variantInfo ], defsAcc
+                                        | None -> variantAcc, defsAcc
+                                    | _ ->
                                     let variantNameOpt, ownFieldItems, objectFieldInits =
                                         match variant with
                                         | :? Ast.Decl.Data as structVariant -> Some structVariant.name, structVariant.items, None
@@ -365,15 +379,16 @@ module Analyze =
                                               enumInfo = None
                                               unionInfo = None
                                               methods = Map.empty }
-                                        let variantInfo = { name = variantName; typeSid = variantSid; objectFieldInits = objectFieldInits; span = variant.span }
+                                        let variantInfo = { name = variantName; typeSid = variantSid; isUnion = false; objectFieldInits = objectFieldInits; span = variant.span }
                                         variantAcc @ [ variantInfo ], Map.add qualifiedName variantDef defsAcc)
                                 ([], defs)
 
-                        // ルート型の DataTypeDef を登録する。
+                        // ルート型の DataTypeDef を登録する。ネスト union は親 union を基底型に持つため、
+                        // collectInheritedFields が親 union の共有フィールドまで辿れるよう baseType を設定する。
                         Map.add
                             unionName
                             { typeSid = unionSid
-                              baseType = None
+                              baseType = unionBaseType
                               delegatedByFieldName = None
                               typeParams = resolvedUnionDecl.typeParams
                               fields = unionFieldDefs
