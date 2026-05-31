@@ -2888,3 +2888,38 @@ fn main: ()
     magenta'red. Console'WriteLine.
 """
         Assert.Equal("0\n255\n255", runForStdout "UnionObjectVariants" program)
+
+    [<Fact>]
+    let ``extendable union external variants compile and match correctly`` () =
+        let program = """
+import System'Console
+
+extendable union Color
+    val alpha: Int
+
+    object RichBlack: Color
+        alpha = 255
+
+    struct Rgb: Color
+        val r: Int
+
+struct Cmyk: Color
+    val k: Int
+
+object Transparent: Color
+    alpha = 0
+
+impl Color
+    fn red self: Int
+        match self
+        | Color'RichBlack -> 0
+        | Color'Rgb { r, .. } -> r
+        | Color'Cmyk { k, .. } -> k
+        | Color'Transparent -> -1
+
+fn main: ()
+    Color'Cmyk { k = 42, alpha = 255 }'red. Console'WriteLine.
+    Color'Transparent'red. Console'WriteLine.
+    Color'RichBlack'red. Console'WriteLine.
+"""
+        Assert.Equal("42\n-1\n0", runForStdout "UnionExternalVariants" program)
