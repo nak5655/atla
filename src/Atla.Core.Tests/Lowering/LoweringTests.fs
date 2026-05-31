@@ -2546,7 +2546,9 @@ async fn choose (c: Bool) (a: Task Int) (b: Task Int): Int
         proc.WaitForExit()
         Assert.Equal(0, proc.ExitCode)
         Assert.True(String.IsNullOrWhiteSpace stderr, stderr)
-        stdout.Trim()
+        // Windows 上の Console.WriteLine は \r\n を吐くが、テスト側の expected は \n
+        // 区切りで書くのが標準。ヘルパで一度だけ正規化し、各テストでの .Replace を不要にする。
+        stdout.Replace("\r\n", "\n").Trim()
 
     [<Fact>]
     let ``comparison operators on Int produce correct Bool results`` () =
