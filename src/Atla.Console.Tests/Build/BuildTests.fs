@@ -40,7 +40,7 @@ package:
     /// カレントディレクトリから上位へ辿ってリポジトリルートを見つける。
     let private tryFindRepositoryRoot () : string option =
         let rec loop (dir: DirectoryInfo) =
-            let marker = Path.Join(dir.FullName, "examples", "gui_hello", "atla.yaml")
+            let marker = Path.Join(dir.FullName, "examples", "hello_gui", "atla.yaml")
             if File.Exists(marker) then
                 Some dir.FullName
             else
@@ -92,7 +92,7 @@ package:
             """
 import System'Console
 
-fn main: () =
+fn main: ()
     "Hello, World!" Console'WriteLine.
 """.Trim())
 
@@ -111,7 +111,8 @@ fn main: () =
         File.WriteAllText(
             Path.Join(projectRoot, "src", "library.atla"),
             """
-fn greet: () = ()
+fn greet: ()
+    ()
 """.Trim())
 
         let outDir = Path.Join(projectRoot, "artifacts")
@@ -130,7 +131,8 @@ fn greet: () = ()
         File.WriteAllText(
             Path.Join(libRoot, "src", "Inner.atla"),
             """
-fn value: Int = 42
+fn value: Int
+    42
 """.Trim())
 
         File.WriteAllText(
@@ -153,7 +155,8 @@ public import Inner
         File.WriteAllText(
             Path.Join(projectRoot, "src", "library.atla"),
             """
-fn greet: () = ()
+fn greet: ()
+    ()
 """.Trim())
 
         let outDir = Path.Join(projectRoot, "artifacts")
@@ -172,7 +175,8 @@ fn greet: () = ()
         File.WriteAllText(
             Path.Join(projectRoot, "src", "library.atla"),
             """
-fn greet: () = ()
+fn greet: ()
+    ()
 """.Trim())
 
         let atlaHome = createTempAtlaHomeDir ()
@@ -189,7 +193,8 @@ fn greet: () = ()
         File.WriteAllText(
             Path.Join(projectRoot, "src", "library.atla"),
             """
-fn greet: () = ()
+fn greet: ()
+    ()
 """.Trim())
 
         let atlaHome = createTempAtlaHomeDir ()
@@ -208,7 +213,7 @@ fn greet: () = ()
             """
 import System'Console
 
-fn main: () =
+fn main: ()
     "Hello, World!" Console'WriteLine.
 """.Trim())
 
@@ -231,7 +236,7 @@ fn main: () =
             """
 import System'Console
 
-fn main: () =
+fn main: ()
     "Hello, World!" Console'WriteLine.
 """.Trim())
 
@@ -241,10 +246,10 @@ fn main: () =
         Assert.Equal(1, code)
 
     [<Fact>]
-    let ``build should succeed for examples gui_hello`` () =
+    let ``build should succeed for examples hello_gui`` () =
         match tryFindRepositoryRoot () with
         | Some repositoryRoot ->
-            let projectRoot = Path.Join(repositoryRoot, "examples", "gui_hello")
+            let projectRoot = Path.Join(repositoryRoot, "examples", "hello_gui")
             let outDir = Path.Join(projectRoot, "out-regression")
 
             if Directory.Exists(outDir) then

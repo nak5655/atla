@@ -77,7 +77,7 @@ module LayoutTests =
 import System'Console
 import System'Linq'Enumerable
 
-fn main: () =
+fn main: ()
     for i in 1 3 Enumerable'Range.
         i Console'WriteLine.
 """
@@ -144,7 +144,7 @@ enum Color
     | Black
     | Rgb { r: Int, g: Int, b: Int }
 
-fn red (color: Color): Int =
+fn red (color: Color): Int
     match color
     | Color'Black -> 0
     | Color'Rgb { r, .. } -> r
@@ -226,7 +226,8 @@ fn red (color: Color): Int =
     [<Fact>]
     let ``layoutAssembly preserves Array String argument type in MIR method signature`` () =
         let program = """
-fn keep (xs: Array String): Array String = xs
+fn keep (xs: Array String): Array String
+    xs
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -274,7 +275,7 @@ fn keep (xs: Array String): Array String = xs
         let program = """
 import System'IO'StringWriter
 
-fn main: () =
+fn main: ()
     let writer = StringWriter.
     "hello" writer'WriteLine.
 """
@@ -327,7 +328,7 @@ fn main: () =
 
     [<Fact>]
     let ``Array String type snapshot stays stable across AST HIR MIR`` () =
-        let program = "fn keep (xs: Array String): Array String = xs"
+        let program = "fn keep (xs: Array String): Array String\n    xs"
         let input: Input<SourceChar> = StringInput program
 
         let rec snapshotTypeExpr (typeExpr: Ast.TypeExpr) : string =
@@ -727,7 +728,7 @@ fn main: () =
     /// 単純な整数加算関数の型表現が AST→HIR→MIR を通じて安定していることを検証するスナップショットテスト。
     [<Fact>]
     let ``HIR and MIR type snapshot is stable for simple int addition function`` () =
-        let program = "fn add (x: Int) (y: Int): Int = x + y"
+        let program = "fn add (x: Int) (y: Int): Int\n    x + y"
         let input: Input<SourceChar> = StringInput program
 
         let snapshotTypeId (tid: TypeId) : string =
@@ -794,7 +795,8 @@ fn main: () =
     [<Fact>]
     let ``diagnostic snapshot is stable for undefined variable reference`` () =
         let program = """
-fn bad (): Int = undefinedVar
+fn bad (): Int
+    undefinedVar
 """
         let input: Input<SourceChar> = StringInput program
 

@@ -27,18 +27,53 @@ module ParserTests =
 
     [<Fact>]
     let ``fileModule parses function declaration`` () =
-        let program = "fn main (): Int = 1"
+        let program = "fn main (): Int\n    1"
 
         match parseModule program with
         | Success (astModule, _) ->
             Assert.Single(astModule.decls) |> ignore
+            match astModule.decls.Head with
+            | :? Ast.Decl.Fn as fn -> Assert.Equal("main", fn.name)
+            | _ -> Assert.True(false, "expected Ast.Decl.Fn")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
+    let ``fileModule rejects function body on same line as signature`` () =
+        // 改行必須。body を signature と同じ行に置くとパースエラー。
+        let program = "fn main: Int 1"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let hasValidFn =
+                astModule.decls
+                |> List.exists (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn -> true
+                    | _ -> false)
+            Assert.False(hasValidFn, "expected same-line body to be rejected")
+        | Failure _ -> ()
+
+    [<Fact>]
+    let ``fileModule rejects old fn syntax with equals separator`` () =
+        // 旧 `fn name: Type = body` の `=` 区切りは廃止された。
+        let program = "fn main: Int = 1"
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let hasValidFn =
+                astModule.decls
+                |> List.exists (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn -> true
+                    | _ -> false)
+            Assert.False(hasValidFn, "expected legacy `=` separator to be rejected")
+        | Failure _ -> ()
+
+    [<Fact>]
     let ``fileModule parses if expression`` () =
         let program = """
-fn main (): Int =
+fn main (): Int
     if
     | 1 == 1 => 1
     | else => 0
@@ -53,7 +88,7 @@ fn main (): Int =
     [<Fact>]
     let ``fileModule parses multi-branch if without error nodes`` () =
         let program = """
-fn applyOp (op: String): Int =
+fn applyOp (op: String): Int
     if
     | op == "+" => 1
     | op == "-" => 2
@@ -114,7 +149,7 @@ fn applyOp (op: String): Int =
     [<Fact>]
     let ``fileModule parses for statement in do block`` () =
         let program = """
-fn main: () =
+fn main: ()
     for i in values
         i
 """
@@ -157,7 +192,7 @@ fn main: () =
     [<Fact>]
     let ``fileModule parses fizzbuzz for statement`` () =
         let program = """
-fn fizzbuzz (n: Int): () =
+fn fizzbuzz (n: Int): ()
     for i in n
         if
         | i % 15 == 0 => "FizzBuzz"
@@ -165,7 +200,7 @@ fn fizzbuzz (n: Int): () =
         | i % 3 == 0 => "Fizz"
         | else => i
 
-fn main: () =
+fn main: ()
     let n = 10
     n fizzbuzz.
 """
@@ -208,7 +243,7 @@ fn main: () =
     [<Fact>]
     let ``fileModule parses break statement in for body`` () =
         let program = """
-fn main: () =
+fn main: ()
     for i in values
         if | i == 3 =>
             break
@@ -267,7 +302,7 @@ fn main: () =
         let program = """
 import System'Console
 
-fn main: () =
+fn main: ()
     let line = Console'ReadLine.
     let a = " " line'Split.
     a[0] Console'WriteLine.
@@ -322,7 +357,7 @@ fn main: () =
 import Avalonia'Controls'AppBuilder
 import Avalonia'Application
 
-fn main: () =
+fn main: ()
     let config = AppBuilder'Configure<Application>.
     config
 """
@@ -424,7 +459,8 @@ struct Person
 struct Person
     val name: String
     val age: Int
-fn main (): Person = { name = "Alice", age = 20 } Person.
+fn main (): Person
+    { name = "Alice", age = 20 } Person.
 """
 
         match parseModule program with
@@ -493,7 +529,8 @@ enum Color
 enum Color
     | Rgb { r: Int, g: Int, b: Int }
 
-fn main (): Color = Color'Rgb { r = 255, g = 0, b = 0 }
+fn main (): Color
+    Color'Rgb { r = 255, g = 0, b = 0 }
 """
 
         match parseModule program with
@@ -522,7 +559,7 @@ fn main (): Color = Color'Rgb { r = 255, g = 0, b = 0 }
     [<Fact>]
     let ``fileModule parses match expression with enum patterns`` () =
         let program = """
-fn main (color: Color): Int =
+fn main (color: Color): Int
     match color
     | Color'Black -> 0
     | Color'Rgb { r, .. } -> r
@@ -566,7 +603,8 @@ fn main (color: Color): Int =
         let program = """
 import System'Console
 
-fn main: () = ()
+fn main: ()
+    ()
 """
 
         match parseModule program with
@@ -580,7 +618,8 @@ fn main: () = ()
 struct Line
     val slope: Float
     val intercept: Float
-fn main (): Line = { slope = 2.0, intercept = -1.0 } Line.
+fn main (): Line
+    { slope = 2.0, intercept = -1.0 } Line.
 """
 
         match parseModule program with
@@ -622,7 +661,7 @@ fn main (): Line = { slope = 2.0, intercept = -1.0 } Line.
         let program = """
 import System'Console
 
-fn main (): () =
+fn main (): ()
     "hello" Console'WriteLine.
     "world" Console'WriteLine.
 """
@@ -676,7 +715,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses whitespace separated array type application`` () =
-        let program = "fn join (xs: Array String): () = ()"
+        let program = "fn join (xs: Array String): ()\n    ()"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -710,7 +749,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses lambda expression at expr top-level`` () =
-        let program = "fn main (): Int = 1 (fn x -> x)."
+        let program = "fn main (): Int\n    1 (fn x -> x)."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -744,7 +783,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses lambda expression with explicit unit argument list`` () =
-        let program = "fn main (): Int = (fn () -> 1)."
+        let program = "fn main (): Int\n    (fn () -> 1)."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -773,7 +812,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule reports duplicate lambda parameter as Ast.Expr.Error`` () =
-        let program = "fn main (): Int = fn x x -> x"
+        let program = "fn main (): Int\n    fn x x -> x"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -798,7 +837,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule reports missing lambda parameter list as Ast.Expr.Error`` () =
-        let program = "fn main (): Int = fn -> 1"
+        let program = "fn main (): Int\n    fn -> 1"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -823,7 +862,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses apostrophe member access with dot call`` () =
-        let program = "fn main (): Int = 1 value'transform."
+        let program = "fn main (): Int\n    1 value'transform."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -852,7 +891,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses direct callable zero argument call`` () =
-        let program = "fn main (): Int = callable ."
+        let program = "fn main (): Int\n    callable ."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -877,7 +916,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule reports dangling apostrophe member access as Ast.Expr.Error`` () =
-        let program = "fn main (): Int = value'"
+        let program = "fn main (): Int\n    value'"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -902,7 +941,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule rejects missing dot in call chain`` () =
-        let program = "fn main (): Int = 1 increment"
+        let program = "fn main (): Int\n    1 increment"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -926,7 +965,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses member access as primary before dot call`` () =
-        let program = "fn main (): Int = c a'b."
+        let program = "fn main (): Int\n    c a'b."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -961,7 +1000,7 @@ fn main (): () =
     [<Fact>]
     let ``fileModule parses member access assignment target`` () =
         let program = """
-fn main (): () =
+fn main (): ()
     window'Width = 320
 """
 
@@ -1001,7 +1040,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses chained dot-only calls left to right`` () =
-        let program = "fn main (): Int = x f. g."
+        let program = "fn main (): Int\n    x f. g."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1036,7 +1075,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses multi argument dot-only call`` () =
-        let program = "fn main (): Int = a b c sum3."
+        let program = "fn main (): Int\n    a b c sum3."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1068,7 +1107,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule rejects missing dot in multi argument call chain`` () =
-        let program = "fn main (): Int = a b sum3"
+        let program = "fn main (): Int\n    a b sum3"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1093,7 +1132,7 @@ fn main (): () =
 
     [<Fact>]
     let ``fileModule parses identifier dot as zero argument call`` () =
-        let program = "fn main (): Int = ping."
+        let program = "fn main (): Int\n    ping."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1128,7 +1167,7 @@ struct Line
     val slope: Float
     val intercept: Float
 impl Line
-    fn evaluate self (x: Float): Float =
+    fn evaluate self (x: Float): Float
         self'slope * x + self'intercept
 """
 
@@ -1158,7 +1197,7 @@ impl Line
 struct B
     val value: Int
 impl B for A
-    fn evaluate self: Int =
+    fn evaluate self: Int
         self'value
 """
 
@@ -1216,7 +1255,8 @@ impl Base for Wrapper by inner
 struct MyButton
     val label: String
 impl MyButton as Button
-    fn click self: Unit = ()
+    fn click self: Unit
+        ()
 """
 
         match parseModule program with
@@ -1275,8 +1315,10 @@ impl Widget as Control
 struct MyButton
     val label: String
 impl MyButton as Button
-    override fn click self: Unit = ()
-    fn helper self: Unit = ()
+    override fn click self: Unit
+        ()
+    fn helper self: Unit
+        ()
 """
 
         match parseModule program with
@@ -1310,7 +1352,8 @@ impl MyButton as Button
 struct Foo
     val x: Int
 impl Foo
-    override fn bar self: Unit = ()
+    override fn bar self: Unit
+        ()
 """
 
         match parseModule program with
@@ -1338,7 +1381,8 @@ impl Foo
         // トップレベル fn の前に override を書くのは構文エラー。
         // fnDecl パーサが override を受理しないため、Decl.Error として吸収される。
         let program = """
-override fn main (): Unit = ()
+override fn main (): Unit
+    ()
 """
 
         match parseModule program with
@@ -1360,8 +1404,10 @@ override fn main (): Unit = ()
 struct MyTask
     val value: Int
 impl MyTask as Object
-    async fn run self: Unit = ()
-    fn sync self: Unit = ()
+    async fn run self: Unit
+        ()
+    fn sync self: Unit
+        ()
 """
 
         match parseModule program with
@@ -1392,7 +1438,8 @@ impl MyTask as Object
 struct MyTask
     val value: Int
 impl MyTask as Object
-    override async fn run self: Unit = ()
+    override async fn run self: Unit
+        ()
 """
 
         match parseModule program with
@@ -1417,7 +1464,7 @@ impl MyTask as Object
 
     [<Fact>]
     let ``fileModule parses async fn at top level`` () =
-        let program = "async fn run (): Unit = ()"
+        let program = "async fn run (): Unit\n    ()"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1438,7 +1485,7 @@ impl MyTask as Object
 
     [<Fact>]
     let ``fileModule parses await expr in fn body`` () =
-        let program = "async fn run (x: Int): Unit = await x"
+        let program = "async fn run (x: Int): Unit\n    await x"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1468,7 +1515,7 @@ impl MyTask as Object
     [<Fact>]
     let ``fileModule parses await with dot-call operand`` () =
         // `await x f.` は `await (f(x))` として解析され、operand は Apply となる。
-        let program = "async fn run (x: Int): Unit = await x f."
+        let program = "async fn run (x: Int): Unit\n    await x f."
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1495,7 +1542,7 @@ impl MyTask as Object
 
     [<Fact>]
     let ``fileModule parses true literal as Bool`` () =
-        let program = "fn main (): Bool = True"
+        let program = "fn main (): Bool\n    True"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1519,7 +1566,7 @@ impl MyTask as Object
 
     [<Fact>]
     let ``fileModule parses false literal as Bool`` () =
-        let program = "fn main (): Bool = False"
+        let program = "fn main (): Bool\n    False"
 
         match parseModule program with
         | Success (astModule, _) ->
@@ -1544,7 +1591,7 @@ impl MyTask as Object
     [<Fact>]
     let ``fileModule parses compound add assignment`` () =
         let program = """
-fn main (): Unit =
+fn main (): Unit
     var x = 1
     x += 2
 """
@@ -1570,7 +1617,7 @@ fn main (): Unit =
     [<Fact>]
     let ``fileModule parses compound subtract assignment`` () =
         let program = """
-fn main (): Unit =
+fn main (): Unit
     var x = 3
     x -= 1
 """
@@ -1596,7 +1643,7 @@ fn main (): Unit =
     [<Fact>]
     let ``fileModule parses compound multiply assignment`` () =
         let program = """
-fn main (): Unit =
+fn main (): Unit
     var x = 3
     x *= 2
 """
@@ -1622,7 +1669,7 @@ fn main (): Unit =
     [<Fact>]
     let ``fileModule parses compound divide assignment`` () =
         let program = """
-fn main (): Unit =
+fn main (): Unit
     var x = 10
     x /= 2
 """
@@ -1658,7 +1705,7 @@ fn main (): Unit =
     [<Fact>]
     let ``fileModule parses let binding type annotation`` () =
         let program = """
-fn main: () =
+fn main: ()
     let x: List Int = List.
     x
 """
@@ -1683,7 +1730,7 @@ fn main: () =
     [<Fact>]
     let ``fileModule parses var binding type annotation`` () =
         let program = """
-fn main: () =
+fn main: ()
     var x: Int = 0
     x
 """
@@ -1710,7 +1757,7 @@ fn main: () =
     [<Fact>]
     let ``fileModule parses expression type ascription`` () =
         let program = """
-fn main: () =
+fn main: ()
     let y = List. : List Int
     y
 """
@@ -1772,7 +1819,8 @@ enum Opt T
     | Some { value: T }
 
 impl Opt T
-    fn isSome self: Bool = true
+    fn isSome self: Bool
+        true
 """
 
         match parseModule program with
@@ -1797,7 +1845,7 @@ impl Opt T
     [<Fact>]
     let ``fileModule parses if statement without else`` () =
         let program = """
-fn main (): Int =
+fn main (): Int
     if | True =>
         return 1
     2
@@ -1838,7 +1886,7 @@ fn main (): Int =
     let ``fileModule parses if-else statement`` () =
         // else あり `if` ブロックは exprStmt (ifExpr) として解析される
         let program = """
-fn main (): Int =
+fn main (): Int
     if
     | True =>
         return 1
@@ -1885,7 +1933,7 @@ fn main (): Int =
     [<Fact>]
     let ``fileModule parses let-else statement with positional binding`` () =
         let program = """
-fn unwrap (o: Opt Int): Int =
+fn unwrap (o: Opt Int): Int
     let Opt'Some x = o
     | else -> return -1
     x
@@ -1931,7 +1979,7 @@ fn unwrap (o: Opt Int): Int =
     [<Fact>]
     let ``fileModule parses var-else statement with named field binding`` () =
         let program = """
-fn test (o: Opt Int): Int =
+fn test (o: Opt Int): Int
     var Opt'Some { value } = o
     | else -> return 0
     value
@@ -1974,7 +2022,7 @@ fn test (o: Opt Int): Int =
     [<Fact>]
     let ``fileModule parses bare return as return unit`` () =
         let program = """
-fn doWork (): Unit =
+fn doWork (): Unit
     return
     42 print.
 """
@@ -2011,7 +2059,7 @@ fn doWork (): Unit =
     [<Fact>]
     let ``fileModule parses while statement`` () =
         let program = """
-fn main: () =
+fn main: ()
     var x = 0
     while x < 10
         x = x + 1
@@ -2052,7 +2100,7 @@ fn main: () =
     [<Fact>]
     let ``fileModule parses break and continue in while body`` () =
         let program = """
-fn main: () =
+fn main: ()
     var x = 0
     while x < 100
         if | x == 3 =>

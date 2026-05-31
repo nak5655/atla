@@ -1,6 +1,6 @@
 import sub
 import sub'Person
 
-fn main: () =
+fn main: ()
     let p = { name = "alice", age = 30 } Person.
     p'sayHello.

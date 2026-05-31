@@ -103,7 +103,7 @@ module AnalyzeTests =
     [<Fact>]
     let ``semantic analysis and lowering handle do block`` () =
         let program = """
-fn main (): Int = do
+fn main (): Int
     let value = 1
     value
 """
@@ -155,7 +155,7 @@ enum Color
     | Black
     | Rgb { r: Int, g: Int, b: Int }
 
-fn red (color: Color): Int =
+fn red (color: Color): Int
     match color
     | Color'Black -> 0
     | Color'Rgb { r, .. } -> r
@@ -195,7 +195,8 @@ fn red (color: Color): Int =
 enum Color
     | Black
 
-fn main (): Color = Color'Black
+fn main (): Color
+    Color'Black
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -229,7 +230,7 @@ enum Color
     | Black
     | White
 
-fn main (color: Color): Int =
+fn main (color: Color): Int
     match color
     | Color'Black -> 0
 """
@@ -259,7 +260,7 @@ fn main (color: Color): Int =
 enum Color
     | Black
 
-fn main (color: Color): Int =
+fn main (color: Color): Int
     match color
     | Color'Black -> 0
     | Color'Black -> 1
@@ -293,7 +294,7 @@ fn main (color: Color): Int =
 struct Point
     val x: Int
     val y: Int
-fn makePoint (): Point = do
+fn makePoint (): Point
     let xv = 1
     let yv = 2
     { x = xv, y = yv } Point.
@@ -342,7 +343,7 @@ fn makePoint (): Point = do
 
     [<Fact>]
     let ``semantic analysis preserves dangling apostrophe parser error message`` () =
-        let program = "fn main (): Int = value'"
+        let program = "fn main (): Int\n    value'"
         let input: Input<SourceChar> = StringInput program
 
         let diagnostics =
@@ -410,7 +411,8 @@ fn makePoint (): Point = do
     let ``semantic analysis lowers dot-only member call into Hir.Call with native callable`` () =
         let program = """
 import System'Console
-fn main (): () = "hello" Console'WriteLine.
+fn main (): ()
+    "hello" Console'WriteLine.
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -454,7 +456,8 @@ fn main (): () = "hello" Console'WriteLine.
 struct Person
     val name: String
     val age: Int
-fn buildPerson (): Person = { name = "Alice", age = 20 } Person.
+fn buildPerson (): Person
+    { name = "Alice", age = 20 } Person.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -645,9 +648,11 @@ struct A
 struct B
     val value: Int
 impl A for B
-    fn asInt self: Int = self'value
+    fn asInt self: Int
+        self'value
 impl B for A
-    fn asInt self: Int = self'value
+    fn asInt self: Int
+        self'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -679,7 +684,8 @@ import System'IDisposable
 struct Box
     val items: IDisposable
 impl IDisposable for Box by items
-fn close (b: Box): () = b'Dispose.
+fn close (b: Box): ()
+    b'Dispose.
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -752,9 +758,11 @@ struct Reader
 struct Writer
     val marker: Int
 impl Shape for Reader
-    fn read self: Int = self'value
+    fn read self: Int
+        self'value
 impl Shape for Writer
-    fn write self: Int = self'value
+    fn write self: Int
+        self'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -786,9 +794,11 @@ impl Shape for Writer
 struct Line
     val value: Int
 impl Line
-    fn first self: Int = self'value
+    fn first self: Int
+        self'value
 impl Line
-    fn second self: Int = self'value
+    fn second self: Int
+        self'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -821,9 +831,11 @@ struct Line
 struct Reader
     val marker: Int
 impl Line for Reader
-    fn first self: Int = self'value
+    fn first self: Int
+        self'value
 impl Line for Reader
-    fn second self: Int = self'value
+    fn second self: Int
+        self'value
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -856,7 +868,8 @@ import System'IDisposable
 struct Resource
     val id: Int
 impl Resource as IDisposable
-    fn dispose self: Unit = ()
+    fn dispose self: Unit
+        ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -889,7 +902,8 @@ import System'Math
 struct Token
     val value: Int
 impl Token as Math
-    fn run self: Unit = ()
+    fn run self: Unit
+        ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -921,7 +935,8 @@ impl Token as Math
 struct Widget
     val id: Int
 impl Widget as UnknownBase
-    fn run self: Unit = ()
+    fn run self: Unit
+        ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -983,8 +998,10 @@ impl Widget as UnknownBase
     [<Fact>]
     let ``semantic analysis handles multi argument dot-only call`` () =
         let program = """
-fn add3 (a: Int) (b: Int) (c: Int): Int = a
-fn main (): Int = 1 2 3 add3.
+fn add3 (a: Int) (b: Int) (c: Int): Int
+    a
+fn main (): Int
+    1 2 3 add3.
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -1026,8 +1043,10 @@ fn main (): Int = 1 2 3 add3.
     [<Fact>]
     let ``semantic analysis handles zero argument dot-only call`` () =
         let program = """
-fn ping (): Int = 1
-fn main (): Int = ping.
+fn ping (): Int
+    1
+fn main (): Int
+    ping.
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -1173,7 +1192,7 @@ fn main (): Int = ping.
     [<Fact>]
     let ``analyzeExpr should preserve mutable variable capture in lambda body`` () =
         let program = """
-fn main: () =
+fn main: ()
     var x = 1
     let f = fn _ -> x
     ()
@@ -1220,7 +1239,7 @@ fn main: () =
         let program = """
 import System'Linq'Enumerable
 
-fn main: () =
+fn main: ()
     for i in 0 1 Enumerable'Range.
         let f = fn _ -> i
         ()
@@ -1351,9 +1370,11 @@ fn main: () =
         let program = """
 import System'Console
 
-fn greet (): () = "hello!" Console'WriteLine.
+fn greet (): ()
+    "hello!" Console'WriteLine.
 
-fn main: () = greet.
+fn main: ()
+    greet.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -1386,9 +1407,11 @@ fn main: () = greet.
         let program = """
 import System'Console
 
-fn greet (): () = "hello!" Console'WriteLine.
+fn greet (): ()
+    "hello!" Console'WriteLine.
 
-fn main: () = () greet.
+fn main: ()
+    () greet.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -1419,7 +1442,7 @@ import System'Console
 
 import System'Linq'Enumerable
 
-fn main: () = do
+fn main: ()
     for i in 1 20 Enumerable'Range.
         i Console'WriteLine.
 """
@@ -1455,7 +1478,7 @@ fn main: () = do
 import System'Int32
 import System'Console
 
-fn main: () = do
+fn main: ()
     var n_x = Console'ReadLine.
     n_x = " " n_x'Split.
 """
@@ -1490,7 +1513,7 @@ fn main: () = do
         let program = """
 import System'Text'StringBuilder
 
-fn appendExclamation (sb: StringBuilder): () = do
+fn appendExclamation (sb: StringBuilder): ()
     let ignored = "!" sb'Append.
     ()
 """
@@ -1525,7 +1548,7 @@ fn appendExclamation (sb: StringBuilder): () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     let line = Console'ReadLine.
     let a = " " line'Split.
     a[0] Console'WriteLine.
@@ -1558,7 +1581,7 @@ fn main: () = do
 
     [<Fact>]
     let ``array String type application should be analyzed`` () =
-        let program = "fn join (xs: Array String): () = ()"
+        let program = "fn join (xs: Array String): ()\n    ()"
         let input: Input<SourceChar> = StringInput program
 
         match Lexer.tokenize input Position.Zero with
@@ -1599,7 +1622,7 @@ fn main: () = do
 
     [<Fact>]
     let ``array type application with too many type arguments should report diagnostic`` () =
-        let program = "fn bad (xs: Array String Int): () = ()"
+        let program = "fn bad (xs: Array String Int): ()\n    ()"
         let input: Input<SourceChar> = StringInput program
 
         match Lexer.tokenize input Position.Zero with
@@ -1639,7 +1662,7 @@ fn main: () = do
 
     [<Fact>]
     let ``non-array type application should be preserved as TypeId.App`` () =
-        let program = "fn bad (xs: String Int): () = ()"
+        let program = "fn bad (xs: String Int): ()\n    ()"
         let input: Input<SourceChar> = StringInput program
 
         match Lexer.tokenize input Position.Zero with
@@ -1683,7 +1706,7 @@ import System'Int32
 import System'Console
 import System'Linq'Enumerable
 
-fn main: () = do
+fn main: ()
     let line = Console'ReadLine.
     let a = " " line'Split.
     for i in 0 a'Length Enumerable'Range.
@@ -1720,7 +1743,8 @@ fn main: () = do
         let program = """
 import System'Activator
 
-fn main (): Int = Activator'CreateInstance<Int>.
+fn main (): Int
+    Activator'CreateInstance<Int>.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -1753,7 +1777,8 @@ fn main (): Int = Activator'CreateInstance<Int>.
         let program = """
 import System'Text'StringBuilder
 
-fn createBuilder (): StringBuilder = StringBuilder.
+fn createBuilder (): StringBuilder
+    StringBuilder.
 """
 
         let input: Input<SourceChar> = StringInput program
@@ -1790,7 +1815,7 @@ fn createBuilder (): StringBuilder = StringBuilder.
         let program = """
 import System'Collections'ArrayList
 
-fn main (): () = do
+fn main (): ()
     let list = ArrayList.
     let count = list'Count
     ()
@@ -1826,7 +1851,7 @@ fn main (): () = do
         let program = """
 import System'Console
 
-fn main (): () = do
+fn main (): ()
     Console'WindowWidth = 120
     ()
 """
@@ -1861,7 +1886,7 @@ fn main (): () = do
         let program = """
 import System'DateTime
 
-fn main (): () = do
+fn main (): ()
     DateTime'Now = DateTime'Now
     ()
 """
@@ -1893,7 +1918,7 @@ fn main (): () = do
         let program = """
 import Atla'Core'Tests'Semantics'TestExtensions
 
-fn addTen (): () = do
+fn addTen (): ()
     let x = 1
     x'PlusTen.
 """
@@ -1931,7 +1956,8 @@ fn addTen (): () = do
     [<Fact>]
     let ``parser should parse arrow type expression`` () =
         let program = """
-fn apply (f: Int -> Int) (x: Int): Int = x
+fn apply (f: Int -> Int) (x: Int): Int
+    x
 """
         let input: Input<SourceChar> = StringInput program
         match Lexer.tokenize input Position.Zero with
@@ -1952,8 +1978,10 @@ fn apply (f: Int -> Int) (x: Int): Int = x
     [<Fact>]
     let ``semantic analysis supports higher-order function parameters`` () =
         let program = """
-fn twice (x: Int): Int = x + x
-fn apply (f: Int -> Int) (x: Int): Int = x f.
+fn twice (x: Int): Int
+    x + x
+fn apply (f: Int -> Int) (x: Int): Int
+    x f.
 """
         let input: Input<SourceChar> = StringInput program
         match Lexer.tokenize input Position.Zero with
@@ -1983,8 +2011,10 @@ fn apply (f: Int -> Int) (x: Int): Int = x f.
     [<Fact>]
     let ``layout supports higher-order function parameters`` () =
         let program = """
-fn twice (x: Int): Int = x + x
-fn apply (f: Int -> Int) (x: Int): Int = x f.
+fn twice (x: Int): Int
+    x + x
+fn apply (f: Int -> Int) (x: Int): Int
+    x f.
 """
         let input: Input<SourceChar> = StringInput program
         match Lexer.tokenize input Position.Zero with
@@ -2062,7 +2092,7 @@ fn apply (f: Int -> Int) (x: Int): Int = x f.
 import System'Collections'ArrayList
 import System'InvalidOperationException
 
-fn addSubtype: () = do
+fn addSubtype: ()
     let list = ArrayList.
     let ex = InvalidOperationException.
     let _ = ex list'Add.
@@ -2100,7 +2130,7 @@ fn addSubtype: () = do
         let program = """
 import System'Collections'ArrayList
 
-fn test: () = do
+fn test: ()
     let list = ArrayList.
     let s = "hello"
     let _ = s list'Add.
@@ -2134,7 +2164,8 @@ fn test: () = do
     [<Fact>]
     let ``Hir.Method.args preserves parameter declaration order`` () =
         let program = """
-fn apply (f: Int -> Int) (x: Int): Int = x f.
+fn apply (f: Int -> Int) (x: Int): Int
+    x f.
 """
         let input: Input<SourceChar> = StringInput program
         match Lexer.tokenize input Position.Zero with
@@ -2203,7 +2234,7 @@ fn apply (f: Int -> Int) (x: Int): Int = x f.
         // 従来はさらに "Cannot unify types: int and unknown" が報告されていたが、
         // 修正後は根本エラー（未定義変数）のみが報告されるべき。
         let program = """
-fn bad (): Int = do
+fn bad (): Int
     undefinedVar
 """
         let input: Input<SourceChar> = StringInput program
@@ -2401,7 +2432,8 @@ fn bad (): Int = do
         let program = """
 import Non'Existent'MyClass
 
-fn main (): Int = MyClass.
+fn main (): Int
+    MyClass.
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -2433,7 +2465,8 @@ fn main (): Int = MyClass.
     [<Fact>]
     let ``semantic analysis resolves float builtin arithmetic operators`` () =
         let program = """
-fn main (): Float = 2.0f * 3.0f + 1.0f
+fn main (): Float
+    2.0f * 3.0f + 1.0f
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -2474,7 +2507,7 @@ fn main (): Float = 2.0f * 3.0f + 1.0f
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     42 Console'WriteLine.
 """
         let input: Input<SourceChar> = StringInput program
@@ -2506,10 +2539,10 @@ struct CalculatorWindow
     val value: Int
 
 impl CalculatorWindow
-    fn addDigitButton self (digit: Int) (row: Int) (column: Int): Int =
+    fn addDigitButton self (digit: Int) (row: Int) (column: Int): Int
         digit
 
-fn main (): Int = do
+fn main (): Int
     let window = { value = 0 } CalculatorWindow.
     7 0 0 window'addDigitButton.
 """
@@ -2544,10 +2577,10 @@ struct Line
     val intercept: Double
 
 impl Line
-    fn evaluate self (x: Double): Double =
+    fn evaluate self (x: Double): Double
         x
 
-fn main (): () = do
+fn main (): ()
     let line = { slope = 2.0, intercept = -1.0 } Line.
     5.0 line'evaluate. Console'WriteLine.
 """
@@ -2645,8 +2678,10 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
-fn getMessage (e: MyError): String = e'Message
+    fn new (code: Int): MyError
+        { code = code } MyError.
+fn getMessage (e: MyError): String
+    e'Message
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2687,8 +2722,9 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
-fn setLink (e: MyError): () = do
+    fn new (code: Int): MyError
+        { code = code } MyError.
+fn setLink (e: MyError): ()
     e'HelpLink = "https://example.com"
 """
 
@@ -2730,7 +2766,8 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn baseText self: String = base'ToString.
+    fn baseText self: String
+        base'ToString.
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2774,8 +2811,10 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
-fn bad (e: MyError): String = e'NonExistentMember
+    fn new (code: Int): MyError
+        { code = code } MyError.
+fn bad (e: MyError): String
+    e'NonExistentMember
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2812,8 +2851,10 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
-    override fn ToString self: String = "MyError"
+    fn new (code: Int): MyError
+        { code = code } MyError.
+    override fn ToString self: String
+        "MyError"
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2846,8 +2887,10 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
-    override fn NotARealMethod self: Unit = ()
+    fn new (code: Int): MyError
+        { code = code } MyError.
+    override fn NotARealMethod self: Unit
+        ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2879,8 +2922,10 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
-    override fn GetType self: String = "MyError"
+    fn new (code: Int): MyError
+        { code = code } MyError.
+    override fn GetType self: String
+        "MyError"
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2910,7 +2955,8 @@ impl MyError as Exception
 struct Foo
     val x: Int
 impl Foo
-    override fn bar self: Unit = ()
+    override fn bar self: Unit
+        ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2941,7 +2987,8 @@ import System'IDisposable
 struct Box
     val handle: Int
 impl IDisposable for Box
-    override fn Dispose self: Unit = ()
+    override fn Dispose self: Unit
+        ()
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -2972,7 +3019,8 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    override fn ToString (x: Int): String = "static"
+    override fn ToString (x: Int): String
+        "static"
 """
 
         let input: Input<SourceChar> = StringInput source
@@ -3062,12 +3110,14 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
+    fn new (code: Int): MyError
+        { code = code } MyError.
 """
         // モジュール B: ModuleA から MyError を import して Exception 由来の Message プロパティを読み取る。
         let moduleBSource = """
 import ModuleA'MyError
-fn getMessage (e: MyError): String = e'Message
+fn getMessage (e: MyError): String
+    e'Message
 """
         match parseSourceModule "ModuleA" moduleASource, parseSourceModule "ModuleB" moduleBSource with
         | Ok (nameA, astA), Ok (nameB, astB) ->
@@ -3159,12 +3209,13 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
+    fn new (code: Int): MyError
+        { code = code } MyError.
 """
         // モジュール B: ModuleA から MyError を import して HelpLink（読み書き可能）へ代入する。
         let moduleBSource = """
 import ModuleA'MyError
-fn setLink (e: MyError): () = do
+fn setLink (e: MyError): ()
     e'HelpLink = "https://example.com"
 """
         match parseSourceModule "ModuleA" moduleASource, parseSourceModule "ModuleB" moduleBSource with
@@ -3256,9 +3307,11 @@ import System'Exception
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
-fn getMsg (e: Exception): String = e'Message
-fn test (): String = do
+    fn new (code: Int): MyError
+        { code = code } MyError.
+fn getMsg (e: Exception): String
+    e'Message
+fn test (): String
     let err = { code = 42 } MyError.
     err getMsg.
 """
@@ -3303,8 +3356,9 @@ import System'Runtime'ExceptionServices'ExceptionDispatchInfo
 struct MyError
     val code: Int
 impl MyError as Exception
-    fn new (code: Int): MyError = { code = code } MyError.
-fn test (): ExceptionDispatchInfo = do
+    fn new (code: Int): MyError
+        { code = code } MyError.
+fn test (): ExceptionDispatchInfo
     let err = { code = 1 } MyError.
     err ExceptionDispatchInfo'Capture.
 """
@@ -3346,7 +3400,7 @@ fn test (): ExceptionDispatchInfo = do
         let input: Input<SourceChar> = StringInput """
 import System'AppDomain
 
-fn test (domain: AppDomain): () =
+fn test (domain: AppDomain): ()
     domain'ProcessExit += fn _ __ -> ()
 """
         match Lexer.tokenize input Position.Zero with
@@ -3480,7 +3534,8 @@ fn test (domain: AppDomain): () =
     [<Fact>]
     let ``Float'Parse resolves to System.Single.Parse without error`` () =
         let program = """
-fn parse (s: String): Float = s Float'Parse.
+fn parse (s: String): Float
+    s Float'Parse.
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -3508,7 +3563,8 @@ fn parse (s: String): Float = s Float'Parse.
     [<Fact>]
     let ``Int'Parse resolves to System.Int32.Parse without error`` () =
         let program = """
-fn parse (s: String): Int = s Int'Parse.
+fn parse (s: String): Int
+    s Int'Parse.
 """
         let input: Input<SourceChar> = StringInput program
 
@@ -3579,7 +3635,7 @@ struct Rectangle
     val height: Float
 
 impl Geometry for Rectangle
-    fn area self: Float =
+    fn area self: Float
         self'width * self'height
 """
         let input: Input<SourceChar> = StringInput source
@@ -3669,12 +3725,12 @@ enum Opt T
     | Some { value: T }
 
 impl Opt T
-    fn isSome self: Bool =
+    fn isSome self: Bool
         match self
         | Opt'None -> False
         | Opt'Some { value } -> True
 
-    fn isNone self: Bool =
+    fn isNone self: Bool
         match self
         | Opt'None -> True
         | Opt'Some { value } -> False
@@ -3702,7 +3758,8 @@ impl Opt T
     [<Fact>]
     let ``async fn returning Unit wraps to Task`` () =
         let source = """
-async fn run (): () = ()
+async fn run (): ()
+    ()
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3733,7 +3790,8 @@ async fn run (): () = ()
     [<Fact>]
     let ``async fn returning Int wraps to Task of Int`` () =
         let source = """
-async fn good (): Int = 1
+async fn good (): Int
+    1
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3767,7 +3825,8 @@ async fn good (): Int = 1
         let source = """
 import System'Threading'Tasks'Task
 
-fn sync (t: Task): () = await t
+fn sync (t: Task): ()
+    await t
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3802,7 +3861,7 @@ fn sync (t: Task): () = await t
         let source = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): () =
+async fn run (t: Task): ()
     await t
 """
         let input: Input<SourceChar> = StringInput source
@@ -3848,7 +3907,8 @@ async fn run (t: Task): () =
     [<Fact>]
     let ``await on non-Task operand produces diagnostic`` () =
         let source = """
-async fn bad (x: Int): Int = await x
+async fn bad (x: Int): Int
+    await x
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3889,7 +3949,7 @@ async fn bad (x: Int): Int = await x
     [<Fact>]
     let ``let binding type annotation makes inferred type concrete`` () =
         let source = """
-fn main: List Int =
+fn main: List Int
     let x: List Int = List.
     x
 """
@@ -3916,7 +3976,7 @@ fn main: List Int =
     [<Fact>]
     let ``expression type ascription makes inferred type concrete`` () =
         let source = """
-fn main: List Int =
+fn main: List Int
     let y = List. : List Int
     y
 """
@@ -3943,7 +4003,7 @@ fn main: List Int =
     [<Fact>]
     let ``type annotation mismatch produces diagnostic`` () =
         let source = """
-fn main: Int =
+fn main: Int
     let x: Int = List.
     x
 """

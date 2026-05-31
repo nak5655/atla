@@ -12,7 +12,7 @@ module DiagnosticsTests =
         let server = Server(fun _ diagnostics -> published.Add(diagnostics))
         server.IsAvailablePublishDiagnostics <- true
 
-        server.OpenDocument("file:///tmp/semantic-unresolved.atla", "fn main: Int = missing")
+        server.OpenDocument("file:///tmp/semantic-unresolved.atla", "fn main: Int\n    missing")
 
         let diagnostics = published |> Seq.last
         let json = JsonConvert.SerializeObject(diagnostics, Formatting.None)
@@ -27,7 +27,7 @@ module DiagnosticsTests =
         let server = Server(fun _ diagnostics -> published.Add(diagnostics))
         server.IsAvailablePublishDiagnostics <- true
 
-        server.OpenDocument("file:///tmp/semantic-type-mismatch.atla", "fn main: Int = \"hello\"")
+        server.OpenDocument("file:///tmp/semantic-type-mismatch.atla", "fn main: Int\n    \"hello\"")
 
         let diagnostics = published |> Seq.last
         let json = JsonConvert.SerializeObject(diagnostics, Formatting.None)
@@ -42,7 +42,7 @@ module DiagnosticsTests =
         let server = Server(fun _ diagnostics -> published.Add(diagnostics))
         server.IsAvailablePublishDiagnostics <- true
 
-        server.OpenDocument("file:///tmp/syntax-error.atla", "fn main: Int =")
+        server.OpenDocument("file:///tmp/syntax-error.atla", "fn main: Int")
 
         let diagnostics = published |> Seq.last
         let json = JsonConvert.SerializeObject(diagnostics, Formatting.None)

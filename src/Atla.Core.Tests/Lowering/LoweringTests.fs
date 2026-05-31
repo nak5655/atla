@@ -28,7 +28,7 @@ module LoweringTests =
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     "Hello, World!" Console'WriteLine.
 """
 
@@ -66,7 +66,7 @@ fn main: () = do
 import System'Console
 import System'Linq'Enumerable
 
-fn main: () = do
+fn main: ()
     for i in 0 10 Enumerable'Range.
         if | i == 3 =>
             break
@@ -103,7 +103,7 @@ fn main: () = do
     [<Fact>]
     let ``break outside loop fails to compile`` () =
         let program = """
-fn main: () = do
+fn main: ()
     break
 """
 
@@ -123,7 +123,7 @@ fn main: () = do
 import System'Console
 import System'Linq'Enumerable
 
-fn main: () = do
+fn main: ()
     for i in 0 6 Enumerable'Range.
         if | i % 2 == 1 =>
             continue
@@ -164,7 +164,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     for i in 2 7 range.
         i Console'WriteLine.
 """
@@ -199,7 +199,7 @@ fn main: () = do
     [<Fact>]
     let ``continue outside loop fails to compile`` () =
         let program = """
-fn main: () = do
+fn main: ()
     continue
 """
 
@@ -223,7 +223,7 @@ import System'Console
 struct Bag
     val items: List Int
 
-fn main: () =
+fn main: ()
     let b = { items = List. } Bag.
     1 b'items'Add.
     2 b'items'Add.
@@ -265,9 +265,11 @@ fn main: () =
         let program = """
 import System'Console
 
-fn greet (): () = "hello!" Console'WriteLine.
+fn greet (): ()
+    "hello!" Console'WriteLine.
 
-fn main: () = greet.
+fn main: ()
+    greet.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -302,9 +304,11 @@ fn main: () = greet.
         let program = """
 import System'Console
 
-fn greet (): () = "hello!" Console'WriteLine.
+fn greet (): ()
+    "hello!" Console'WriteLine.
 
-fn main: () = () greet.
+fn main: ()
+    () greet.
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -320,7 +324,7 @@ fn main: () = () greet.
 import System'Array
 import System'Console
 import System'Linq'Enumerable
-fn fizzbuzz (n: Int): () =
+fn fizzbuzz (n: Int): ()
     for i in 1 n Enumerable'Range.
         let s =
             if
@@ -331,7 +335,7 @@ fn fizzbuzz (n: Int): () =
         s Console'WriteLine.
 
 
-fn main: () = do
+fn main: ()
     let n = Console'ReadLine. Int32'Parse.
     n fizzbuzz.
 """
@@ -376,14 +380,14 @@ fn main: () = do
 import System'Int32
 import System'Console
 
-fn fibonacci (n: Int): Int =
+fn fibonacci (n: Int): Int
     if
     | n == 0 => 0
     | n == 1 => 1
     | n == 2 => 1
     | else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
-fn main: () = do
+fn main: ()
     let n = Console'ReadLine. Int32'Parse.
     n fibonacci. Console'WriteLine.
 """
@@ -422,7 +426,8 @@ fn main: () = do
     [<Fact>]
     let ``main int return should become process exit code`` () =
         let program = """
-fn main: Int = 7
+fn main: Int
+    7
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -458,7 +463,7 @@ fn main: Int = 7
 import System'Int32
 import System'Console
 
-fn main: () = do
+fn main: ()
     var n_x = Console'ReadLine.
     n_x = " " n_x'Split.
 """
@@ -477,7 +482,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     let a = Console'ReadLine.
     a[1] Console'WriteLine.
 """
@@ -518,7 +523,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     let line = Console'ReadLine.
     let a = " " line'Split.
     a[0] Console'WriteLine.
@@ -560,9 +565,10 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn count (xs: Array String): Int = xs'Length
+fn count (xs: Array String): Int
+    xs'Length
 
-fn main: () = do
+fn main: ()
     let line = Console'ReadLine.
     let a = " " line'Split.
     a count. Console'WriteLine.
@@ -606,7 +612,7 @@ import System'Int32
 import System'Console
 import System'Linq'Enumerable
 
-fn main: () = do
+fn main: ()
     let line = Console'ReadLine.
     let a = " " line'Split.
     for i in 0 a'Length Enumerable'Range.
@@ -647,7 +653,8 @@ fn main: () = do
     [<Fact>]
     let ``compile result should include diagnostics list on success`` () =
         let program = """
-fn main: Int = 0
+fn main: Int
+    0
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -660,7 +667,7 @@ fn main: Int = 0
     [<Fact>]
     let ``compile result should include error diagnostics on failure`` () =
         let program = """
-fn main: Int =
+fn main: Int
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -674,7 +681,8 @@ fn main: Int =
     [<Fact>]
     let ``compile should fail when dependency reference assembly path is missing`` () =
         let program = """
-fn main: Int = 0
+fn main: Int
+    0
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -702,7 +710,8 @@ fn main: Int = 0
     [<Fact>]
     let ``compile should fail when dependency reference assembly is invalid format`` () =
         let program = """
-fn main: Int = 0
+fn main: Int
+    0
 """
 
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -737,7 +746,7 @@ fn main: Int = 0
         let program = """
 import System'Text'Json'JsonNamingPolicy
 
-fn main: () = do
+fn main: ()
     var policy = JsonNamingPolicy'CamelCase
 """
 
@@ -770,7 +779,7 @@ fn main: () = do
         let program = """
 import System'Text'Json'JsonNamingPolicy
 
-fn main: () = do
+fn main: ()
     var policy = JsonNamingPolicy'CamelCase
 """
 
@@ -800,7 +809,7 @@ fn main: () = do
         let program = """
 import System'Text'Json'DoesNotExist
 
-fn main: () = do
+fn main: ()
     var x = DoesNotExist'Parse
 """
 
@@ -860,7 +869,7 @@ fn main: () = do
         let result =
             compileSingle
                 { asmName = "DependencyConflictProgram"
-                  source = "fn main: Int = 0"
+                  source = "fn main: Int\n    0"
                   outDir = outDir
                   dependencies = [ depA; depB ] }
 
@@ -891,7 +900,7 @@ fn main: () = do
         let compileOnce () =
             compileSingle
                 { asmName = "DependencyDeterminismProgram"
-                  source = "fn main: Int = 0"
+                  source = "fn main: Int\n    0"
                   outDir = outDir
                   dependencies = [ depA; depB ] }
 
@@ -986,11 +995,11 @@ fn main: () = do
 import System'Text'StringBuilder
 import System'Console
 
-fn process (sb: StringBuilder): () = do
+fn process (sb: StringBuilder): ()
     let _ = "ok" sb'Append.
     sb'ToString. Console'WriteLine.
 
-fn main: () = do
+fn main: ()
     let sb = StringBuilder.
     sb process.
 """
@@ -1034,8 +1043,8 @@ fn main: () = do
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
-        let mainSource = "import Foo'Bar\n\nfn main: Int = 7 Foo'Bar'make."
-        let fooBarSource = "fn make (x: Int): Int = x"
+        let mainSource = "import Foo'Bar\n\nfn main: Int\n    7 Foo'Bar'make."
+        let fooBarSource = "fn make (x: Int): Int\n    x"
         let fooSource = "struct Bar\n    val value: Int"
 
         let result =
@@ -1058,7 +1067,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import Foo'Bar\n\nfn id (x: Bar): Bar = x\n\nfn main: () = do\n    let v = { value = 42 } Bar.\n    let _ = v id."
+            "import Foo'Bar\n\nfn id (x: Bar): Bar\n    x\n\nfn main: ()\n    let v = { value = 42 } Bar.\n    let _ = v id."
         let fooSource = "struct Bar\n    val value: Int"
 
         let result =
@@ -1080,7 +1089,7 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import sub'Person\n\nfn main: () = do\n    let p = { name = \"alice\" } Person.\n    let _ = p"
+            "import sub'Person\n\nfn main: ()\n    let p = { name = \"alice\" } Person.\n    let _ = p"
         let subSource = "struct Person\n    val name: String"
 
         let result =
@@ -1105,10 +1114,10 @@ fn main: () = do
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import sub\nimport sub'Person\n\nfn main: () = do\n    let p = { name = \"alice\" } Person.\n    p'greet."
+            "import sub\nimport sub'Person\n\nfn main: ()\n    let p = { name = \"alice\" } Person.\n    p'greet."
 
         let subSource =
-            "import System'Console\n\nstruct Person\n    val name: String\n\nimpl Person\n    fn greet self: () = do\n        self'name Console'WriteLine."
+            "import System'Console\n\nstruct Person\n    val name: String\n\nimpl Person\n    fn greet self: ()\n        self'name Console'WriteLine."
 
         let result =
             Compiler.compileModules {
@@ -1128,7 +1137,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     True Console'WriteLine.
     False Console'WriteLine.
 """
@@ -1171,15 +1180,15 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn printMsg: () = do
+fn printMsg: ()
     "called!" Console'WriteLine.
 
-fn applyTwice (callback: () -> ()): () = do
+fn applyTwice (callback: () -> ()): ()
     let doIt = fn () -> callback.
     doIt.
     doIt.
 
-fn main: () = do
+fn main: ()
     printMsg applyTwice.
 """
 
@@ -1221,7 +1230,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     let value = 3.14
     let invertedValue = -value
     invertedValue'ToString. Console'WriteLine.
@@ -1263,7 +1272,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     let a = 1.5f
     let b = 2.0f
     let c = a + b
@@ -1305,7 +1314,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     let n = 42
     let neg = -n
     neg'ToString. Console'WriteLine.
@@ -1355,10 +1364,10 @@ struct Rectangle
     val height: Double
 
 impl Geometry for Rectangle
-    fn area self: Double =
+    fn area self: Double
         self'width * self'height
 
-fn main: () =
+fn main: ()
     let rect = { width = 5.0, height = 10.0 } Rectangle.
     rect'area. Console'WriteLine.
 """
@@ -1401,14 +1410,14 @@ enum Color
     | Hsv { h: Int, s: Int, v: Int }
 
 impl Color
-    fn red self: Int =
+    fn red self: Int
         match self
         | Color'Black -> 0
         | Color'White -> 255
         | Color'Rgb { r, .. } -> r
         | Color'Hsv { h, s, v } -> (h * s * v) / 10000
 
-fn main: () =
+fn main: ()
     let color = Color'Rgb { r = 255, g = 0, b = 0 }
     color'red. Console'WriteLine.
 """
@@ -1450,7 +1459,7 @@ import System'Console
 import sub
 import sub'Color
 
-fn main: () = do
+fn main: ()
     let color = Color'Rgb { r = 255, g = 0, b = 0 }
     color'red. Console'WriteLine.
 """
@@ -1462,7 +1471,7 @@ enum Color
     | Rgb { r: Int, g: Int, b: Int }
 
 impl Color
-    fn red self: Int =
+    fn red self: Int
         match self
         | Color'Black -> 0
         | Color'Rgb { r, .. } -> r
@@ -1520,15 +1529,15 @@ struct Box
     val _value: Opt Int
 
 impl Box
-    fn new: Box =
+    fn new: Box
         { _value = Opt'None } Box.
 
-    fn get self: Int =
+    fn get self: Int
         match self'_value
         | Opt'None -> -1
         | Opt'Some { value } -> value
 
-fn main: () = do
+fn main: ()
     let b = Box'new.
     b'get. Console'WriteLine.
 """
@@ -1575,15 +1584,15 @@ struct Box
     val _value: Opt Int
 
 impl Box
-    fn new (n: Int): Box =
+    fn new (n: Int): Box
         { _value = n Opt'Some. } Box.
 
-    fn get self: Int =
+    fn get self: Int
         match self'_value
         | Opt'None -> -1
         | Opt'Some { value } -> value
 
-fn main: () = do
+fn main: ()
     let b = 42 Box'new.
     b'get. Console'WriteLine.
 """
@@ -1629,12 +1638,13 @@ enum Opt T
     | Some { value: T }
 
 impl Opt T
-    fn count self: Int =
+    fn count self: Int
         match self
         | Opt'None -> 0
         | Opt'Some _ -> 1
 
-fn main: () = ()
+fn main: ()
+    ()
 """
 
         let res = compileSingle { asmName = "GenericImplWildcard"; source = source.Trim(); outDir = outDir; dependencies = [] }
@@ -1658,12 +1668,13 @@ enum Opt T
     | Some { value: T }
 
 impl Opt T
-    fn hasPayload self: Int =
+    fn hasPayload self: Int
         match self
         | Opt'None -> 0
         | Opt'Some { value } -> 1
 
-fn main: () = ()
+fn main: ()
+    ()
 """
 
         let res = compileSingle { asmName = "GenericImplNamedField"; source = source.Trim(); outDir = outDir; dependencies = [] }
@@ -1687,9 +1698,10 @@ struct Point
     val y: Int
 
 impl Point
-    fn sum self: Int = self'x + self'y
+    fn sum self: Int
+        self'x + self'y
 
-fn main: () =
+fn main: ()
     let p = { x = 3, y = 4 } Point.
     p'sum. Console'WriteLine.
 """
@@ -1747,10 +1759,12 @@ struct MyError
     val code: Int
 
 impl MyError as Exception
-    fn new (c: Int): MyError = { code = c } MyError.
-    override fn ToString self: String = base'ToString.
+    fn new (c: Int): MyError
+        { code = c } MyError.
+    override fn ToString self: String
+        base'ToString.
 
-fn main: () =
+fn main: ()
     let e = 42 MyError'new.
     e'ToString. Console'WriteLine.
 """
@@ -1790,7 +1804,8 @@ fn main: () =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (): () = ()
+async fn run (): ()
+    ()
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1829,7 +1844,8 @@ async fn run (): () = ()
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): () = await t
+async fn run (t: Task): ()
+    await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1869,7 +1885,8 @@ async fn run (t: Task): () = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): () = await t
+async fn run (t: Task): ()
+    await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1903,7 +1920,8 @@ async fn run (t: Task): () = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn runT (t: Task Int): Int = await t
+async fn runT (t: Task Int): Int
+    await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -1938,7 +1956,7 @@ async fn runT (t: Task Int): Int = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn compute (t: Task Int): Int =
+async fn compute (t: Task Int): Int
     let x = await t
     x
 """
@@ -1975,7 +1993,8 @@ async fn compute (t: Task Int): Int =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): () = await t
+async fn run (t: Task): ()
+    await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2011,7 +2030,7 @@ async fn run (t: Task): () = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn compute (t: Task Int): Int =
+async fn compute (t: Task Int): Int
     let x = await t
     x
 """
@@ -2048,7 +2067,8 @@ async fn compute (t: Task Int): Int =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): () = await t
+async fn run (t: Task): ()
+    await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2085,7 +2105,7 @@ async fn run (t: Task): () = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn two (a: Task) (b: Task Int): Int =
+async fn two (a: Task) (b: Task Int): Int
     await a
     await b
 """
@@ -2129,7 +2149,8 @@ async fn two (a: Task) (b: Task Int): Int =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): () = await t
+async fn run (t: Task): ()
+    await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2167,7 +2188,7 @@ async fn run (t: Task): () = await t
         let program = """
 import System'Threading'Tasks'Task
 
-async fn compute (t: Task Int): Int =
+async fn compute (t: Task Int): Int
     let x = await t
     x
 """
@@ -2203,7 +2224,8 @@ async fn compute (t: Task Int): Int =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn run (t: Task): () = await t
+async fn run (t: Task): ()
+    await t
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2244,7 +2266,7 @@ async fn run (t: Task): () = await t
 import System'Threading'Tasks'Task
 import System'Linq'Enumerable
 
-async fn loopAwait (t: Task): () =
+async fn loopAwait (t: Task): ()
     for i in 1 3 Enumerable'Range.
         await t
 """
@@ -2288,9 +2310,11 @@ async fn loopAwait (t: Task): () =
         let program = """
 import System'Threading'Tasks'Task
 
-async fn inner (): Int = 42
+async fn inner (): Int
+    42
 
-async fn outer (): Int = await (inner.)
+async fn outer (): Int
+    await (inner.)
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2321,9 +2345,11 @@ async fn outer (): Int = await (inner.)
         let program = """
 import System'Threading'Tasks'Task
 
-async fn inner (t: Task Int): Int = await t
+async fn inner (t: Task Int): Int
+    await t
 
-async fn outer (t: Task Int): Int = await (t inner.)
+async fn outer (t: Task Int): Int
+    await (t inner.)
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2361,9 +2387,11 @@ async fn outer (t: Task Int): Int = await (t inner.)
         let program = """
 import System'Threading'Tasks'Task
 
-async fn id (x: Int): Int = x
+async fn id (x: Int): Int
+    x
 
-async fn outer (t: Task Int): Int = await ((await t) id.)
+async fn outer (t: Task Int): Int
+    await ((await t) id.)
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2403,9 +2431,11 @@ async fn outer (t: Task Int): Int = await ((await t) id.)
         let program = """
 import System'Threading'Tasks'Task
 
-async fn pick (x: Int) (y: Int): Int = y
+async fn pick (x: Int) (y: Int): Int
+    y
 
-async fn outer (a: Task Int) (b: Task Int): Int = await ((await a) (await b) pick.)
+async fn outer (a: Task Int) (b: Task Int): Int
+    await ((await a) (await b) pick.)
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
@@ -2447,7 +2477,7 @@ async fn outer (a: Task Int) (b: Task Int): Int = await ((await a) (await b) pic
         let program = """
 import System'Threading'Tasks'Task
 
-async fn choose (c: Bool) (a: Task Int) (b: Task Int): Int =
+async fn choose (c: Bool) (a: Task Int) (b: Task Int): Int
     if
     | c => await a
     | else => await b
@@ -2523,13 +2553,13 @@ async fn choose (c: Bool) (a: Task Int) (b: Task Int): Int =
         let program = """
 import System'Console
 
-fn check (a: Int) (b: Int): () = do
+fn check (a: Int) (b: Int): ()
     if | a < b => "lt" Console'Write.
     if | a > b => "gt" Console'Write.
     if | a <= b => "le" Console'Write.
     if | a >= b => "ge" Console'Write.
 
-fn main: () = do
+fn main: ()
     3 5 check.
     5 3 check.
     4 4 check.
@@ -2542,7 +2572,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     if | 0.5f < 1.0f => "a" Console'Write.
     if | 2.0f > 1.0f => "b" Console'Write.
     if | 1.0f <= 1.0f => "c" Console'Write.
@@ -2557,11 +2587,11 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn rhs: Bool = do
+fn rhs: Bool
     "R" Console'Write.
     True
 
-fn main: () = do
+fn main: ()
     if | False && rhs. => "A" Console'Write.
     if | True && rhs. => "B" Console'Write.
     "z" Console'Write.
@@ -2575,11 +2605,11 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn rhs: Bool = do
+fn rhs: Bool
     "R" Console'Write.
     True
 
-fn main: () = do
+fn main: ()
     if | True || rhs. => "A" Console'Write.
     if | False || rhs. => "B" Console'Write.
     "z" Console'Write.
@@ -2597,7 +2627,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     let xs: List Int = List.
     10 xs'Add.
     20 xs'Add.
@@ -2611,7 +2641,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     let xs: List Int = List.
     10 xs'Add.
     20 xs'Add.
@@ -2628,7 +2658,7 @@ fn main: () = do
 import System'Activator
 import System'Console
 
-fn main: () = do
+fn main: ()
     let x = Activator'CreateInstance<Int>.
     x Console'Write.
 """
@@ -2640,11 +2670,11 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn cmp (a: Int) (b: Int): () = do
+fn cmp (a: Int) (b: Int): ()
     if | a < b => "L" Console'Write.
     if | a > b => "G" Console'Write.
 
-fn main: () = do
+fn main: ()
     3 5 cmp.
     5 3 cmp.
     if | 1 < 2 && 2 > 1 => "B" Console'Write.
@@ -2661,12 +2691,12 @@ enum Opt T
     | None
     | Some { value: T }
 
-fn unwrapOr (o: Opt Int) (default: Int): Int =
+fn unwrapOr (o: Opt Int) (default: Int): Int
     let Opt'Some v = o
     | else -> return default
     v
 
-fn main: () = do
+fn main: ()
     let some = Opt'Some { value = 42 }
     let none = Opt'None
     (some 0 unwrapOr.) Console'WriteLine.
@@ -2684,12 +2714,12 @@ enum Opt T
     | None
     | Some { value: T }
 
-fn getValueOrZero (o: Opt Int): Int =
+fn getValueOrZero (o: Opt Int): Int
     let Opt'Some { value } = o
     | else -> return 0
     value
 
-fn main: () = do
+fn main: ()
     let some = Opt'Some { value = 99 }
     let none = Opt'None
     (some getValueOrZero.) Console'WriteLine.
@@ -2702,12 +2732,12 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn printIfPositive (n: Int): Unit =
+fn printIfPositive (n: Int): Unit
     if | n <= 0 =>
         return
     n Console'WriteLine.
 
-fn main: () = do
+fn main: ()
     3 printIfPositive.
     0 printIfPositive.
     5 printIfPositive.
@@ -2723,12 +2753,12 @@ enum Opt T
     | None
     | Some { value: T }
 
-fn printValue (o: Opt Int): Unit =
+fn printValue (o: Opt Int): Unit
     let Opt'Some x = o
     | else -> return
     x Console'WriteLine.
 
-fn main: () = do
+fn main: ()
     (1 Opt'Some.) printValue.
     Opt'None printValue.
     (2 Opt'Some.) printValue.
@@ -2740,7 +2770,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     var x = 0
     while x < 5
         x = x + 1
@@ -2753,7 +2783,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     var x = 0
     while x < 100
         if | x == 3 =>
@@ -2768,7 +2798,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     var sum = 0
     var i = 0
     while i < 5
@@ -2785,7 +2815,7 @@ fn main: () = do
         let program = """
 import System'Console
 
-fn main: () = do
+fn main: ()
     var x = 42
     while False
         x = 0

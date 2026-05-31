@@ -1,7 +1,7 @@
 import System'Array
 import System'Console
 
-fn fizzbuzz (n: Int): () =
+fn fizzbuzz (n: Int): ()
     for i in 1 (n + 1) range.
         let s =
             if
@@ -11,6 +11,6 @@ fn fizzbuzz (n: Int): () =
             | else => i'ToString.
         s Console'WriteLine.
 
-fn main: () =
+fn main: ()
     let n = Console'ReadLine. Int32'Parse.
     n fizzbuzz.

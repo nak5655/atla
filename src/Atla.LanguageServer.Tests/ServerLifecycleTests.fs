@@ -158,7 +158,7 @@ module ServerLifecycleTests =
             // Open a document whose URI also uses %3A encoding in the path portion.
             let rawDocUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
             let encodedDocUri = encodePathColon rawDocUri
-            server.OpenDocument(encodedDocUri, "fn main: Int = 0")
+            server.OpenDocument(encodedDocUri, "fn main: Int\n    0")
 
             // Build system should have been invoked and the dependency injected.
             let request = Assert.Single(capturedRequests)
@@ -180,8 +180,8 @@ module ServerLifecycleTests =
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
 
         let uri = "file:///tmp/lifecycle.atla"
-        server.OpenDocument(uri, "fn main: Int = 0")
-        server.ChangeDocument(uri, "fn main: Int = 0")
+        server.OpenDocument(uri, "fn main: Int\n    0")
+        server.ChangeDocument(uri, "fn main: Int\n    0")
         server.WaitForPendingCompilations()
 
         let tokensBeforeClose = server.Tokenize(uri)
@@ -264,8 +264,8 @@ module ServerLifecycleTests =
 
         server.Initialize(content) |> ignore
 
-        server.OpenDocument("file:///tmp/workspace/in.atla", "fn main: Int = 0")
-        server.OpenDocument("file:///tmp/out.atla", "fn main: Int = 0")
+        server.OpenDocument("file:///tmp/workspace/in.atla", "fn main: Int\n    0")
+        server.OpenDocument("file:///tmp/out.atla", "fn main: Int\n    0")
 
         let publishedList = published |> Seq.toList
         Assert.Contains(publishedList, fun (uri, count) -> uri = "file:///tmp/workspace/in.atla" && count = 0)
@@ -343,7 +343,7 @@ module ServerLifecycleTests =
 
         server.IsAvailablePublishDiagnostics <- true
         let documentUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
-        server.OpenDocument(documentUri, "fn main: Int = 0")
+        server.OpenDocument(documentUri, "fn main: Int\n    0")
 
         let request = capturedRequests |> Seq.exactlyOne
         Assert.Single(request.dependencies) |> ignore
@@ -358,7 +358,7 @@ module ServerLifecycleTests =
         let srcDir = Path.Join(tempRoot, "src")
         Directory.CreateDirectory(srcDir) |> ignore
         File.WriteAllText(Path.Join(tempRoot, "atla.yaml"), "package:\n  name: \"gui_calc\"\n  version: \"0.1.0\"\n")
-        File.WriteAllText(Path.Join(srcDir, "main.atla"), "fn main: Int = 0")
+        File.WriteAllText(Path.Join(srcDir, "main.atla"), "fn main: Int\n    0")
 
         let buildProject (_: BuildRequest) : BuildResult =
             { succeeded = true
@@ -465,7 +465,7 @@ module ServerLifecycleTests =
             DependencyLoader.clearLocalCopyCache()
             server.Initialize(initializeContent) |> ignore
             server.IsAvailablePublishDiagnostics <- true
-            server.OpenDocument(documentUri, "import System'Text'Json'JsonNamingPolicy\nfn main: () = do\n    let _ = JsonNamingPolicy'CamelCase")
+            server.OpenDocument(documentUri, "import System'Text'Json'JsonNamingPolicy\nfn main: ()\n    let _ = JsonNamingPolicy'CamelCase")
             server.WaitForPendingCompilations()
 
             Assert.True(File.Exists(normalizedSourceDependencyPath))
@@ -525,7 +525,7 @@ module ServerLifecycleTests =
 
         server.Initialize(initializeContent) |> ignore
         let documentUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
-        server.OpenDocument(documentUri, "fn main: Int = 0")
+        server.OpenDocument(documentUri, "fn main: Int\n    0")
 
         Assert.False(compileCalled)
         let (_, diagnostics) = published |> Seq.last
@@ -541,7 +541,7 @@ module ServerLifecycleTests =
         let makeServer (collector: ResizeArray<string * int>) =
             Server(fun uri diagnostics -> collector.Add(uri, diagnostics.Length))
 
-        let source = "fn main: Int = undefinedSymbol"
+        let source = "fn main: Int\n    undefinedSymbol"
         let uri = "file:///tmp/determinism-test.atla"
 
         // 1回目のコンパイル。
@@ -639,8 +639,8 @@ module ServerLifecycleTests =
             server.IsAvailablePublishDiagnostics <- true
 
             let documentUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
-            server.OpenDocument(documentUri, "fn main: Int = 0")
-            server.ChangeDocument(documentUri, "fn main: Int = 1")
+            server.OpenDocument(documentUri, "fn main: Int\n    0")
+            server.ChangeDocument(documentUri, "fn main: Int\n    1")
             server.WaitForPendingCompilations()
 
             // didOpen と didChange 両方でコンパイルが呼ばれていること。
@@ -723,11 +723,11 @@ module ServerLifecycleTests =
 
             let documentUri = System.Uri(Path.Join(srcDir, "main.atla")).AbsoluteUri
             // didOpen: buildProject 成功 → コンパイル実行。
-            server.OpenDocument(documentUri, "fn main: Int = 0")
+            server.OpenDocument(documentUri, "fn main: Int\n    0")
             compileCalled <- false
 
             // didChange: buildProject 失敗 → build 診断のみ返し、コンパイルはスキップ。
-            server.ChangeDocument(documentUri, "fn main: Int = 1")
+            server.ChangeDocument(documentUri, "fn main: Int\n    1")
             server.WaitForPendingCompilations()
 
             Assert.False(compileCalled, "compile must not be called when dependency resolution fails")

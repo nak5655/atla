@@ -79,7 +79,7 @@ module IncrementalSyncTests =
         server.IsAvailablePublishDiagnostics <- true
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
         let uri = "file:///tmp/incr-delete.atla"
-        server.OpenDocument(uri, "fn main: Int = 42")
+        server.OpenDocument(uri, "fn main: Int\n    42")
 
         // "fn " の部分（0,0）-（0,3）を削除する。
         server.ApplyIncrementalChanges(uri, [ mkChange 0 0 0 3 "" ] |> Seq.ofList)
@@ -99,7 +99,7 @@ module IncrementalSyncTests =
         server.IsAvailablePublishDiagnostics <- true
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
         let uri = "file:///tmp/incr-replace.atla"
-        server.OpenDocument(uri, "fn main: Int = 0")
+        server.OpenDocument(uri, "fn main: Int\n    0")
 
         // "Int" を "Float" に置き換える: (0,9)-(0,12)
         server.ApplyIncrementalChanges(uri, [ mkChange 0 9 0 12 "Float" ] |> Seq.ofList)
@@ -118,10 +118,10 @@ module IncrementalSyncTests =
         server.IsAvailablePublishDiagnostics <- true
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
         let uri = "file:///tmp/incr-full-replace.atla"
-        server.OpenDocument(uri, "fn main: Int = 0")
+        server.OpenDocument(uri, "fn main: Int\n    0")
 
         // range なし → 全文置換。
-        server.ApplyIncrementalChanges(uri, [ mkFullChange "fn main: Int = 99" ] |> Seq.ofList)
+        server.ApplyIncrementalChanges(uri, [ mkFullChange "fn main: Int\n    99" ] |> Seq.ofList)
         server.WaitForPendingCompilations()
 
         let tokens = server.Tokenize(uri)
@@ -140,7 +140,7 @@ module IncrementalSyncTests =
         server.IsAvailablePublishDiagnostics <- true
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
         let uri = "file:///tmp/incr-multi.atla"
-        server.OpenDocument(uri, "fn main: Int = 0")
+        server.OpenDocument(uri, "fn main: Int\n    0")
 
         // 2 つの変更を同一 contentChanges エントリとして送る。
         // 1. "0" を "1" に置換する (0,15)-(0,16)
@@ -170,7 +170,7 @@ module IncrementalSyncTests =
         server.IsAvailablePublishDiagnostics <- true
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
         let uri = "file:///tmp/incr-multiline.atla"
-        server.OpenDocument(uri, "fn main: Int =\n  0")
+        server.OpenDocument(uri, "fn main: Int\n  0")
 
         // 行 0 の末尾から行 1 末尾まで（= ":\n  0"）を " = 42" で置換する。
         server.ApplyIncrementalChanges(uri, [ mkChange 0 13 1 3 " = 42" ] |> Seq.ofList)
@@ -192,7 +192,7 @@ module IncrementalSyncTests =
         server.IsAvailablePublishDiagnostics <- true
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
         let uri = "file:///tmp/incr-clamp.atla"
-        server.OpenDocument(uri, "fn main: Int = 0")
+        server.OpenDocument(uri, "fn main: Int\n    0")
 
         // 存在しない行 999 を参照しても例外を起こさずに処理できること。
         // 例外が発生しなければテスト成功（バッファは変形されるが壊れない）。
@@ -212,7 +212,7 @@ module IncrementalSyncTests =
                 debounceDelayMs = 0)
         server.IsAvailablePublishDiagnostics <- true
         let uri = "file:///tmp/incr-empty.atla"
-        server.OpenDocument(uri, "fn main: Int = 0")
+        server.OpenDocument(uri, "fn main: Int\n    0")
 
         let prevCount = published.Count
         server.ApplyIncrementalChanges(uri, Seq.empty)
@@ -234,10 +234,10 @@ module IncrementalSyncTests =
                 debounceDelayMs = 0)
         server.IsAvailablePublishDiagnostics <- true
         let uri = "file:///tmp/incr-diag.atla"
-        server.OpenDocument(uri, "fn main: Int = 0")
+        server.OpenDocument(uri, "fn main: Int\n    0")
 
-        // "= 0" を "= " に削減して構文エラーを発生させる。
-        server.ApplyIncrementalChanges(uri, [ mkChange 0 14 0 17 "" ] |> Seq.ofList)
+        // body 行（"\n    0"）を削除し、signature だけ残して構文エラーを発生させる。
+        server.ApplyIncrementalChanges(uri, [ mkChange 0 12 1 5 "" ] |> Seq.ofList)
         server.WaitForPendingCompilations()
 
         let lastCount = published |> Seq.last |> snd

@@ -30,7 +30,7 @@ struct FlappyGame
     val _rand: Random
 
 impl FlappyGame as Game
-    fn new: FlappyGame =
+    fn new: FlappyGame
         { _spriteBatch = Opt'None
         , _whiteTexture = Opt'None
         , _birdPos = 200.0f 300.0f Vector2.
@@ -44,10 +44,10 @@ impl FlappyGame as Game
         , _pipeSpeed = 200.0f
         , _rand = Random. } FlappyGame.
 
-    fn RandomGap self: Int =
+    fn RandomGap self: Int
         200 450 self'_rand'Next.
 
-    fn ResetGame self: () =
+    fn ResetGame self: ()
         self'_birdPos = 200.0f 300.0f Vector2.
         self'_birdVelocity = 0.0f
         self'_pipes'Clear.
@@ -58,7 +58,7 @@ impl FlappyGame as Game
             let gapY = self'RandomGap. toFloat.
             (pipeX gapY Vector2.) self'_pipes'Add.
 
-    override fn Initialize self: () =
+    override fn Initialize self: ()
         base'Initialize.
 
         # 初期パイプ生成
@@ -67,7 +67,7 @@ impl FlappyGame as Game
             let gapY = self'RandomGap. toFloat.
             (pipeX gapY Vector2.) self'_pipes'Add.
 
-    override async fn LoadContent self: () =
+    override async fn LoadContent self: ()
         await base'LoadContent.
 
         self'_spriteBatch = self'GraphicsDevice SpriteBatch. Opt'Some.
@@ -76,7 +76,7 @@ impl FlappyGame as Game
         self'_whiteTexture = whiteTexture Opt'Some.
         self'GraphicsContext'CommandList (Color'White array.) whiteTexture'SetData<Color>.
 
-    override fn Update self (gameTime: GameTime): () =
+    override fn Update self (gameTime: GameTime): ()
         gameTime base'Update.
 
         let dt = gameTime'Elapsed'TotalSeconds toFloat.
@@ -117,7 +117,7 @@ impl FlappyGame as Game
         if | shouldReset =>
             self'ResetGame.
 
-    override fn Draw self (gameTime: GameTime): () =
+    override fn Draw self (gameTime: GameTime): ()
         gameTime base'Draw.
 
         self'GraphicsDevice'Presenter'BackBuffer Color'CornflowerBlue self'GraphicsContext'CommandList'Clear.

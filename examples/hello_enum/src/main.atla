@@ -7,13 +7,13 @@ enum Color
     | Hsv { h: Int, s: Int, v: Int }
 
 impl Color
-    fn red self: Int =
+    fn red self: Int
         match self
         | Color'Black -> 0
         | Color'White -> 255
         | Color'Rgb { r, .. } -> r
         | Color'Hsv { h, s, v } -> (h * s * v) / 10000
 
-fn main: () =
+fn main: ()
     let color = Color'Rgb { r = 255, g = 0, b = 0 }
     color'red. Console'WriteLine.
