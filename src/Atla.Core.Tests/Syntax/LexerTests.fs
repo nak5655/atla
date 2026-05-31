@@ -97,3 +97,59 @@ module LexerTests =
                 | _ -> false)
         | Failure(reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``tokenizeAll emits standalone and trailing comments with spans`` () =
+        let program = "# file header\nval answer = 42 # trailing"
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenizeAll input Position.Zero with
+        | Success(tokens, _) ->
+            let comments =
+                tokens
+                |> List.choose (fun token ->
+                    match token with
+                    | :? Token.Comment as c -> Some c
+                    | _ -> None)
+            Assert.Equal(2, List.length comments)
+
+            let header = comments.[0]
+            Assert.Equal("# file header", header.text)
+            Assert.Equal(0, header.span.left.Line)
+            Assert.Equal(0, header.span.left.Column)
+            Assert.Equal(0, header.span.right.Line)
+            Assert.Equal("# file header".Length, header.span.right.Column)
+
+            let trailing = comments.[1]
+            Assert.Equal("# trailing", trailing.text)
+            Assert.Equal(1, trailing.span.left.Line)
+
+            // Regular tokens are still produced alongside comments.
+            Assert.Contains(tokens, fun token ->
+                match token with
+                | :? Token.Keyword as kw -> kw.str = "val"
+                | _ -> false)
+            Assert.Contains(tokens, fun token ->
+                match token with
+                | :? Token.Int as i -> i.value = 42
+                | _ -> false)
+        | Failure(reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``tokenizeAll does not treat hash inside string literals as comment`` () =
+        let program = "val s = \"#not-comment\""
+        let input: Input<SourceChar> = StringInput program
+
+        match Lexer.tokenizeAll input Position.Zero with
+        | Success(tokens, _) ->
+            Assert.DoesNotContain(tokens, fun token ->
+                match token with
+                | :? Token.Comment -> true
+                | _ -> false)
+            Assert.Contains(tokens, fun token ->
+                match token with
+                | :? Token.String as str -> str.value = "#not-comment"
+                | _ -> false)
+        | Failure(reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")

@@ -78,7 +78,7 @@ module SemanticTokensTests =
           "params": {
             "capabilities": {
               "textDocument": {
-                "semanticTokens": { "tokenTypes": ["comment", "operator"] }
+                "semanticTokens": { "tokenTypes": ["operator", "namespace"] }
               }
             }
           }
@@ -97,3 +97,31 @@ module SemanticTokensTests =
 
         Assert.Contains("\"resultId\":\"\"", json)
         Assert.Contains("\"data\":[0,0,2,0,0]", json)
+
+    [<Fact>]
+    let ``internal tokenize emits comment token when client advertises comment type`` () =
+        let server = Server()
+        server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string"; "comment" |]
+
+        let tokens = server.InternalTokenize("# hi")
+
+        // Single comment spanning columns 0..4 on line 0; encoded with token type index 5.
+        Assert.Equal<uint32 list>([ 0u; 0u; 4u; 5u; 0u ], tokens)
+
+    [<Fact>]
+    let ``internal tokenize drops comment when client does not advertise comment type`` () =
+        let server = Server()
+        server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
+
+        let tokens = server.InternalTokenize("# hi\nval x = 1")
+
+        // Comment is filtered out by the legend; only `val`, `x`, and `1` remain.
+        // Encoded as: val (line 1 col 0, len 3, keyword=0), x (delta col 4, len 1, variable=2), 1 (delta col 4, len 1, number=3).
+        Assert.Equal<uint32 list>(
+            [
+                1u; 0u; 3u; 0u; 0u
+                0u; 4u; 1u; 2u; 0u
+                0u; 4u; 1u; 3u; 0u
+            ],
+            tokens
+        )

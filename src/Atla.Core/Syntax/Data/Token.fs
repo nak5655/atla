@@ -88,3 +88,9 @@ module Token =
         member this.span = span
         interface Token with
             member this.span = span
+
+    type Comment(text: string, span: Span) =
+        member this.text = text
+        member this.span = span
+        interface Token with
+            member this.span = span
