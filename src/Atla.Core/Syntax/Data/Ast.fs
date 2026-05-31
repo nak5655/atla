@@ -538,11 +538,45 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Data(name: string, typeParams: string list, items: DataItem list, span: Span) =
+        type Data(name: string, typeParams: string list, items: DataItem list, baseUnionName: string option, span: Span) =
+            /// 後方互換コンストラクタ。派生元 union を持たない通常の `struct` 宣言用。
+            new(name: string, typeParams: string list, items: DataItem list, span: Span) =
+                Data(name, typeParams, items, None, span)
             member this.name = name
             /// 型パラメータ名のリスト（例: `struct Pair A B` では `["A"; "B"]`）。非ジェネリックの場合は空リスト。
             member this.typeParams = typeParams
             member this.items = items
+            /// `struct Rgb: Color` のように `:` で派生元 union を指定した場合の union 名。
+            /// 通常の struct 宣言では `None`。
+            member this.baseUnionName = baseUnionName
+            member this.span = span
+            interface Decl with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        /// `object Name: Union` 形式の単集合バリアント宣言。
+        /// 本体は親 union から継承したフィールドへの初期値代入 (`field = expr`) の並び。
+        type Object(name: string, baseUnionName: string, fieldInits: DataInitField list, span: Span) =
+            member this.name = name
+            member this.baseUnionName = baseUnionName
+            member this.fieldInits = fieldInits
+            member this.span = span
+            interface Decl with
+                member this.span = span
+            interface HasSpan with
+                member this.span = span
+
+        /// `union Name` / `extendable union Name` 形式の直和型宣言。
+        /// fields: union 本体直下のフィールド宣言（全バリアントが継承する）。
+        /// variants: 本体内に宣言された派生バリアント（Data=struct, Object=object, Union=ネスト union）。
+        type Union(name: string, typeParams: string list, isExtendable: bool, fields: DataItem list, variants: Decl list, span: Span) =
+            member this.name = name
+            member this.typeParams = typeParams
+            /// `extendable` 修飾子の有無。true の場合、外部からのバリアント追加を許可し match の網羅性チェックを行わない。
+            member this.isExtendable = isExtendable
+            member this.fields = fields
+            member this.variants = variants
             member this.span = span
             interface Decl with
                 member this.span = span

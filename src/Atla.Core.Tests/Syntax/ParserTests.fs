@@ -2168,3 +2168,61 @@ fn main: ()
                 Assert.True(false, "function 'main' not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses sealed union with object and struct variants`` () =
+        let program = """
+union Color
+    val alpha: Int
+
+    object RichBlack: Color
+        alpha = 255
+
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            match astModule.decls with
+            | [ (:? Ast.Decl.Union as unionDecl) ] ->
+                Assert.Equal("Color", unionDecl.name)
+                Assert.False(unionDecl.isExtendable)
+                Assert.Equal(1, unionDecl.fields.Length)
+                Assert.Equal(2, unionDecl.variants.Length)
+                match unionDecl.variants with
+                | [ (:? Ast.Decl.Object as objVariant); (:? Ast.Decl.Data as structVariant) ] ->
+                    Assert.Equal("RichBlack", objVariant.name)
+                    Assert.Equal("Color", objVariant.baseUnionName)
+                    Assert.Equal(1, objVariant.fieldInits.Length)
+                    Assert.Equal("Rgb", structVariant.name)
+                    Assert.Equal(Some "Color", structVariant.baseUnionName)
+                    Assert.Equal(3, structVariant.items.Length)
+                | _ ->
+                    Assert.True(false, "expected an Object variant followed by a Data variant")
+            | _ ->
+                Assert.True(false, "expected a single Ast.Decl.Union declaration")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule parses extendable union`` () =
+        let program = """
+extendable union Shape
+    val sides: Int
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            match astModule.decls with
+            | [ (:? Ast.Decl.Union as unionDecl) ] ->
+                Assert.Equal("Shape", unionDecl.name)
+                Assert.True(unionDecl.isExtendable)
+                Assert.Equal(1, unionDecl.fields.Length)
+                Assert.Equal(0, unionDecl.variants.Length)
+            | _ ->
+                Assert.True(false, "expected a single extendable Ast.Decl.Union declaration")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
