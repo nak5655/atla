@@ -1,0 +1,38 @@
+import System'Console
+
+extendable union Color
+    val alpha: Int
+
+    object RichBlack: Color
+        alpha = 255
+
+    object Gold: Color
+        alpha = 255
+
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
+
+    union HueColor: Color
+        val h: Int
+        val s: Int
+
+        struct Hsv: HueColor
+            val v: Int
+
+        struct Hsl: HueColor
+            val l: Int
+
+impl Color
+    fn red self: Int
+        match self
+        | Color'RichBlack -> 0
+        | Color'Gold -> 255
+        | Color'Rgb { r, .. } -> r
+        | Color'HueColor'Hsv { h, s, v, .. } -> (h * s * v) / 10000
+        | Color'HueColor'Hsl { h, s, l, .. } -> (h * s * l) / 10000
+
+fn main: ()
+    val magenta = Color'Rgb { r = 255, g = 0, b = 255, alpha = 255 }
+    magenta'red. Console'WriteLine.
