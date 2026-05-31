@@ -32,7 +32,7 @@ module SemanticTokensTests =
         let server = Server()
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
 
-        let tokens = server.InternalTokenize("fn main: Int = 0")
+        let tokens = server.InternalTokenize("fn main: Int\n    0")
 
         Assert.NotEmpty(tokens)
 
@@ -59,9 +59,9 @@ module SemanticTokensTests =
         let server = Server()
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
 
-        let lf = "fn main: Int = do\n    let x = 1\n    \"ok\""
-        let crlf = "fn main: Int = do\r\n    let x = 1\r\n    \"ok\""
-        let bom = "\uFEFFfn main: Int = do\n    let x = 1\n    \"ok\""
+        let lf = "fn main: Int\n    let x = 1\n    \"ok\""
+        let crlf = "fn main: Int\r\n    let x = 1\r\n    \"ok\""
+        let bom = "\uFEFFfn main: Int\n    let x = 1\n    \"ok\""
 
         let tokensLf = server.InternalTokenize(lf)
         let tokensCrlf = server.InternalTokenize(crlf)

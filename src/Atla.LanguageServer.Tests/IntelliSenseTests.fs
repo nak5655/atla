@@ -23,7 +23,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetCompletions returns non-empty list for valid source`` () =
-        let server = makeServerWithSource "file:///tmp/completion.atla" "fn main: Int = 0"
+        let server = makeServerWithSource "file:///tmp/completion.atla" "fn main: Int\n    0"
         let result = server.GetCompletions("file:///tmp/completion.atla", 0, 15)
         // 少なくとも main が補完候補として含まれること。
         Assert.False(result.isIncomplete)
@@ -31,7 +31,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetCompletions includes declared function name`` () =
-        let server = makeServerWithSource "file:///tmp/completion-fn.atla" "fn greet: Int = 42"
+        let server = makeServerWithSource "file:///tmp/completion-fn.atla" "fn greet: Int\n    42"
         let result = server.GetCompletions("file:///tmp/completion-fn.atla", 0, 16)
         let names = result.items |> List.map (fun i -> i.label)
         Assert.Contains("greet", names)
@@ -44,7 +44,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetCompletions items have kind and detail fields`` () =
-        let server = makeServerWithSource "file:///tmp/completion-detail.atla" "fn compute: Int = 1"
+        let server = makeServerWithSource "file:///tmp/completion-detail.atla" "fn compute: Int\n    1"
         let result = server.GetCompletions("file:///tmp/completion-detail.atla", 0, 10)
         let computeItem = result.items |> List.tryFind (fun i -> i.label = "compute")
         Assert.True(computeItem.IsSome)
@@ -54,7 +54,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetCompletions on apostrophe returns receiver type members only`` () =
-        let source = "import System'Console\nfn main (): () = do\n    \"Hello, World!\" Console'"
+        let source = "import System'Console\nfn main (): ()\n    \"Hello, World!\" Console'"
         let server = makeServerWithSource "file:///tmp/completion-incomplete.atla" source
         let result = server.GetCompletions("file:///tmp/completion-incomplete.atla", 2, 28)
         let names = result.items |> List.map (fun i -> i.label)
@@ -74,7 +74,7 @@ module IntelliSenseTests =
         //   Id("out") span right = 14 ≤ 15 → 型 TextWriter が解決される。
         let source =
             "import System'Console\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let out = Console'Out\n" +
             "  let _ = (out)'NewLine\n" +
             "  ()"
@@ -99,7 +99,7 @@ module IntelliSenseTests =
         //   Console'Out span right = 22 ≤ 23 → 型 TextWriter が解決される。
         let source =
             "import System'Console\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let _ = (Console'Out)'NewLine\n" +
             "  ()"
         let server = makeServerWithSource "file:///tmp/completion-chained-receiver.atla" source
@@ -115,13 +115,13 @@ module IntelliSenseTests =
     let ``Completions for variable bound to static member suggest instance members`` () =
         let initialSource =
             "import System'DateTime\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let a = DateTime'Now\n" +
             "  a'Year\n" +
             "  ()"
         let changedSource =
             "import System'DateTime\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let a = DateTime'Now\n" +
             "  a'\n" +
             "  ()"
@@ -141,13 +141,13 @@ module IntelliSenseTests =
         let uri = "file:///tmp/completion-partial-hir-cache.atla"
         let initialSource =
             "import System'DateTime\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let value = DateTime'Now\n" +
             "  value'\n" +
             "  ()"
         let changedSource =
             "import System'DateTime\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let value = 1\n" +
             "  unknownValue\n" +
             "  value'\n" +
@@ -165,7 +165,7 @@ module IntelliSenseTests =
         let afterNames = afterChange.items |> List.map (fun i -> i.label)
         Assert.DoesNotContain("Year", afterNames)
 
-        let source = "fn main: Int = do\n  let first = 1\n  fir\n  let second = 2\n  first"
+        let source = "fn main: Int\n  let first = 1\n  fir\n  let second = 2\n  first"
         let server = makeServerWithSource "file:///tmp/completion-scope.atla" source
         // 行2・列4 (`fir` 位置) は `second` の宣言より前。
         let result = server.GetCompletions("file:///tmp/completion-scope.atla", 2, 4)
@@ -175,7 +175,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetCompletions on import apostrophe suggests namespace types`` () =
-        let source = "import System'\nfn main (): Int = 0"
+        let source = "import System'\nfn main (): Int\n    0"
         let server = makeServerWithSource "file:///tmp/completion-import-system.atla" source
         // 行0・列14は `import System'` の apostrophe 直後。
         let result = server.GetCompletions("file:///tmp/completion-import-system.atla", 0, 14)
@@ -185,7 +185,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetCompletions without apostrophe includes visible vars and visible types`` () =
-        let source = "import System'Console\nfn main (): Int = do\n  let value = 1\n  value"
+        let source = "import System'Console\nfn main (): Int\n  let value = 1\n  value"
         let server = makeServerWithSource "file:///tmp/completion-vars-types.atla" source
         let result = server.GetCompletions("file:///tmp/completion-vars-types.atla", 3, 3)
         let names = result.items |> List.map (fun i -> i.label)
@@ -204,7 +204,7 @@ module IntelliSenseTests =
         //   dataTypeFields からフィールド候補 ["name", "age"] が返される。
         let source =
             "struct Person\n    val name: String\n    val age: Int\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let person = { name = \"Alice\", age = 30 } Person.\n" +
             "  person'\n" +
             "  ()"
@@ -224,7 +224,7 @@ module IntelliSenseTests =
     [<Fact>]
     let ``GetHover returns None for position with no identifier`` () =
         // ソースの先頭（fn キーワード位置）はキーワードであり Id ノードではない。
-        let server = makeServerWithSource "file:///tmp/hover-none.atla" "fn main: Int = 0"
+        let server = makeServerWithSource "file:///tmp/hover-none.atla" "fn main: Int\n    0"
         let result = server.GetHover("file:///tmp/hover-none.atla", 0, 0)
         Assert.True(result.IsNone)
 
@@ -235,7 +235,7 @@ module IntelliSenseTests =
         //   let x = 5
         //   x
         // 行2・列2 が `x` の使用位置。
-        let source = "fn test: Int =\n  let x = 5\n  x"
+        let source = "fn test: Int\n  let x = 5\n  x"
         let server = makeServerWithSource "file:///tmp/hover-id.atla" source
         let result = server.GetHover("file:///tmp/hover-id.atla", 2, 2)
         match result with
@@ -265,7 +265,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetDefinition returns None for position with no identifier`` () =
-        let server = makeServerWithSource "file:///tmp/def-none.atla" "fn main: Int = 0"
+        let server = makeServerWithSource "file:///tmp/def-none.atla" "fn main: Int\n    0"
         // 行0・列0 は `fn` キーワードであり識別子ではない。
         let result = server.GetDefinition("file:///tmp/def-none.atla", 0, 0)
         Assert.True(result.IsNone)
@@ -276,7 +276,7 @@ module IntelliSenseTests =
         // fn go: Int =
         //   let y = 10
         //   y
-        let source = "fn go: Int =\n  let y = 10\n  y"
+        let source = "fn go: Int\n  let y = 10\n  y"
         let server = makeServerWithSource "file:///tmp/def-location.atla" source
         // 行2・列2 が `y` の使用位置。
         let result = server.GetDefinition("file:///tmp/def-location.atla", 2, 2)
@@ -357,7 +357,7 @@ module IntelliSenseTests =
         // PositionIndex.dataTypeFields に Person のフィールドが登録されていることを検証する。
         let source =
             "struct Person\n    val name: String\n    val age: Int\n" +
-            "fn main (): () = ()"
+            "fn main (): ()\n    ()"
         let compileResult = Atla.Compiler.Compiler.compileModules {
             asmName = "diag"
             modules = [ { moduleName = "main"; source = source; filePath = None } ]
@@ -386,7 +386,7 @@ module IntelliSenseTests =
         // PositionIndex.bindingSites に記録されることを検証する。
         let source =
             "struct Person\n    val name: String\n    val age: Int\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let person = { name = \"Alice\", age = 30 } Person.\n" +
             "  person'\n" +
             "  ()"
@@ -414,7 +414,7 @@ module IntelliSenseTests =
         // データ型変数 person が do ブロック内の let 束縛として visibleVarMap に含まれることを検証する。
         let source =
             "struct Person\n    val name: String\n    val age: Int\n" +
-            "fn main (): () = do\n" +
+            "fn main (): ()\n" +
             "  let person = { name = \"Alice\", age = 30 } Person.\n" +
             "  per\n" +
             "  ()"
@@ -427,7 +427,7 @@ module IntelliSenseTests =
     [<Fact>]
     let ``GetCompletions after close returns empty list`` () =
         let uri = "file:///tmp/completion-close.atla"
-        let server = makeServerWithSource uri "fn clean: Int = 0"
+        let server = makeServerWithSource uri "fn clean: Int\n    0"
         let beforeClose = server.GetCompletions(uri, 0, 0)
         Assert.NotEmpty(beforeClose.items)
         server.CloseDocument(uri)

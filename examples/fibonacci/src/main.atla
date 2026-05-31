@@ -1,12 +1,12 @@
 import System'Console
 
-fn fibonacci (n: Int): Int =
+fn fibonacci (n: Int): Int
     if
     | n == 0 => 0
     | n == 1 => 1
     | n == 2 => 1
     | else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
-fn main: () =
+fn main: ()
     let n = Console'ReadLine. Int32'Parse.
     n fibonacci. Console'WriteLine.

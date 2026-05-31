@@ -17,7 +17,7 @@ struct CalculatorWindow
     var _clearOnNextDigit: Bool
 
 impl CalculatorWindow as Window
-    fn new: CalculatorWindow =
+    fn new: CalculatorWindow
         let root = StackPanel.
         root'Orientation = Orientation'Vertical
         root'Margin = 8.0 Thickness.
@@ -74,7 +74,7 @@ impl CalculatorWindow as Window
 
         window
 
-    fn addButton self (label: String) (row: Int) (column: Int) (onClick: () -> ()): () =
+    fn addButton self (label: String) (row: Int) (column: Int) (onClick: () -> ()): ()
         let button = Button.
         button'Content = label
         button'FontSize = 20.0
@@ -88,10 +88,10 @@ impl CalculatorWindow as Window
 
         button self'_grid'Children'Add.
 
-    fn addDigitButton self (digit: Int) (row: Int) (column: Int): () =
+    fn addDigitButton self (digit: Int) (row: Int) (column: Int): ()
         (digit'ToString.) row column (digit self'onDigit.) self'addButton.
 
-    fn onDigit self (digit: Int): () -> () =
+    fn onDigit self (digit: Int): () -> ()
         fn () ->
             if | self'_clearOnNextDigit =>
                 self'_display'Text = "0"
@@ -103,10 +103,10 @@ impl CalculatorWindow as Window
             | else =>
                 self'_display'Text += digit'ToString.
 
-    fn addOperatorButton self (operator: String) (row: Int) (column: Int): () =
+    fn addOperatorButton self (operator: String) (row: Int) (column: Int): ()
         operator row column (operator self'onOperator.) self'addButton.
 
-    fn onOperator self (operator: String): () -> () =
+    fn onOperator self (operator: String): () -> ()
         fn () ->
             let value = self'_display'Text Double'Parse.
 
@@ -120,7 +120,7 @@ impl CalculatorWindow as Window
             self'_pendingOperator = operator
             self'_clearOnNextDigit = True
 
-    fn applyOperator self (left: Double) (right: Double) (operator: String): Double =
+    fn applyOperator self (left: Double) (right: Double) (operator: String): Double
         if
         | operator == "+" => left + right
         | operator == "-" => left - right
@@ -128,7 +128,7 @@ impl CalculatorWindow as Window
         | operator == "/" => left / right
         | else => right
 
-    fn onEquals self: () -> () =
+    fn onEquals self: () -> ()
         fn () ->
             let value = self'_display'Text Double'Parse.
 
@@ -141,14 +141,14 @@ impl CalculatorWindow as Window
                 self'_pendingOperator = ""
                 self'_clearOnNextDigit = True
 
-    fn onClear self: () -> () =
+    fn onClear self: () -> ()
         fn () ->
             self'_currentValue = 0.0
             self'_display'Text = "0"
             self'_pendingOperator = ""
             self'_clearOnNextDigit = False
 
-    fn onBackspace self: () -> () =
+    fn onBackspace self: () -> ()
         fn () ->
             if
             | self'_clearOnNextDigit =>
@@ -161,7 +161,7 @@ impl CalculatorWindow as Window
                 | else =>
                     self'_display'Text = 0 (text'Length - 1) text'Substring.
 
-    fn onToggleSign self: () -> () =
+    fn onToggleSign self: () -> ()
         fn () ->
             let value = self'_display'Text Double'Parse.
             let invertedValue = -value

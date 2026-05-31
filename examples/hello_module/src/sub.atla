@@ -5,6 +5,6 @@ struct Person
     val age: Int
 
 impl Person
-    fn sayHello self: () =
+    fn sayHello self: ()
         "hello, " Console'Write.
         self'name Console'WriteLine.

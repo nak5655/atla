@@ -27,7 +27,7 @@ module LexerTests =
 
     [<Fact>]
     let ``token spans keep full token width`` () =
-        let program = "fn main: Int = 0"
+        let program = "fn main: Int\n    0"
         let input: Input<SourceChar> = StringInput program
 
         match Lexer.tokenize input Position.Zero with

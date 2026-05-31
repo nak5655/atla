@@ -6,7 +6,7 @@ import Avalonia'Controls'WindowStartupLocation
 import Avalonia'Themes'Fluent'FluentTheme
 import Calculator'CalculatorWindow
 
-fn appMain (app: Application) (args: Array String): () =
+fn appMain (app: Application) (args: Array String): ()
     FluentTheme. app'Styles'Add.
 
     let window = CalculatorWindow'new.
@@ -17,6 +17,6 @@ fn appMain (app: Application) (args: Array String): () =
     window'Show.
     app window DesktopApplicationExtensions'Run.
 
-fn main (args: Array String): () =
+fn main (args: Array String): ()
     let config = (AppBuilder'Configure<Application>.)'UsePlatformDetect.
     appMain args config'Start.

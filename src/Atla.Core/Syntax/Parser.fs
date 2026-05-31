@@ -749,49 +749,109 @@ module Parser =
         Delay (fun () ->
             Many1 stmt |>> fun stmts -> Ast.Expr.Block(stmts, { left = stmts.Head.span.left; right = (List.last stmts).span.right }) :> Ast.Expr)
 
+    // 共通ヘルパ: `fn` キーワード以降のシグネチャ＋本体を解析し、Decl.Fn を構築する。
+    // - シグネチャ（name / args / `:` / 戻り値型）は `fn` と同一行に限定（LineInput）して解析する。
+    //   これにより `fn foo: Int\n    x ping.` の body 先頭識別子が typeExpr に取り込まれるのを防ぐ。
+    // - 本体は `outermostPos`（fn または override/async など最も左の修飾子）の開始列でオフサイド境界を引き、
+    //   必ず次の行から始まる Many1 stmt として解析する。同一行に本体を書いた場合はパースエラー。
+    and parseFnAfterKeyword
+        (input: Input<Token>)
+        (afterFnPos: Position)
+        (fnKw: Token)
+        (outermostPos: Position)
+        (argList: PackratParser<Token, Ast.FnArg list>)
+        : ParseResult<Ast.Decl.Fn> =
+            let bodyInput = BlockInput(input, outermostPos) :> Input<Token>
+            let sigInput = LineInput(bodyInput, fnKw.span.left.Line) :> Input<Token>
+            match tid sigInput afterFnPos with
+            | Failure (msg, span) -> Failure (msg, span)
+            | Success (id, afterIdPos) ->
+                match argList sigInput afterIdPos with
+                | Failure (msg, span) -> Failure (msg, span)
+                | Success (args, afterArgsPos) ->
+                    match (delim ':') sigInput afterArgsPos with
+                    | Failure (msg, span) -> Failure (msg, span)
+                    | Success (_, afterColonPos) ->
+                        match typeExpr sigInput afterColonPos with
+                        | Failure (msg, span) -> Failure (msg, span)
+                        | Success (ret, afterRetPos) ->
+                            match (Many1 stmt) bodyInput afterRetPos with
+                            | Failure (msg, span) -> Failure (msg, span)
+                            | Success (stmts, nextPos) ->
+                                let firstStmt = stmts.Head
+                                if firstStmt.span.left.Line <= ret.span.right.Line then
+                                    Failure ("Function body must start on a new line after the signature", firstStmt.span)
+                                else
+                                    let body =
+                                        Ast.Expr.Block(stmts, { left = firstStmt.span.left; right = (List.last stmts).span.right }) :> Ast.Expr
+                                    let decl =
+                                        Ast.Decl.Fn(id.str, args, ret, body, false, false, { left = id.span.left; right = body.span.right })
+                                    Success (decl, nextPos)
+
     and fnDecl: PackratParser<Token, Ast.Decl> =
-        Delay (fun () ->
-            Optional (keyword "async") <&>
-            block (asToken (keyword "fn"))
-                (Once (tid <&> Many fnArg <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr |>> fun (((id, args), ret), body) -> Ast.Decl.Fn (id.str, args, ret, body, false, false, { left = id.span.left; right = body.span.right }) :> Ast.Decl)
-                    (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl))
-            |>> fun (asyncOpt, fnDecl) ->
-                match asyncOpt, fnDecl with
-                | None, _ -> fnDecl
-                | Some kw, (:? Ast.Decl.Fn as fn) ->
-                    Ast.Decl.Fn(
-                        fn.name, fn.args, fn.ret, fn.body, fn.isOverride, true,
-                        { left = kw.span.left; right = fn.span.right }) :> Ast.Decl
-                | Some _, other -> other)
+        Delay (fun () -> fun input pos ->
+            let asyncResult = (Optional (keyword "async")) input pos
+            match asyncResult with
+            | Failure (msg, span) -> Failure (msg, span)
+            | Success (asyncOpt, afterAsyncPos) ->
+                match (keyword "fn") input afterAsyncPos with
+                | Failure (msg, span) -> Failure (msg, span)
+                | Success (fnKw, afterFnPos) ->
+                    let outermostPos =
+                        match asyncOpt with
+                        | Some kw -> kw.span.left
+                        | None -> fnKw.span.left
+                    let argList = Many fnArg |>> fun args -> args
+                    match parseFnAfterKeyword input afterFnPos fnKw outermostPos argList with
+                    | Success (decl, nextPos) ->
+                        let isAsync = Option.isSome asyncOpt
+                        let finalDecl =
+                            if isAsync then
+                                Ast.Decl.Fn(decl.name, decl.args, decl.ret, decl.body, decl.isOverride, true,
+                                    { left = outermostPos; right = decl.span.right }) :> Ast.Decl
+                            else
+                                decl :> Ast.Decl
+                        Success (finalDecl, nextPos)
+                    | Failure (msg, span) ->
+                        Success (Ast.Decl.Error(msg, span) :> Ast.Decl, afterFnPos))
 
     // `override` / `async` 修飾子はオプショナル。記述順は `override async fn` を期待する。
     // `override` は `impl A as B` 内のメソッドでのみ意味があり、他文脈での使用は Resolve
     // フェーズでエラーとして検出する（パーサ側では受理する）。
     // `async` は本体で `await` を許可し、戻り値型が Task / Task T であることを Analyze で検査する。
     and implMethodDecl: PackratParser<Token, Ast.Decl.Fn> =
-        Delay (fun () ->
-            Optional (keyword "override") <&>
-            Optional (keyword "async") <&>
-            block (asToken (keyword "fn"))
-                    (Once
-                    (tid <&> methodArgList <& delim ':' <&> typeExpr <& symbol "=" <&> fnBodyExpr
-                     |>> fun (((id, args), ret), body) -> Ast.Decl.Fn(id.str, args, ret, body, false, false, { left = id.span.left; right = body.span.right }))
-                    (fun (msg, span) ->
-                        Ast.Decl.Fn($"error_{span.left.Line}_{span.left.Column}", [], Ast.TypeExpr.Id("Unit", span), Ast.Expr.Error(msg, span), false, false, span)))
-            |>> fun ((overrideOpt, asyncOpt), fnDecl) ->
-                let leftSpan =
-                    match overrideOpt, asyncOpt with
-                    | Some kw, _ -> kw.span.left
-                    | None, Some kw -> kw.span.left
-                    | None, None -> fnDecl.span.left
-                let isOverride = Option.isSome overrideOpt
-                let isAsync = Option.isSome asyncOpt
-                if not isOverride && not isAsync then
-                    fnDecl
-                else
-                    Ast.Decl.Fn(
-                        fnDecl.name, fnDecl.args, fnDecl.ret, fnDecl.body, isOverride, isAsync,
-                        { left = leftSpan; right = fnDecl.span.right }))
+        Delay (fun () -> fun input pos ->
+            match (Optional (keyword "override")) input pos with
+            | Failure (msg, span) -> Failure (msg, span)
+            | Success (overrideOpt, afterOverridePos) ->
+                match (Optional (keyword "async")) input afterOverridePos with
+                | Failure (msg, span) -> Failure (msg, span)
+                | Success (asyncOpt, afterAsyncPos) ->
+                    match (keyword "fn") input afterAsyncPos with
+                    | Failure (msg, span) -> Failure (msg, span)
+                    | Success (fnKw, afterFnPos) ->
+                        let outermostPos =
+                            match overrideOpt, asyncOpt with
+                            | Some kw, _ -> kw.span.left
+                            | None, Some kw -> kw.span.left
+                            | None, None -> fnKw.span.left
+                        match parseFnAfterKeyword input afterFnPos fnKw outermostPos methodArgList with
+                        | Success (decl, nextPos) ->
+                            let isOverride = Option.isSome overrideOpt
+                            let isAsync = Option.isSome asyncOpt
+                            let finalDecl =
+                                if not isOverride && not isAsync then
+                                    decl
+                                else
+                                    Ast.Decl.Fn(decl.name, decl.args, decl.ret, decl.body, isOverride, isAsync,
+                                        { left = outermostPos; right = decl.span.right })
+                            Success (finalDecl, nextPos)
+                        | Failure (msg, span) ->
+                            // 修飾子を含めて消費した範囲を保持しつつ Decl.Fn のエラー版を返し、後続のメソッド解析を継続させる。
+                            let errSpan = { left = outermostPos; right = span.right }
+                            Success (
+                                Ast.Decl.Fn($"error_{errSpan.left.Line}_{errSpan.left.Column}", [], Ast.TypeExpr.Id("Unit", errSpan), Ast.Expr.Error(msg, span), false, false, errSpan),
+                                afterFnPos))
 
     // role 宣言の抽象メソッドシグネチャ（ボディなし）。
     // `fn name args: ret` の形式で、`= body` を持たない。

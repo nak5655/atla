@@ -8,9 +8,9 @@ struct Rectangle
     val height: Double
 
 impl Shape for Rectangle
-    fn area self: Double =
+    fn area self: Double
         self'width * self'height
 
-fn main: () =
+fn main: ()
     let rect = { width = 5.0, height = 10.0 } Rectangle.
     rect'area. Console'WriteLine.

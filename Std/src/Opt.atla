@@ -3,12 +3,12 @@ enum Opt T
     | Some { value: T }
 
 impl Opt T
-    fn isSome self: Bool =
+    fn isSome self: Bool
         match self
         | Opt'None -> False
         | Opt'Some _ -> True
 
-    fn isNone self: Bool =
+    fn isNone self: Bool
         match self
         | Opt'None -> True
         | Opt'Some _ -> False

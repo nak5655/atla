@@ -139,7 +139,7 @@ package:
         let compileResult =
             Compiler.compileModules {
                 asmName = "HelloLibAsm"
-                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = "fn main: () = ()"; filePath = None } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "main"; source = "fn main: ()\n    ()"; filePath = None } ]
                 entryModuleName = "main"
                 outDir = compileOutDir
                 dependencies = []
@@ -233,7 +233,7 @@ dependencies:
         let compileResult =
             Compiler.compileModules {
                 asmName = "PeopleLibAsm"
-                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = "struct Person\n    val name: String\nfn greet (p: Person): String = p'name"; filePath = None } ]
+                modules = [ { Compiler.ModuleSource.moduleName = "people"; source = "struct Person\n    val name: String\nfn greet (p: Person): String\n    p'name"; filePath = None } ]
                 entryModuleName = "people"
                 outDir = libCompileOutDir
                 dependencies = []
@@ -279,7 +279,8 @@ dependencies:
 struct Person
     val name: String
 impl Person
-    fn greet self: String = self'name
+    fn greet self: String
+        self'name
 """
 
         let libraryResult =
@@ -319,7 +320,7 @@ impl Person
 import System'Console
 import people'Person
 
-fn main: () = do
+fn main: ()
     let p = { name = "alice" } Person.
     let message = p'greet.
     message Console'WriteLine.
@@ -400,12 +401,12 @@ enum Opt T
 import System'Console
 import opt'Opt
 
-fn unwrapOr (o: Opt Int): Int =
+fn unwrapOr (o: Opt Int): Int
     match o
     | Opt'None -> -1
     | Opt'Some { value } -> value
 
-fn main: () = do
+fn main: ()
     let a = Opt'Some { value = 99 }
     let b = Opt'None
     let ra = a unwrapOr.
