@@ -69,14 +69,14 @@ module IntelliSenseTests =
         // HIR position-based 型解決により、括弧内の out の型 TextWriter が取得され
         // TextWriter メンバーが補完候補として返されることを検証する。
         //
-        // Line 3: "  let _ = (out)'NewLine"
+        // Line 3: "  val _ = (out)'NewLine"
         //   apostropheCol = 15, cursor just after apostrophe (character = 16, memberPrefix = "").
         //   Id("out") span right = 14 ≤ 15 → 型 TextWriter が解決される。
         let source =
             "import System'Console\n" +
             "fn main (): ()\n" +
-            "  let out = Console'Out\n" +
-            "  let _ = (out)'NewLine\n" +
+            "  val out = Console'Out\n" +
+            "  val _ = (out)'NewLine\n" +
             "  ()"
         let server = makeServerWithSource "file:///tmp/completion-paren-receiver.atla" source
         // カーソルは行3・列16（"(out)'" の直後、memberPrefix は空）。
@@ -94,13 +94,13 @@ module IntelliSenseTests =
         // HIR position-based 型解決により Console'Out MemberAccess ノードの
         // 型 TextWriter が取得され TextWriter メンバーが補完候補として返されることを検証する。
         //
-        // Line 2: "  let _ = (Console'Out)'NewLine"
+        // Line 2: "  val _ = (Console'Out)'NewLine"
         //   apostropheCol = 23, cursor just after apostrophe (character = 24, memberPrefix = "").
         //   Console'Out span right = 22 ≤ 23 → 型 TextWriter が解決される。
         let source =
             "import System'Console\n" +
             "fn main (): ()\n" +
-            "  let _ = (Console'Out)'NewLine\n" +
+            "  val _ = (Console'Out)'NewLine\n" +
             "  ()"
         let server = makeServerWithSource "file:///tmp/completion-chained-receiver.atla" source
         // カーソルは行2・列24（"(Console'Out)'" の直後、memberPrefix は空）。
@@ -116,13 +116,13 @@ module IntelliSenseTests =
         let initialSource =
             "import System'DateTime\n" +
             "fn main (): ()\n" +
-            "  let a = DateTime'Now\n" +
+            "  val a = DateTime'Now\n" +
             "  a'Year\n" +
             "  ()"
         let changedSource =
             "import System'DateTime\n" +
             "fn main (): ()\n" +
-            "  let a = DateTime'Now\n" +
+            "  val a = DateTime'Now\n" +
             "  a'\n" +
             "  ()"
         let uri = "file:///tmp/completion-datetime-now.atla"
@@ -142,13 +142,13 @@ module IntelliSenseTests =
         let initialSource =
             "import System'DateTime\n" +
             "fn main (): ()\n" +
-            "  let value = DateTime'Now\n" +
+            "  val value = DateTime'Now\n" +
             "  value'\n" +
             "  ()"
         let changedSource =
             "import System'DateTime\n" +
             "fn main (): ()\n" +
-            "  let value = 1\n" +
+            "  val value = 1\n" +
             "  unknownValue\n" +
             "  value'\n" +
             "  ()"
@@ -165,7 +165,7 @@ module IntelliSenseTests =
         let afterNames = afterChange.items |> List.map (fun i -> i.label)
         Assert.DoesNotContain("Year", afterNames)
 
-        let source = "fn main: Int\n  let first = 1\n  fir\n  let second = 2\n  first"
+        let source = "fn main: Int\n  val first = 1\n  fir\n  val second = 2\n  first"
         let server = makeServerWithSource "file:///tmp/completion-scope.atla" source
         // 行2・列4 (`fir` 位置) は `second` の宣言より前。
         let result = server.GetCompletions("file:///tmp/completion-scope.atla", 2, 4)
@@ -185,7 +185,7 @@ module IntelliSenseTests =
 
     [<Fact>]
     let ``GetCompletions without apostrophe includes visible vars and visible types`` () =
-        let source = "import System'Console\nfn main (): Int\n  let value = 1\n  value"
+        let source = "import System'Console\nfn main (): Int\n  val value = 1\n  value"
         let server = makeServerWithSource "file:///tmp/completion-vars-types.atla" source
         let result = server.GetCompletions("file:///tmp/completion-vars-types.atla", 3, 3)
         let names = result.items |> List.map (fun i -> i.label)
@@ -205,7 +205,7 @@ module IntelliSenseTests =
         let source =
             "struct Person\n    val name: String\n    val age: Int\n" +
             "fn main (): ()\n" +
-            "  let person = { name = \"Alice\", age = 30 } Person.\n" +
+            "  val person = { name = \"Alice\", age = 30 } Person.\n" +
             "  person'\n" +
             "  ()"
         let server = makeServerWithSource "file:///tmp/completion-data-fields.atla" source
@@ -235,7 +235,7 @@ module IntelliSenseTests =
         //   let x = 5
         //   x
         // 行2・列2 が `x` の使用位置。
-        let source = "fn test: Int\n  let x = 5\n  x"
+        let source = "fn test: Int\n  val x = 5\n  x"
         let server = makeServerWithSource "file:///tmp/hover-id.atla" source
         let result = server.GetHover("file:///tmp/hover-id.atla", 2, 2)
         match result with
@@ -276,7 +276,7 @@ module IntelliSenseTests =
         // fn go: Int =
         //   let y = 10
         //   y
-        let source = "fn go: Int\n  let y = 10\n  y"
+        let source = "fn go: Int\n  val y = 10\n  y"
         let server = makeServerWithSource "file:///tmp/def-location.atla" source
         // 行2・列2 が `y` の使用位置。
         let result = server.GetDefinition("file:///tmp/def-location.atla", 2, 2)
@@ -387,7 +387,7 @@ module IntelliSenseTests =
         let source =
             "struct Person\n    val name: String\n    val age: Int\n" +
             "fn main (): ()\n" +
-            "  let person = { name = \"Alice\", age = 30 } Person.\n" +
+            "  val person = { name = \"Alice\", age = 30 } Person.\n" +
             "  person'\n" +
             "  ()"
         let compileResult = Atla.Compiler.Compiler.compileModules {
@@ -415,7 +415,7 @@ module IntelliSenseTests =
         let source =
             "struct Person\n    val name: String\n    val age: Int\n" +
             "fn main (): ()\n" +
-            "  let person = { name = \"Alice\", age = 30 } Person.\n" +
+            "  val person = { name = \"Alice\", age = 30 } Person.\n" +
             "  per\n" +
             "  ()"
         let server = makeServerWithSource "file:///tmp/completion-person-var.atla" source

@@ -8,5 +8,5 @@ fn fibonacci (n: Int): Int
     | else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
 fn main: ()
-    let n = Console'ReadLine. Int32'Parse.
+    val n = Console'ReadLine. Int32'Parse.
     n fibonacci. Console'WriteLine.

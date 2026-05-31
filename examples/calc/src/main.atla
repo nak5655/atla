@@ -9,7 +9,7 @@ import Calculator'CalculatorWindow
 fn appMain (app: Application) (args: Array String): ()
     FluentTheme. app'Styles'Add.
 
-    let window = CalculatorWindow'new.
+    val window = CalculatorWindow'new.
     window'Title = "Calc"
     window'Width = 320.0
     window'Height = 480.0
@@ -18,5 +18,5 @@ fn appMain (app: Application) (args: Array String): ()
     app window DesktopApplicationExtensions'Run.
 
 fn main (args: Array String): ()
-    let config = (AppBuilder'Configure<Application>.)'UsePlatformDetect.
+    val config = (AppBuilder'Configure<Application>.)'UsePlatformDetect.
     appMain args config'Start.

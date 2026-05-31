@@ -224,7 +224,7 @@ struct Bag
     val items: List Int
 
 fn main: ()
-    let b = { items = List. } Bag.
+    val b = { items = List. } Bag.
     1 b'items'Add.
     2 b'items'Add.
     3 b'items'Add.
@@ -326,7 +326,7 @@ import System'Console
 import System'Linq'Enumerable
 fn fizzbuzz (n: Int): ()
     for i in 1 n Enumerable'Range.
-        let s =
+        val s =
             if
             | i % 15 == 0 => "FizzBuzz"
             | i % 5 == 0 => "Buzz"
@@ -336,7 +336,7 @@ fn fizzbuzz (n: Int): ()
 
 
 fn main: ()
-    let n = Console'ReadLine. Int32'Parse.
+    val n = Console'ReadLine. Int32'Parse.
     n fizzbuzz.
 """
 
@@ -388,7 +388,7 @@ fn fibonacci (n: Int): Int
     | else => (n - 2) fibonacci. + (n - 1) fibonacci.
 
 fn main: ()
-    let n = Console'ReadLine. Int32'Parse.
+    val n = Console'ReadLine. Int32'Parse.
     n fibonacci. Console'WriteLine.
 """
 
@@ -483,7 +483,7 @@ fn main: ()
 import System'Console
 
 fn main: ()
-    let a = Console'ReadLine.
+    val a = Console'ReadLine.
     a[1] Console'WriteLine.
 """
 
@@ -524,8 +524,8 @@ fn main: ()
 import System'Console
 
 fn main: ()
-    let line = Console'ReadLine.
-    let a = " " line'Split.
+    val line = Console'ReadLine.
+    val a = " " line'Split.
     a[0] Console'WriteLine.
 """
 
@@ -569,8 +569,8 @@ fn count (xs: Array String): Int
     xs'Length
 
 fn main: ()
-    let line = Console'ReadLine.
-    let a = " " line'Split.
+    val line = Console'ReadLine.
+    val a = " " line'Split.
     a count. Console'WriteLine.
 """
 
@@ -613,8 +613,8 @@ import System'Console
 import System'Linq'Enumerable
 
 fn main: ()
-    let line = Console'ReadLine.
-    let a = " " line'Split.
+    val line = Console'ReadLine.
+    val a = " " line'Split.
     for i in 0 a'Length Enumerable'Range.
         a[i] Console'WriteLine.
 """
@@ -996,11 +996,11 @@ import System'Text'StringBuilder
 import System'Console
 
 fn process (sb: StringBuilder): ()
-    let _ = "ok" sb'Append.
+    val _ = "ok" sb'Append.
     sb'ToString. Console'WriteLine.
 
 fn main: ()
-    let sb = StringBuilder.
+    val sb = StringBuilder.
     sb process.
 """
 
@@ -1067,7 +1067,7 @@ fn main: ()
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import Foo'Bar\n\nfn id (x: Bar): Bar\n    x\n\nfn main: ()\n    let v = { value = 42 } Bar.\n    let _ = v id."
+            "import Foo'Bar\n\nfn id (x: Bar): Bar\n    x\n\nfn main: ()\n    val v = { value = 42 } Bar.\n    val _ = v id."
         let fooSource = "struct Bar\n    val value: Int"
 
         let result =
@@ -1089,7 +1089,7 @@ fn main: ()
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import sub'Person\n\nfn main: ()\n    let p = { name = \"alice\" } Person.\n    let _ = p"
+            "import sub'Person\n\nfn main: ()\n    val p = { name = \"alice\" } Person.\n    val _ = p"
         let subSource = "struct Person\n    val name: String"
 
         let result =
@@ -1114,7 +1114,7 @@ fn main: ()
         Directory.CreateDirectory(outDir) |> ignore
 
         let mainSource =
-            "import sub\nimport sub'Person\n\nfn main: ()\n    let p = { name = \"alice\" } Person.\n    p'greet."
+            "import sub\nimport sub'Person\n\nfn main: ()\n    val p = { name = \"alice\" } Person.\n    p'greet."
 
         let subSource =
             "import System'Console\n\nstruct Person\n    val name: String\n\nimpl Person\n    fn greet self: ()\n        self'name Console'WriteLine."
@@ -1184,7 +1184,7 @@ fn printMsg: ()
     "called!" Console'WriteLine.
 
 fn applyTwice (callback: () -> ()): ()
-    let doIt = fn () -> callback.
+    val doIt = fn () -> callback.
     doIt.
     doIt.
 
@@ -1231,8 +1231,8 @@ fn main: ()
 import System'Console
 
 fn main: ()
-    let value = 3.14
-    let invertedValue = -value
+    val value = 3.14
+    val invertedValue = -value
     invertedValue'ToString. Console'WriteLine.
 """
 
@@ -1273,9 +1273,9 @@ fn main: ()
 import System'Console
 
 fn main: ()
-    let a = 1.5f
-    let b = 2.0f
-    let c = a + b
+    val a = 1.5f
+    val b = 2.0f
+    val c = a + b
     c'ToString. Console'WriteLine.
 """
 
@@ -1315,8 +1315,8 @@ fn main: ()
 import System'Console
 
 fn main: ()
-    let n = 42
-    let neg = -n
+    val n = 42
+    val neg = -n
     neg'ToString. Console'WriteLine.
 """
 
@@ -1368,7 +1368,7 @@ impl Geometry for Rectangle
         self'width * self'height
 
 fn main: ()
-    let rect = { width = 5.0, height = 10.0 } Rectangle.
+    val rect = { width = 5.0, height = 10.0 } Rectangle.
     rect'area. Console'WriteLine.
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -1418,7 +1418,7 @@ impl Color
         | Color'Hsv { h, s, v } -> (h * s * v) / 10000
 
 fn main: ()
-    let color = Color'Rgb { r = 255, g = 0, b = 0 }
+    val color = Color'Rgb { r = 255, g = 0, b = 0 }
     color'red. Console'WriteLine.
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -1460,7 +1460,7 @@ import sub
 import sub'Color
 
 fn main: ()
-    let color = Color'Rgb { r = 255, g = 0, b = 0 }
+    val color = Color'Rgb { r = 255, g = 0, b = 0 }
     color'red. Console'WriteLine.
 """
 
@@ -1538,7 +1538,7 @@ impl Box
         | Opt'Some { value } -> value
 
 fn main: ()
-    let b = Box'new.
+    val b = Box'new.
     b'get. Console'WriteLine.
 """
 
@@ -1593,7 +1593,7 @@ impl Box
         | Opt'Some { value } -> value
 
 fn main: ()
-    let b = 42 Box'new.
+    val b = 42 Box'new.
     b'get. Console'WriteLine.
 """
 
@@ -1702,7 +1702,7 @@ impl Point
         self'x + self'y
 
 fn main: ()
-    let p = { x = 3, y = 4 } Point.
+    val p = { x = 3, y = 4 } Point.
     p'sum. Console'WriteLine.
 """
 
@@ -1765,7 +1765,7 @@ impl MyError as Exception
         base'ToString.
 
 fn main: ()
-    let e = 42 MyError'new.
+    val e = 42 MyError'new.
     e'ToString. Console'WriteLine.
 """
 
@@ -1957,7 +1957,7 @@ async fn runT (t: Task Int): Int
 import System'Threading'Tasks'Task
 
 async fn compute (t: Task Int): Int
-    let x = await t
+    val x = await t
     x
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -2031,7 +2031,7 @@ async fn run (t: Task): ()
 import System'Threading'Tasks'Task
 
 async fn compute (t: Task Int): Int
-    let x = await t
+    val x = await t
     x
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -2189,7 +2189,7 @@ async fn run (t: Task): ()
 import System'Threading'Tasks'Task
 
 async fn compute (t: Task Int): Int
-    let x = await t
+    val x = await t
     x
 """
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -2628,7 +2628,7 @@ fn main: ()
 import System'Console
 
 fn main: ()
-    let xs: List Int = List.
+    val xs: List Int = List.
     10 xs'Add.
     20 xs'Add.
     30 xs'Add.
@@ -2642,7 +2642,7 @@ fn main: ()
 import System'Console
 
 fn main: ()
-    let xs: List Int = List.
+    val xs: List Int = List.
     10 xs'Add.
     20 xs'Add.
     xs[0] = 99
@@ -2659,7 +2659,7 @@ import System'Activator
 import System'Console
 
 fn main: ()
-    let x = Activator'CreateInstance<Int>.
+    val x = Activator'CreateInstance<Int>.
     x Console'Write.
 """
         // CreateInstance<Int> は int の既定値 0 を返す。
@@ -2692,15 +2692,15 @@ enum Opt T
     | Some { value: T }
 
 fn unwrapOr (o: Opt Int) (default: Int): Int
-    let Opt'Some v = o
+    val Opt'Some v = o
     | else -> return default
     v
 
 fn main: ()
-    let some = Opt'Some { value = 42 }
-    let none = Opt'None
+    val some = Opt'Some { value = 42 }
+    val none = Opt'None
     (some 0 unwrapOr.) Console'WriteLine.
-    let negOne = -1
+    val negOne = -1
     (none negOne unwrapOr.) Console'WriteLine.
 """
         Assert.Equal("42\n-1", runForStdout "LetElseOpt" program)
@@ -2715,13 +2715,13 @@ enum Opt T
     | Some { value: T }
 
 fn getValueOrZero (o: Opt Int): Int
-    let Opt'Some { value } = o
+    val Opt'Some { value } = o
     | else -> return 0
     value
 
 fn main: ()
-    let some = Opt'Some { value = 99 }
-    let none = Opt'None
+    val some = Opt'Some { value = 99 }
+    val none = Opt'None
     (some getValueOrZero.) Console'WriteLine.
     (none getValueOrZero.) Console'WriteLine.
 """
@@ -2754,7 +2754,7 @@ enum Opt T
     | Some { value: T }
 
 fn printValue (o: Opt Int): Unit
-    let Opt'Some x = o
+    val Opt'Some x = o
     | else -> return
     x Console'WriteLine.
 

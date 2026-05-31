@@ -59,9 +59,9 @@ module SemanticTokensTests =
         let server = Server()
         server.TokenTypes <- [| "keyword"; "type"; "variable"; "number"; "string" |]
 
-        let lf = "fn main: Int\n    let x = 1\n    \"ok\""
-        let crlf = "fn main: Int\r\n    let x = 1\r\n    \"ok\""
-        let bom = "\uFEFFfn main: Int\n    let x = 1\n    \"ok\""
+        let lf = "fn main: Int\n    val x = 1\n    \"ok\""
+        let crlf = "fn main: Int\r\n    val x = 1\r\n    \"ok\""
+        let bom = "\uFEFFfn main: Int\n    val x = 1\n    \"ok\""
 
         let tokensLf = server.InternalTokenize(lf)
         let tokensCrlf = server.InternalTokenize(crlf)
