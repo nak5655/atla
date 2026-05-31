@@ -484,7 +484,7 @@ module Parser =
     and expr: PackratParser<Token, Ast.Expr> =
         Delay (fun () -> lambdaExpr <|> ascriptionExpr)
 
-    // `| else -> stmt...` を解析する（let-else / var-else の else ブランチ）。
+    // `| else -> stmt...` を解析する（val-else / var-else の else ブランチ）。
     // blockAtOpener で `|` の列をオフサイド基準とし、ボディは `|` より右に字下げする。
     and letElseElseBranch: PackratParser<Token, Ast.Stmt list> =
         Delay (fun () ->
@@ -492,10 +492,10 @@ module Parser =
                 keyword "else" &> keyword "->" &>
                 Once (Many1 stmt) (fun (msg, span) -> [ Ast.Stmt.Error(msg, span) :> Ast.Stmt ])))
 
-    // `let <enumPattern> = <expr> <letElseElseBranch>` を解析する。
+    // `val <enumPattern> = <expr> <letElseElseBranch>` を解析する。
     and letElseStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () ->
-            block (asToken (keyword "let")) (enumPattern <& symbol "=" <&> expr)
+            block (asToken (keyword "val")) (enumPattern <& symbol "=" <&> expr)
             <&> letElseElseBranch
             |>> fun ((pattern, value), elseBranch) ->
                 let rightSpan = if elseBranch.IsEmpty then value.span.right else (List.last elseBranch).span.right
@@ -513,7 +513,7 @@ module Parser =
     // 文
     and letStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () ->
-            block (asToken (keyword "let")) (Once (tid <&> Optional (delim ':' &> typeExpr) <& symbol "=" <&> expr |>> fun ((id, typeAnnOpt), rhs) -> Ast.Stmt.Let (id.str, typeAnnOpt, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt)))
+            block (asToken (keyword "val")) (Once (tid <&> Optional (delim ':' &> typeExpr) <& symbol "=" <&> expr |>> fun ((id, typeAnnOpt), rhs) -> Ast.Stmt.Let (id.str, typeAnnOpt, rhs, { left = id.span.left; right = rhs.span.right})) (fun (msg, span) -> Ast.Stmt.Error(msg, span) :> Ast.Stmt)))
 
     and varStmt: PackratParser<Token, Ast.Stmt> =
         Delay (fun () ->

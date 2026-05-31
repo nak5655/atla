@@ -3,7 +3,7 @@ import System'Console
 
 fn fizzbuzz (n: Int): ()
     for i in 1 (n + 1) range.
-        let s =
+        val s =
             if
             | i % 15 == 0 => "FizzBuzz"
             | i % 5 == 0 => "Buzz"
@@ -12,5 +12,5 @@ fn fizzbuzz (n: Int): ()
         s Console'WriteLine.
 
 fn main: ()
-    let n = Console'ReadLine. Int32'Parse.
+    val n = Console'ReadLine. Int32'Parse.
     n fizzbuzz.

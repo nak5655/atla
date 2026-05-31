@@ -8,7 +8,7 @@ open Atla.Core.Syntax.Data
 module LexerTests =
     [<Fact>]
     let ``tokenize parses keywords and literals`` () =
-        let program = "let answer = 42"
+        let program = "val answer = 42"
         let input: Input<SourceChar> = StringInput program
 
         match Lexer.tokenize input Position.Zero with
@@ -16,7 +16,7 @@ module LexerTests =
             Assert.NotEmpty(tokens)
             Assert.Contains(tokens, fun token ->
                 match token with
-                | :? Token.Keyword as kw -> kw.str = "let"
+                | :? Token.Keyword as kw -> kw.str = "val"
                 | _ -> false)
             Assert.Contains(tokens, fun token ->
                 match token with
@@ -46,14 +46,14 @@ module LexerTests =
 
     [<Fact>]
     let ``tokenize ignores hash line comments`` () =
-        let program = "# file header\nlet answer = 42 # trailing"
+        let program = "# file header\nval answer = 42 # trailing"
         let input: Input<SourceChar> = StringInput program
 
         match Lexer.tokenize input Position.Zero with
         | Success(tokens, _) ->
             Assert.Contains(tokens, fun token ->
                 match token with
-                | :? Token.Keyword as kw -> kw.str = "let"
+                | :? Token.Keyword as kw -> kw.str = "val"
                 | _ -> false)
             Assert.Contains(tokens, fun token ->
                 match token with
@@ -68,7 +68,7 @@ module LexerTests =
 
     [<Fact>]
     let ``tokenize keeps hash inside string literals`` () =
-        let program = "let s = \"#not-comment\""
+        let program = "val s = \"#not-comment\""
         let input: Input<SourceChar> = StringInput program
 
         match Lexer.tokenize input Position.Zero with

@@ -276,7 +276,7 @@ fn keep (xs: Array String): Array String
 import System'IO'StringWriter
 
 fn main: ()
-    let writer = StringWriter.
+    val writer = StringWriter.
     "hello" writer'WriteLine.
 """
 

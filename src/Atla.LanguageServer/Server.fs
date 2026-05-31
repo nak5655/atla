@@ -318,7 +318,7 @@ let private tryResolveSystemTypeFromTypeId (symbolTable: SymbolTable) (tid: Type
 
 let private letStaticAccessPattern =
     Regex(
-        @"^\s*let\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*[^=]+)?\s*=\s*(?<typeName>[A-Za-z_][A-Za-z0-9_]*)'(?<memberName>[A-Za-z_][A-Za-z0-9_]*)\s*$",
+        @"^\s*val\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*[^=]+)?\s*=\s*(?<typeName>[A-Za-z_][A-Za-z0-9_]*)'(?<memberName>[A-Za-z_][A-Za-z0-9_]*)\s*$",
         RegexOptions.Compiled ||| RegexOptions.CultureInvariant)
 
 let private collectWorkspaceRoots (content: JObject) : string list =

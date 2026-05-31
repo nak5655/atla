@@ -321,8 +321,8 @@ import System'Console
 import people'Person
 
 fn main: ()
-    let p = { name = "alice" } Person.
-    let message = p'greet.
+    val p = { name = "alice" } Person.
+    val message = p'greet.
     message Console'WriteLine.
 """
 
@@ -407,10 +407,10 @@ fn unwrapOr (o: Opt Int): Int
     | Opt'Some { value } -> value
 
 fn main: ()
-    let a = Opt'Some { value = 99 }
-    let b = Opt'None
-    let ra = a unwrapOr.
-    let rb = b unwrapOr.
+    val a = Opt'Some { value = 99 }
+    val b = Opt'None
+    val ra = a unwrapOr.
+    val rb = b unwrapOr.
     ra Console'WriteLine.
     rb Console'WriteLine.
 """

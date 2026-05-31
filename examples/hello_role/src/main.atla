@@ -12,5 +12,5 @@ impl Shape for Rectangle
         self'width * self'height
 
 fn main: ()
-    let rect = { width = 5.0, height = 10.0 } Rectangle.
+    val rect = { width = 5.0, height = 10.0 } Rectangle.
     rect'area. Console'WriteLine.

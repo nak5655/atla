@@ -18,12 +18,12 @@ struct CalculatorWindow
 
 impl CalculatorWindow as Window
     fn new: CalculatorWindow
-        let root = StackPanel.
+        val root = StackPanel.
         root'Orientation = Orientation'Vertical
         root'Margin = 8.0 Thickness.
         root'Spacing = 8.0
 
-        let display = TextBox.
+        val display = TextBox.
         display'Text = "0"
         display'IsReadOnly = True
         display'FontSize = 32.0
@@ -32,14 +32,14 @@ impl CalculatorWindow as Window
 
         display root'Children'Add.
 
-        let grid = Grid.
+        val grid = Grid.
         grid'RowDefinitions = "Auto,Auto,Auto,Auto,Auto" RowDefinitions.
         grid'ColumnDefinitions = "*,*,*,*" ColumnDefinitions.
         grid'Margin = 0 8 0 0 Thickness.
 
         grid root'Children'Add.
 
-        let window =
+        val window =
             { _grid = grid
             , _display = display
             , _currentValue = 0.0
@@ -75,7 +75,7 @@ impl CalculatorWindow as Window
         window
 
     fn addButton self (label: String) (row: Int) (column: Int) (onClick: () -> ()): ()
-        let button = Button.
+        val button = Button.
         button'Content = label
         button'FontSize = 20.0
         button'Margin = 4.0 Thickness.
@@ -108,7 +108,7 @@ impl CalculatorWindow as Window
 
     fn onOperator self (operator: String): () -> ()
         fn () ->
-            let value = self'_display'Text Double'Parse.
+            val value = self'_display'Text Double'Parse.
 
             if
             | self'_pendingOperator != "" =>
@@ -130,7 +130,7 @@ impl CalculatorWindow as Window
 
     fn onEquals self: () -> ()
         fn () ->
-            let value = self'_display'Text Double'Parse.
+            val value = self'_display'Text Double'Parse.
 
             if
             | self'_pendingOperator == "" =>
@@ -154,7 +154,7 @@ impl CalculatorWindow as Window
             | self'_clearOnNextDigit =>
                 ()
             | else =>
-                let text = self'_display'Text
+                val text = self'_display'Text
                 if
                 | text'Length == 1 =>
                     self'_display'Text = "0"
@@ -163,7 +163,7 @@ impl CalculatorWindow as Window
 
     fn onToggleSign self: () -> ()
         fn () ->
-            let value = self'_display'Text Double'Parse.
-            let invertedValue = -value
+            val value = self'_display'Text Double'Parse.
+            val invertedValue = -value
 
             self'_display'Text = invertedValue'ToString.

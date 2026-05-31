@@ -104,7 +104,7 @@ module AnalyzeTests =
     let ``semantic analysis and lowering handle do block`` () =
         let program = """
 fn main (): Int
-    let value = 1
+    val value = 1
     value
 """
 
@@ -295,8 +295,8 @@ struct Point
     val x: Int
     val y: Int
 fn makePoint (): Point
-    let xv = 1
-    let yv = 2
+    val xv = 1
+    val yv = 2
     { x = xv, y = yv } Point.
 """
         let input: Input<SourceChar> = StringInput program
@@ -1194,7 +1194,7 @@ fn main (): Int
         let program = """
 fn main: ()
     var x = 1
-    let f = fn _ -> x
+    val f = fn _ -> x
     ()
 """
 
@@ -1241,7 +1241,7 @@ import System'Linq'Enumerable
 
 fn main: ()
     for i in 0 1 Enumerable'Range.
-        let f = fn _ -> i
+        val f = fn _ -> i
         ()
     ()
 """
@@ -1514,7 +1514,7 @@ fn main: ()
 import System'Text'StringBuilder
 
 fn appendExclamation (sb: StringBuilder): ()
-    let ignored = "!" sb'Append.
+    val ignored = "!" sb'Append.
     ()
 """
 
@@ -1549,8 +1549,8 @@ fn appendExclamation (sb: StringBuilder): ()
 import System'Console
 
 fn main: ()
-    let line = Console'ReadLine.
-    let a = " " line'Split.
+    val line = Console'ReadLine.
+    val a = " " line'Split.
     a[0] Console'WriteLine.
 """
 
@@ -1707,8 +1707,8 @@ import System'Console
 import System'Linq'Enumerable
 
 fn main: ()
-    let line = Console'ReadLine.
-    let a = " " line'Split.
+    val line = Console'ReadLine.
+    val a = " " line'Split.
     for i in 0 a'Length Enumerable'Range.
         a[i] Console'WriteLine.
 """
@@ -1816,8 +1816,8 @@ fn createBuilder (): StringBuilder
 import System'Collections'ArrayList
 
 fn main (): ()
-    let list = ArrayList.
-    let count = list'Count
+    val list = ArrayList.
+    val count = list'Count
     ()
 """
 
@@ -1919,7 +1919,7 @@ fn main (): ()
 import Atla'Core'Tests'Semantics'TestExtensions
 
 fn addTen (): ()
-    let x = 1
+    val x = 1
     x'PlusTen.
 """
 
@@ -2093,9 +2093,9 @@ import System'Collections'ArrayList
 import System'InvalidOperationException
 
 fn addSubtype: ()
-    let list = ArrayList.
-    let ex = InvalidOperationException.
-    let _ = ex list'Add.
+    val list = ArrayList.
+    val ex = InvalidOperationException.
+    val _ = ex list'Add.
     ()
 """
         let input: Input<SourceChar> = StringInput program
@@ -2131,9 +2131,9 @@ fn addSubtype: ()
 import System'Collections'ArrayList
 
 fn test: ()
-    let list = ArrayList.
-    let s = "hello"
-    let _ = s list'Add.
+    val list = ArrayList.
+    val s = "hello"
+    val _ = s list'Add.
     ()
 """
         let input: Input<SourceChar> = StringInput program
@@ -2543,7 +2543,7 @@ impl CalculatorWindow
         digit
 
 fn main (): Int
-    let window = { value = 0 } CalculatorWindow.
+    val window = { value = 0 } CalculatorWindow.
     7 0 0 window'addDigitButton.
 """
         let input: Input<SourceChar> = StringInput program
@@ -2581,7 +2581,7 @@ impl Line
         x
 
 fn main (): ()
-    let line = { slope = 2.0, intercept = -1.0 } Line.
+    val line = { slope = 2.0, intercept = -1.0 } Line.
     5.0 line'evaluate. Console'WriteLine.
 """
         let input: Input<SourceChar> = StringInput program
@@ -3312,7 +3312,7 @@ impl MyError as Exception
 fn getMsg (e: Exception): String
     e'Message
 fn test (): String
-    let err = { code = 42 } MyError.
+    val err = { code = 42 } MyError.
     err getMsg.
 """
         let input: Input<SourceChar> = StringInput source
@@ -3359,7 +3359,7 @@ impl MyError as Exception
     fn new (code: Int): MyError
         { code = code } MyError.
 fn test (): ExceptionDispatchInfo
-    let err = { code = 1 } MyError.
+    val err = { code = 1 } MyError.
     err ExceptionDispatchInfo'Capture.
 """
         let input: Input<SourceChar> = StringInput source
@@ -3944,13 +3944,13 @@ async fn bad (x: Int): Int
         match typOpt with
         | Some (TypeId.App(TypeId.Native t, [ TypeId.Int ])) when t = typedefof<System.Collections.Generic.List<_>> ->
             Assert.True(true)
-        | other -> Assert.True(false, $"expected let binding type List<Int>, got {other}")
+        | other -> Assert.True(false, $"expected val binding type List<Int>, got {other}")
 
     [<Fact>]
     let ``let binding type annotation makes inferred type concrete`` () =
         let source = """
 fn main: List Int
-    let x: List Int = List.
+    val x: List Int = List.
     x
 """
         let input: Input<SourceChar> = StringInput source
@@ -3977,7 +3977,7 @@ fn main: List Int
     let ``expression type ascription makes inferred type concrete`` () =
         let source = """
 fn main: List Int
-    let y = List. : List Int
+    val y = List. : List Int
     y
 """
         let input: Input<SourceChar> = StringInput source
@@ -4004,7 +4004,7 @@ fn main: List Int
     let ``type annotation mismatch produces diagnostic`` () =
         let source = """
 fn main: Int
-    let x: Int = List.
+    val x: Int = List.
     x
 """
         let input: Input<SourceChar> = StringInput source

@@ -71,6 +71,71 @@ module ParserTests =
         | Failure _ -> ()
 
     [<Fact>]
+    let ``fileModule parses val binding`` () =
+        // `let` → `val` リネーム: `val name = expr` がローカル束縛として `Stmt.Let` にパースされる。
+        let program = """
+fn main: Int
+    val x = 1
+    x
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fn =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+            match fn with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as b ->
+                    let hasLetStmt =
+                        b.stmts
+                        |> List.exists (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.Let as letStmt -> letStmt.name = "x"
+                            | _ -> false)
+                    Assert.True(hasLetStmt, "expected `val x = 1` to parse as Ast.Stmt.Let")
+                | _ -> Assert.True(false, "function body was not parsed as Block")
+            | None -> Assert.True(false, "main not found")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``fileModule rejects legacy let keyword for local binding`` () =
+        // 旧 `let x = 1` は廃止。`let` はキーワードではなくなり、Stmt.Let としては解析されない。
+        let program = """
+fn main: Int
+    let x = 1
+    x
+"""
+
+        match parseModule program with
+        | Success (astModule, _) ->
+            let fn =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Fn as fn -> Some fn
+                    | _ -> None)
+            match fn with
+            | Some fn ->
+                match fn.body with
+                | :? Ast.Expr.Block as b ->
+                    let hasLetStmt =
+                        b.stmts
+                        |> List.exists (fun stmt ->
+                            match stmt with
+                            | :? Ast.Stmt.Let -> true
+                            | _ -> false)
+                    Assert.False(hasLetStmt, "expected legacy `let x = 1` not to parse as Ast.Stmt.Let")
+                | _ -> ()
+            | None -> ()
+        | Failure _ -> ()
+
+    [<Fact>]
     let ``fileModule parses if expression`` () =
         let program = """
 fn main (): Int
@@ -201,7 +266,7 @@ fn fizzbuzz (n: Int): ()
         | else => i
 
 fn main: ()
-    let n = 10
+    val n = 10
     n fizzbuzz.
 """
 
@@ -303,8 +368,8 @@ fn main: ()
 import System'Console
 
 fn main: ()
-    let line = Console'ReadLine.
-    let a = " " line'Split.
+    val line = Console'ReadLine.
+    val a = " " line'Split.
     a[0] Console'WriteLine.
 """
 
@@ -358,7 +423,7 @@ import Avalonia'Controls'AppBuilder
 import Avalonia'Application
 
 fn main: ()
-    let config = AppBuilder'Configure<Application>.
+    val config = AppBuilder'Configure<Application>.
     config
 """
 
@@ -396,9 +461,9 @@ fn main: ()
                             | _ ->
                                 Assert.True(false, "generic apply function was not parsed as Ast.Expr.GenericApply")
                         | _ ->
-                            Assert.True(false, "let statement value was not parsed as apply expression")
+                            Assert.True(false, "val statement value was not parsed as apply expression")
                     | None ->
-                        Assert.True(false, "config let statement was not found")
+                        Assert.True(false, "config val statement was not found")
                 | _ ->
                     Assert.True(false, "main body was not parsed into a block expression")
             | None ->
@@ -1706,7 +1771,7 @@ fn main (): Unit
     let ``fileModule parses let binding type annotation`` () =
         let program = """
 fn main: ()
-    let x: List Int = List.
+    val x: List Int = List.
     x
 """
 
@@ -1722,8 +1787,8 @@ fn main: ()
                     match applyType.args with
                     | [ (:? Ast.TypeExpr.Id as argId) ] -> Assert.Equal("Int", argId.name)
                     | _ -> Assert.True(false, "expected single Int type argument")
-                | _ -> Assert.True(false, "expected Some Apply type annotation on let binding")
-            | None -> Assert.True(false, "let binding 'x' was not found")
+                | _ -> Assert.True(false, "expected Some Apply type annotation on val binding")
+            | None -> Assert.True(false, "val binding 'x' was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
@@ -1758,7 +1823,7 @@ fn main: ()
     let ``fileModule parses expression type ascription`` () =
         let program = """
 fn main: ()
-    let y = List. : List Int
+    val y = List. : List Int
     y
 """
 
@@ -1766,7 +1831,7 @@ fn main: ()
         | Success (astModule, _) ->
             match firstLetStmt astModule "y" with
             | Some letStmt ->
-                Assert.True(letStmt.typeAnnotation.IsNone, "let binding 'y' should have no binding annotation")
+                Assert.True(letStmt.typeAnnotation.IsNone, "val binding 'y' should have no binding annotation")
                 match letStmt.value with
                 | :? Ast.Expr.TypeAscription as asc ->
                     match asc.typeExpr with
@@ -1775,8 +1840,8 @@ fn main: ()
                         | :? Ast.TypeExpr.Id as headId -> Assert.Equal("List", headId.name)
                         | _ -> Assert.True(false, "expected List head in ascription type")
                     | _ -> Assert.True(false, "expected Apply ascription type")
-                | _ -> Assert.True(false, "expected let value to be a TypeAscription")
-            | None -> Assert.True(false, "let binding 'y' was not found")
+                | _ -> Assert.True(false, "expected val value to be a TypeAscription")
+            | None -> Assert.True(false, "val binding 'y' was not found")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
@@ -1934,7 +1999,7 @@ fn main (): Int
     let ``fileModule parses let-else statement with positional binding`` () =
         let program = """
 fn unwrap (o: Opt Int): Int
-    let Opt'Some x = o
+    val Opt'Some x = o
     | else -> return -1
     x
 """

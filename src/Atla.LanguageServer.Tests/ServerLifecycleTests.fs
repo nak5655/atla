@@ -465,7 +465,7 @@ module ServerLifecycleTests =
             DependencyLoader.clearLocalCopyCache()
             server.Initialize(initializeContent) |> ignore
             server.IsAvailablePublishDiagnostics <- true
-            server.OpenDocument(documentUri, "import System'Text'Json'JsonNamingPolicy\nfn main: ()\n    let _ = JsonNamingPolicy'CamelCase")
+            server.OpenDocument(documentUri, "import System'Text'Json'JsonNamingPolicy\nfn main: ()\n    val _ = JsonNamingPolicy'CamelCase")
             server.WaitForPendingCompilations()
 
             Assert.True(File.Exists(normalizedSourceDependencyPath))
