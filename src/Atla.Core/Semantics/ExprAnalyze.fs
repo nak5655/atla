@@ -1941,8 +1941,17 @@ module ExprAnalyze =
                                                 | None ->
                                                     let armNameEnv = matchNameEnv.sub()
                                                     let variantType = TypeId.Name variantDef.typeSid
-                                                    // scrutinee をバリアント型へダウンキャストした式（フィールドアクセス用）。
-                                                    let castExpr = Hir.Expr.Cast(scrutineeRef, variantType, matchArm.span)
+                                                    // scrutinee をバリアント型へ一度だけダウンキャストして局所変数へ束縛し、
+                                                    // 各フィールドはその局所変数から読み出す。
+                                                    // フィールドごとに castclass を繰り返すと余計な評価が積み重なり
+                                                    // 不正な IL（スタック不整合）を生むため、キャストは 1 回に集約する。
+                                                    let castStmts, castReceiver =
+                                                        if namedFieldNames.IsEmpty then [], scrutineeRef
+                                                        else
+                                                            let castSid = armNameEnv.declareLocal "__match_cast" variantType
+                                                            let castExpr = Hir.Expr.Cast(scrutineeRef, variantType, matchArm.span)
+                                                            [ Hir.Stmt.Let(castSid, false, castExpr, matchArm.span) ],
+                                                            Hir.Expr.Id(castSid, variantType, matchArm.span)
                                                     let bindingStmts =
                                                         namedFieldNames
                                                         |> List.choose (fun fieldName ->
@@ -1950,12 +1959,13 @@ module ExprAnalyze =
                                                             |> Option.map (fun (ownerSid, fieldDef) ->
                                                                 let sid = armNameEnv.declareLocal fieldName fieldDef.typ
                                                                 let valueExpr =
-                                                                    Hir.Expr.MemberAccess(Hir.Member.DataField(ownerSid, fieldDef.sid), Some castExpr, fieldDef.typ, matchArm.span)
+                                                                    Hir.Expr.MemberAccess(Hir.Member.DataField(ownerSid, fieldDef.sid), Some castReceiver, fieldDef.typ, matchArm.span)
                                                                 Hir.Stmt.Let(sid, false, valueExpr, matchArm.span)))
+                                                    let allStmts = castStmts @ bindingStmts
                                                     let bodyExpr = analyzeExpr armNameEnv typeEnv matchArm.body tid
                                                     let thenExpr =
-                                                        if bindingStmts.IsEmpty then bodyExpr
-                                                        else Hir.Expr.Block(bindingStmts, bodyExpr, bodyExpr.typ, matchArm.span)
+                                                        if allStmts.IsEmpty then bodyExpr
+                                                        else Hir.Expr.Block(allStmts, bodyExpr, bodyExpr.typ, matchArm.span)
                                                     Result.Ok(variantPattern.caseName, variantDef, thenExpr)
                                     | _ ->
                                         Result.Error(Hir.Expr.ExprError("Unsupported match pattern", tid, matchArm.span))
