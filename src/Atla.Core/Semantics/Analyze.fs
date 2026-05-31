@@ -815,7 +815,7 @@ module Analyze =
                         match instanceImplMethodsByType.TryGetValue(typ.sym.id) with
                         | true, ms -> ms
                         | false, _ -> []
-                    Hir.Type(typ.sym, typ.isInterface, baseTypeOpt, typ.typeParams, typ.fields, typ.methods @ instanceImplMethods))
+                    Hir.Type(typ.sym, typ.isInterface, typ.isAbstract, baseTypeOpt, typ.typeParams, typ.fields, typ.methods @ instanceImplMethods))
 
             let untypedHirModule =
                 Hir.Module(

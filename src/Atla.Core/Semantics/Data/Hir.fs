@@ -62,6 +62,12 @@ module Hir =
         /// `await operand` 式。`async fn` 本体内でのみ使用可能（ExprAnalyze で検査）。
         /// operand は Task / Task<T> を表す式で、tid は結果型（Task のとき Unit、Task<T> のとき T）。
         | Await of operand: Expr * tid: TypeId * span: Span
+        /// `expr` の実行時型が `testType` のサブタイプかを判定する式（CIL `isinst` + null 比較）。
+        /// union の match ディスパッチで使用する。型は常に Bool。
+        | TypeTest of expr: Expr * testType: TypeId * span: Span
+        /// `expr` を `targetType` へダウンキャストする式（CIL `castclass`）。型は targetType。
+        /// union バリアントのフィールド束縛で、親型の値をバリアント型へ絞り込むのに使用する。
+        | Cast of expr: Expr * targetType: TypeId * span: Span
         | ExprError of message: string * errTyp: TypeId * span: Span
 
         member this.typ =
@@ -80,6 +86,8 @@ module Hir =
             | Block (_, _, t, _) -> t
             | If (_, _, _, t, _) -> t
             | Await (_, t, _) -> t
+            | TypeTest _ -> TypeId.Bool
+            | Cast (_, t, _) -> t
             | ExprError (_, t, _) -> t
 
         member this.span =
@@ -98,6 +106,8 @@ module Hir =
             | Block (_, _, _, span) -> span
             | If (_, _, _, _, span) -> span
             | Await (_, _, span) -> span
+            | TypeTest (_, _, span) -> span
+            | Cast (_, _, span) -> span
             | ExprError (_, _, span) -> span
 
         member this.hasError =
@@ -122,6 +132,8 @@ module Hir =
                 |> Option.map (fun expr -> expr.getDiagnostics)
                 |> Option.defaultValue []
             | Await (operand, _, _) -> operand.getDiagnostics
+            | TypeTest (expr, _, _) -> expr.getDiagnostics
+            | Cast (expr, _, _) -> expr.getDiagnostics
             | _ -> []
 
     and Stmt =
@@ -187,11 +199,17 @@ module Hir =
         member this.hasError = body.hasError
         member this.getDiagnostics = body.getDiagnostics
 
-    type Type(sid: SymbolId, isInterface: bool, baseType: TypeId option, typeParams: string list, fields: Field list, methods: Method list) =
+    type Type(sid: SymbolId, isInterface: bool, isAbstract: bool, baseType: TypeId option, typeParams: string list, fields: Field list, methods: Method list) =
+        /// 後方互換コンストラクタ。`isAbstract = false`（通常の具象型 / interface）として構築する。
+        new(sid: SymbolId, isInterface: bool, baseType: TypeId option, typeParams: string list, fields: Field list, methods: Method list) =
+            Type(sid, isInterface, false, baseType, typeParams, fields, methods)
         member this.sym = sid
         /// この型がインターフェイス（role 宣言から生成）であるかを示す。
         /// true の場合、CIL 出力時に TypeAttributes.Interface として生成される。
         member this.isInterface = isInterface
+        /// この型が abstract class（union ルート型）であるかを示す。
+        /// true の場合、CIL 出力時に TypeAttributes.Abstract を付与し、直接インスタンス化を禁止する。
+        member this.isAbstract = isAbstract
         member this.baseType = baseType
         /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
         member this.typeParams = typeParams
@@ -256,6 +274,10 @@ module Hir =
                 Expr.If(mapExpr f cond, mapExpr f thenBranch, mapExpr f elseBranch, tid, span)
             | Await (operand, tid, span) ->
                 Await(mapExpr f operand, tid, span)
+            | TypeTest (e, testType, span) ->
+                TypeTest(mapExpr f e, testType, span)
+            | Cast (e, targetType, span) ->
+                Cast(mapExpr f e, targetType, span)
         f mapped
 
     /// `Stmt` に含まれる全 `Expr` を bottom-up で変換する。
@@ -306,6 +328,8 @@ module Hir =
             let acc''' = foldExpr f acc'' thenBranch
             foldExpr f acc''' elseBranch
         | Await (operand, _, _) -> foldExpr f acc' operand
+        | TypeTest (e, _, _) -> foldExpr f acc' e
+        | Cast (e, _, _) -> foldExpr f acc' e
 
     /// `Stmt` に含まれる全 `Expr` を pre-order で畳み込む。
     and foldStmt (f: 'a -> Expr -> 'a) (acc: 'a) (stmt: Stmt) : 'a =
@@ -391,6 +415,10 @@ module Hir =
             |> List.fold merge zero
         | Await (operand, _, _) ->
             foldExprWithCtx descend afterStmt leaf merge zero ctx' operand
+        | TypeTest (e, _, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' e
+        | Cast (e, _, _) ->
+            foldExprWithCtx descend afterStmt leaf merge zero ctx' e
 
     /// `Stmt` 内の全 `Expr` を Reader 文脈（`ctx`）を保持しながら畳み込む。
     /// For ループの反復変数は `afterStmt` に合成 `Let` を渡してボディの文脈へ追加する。

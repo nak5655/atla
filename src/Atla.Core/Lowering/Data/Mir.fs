@@ -164,6 +164,13 @@ module Mir =
         /// 数値型変換（toFloat/toDouble/toInt）。src を target 数値型へ変換して dst へ格納する。
         /// Gen で conv.r4/conv.r8/conv.i4 等を発行する。
         | Convert of dst: Reg * src: Value * target: System.Type
+        /// 実行時型テスト（`isinst <target>` の後 `ldnull; cgt.un` で bool 化）。
+        /// src が target 型（またはサブタイプ）なら true を dst へ格納する。union match ディスパッチで使用する。
+        /// target は TypeId のまま保持し、Gen で TypeBuilder を含めて System.Type へ解決する。
+        | TypeTest of dst: Reg * src: Value * target: TypeId
+        /// ダウンキャスト（`castclass <target>`）。src を target 型へキャストして dst へ格納する。
+        /// union バリアントのフィールド束縛で使用する。target は TypeId のまま保持し Gen で解決する。
+        | Cast of dst: Reg * src: Value * target: TypeId
         /// ネイティブ（.NET）フィールドへの書き込み（`stfld`）。
         /// receiver はオブジェクト参照（class）または構造体へのマネージドポインタ（struct のアドレス）。
         | StoreNativeField of receiver: Value * field: FieldInfo * value: Value
@@ -209,6 +216,8 @@ module Mir =
             | NewGenericNative(dst, typ, args) -> sprintf "%A = new %A(%s)" dst typ (String.Join(", ", args |> List.map (fun a -> a.ToString())))
             | NewArr(dst, elemType, values) -> sprintf "%A = new %s[]{%s}" dst elemType.Name (String.Join(", ", values |> List.map (fun v -> v.ToString())))
             | Convert(dst, src, target) -> sprintf "%A = (%s)%s" dst target.Name (src.ToString())
+            | TypeTest(dst, src, target) -> sprintf "%A = %s is %A" dst (src.ToString()) target
+            | Cast(dst, src, target) -> sprintf "%A = (%A)%s" dst target (src.ToString())
             | StoreNativeField(receiver, field, value) -> sprintf "%s.%s = %s" (receiver.ToString()) field.Name (value.ToString())
             | LoadNativeField(dst, instance, field) -> sprintf "%A = %s.%s" dst (instance.ToString()) field.Name
             | NewEnv(dst, typeSid) -> sprintf "%A = new_env(typeSid=%d)" dst typeSid.id
@@ -259,12 +268,17 @@ module Mir =
             with get() = _builder.Value
             and set(v) = _builder <- Some v
 
-    type Type(name: string, sid: SymbolId, isInterface: bool, baseType: TypeId option, typeParams: string list, fields: Field list, ctors: Constructor list, methods: Method list) =
+    type Type(name: string, sid: SymbolId, isInterface: bool, isAbstract: bool, baseType: TypeId option, typeParams: string list, fields: Field list, ctors: Constructor list, methods: Method list) =
         let mutable _builder: TypeBuilder option = None
+        /// 後方互換コンストラクタ。`isAbstract = false` として構築する。
+        new(name: string, sid: SymbolId, isInterface: bool, baseType: TypeId option, typeParams: string list, fields: Field list, ctors: Constructor list, methods: Method list) =
+            Type(name, sid, isInterface, false, baseType, typeParams, fields, ctors, methods)
         member this.name = name
         member this.sym = sid
         /// この型がインターフェイス（role 宣言から生成）であるかを示す。
         member this.isInterface = isInterface
+        /// この型が abstract class（union ルート型）であるかを示す。CIL 出力時に TypeAttributes.Abstract を付与する。
+        member this.isAbstract = isAbstract
         member this.baseType = baseType
         /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
         member this.typeParams = typeParams

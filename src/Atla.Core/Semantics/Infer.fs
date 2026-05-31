@@ -38,6 +38,10 @@ module Infer =
             Hir.Expr.If(inferredCond, inferredThen, inferredElse, inferType tid, span)
         | Hir.Expr.Await (operand, tid, span) ->
             Hir.Expr.Await(inferExpr typeSubst operand, inferType tid, span)
+        | Hir.Expr.TypeTest (e, testType, span) ->
+            Hir.Expr.TypeTest(inferExpr typeSubst e, inferType testType, span)
+        | Hir.Expr.Cast (e, targetType, span) ->
+            Hir.Expr.Cast(inferExpr typeSubst e, inferType targetType, span)
         | Hir.Expr.ExprError (message, errTyp, span) ->
             Hir.Expr.ExprError(message, inferType errTyp, span)
 
@@ -94,7 +98,7 @@ module Infer =
                         let inferredArgs = meth.args |> List.map (fun (sid, tid) -> (sid, Type.resolve typeSubst tid))
                         Hir.Method(meth.sym, inferredArgs, inferExpr typeSubst meth.body, Type.resolve typeSubst meth.typ, meth.overrideTarget, meth.isAsync, meth.span))
                 let inferredBaseType = typ.baseType |> Option.map (Type.resolve typeSubst)
-                Hir.Type(typ.sym, typ.isInterface, inferredBaseType, typ.typeParams, inferredTypeFields, inferredTypeMethods))
+                Hir.Type(typ.sym, typ.isInterface, typ.isAbstract, inferredBaseType, typ.typeParams, inferredTypeFields, inferredTypeMethods))
 
         let typedModule = Hir.Module(hirModule.name, inferredTypes, inferredFields, inferredMethods, hirModule.scope)
 

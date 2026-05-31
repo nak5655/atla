@@ -525,6 +525,24 @@ module Gen =
             match dst with
             | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
             | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        // 実行時型テスト: src を積み、isinst で対象型へ変換後、ldnull; cgt.un で bool 化して dst へ格納する。
+        | Mir.Ins.TypeTest (dst, src, targetTid) ->
+            let targetType = resolveType env targetTid
+            genValue env gen src
+            gen.Emit(OpCodes.Isinst, targetType)
+            gen.Emit(OpCodes.Ldnull)
+            gen.Emit(OpCodes.Cgt_Un)
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
+        // ダウンキャスト: src を積み、castclass で対象型へキャストして dst へ格納する。
+        | Mir.Ins.Cast (dst, src, targetTid) ->
+            let targetType = resolveType env targetTid
+            genValue env gen src
+            gen.Emit(OpCodes.Castclass, targetType)
+            match dst with
+            | Mir.Reg.Arg index -> gen.Emit(OpCodes.Starg, index)
+            | Mir.Reg.Loc index -> gen.Emit(OpCodes.Stloc, index)
         // ネイティブフィールドへの書き込み: receiver（参照 or アドレス）と value を積み、
         // 数値型の不一致があれば変換してから stfld を発行する。
         | Mir.Ins.StoreNativeField (receiver, field, value) ->
@@ -915,14 +933,33 @@ module Gen =
                             // .NET 継承クラス（impl A as DotNetClass）: DefineType で基底クラスを指定する。
                             sysType
                         | _ ->
-                            // TypeId.Name（role）や None の場合は Phase 1b で AddInterfaceImplementation を使用する。
+                            // TypeId.Name（role / union ルート）や None の場合は obj を仮の基底とし、
+                            // union バリアントの Atla 基底型は Phase 1a' の SetParent で後から設定する。
                             typeof<obj>
-                    moduleBuilder.DefineType(typ.name, TypeAttributes.Public, resolvedBaseType)
+                    // union ルート型（isAbstract）は TypeAttributes.Abstract を付与し直接 new を禁止する。
+                    let classAttrs =
+                        if typ.isAbstract then TypeAttributes.Public ||| TypeAttributes.Abstract
+                        else TypeAttributes.Public
+                    moduleBuilder.DefineType(typ.name, classAttrs, resolvedBaseType)
             // Atla の data/enum 型はジェネリクスを型消去でコンパイルする。
             // DefineGenericParameters を呼ばず、TypeVar フィールドは obj として CIL に出力する。
             // （genericParamBuildersByType は使用しない）
             typ.builder <- typeBuilder
             env.typeBuilders.Add(typ.sym, typeBuilder)
+
+        // フェーズ 1a': union バリアントの Atla 基底型（TypeId.Name = union ルート）を SetParent で設定する。
+        // 全 TypeBuilder が宣言済みのこの時点で行うことで、宣言順に依存せず親子関係を確立できる。
+        // .NET ネイティブ基底（impl A as B）は DefineType 時点で確定済みのため対象外。
+        for typ in modul.types do
+            if not typ.isInterface then
+                match typ.baseType with
+                | Some (TypeId.Name baseSid) ->
+                    match env.typeBuilders.TryGetValue(baseSid) with
+                    // role 実装（impl B for A）の基底はインターフェイスであり、継承親ではないため除外する。
+                    // AddInterfaceImplementation はフェーズ 1b では行わず、メソッドは CIL インスタンスメソッドとして生成する。
+                    | true, baseBuilder when not baseBuilder.IsInterface -> typ.builder.SetParent(baseBuilder)
+                    | _ -> ()
+                | _ -> ()
 
         // フェーズ 1b: 具象型に .NET ネイティブ基底インターフェイスの実装を追加する。
         // role（TypeId.Name）経由のインターフェイス実装は impl メソッドが CIL インスタンスメソッドとして
