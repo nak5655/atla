@@ -53,6 +53,18 @@ module Lexer =
     /// Parse whitespace/comment trivia and discard them before/after tokens.
     let trivia: PackratParser<SourceChar, unit> =
         (ws |>> fun _ -> ()) <|> lineComment
+
+    /// Same as `lineComment`, but captures the comment text and span as a `Token.Comment`.
+    /// Used by the LSP semantic-tokens path; the compile/parse path keeps using
+    /// `lineComment` so comments stay out of the AST token stream.
+    let lineCommentToken: PackratParser<SourceChar, Token.Comment> =
+        AcceptIf (fun c -> c.char = '#') <&> Many (AcceptIf (fun c -> c.char <> '\n'))
+        |>> fun (hash, rest) ->
+            let s = SourceString.join (hash :: rest)
+            Token.Comment(s.string, s.span)
+
+    /// Whitespace-only trivia (no comment) — used by `tokenizeAll`.
+    let wsTrivia: PackratParser<SourceChar, unit> = ws |>> fun _ -> ()
     let alpha = AcceptIf (fun c -> System.Char.IsLetter(c.char))
     let alpha_ = alpha <|> (AcceptIf (fun c -> c.char = '_'))
     let digit = AcceptIf (fun c -> System.Char.IsDigit(c.char))
@@ -122,5 +134,11 @@ module Lexer =
             let strContent = content |> List.map (fun t -> t.value) |> String.concat ""
             Token.String(strContent, { left = openQuote.span.left; right = closeQuote.span.right })
 
-    let tokenize : PackratParser<SourceChar, Token list> = 
+    let tokenize : PackratParser<SourceChar, Token list> =
         Many (trivia) &> SepBy ((asToken keyword) <|> (asToken string) <|> (asToken delim) <|> (asToken single) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many trivia) <& Many trivia <& Eoi |>> fun tokens -> tokens
+
+    /// Same as `tokenize`, but emits `Token.Comment` for each `#` line comment.
+    /// Used by the LSP semantic-tokens path so comments can be highlighted; the
+    /// compile/parse path keeps using `tokenize`, which still discards comments.
+    let tokenizeAll : PackratParser<SourceChar, Token list> =
+        Many wsTrivia &> SepBy ((asToken lineCommentToken) <|> (asToken keyword) <|> (asToken string) <|> (asToken delim) <|> (asToken single) <|> (asToken float) <|> (asToken int) <|> (asToken id) <|> (asToken symbol)) (Many wsTrivia) <& Many wsTrivia <& Eoi |>> fun tokens -> tokens

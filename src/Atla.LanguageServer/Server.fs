@@ -37,7 +37,7 @@ let private sanitizeAssemblyName (value: string) : string =
     let sanitized = System.String(chars)
     if String.IsNullOrWhiteSpace sanitized then "Application" else sanitized
 
-let private canonicalTokenTypes = [| "keyword"; "type"; "variable"; "number"; "string" |]
+let private canonicalTokenTypes = [| "keyword"; "type"; "variable"; "number"; "string"; "comment" |]
 
 /// LF 正規化済みテキストを行配列で表したときの (line, char) → 絶対文字オフセット変換。
 /// line・char が範囲外の場合はクランプする。
@@ -732,7 +732,7 @@ type Server
     member _.InternalTokenize(text: string) : uint32 list =
         let inputText = normalizeSemanticInput text
         let input: Input<SourceChar> = StringInput(inputText)
-        match Lexer.tokenize input Position.Zero with
+        match Lexer.tokenizeAll input Position.Zero with
         | Success(tokens, _) ->
             let mutable line = 0
             let mutable col = 0
@@ -746,6 +746,7 @@ type Server
 
                 let tokenType =
                     match token with
+                    | :? Token.Comment -> Some "comment"
                     | :? Token.Keyword -> Some "keyword"
                     | :? Token.Int
                     | :? Token.Float
