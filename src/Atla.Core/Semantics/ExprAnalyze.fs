@@ -2003,10 +2003,14 @@ module ExprAnalyze =
                                     | None when analyzedArms.IsEmpty ->
                                         Hir.Expr.ExprError("Match expression has no arms", tid, matchExpr.span)
                                     | None ->
-                                        // isinst による if 連鎖。最後の arm を末端 else とする。
+                                        // isinst による if 連鎖を組み立てる。最後の arm の本体を末端 else とし、
+                                        // それ以外の arm を後ろから畳み込んで条件分岐を積む。
+                                        // 末端 else は最後の arm の本体そのものであり、最後の arm を畳み込みに
+                                        // 含めると本体が二重に出力され不正な IL になるため、必ず除外する。
+                                        let initArms = analyzedArms |> List.take (analyzedArms.Length - 1)
                                         let lastThen = analyzedArms |> List.last |> (fun (_, _, e) -> e)
                                         let ifChain =
-                                            analyzedArms
+                                            initArms
                                             |> List.rev
                                             |> List.fold
                                                 (fun elseExpr (_, variantDef, thenExpr) ->
