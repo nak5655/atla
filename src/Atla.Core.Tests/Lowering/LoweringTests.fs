@@ -1399,15 +1399,21 @@ fn main: ()
         Assert.Equal("50", stdout.Trim())
 
     [<Fact>]
-    let ``enum match and constructors compile and execute correctly`` () =
+    let ``union match and constructors compile and execute correctly`` () =
         let program = """
 import System'Console
 
-enum Color
-    | Black
-    | White
-    | Rgb { r: Int, g: Int, b: Int }
-    | Hsv { h: Int, s: Int, v: Int }
+union Color
+    object Black: Color
+    object White: Color
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
+    struct Hsv: Color
+        val h: Int
+        val s: Int
+        val v: Int
 
 impl Color
     fn red self: Int
@@ -1449,7 +1455,7 @@ fn main: ()
         Assert.Equal("255", stdout.Trim())
 
     [<Fact>]
-    let ``compileModules should allow imported enum constructor and methods via import sub'Color`` () =
+    let ``compileModules should allow imported union constructor and methods via import sub'Color`` () =
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
@@ -1466,9 +1472,12 @@ fn main: ()
 
         let subSource =
             """
-enum Color
-    | Black
-    | Rgb { r: Int, g: Int, b: Int }
+union Color
+    object Black: Color
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
 
 impl Color
     fn red self: Int
@@ -1512,7 +1521,7 @@ impl Color
         Assert.Equal("255", stdout.Trim())
 
     [<Fact>]
-    let ``generic enum Opt'None unifies with Opt<T> field type`` () =
+    let ``generic union Opt'None unifies with Opt<T> field type`` () =
         // 回帰テスト: Opt'None を Opt<具体型> フィールドに代入するとき
         // "Cannot unify types: Opt and Opt<SomeType>" エラーが発生していたバグの検出用。
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -1521,9 +1530,10 @@ impl Color
         let source = """
 import System'Console
 
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 struct Box
     val _value: Opt Int
@@ -1567,18 +1577,19 @@ fn main: ()
         Assert.Equal("-1", stdout.Trim())
 
     [<Fact>]
-    let ``generic enum Opt'Some pipeline constructor unifies with Opt<T> field type`` () =
-        // 回帰テスト: "arg Type'Case." パイプライン構文で enum case コンストラクターを呼び出すとき
-        // "Enum case 'Some' requires a payload initializer" エラーが発生していたバグの検出用。
+    let ``generic union Opt'Some pipeline constructor unifies with Opt<T> field type`` () =
+        // 回帰テスト: "arg Type'Variant." パイプライン構文で union バリアントコンストラクターを呼び出すとき
+        // ペイロード初期化エラーが発生していたバグの検出用。
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
         let source = """
 import System'Console
 
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 struct Box
     val _value: Opt Int
@@ -1627,15 +1638,16 @@ fn main: ()
         // CIL 生成エラー "Unresolved meta type is not supported in Gen" が
         // 発生しないことを確認する。
         // 根本原因: impl Opt T の self が型消去後の TypeId.Name optSid を持ち、
-        // instantiateEnumRootType が fresh meta を生成し、typeVarSubst = {T -> Meta(m)} となり
+        // 型パラメータ具体化で fresh meta を生成し、typeVarSubst = {T -> Meta(m)} となり
         // Positional("_") の boundType が Meta(m) になって CIL 生成でクラッシュしていた。
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(outDir) |> ignore
 
         let source = """
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 impl Opt T
     fn count self: Int
@@ -1663,9 +1675,10 @@ fn main: ()
         Directory.CreateDirectory(outDir) |> ignore
 
         let source = """
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 impl Opt T
     fn hasPayload self: Int
@@ -2689,9 +2702,10 @@ fn main: ()
         let program = """
 import System'Console
 
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 fn unwrapOr (o: Opt Int) (default: Int): Int
     val Opt'Some v = o
@@ -2712,9 +2726,10 @@ fn main: ()
         let program = """
 import System'Console
 
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 fn getValueOrZero (o: Opt Int): Int
     val Opt'Some { value } = o
@@ -2751,9 +2766,10 @@ fn main: ()
         let program = """
 import System'Console
 
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 fn printValue (o: Opt Int): Unit
     val Opt'Some x = o
@@ -2991,3 +3007,28 @@ fn main: ()
     (b'isNone.) Console'WriteLine.
 """
         Assert.Equal("True\nFalse\nFalse\nTrue", runForStdout "GenericUnionOpt" program)
+
+    [<Fact>]
+    let ``union concatenative construction and let-else binding work`` () =
+        let program = """
+import System'Console
+
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
+
+fn check (o: Opt Int): ()
+    val Opt'Some x = o
+    | else ->
+        "none" Console'WriteLine.
+        return
+    x Console'WriteLine.
+
+fn main: ()
+    val a = 42 Opt'Some.
+    a check.
+    val n = Opt'None
+    n check.
+"""
+        Assert.Equal("42\nnone", runForStdout "UnionLetElse" program)

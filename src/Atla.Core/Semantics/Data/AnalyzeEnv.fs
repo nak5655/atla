@@ -11,18 +11,6 @@ module AnalyzeEnv =
           isMutable: bool
           span: Atla.Core.Data.Span }
 
-    type EnumCaseDef =
-        { name: string
-          tag: int
-          payloadTypeSid: SymbolId option
-          payloadFieldSid: SymbolId option
-          fields: DataFieldDef list
-          span: Atla.Core.Data.Span }
-
-    type EnumTypeDef =
-        { hiddenTagField: DataFieldDef
-          cases: EnumCaseDef list }
-
     /// union バリアントの定義。name は修飾なしバリアント名、typeSid はバリアント型の SymbolId。
     /// objectFieldInits は `object` バリアントの継承フィールド初期値（フィールド名 → 初期化式 AST）。
     /// `struct` バリアントでは None。
@@ -45,11 +33,10 @@ module AnalyzeEnv =
         { typeSid: SymbolId
           baseType: TypeId option
           delegatedByFieldName: string option
-          /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
+          /// 型パラメータ名のリスト（例: `union Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
           typeParams: string list
           fields: DataFieldDef list
           hiddenFields: DataFieldDef list
-          enumInfo: EnumTypeDef option
           /// union ルート型の場合に設定されるメタデータ。バリアント DataTypeDef では None。
           unionInfo: UnionTypeDef option
           methods: Map<string, SymbolId * TypeId * bool> }

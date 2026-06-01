@@ -15,9 +15,6 @@ module Ast =
     type DataItem =
         abstract member span: Span
 
-    type EnumCase =
-        abstract member span: Span
-
     type FnArg =
         abstract member span: Span
 
@@ -433,23 +430,6 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-    module EnumCase =
-        type Field(name:string, typeExpr: TypeExpr, span: Span) =
-            member this.name = name
-            member this.typeExpr = typeExpr
-            member this.span = span
-            interface HasSpan with
-                member this.span = span
-
-        type Case(name: string, fields: Field list, span: Span) =
-            member this.name = name
-            member this.fields = fields
-            member this.span = span
-            interface EnumCase with
-                member this.span = span
-            interface HasSpan with
-                member this.span = span
-
     module DataInitField =
         /// data 初期化式の単一フィールド代入（`name = expr`）。
         type Field(name: string, value: Expr, span: Span) =
@@ -583,17 +563,6 @@ module Ast =
             member this.baseUnionName = baseUnionName
             member this.fields = fields
             member this.variants = variants
-            member this.span = span
-            interface Decl with
-                member this.span = span
-            interface HasSpan with
-                member this.span = span
-
-        type Enum(name: string, typeParams: string list, cases: EnumCase list, span: Span) =
-            member this.name = name
-            /// 型パラメータ名のリスト（例: `enum Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
-            member this.typeParams = typeParams
-            member this.cases = cases
             member this.span = span
             interface Decl with
                 member this.span = span

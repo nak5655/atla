@@ -149,11 +149,14 @@ fn main (): Int
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``semantic analysis lowers enum match into block and if chain`` () =
+    let ``semantic analysis lowers union match into block and if chain`` () =
         let source = """
-enum Color
-    | Black
-    | Rgb { r: Int, g: Int, b: Int }
+union Color
+    object Black: Color
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
 
 fn red (color: Color): Int
     match color
@@ -180,7 +183,7 @@ fn red (color: Color): Int
                             | None -> false)
                     match redMethod.body with
                     | Hir.Expr.Block (_, Hir.Expr.Block ([ Hir.Stmt.Let _ ], Hir.Expr.If _, _, _), _, _) -> ()
-                    | other -> Assert.True(false, $"Expected enum match to lower into Hir.Expr.Block + Hir.Expr.If, got {other}")
+                    | other -> Assert.True(false, $"Expected union match to lower into Hir.Expr.Block + Hir.Expr.If, got {other}")
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun diagnostic -> diagnostic.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
@@ -190,10 +193,10 @@ fn red (color: Color): Int
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``semantic analysis lowers zero field enum constructor to data constructor call`` () =
+    let ``semantic analysis lowers zero field union variant to data constructor call`` () =
         let source = """
-enum Color
-    | Black
+union Color
+    object Black: Color
 
 fn main (): Color
     Color'Black
@@ -211,10 +214,10 @@ fn main (): Color
                 match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
                 | { succeeded = true; value = Some hirModule } ->
                     match hirModule.methods.Head.body with
-                    | Hir.Expr.Block (_, Hir.Expr.Call (Hir.Callable.DataConstructor (_, fieldSids), None, [ Hir.Expr.Int (0, _) ], _, _), _, _) ->
-                        Assert.Single(fieldSids) |> ignore
+                    | Hir.Expr.Block (_, Hir.Expr.Call (Hir.Callable.DataConstructor (_, fieldSids), None, [], _, _), _, _) ->
+                        Assert.Empty(fieldSids)
                     | other ->
-                        Assert.True(false, $"Expected zero-field enum constructor to lower into DataConstructor call, got {other}")
+                        Assert.True(false, $"Expected zero-field union variant to lower into DataConstructor call, got {other}")
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun diagnostic -> diagnostic.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed unexpectedly: {message}")
@@ -224,11 +227,11 @@ fn main (): Color
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``semantic analysis reports non exhaustive enum match`` () =
+    let ``semantic analysis reports non exhaustive enum-style union match`` () =
         let source = """
-enum Color
-    | Black
-    | White
+union Color
+    object Black: Color
+    object White: Color
 
 fn main (color: Color): Int
     match color
@@ -248,17 +251,17 @@ fn main (color: Color): Int
                 | { succeeded = false; diagnostics = diagnostics } ->
                     Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Non-exhaustive match"))
                 | _ ->
-                    Assert.True(false, "Semantic analysis unexpectedly succeeded for non-exhaustive enum match")
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for non-exhaustive union match")
             | Failure (reason, span) ->
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``semantic analysis reports duplicate enum match arms`` () =
+    let ``semantic analysis reports duplicate union match arms`` () =
         let source = """
-enum Color
-    | Black
+union Color
+    object Black: Color
 
 fn main (color: Color): Int
     match color
@@ -3788,12 +3791,14 @@ impl Geometry for Rectangle
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``generic enum declaration produces HIR type with typeParams`` () =
-        // `enum Opt T` が typeParams=["T"] を持つ Hir.Type として解析されることを検証する。
+    let ``generic union declaration produces HIR type with typeParams`` () =
+        // `union Opt T` が typeParams=["T"] を持つ Hir.Type として解析され、
+        // バリアント型 `Opt'Some` が value: T フィールドを持つことを検証する。
         let source = """
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3814,21 +3819,20 @@ enum Opt T
                             | None -> false)
                     Assert.True(optType.IsSome, "Expected 'Opt' HIR type to exist")
                     Assert.Equal<string list>(["T"], optType.Value.typeParams)
-                    let payloadType =
+                    let someType =
                         hirModule.types
                         |> List.tryFind (fun t ->
                             match symbolTable.Get(t.sym) with
-                            // ペイロード型名は "Opt.__enum_payload_Some_type" の形式。
-                            | Some symInfo -> symInfo.name.Contains("__enum_payload_Some")
+                            | Some symInfo -> symInfo.name = "Opt'Some"
                             | None -> false)
-                    match payloadType with
+                    match someType with
                     | Some p ->
                         Assert.Equal<string list>(["T"], p.typeParams)
                         // フィールド value の型が TypeId.TypeVar "T" であることを確認する。
                         match p.fields |> List.tryFind (fun f -> symbolTable.Get(f.sym) |> Option.map (fun s -> s.name.EndsWith(".value")) |> Option.defaultValue false) with
                         | Some field -> Assert.Equal(TypeId.TypeVar "T", field.typ)
-                        | None -> Assert.True(false, "Expected 'value' field in payload type")
-                    | None -> Assert.True(false, "Expected payload type for Some case")
+                        | None -> Assert.True(false, "Expected 'value' field in Opt'Some variant type")
+                    | None -> Assert.True(false, "Expected 'Opt'Some' variant type")
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
@@ -3838,12 +3842,13 @@ enum Opt T
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``generic enum with impl analyzes without errors`` () =
-        // ジェネリック enum + impl の組み合わせが解析エラーなく通ることを検証する。
+    let ``generic union with impl analyzes without errors`` () =
+        // ジェネリック union + impl の組み合わせが解析エラーなく通ることを検証する。
         let source = """
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 impl Opt T
     fn isSome self: Bool
