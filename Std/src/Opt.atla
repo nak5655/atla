@@ -1,14 +1,15 @@
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 impl Opt T
     fn isSome self: Bool
         match self
         | Opt'None -> False
-        | Opt'Some _ -> True
+        | Opt'Some { value, .. } -> True
 
     fn isNone self: Bool
         match self
         | Opt'None -> True
-        | Opt'Some _ -> False
+        | Opt'Some { value, .. } -> False

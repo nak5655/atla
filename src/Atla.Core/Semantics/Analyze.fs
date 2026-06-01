@@ -473,6 +473,10 @@ module Analyze =
                             else None)
                         |> List.fold (fun aliases (name, fullPath) -> Map.add name fullPath aliases) resolvedModule.importedTypeAliases
 
+            // インポートした union のバリアント DataTypeDef を蓄積する。union ルートの再構築時に
+            // 各バリアント（修飾名 `Union'Variant`）の def もここへ登録し、フォールド後に defs へマージする。
+            let importedUnionVariantDefs = System.Collections.Generic.Dictionary<string, DataTypeDef>()
+
             let importedTypeDefs, importedTypeDiagnostics =
                 allImportedTypeAliases
                 |> Map.toList
@@ -681,6 +685,97 @@ module Analyze =
                                                 cases = enumCases }
                                       unionInfo = None
                                       methods = Map.empty }
+                                | :? Ast.Decl.Union as unionDecl ->
+                                    // インポートした union を root + 各バリアント DataTypeDef へ再構築する。
+                                    // バリアント型 SID は元モジュールのエクスポート（type:Union'Variant）を再利用し、
+                                    // 同一 symbolTable 上で生成済みの CIL 型と一致させる。Phase 1 は単層 union を対象とする。
+                                    let unionTypeParams = unionDecl.typeParams
+                                    let unionRootSid = typeSid
+                                    // union 本体フィールド（共有フィールド）を解決する。
+                                    let fieldNameEnv =
+                                        if unionTypeParams.IsEmpty then bootstrapNameEnv
+                                        else
+                                            let sub = bootstrapNameEnv.sub()
+                                            for p in unionTypeParams do sub.scope.DeclareType(p, TypeId.TypeVar p)
+                                            sub
+                                    let resolveExportedSid (name: string) (typ: TypeId) =
+                                        match sourceModuleExports |> Map.tryFind name with
+                                        | Some exportInfo -> exportInfo.symbolId, exportInfo.typ
+                                        | None ->
+                                            let sid = symbolTable.NextId()
+                                            symbolTable.Add(sid, { name = name; typ = typ; kind = SymbolKind.Local() })
+                                            sid, typ
+                                    let unionFieldDefs =
+                                        unionDecl.fields
+                                        |> List.choose (fun item ->
+                                            match item with
+                                            | :? Ast.DataItem.Field as fieldItem ->
+                                                let fieldType = fieldNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                                let fieldSid, ft = resolveExportedSid $"field:{typeNameForLookup}.{fieldItem.name}" fieldType
+                                                Some { name = fieldItem.name; sid = fieldSid; typ = ft; isMutable = fieldItem.isMutable; span = fieldItem.span }
+                                            | _ -> None)
+                                    if not isReusingExistingType then
+                                        let rootFields = unionFieldDefs |> List.map (fun fd -> Hir.Field(fd.sid, fd.typ, Hir.Expr.Unit(fd.span), fd.span))
+                                        types.Add(Hir.Type(unionRootSid, false, true, None, unionTypeParams, rootFields, []))
+                                    // 各バリアントの型 SID と DataTypeDef を再構築する。
+                                    let variantInfos =
+                                        (unionDecl.variants)
+                                        |> List.choose (fun variant ->
+                                            let variantNameOpt, ownItems, objInits =
+                                                match variant with
+                                                | :? Ast.Decl.Data as sv -> Some sv.name, sv.items, None
+                                                | :? Ast.Decl.Object as ov ->
+                                                    let inits = ov.fieldInits |> List.choose (fun i -> match i with | :? Ast.DataInitField.Field as f -> Some(f.name, f.value) | _ -> None)
+                                                    Some ov.name, [], Some inits
+                                                | _ -> None, [], None
+                                            match variantNameOpt with
+                                            | None -> None
+                                            | Some vName ->
+                                                let qualifiedName = sprintf "%s'%s" typeNameForLookup vName
+                                                let variantSid, _ = resolveExportedSid $"type:{qualifiedName}" (TypeId.Name (SymbolId 0))
+                                                // SymbolId 0 のプレースホルダーを避けるため、export 無い場合は新規 SID を typ に使う。
+                                                let variantSidFixed =
+                                                    match sourceModuleExports |> Map.tryFind $"type:{qualifiedName}" with
+                                                    | Some e -> e.symbolId
+                                                    | None ->
+                                                        let s = symbolTable.NextId()
+                                                        symbolTable.Add(s, { name = qualifiedName; typ = TypeId.Name s; kind = SymbolKind.Local() })
+                                                        s
+                                                let _ = variantSid
+                                                let ownFieldDefs =
+                                                    ownItems
+                                                    |> List.choose (fun item ->
+                                                        match item with
+                                                        | :? Ast.DataItem.Field as fieldItem ->
+                                                            let fieldType = fieldNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                                            let fieldSid, ft = resolveExportedSid $"field:{qualifiedName}.{fieldItem.name}" fieldType
+                                                            Some { name = fieldItem.name; sid = fieldSid; typ = ft; isMutable = fieldItem.isMutable; span = fieldItem.span }
+                                                        | _ -> None)
+                                                if not isReusingExistingType then
+                                                    let vFields = ownFieldDefs |> List.map (fun fd -> Hir.Field(fd.sid, fd.typ, Hir.Expr.Unit(fd.span), fd.span))
+                                                    types.Add(Hir.Type(variantSidFixed, false, false, Some(TypeId.Name unionRootSid), unionTypeParams, vFields, []))
+                                                let variantDef =
+                                                    { typeSid = variantSidFixed
+                                                      baseType = Some(TypeId.Name unionRootSid)
+                                                      delegatedByFieldName = None
+                                                      typeParams = unionTypeParams
+                                                      fields = ownFieldDefs
+                                                      hiddenFields = []
+                                                      enumInfo = None
+                                                      unionInfo = None
+                                                      methods = Map.empty }
+                                                importedUnionVariantDefs.[qualifiedName] <- variantDef
+                                                resolvedModule.moduleScope.DeclareType(qualifiedName, TypeId.Name variantSidFixed)
+                                                Some { name = vName; typeSid = variantSidFixed; isUnion = false; objectFieldInits = objInits; span = variant.span })
+                                    { typeSid = unionRootSid
+                                      baseType = None
+                                      delegatedByFieldName = None
+                                      typeParams = unionTypeParams
+                                      fields = unionFieldDefs
+                                      hiddenFields = []
+                                      enumInfo = None
+                                      unionInfo = Some { isExtendable = unionDecl.isExtendable; variants = variantInfos }
+                                      methods = Map.empty }
                                 | _ ->
                                     { typeSid = typeSid
                                       baseType = None
@@ -787,6 +882,10 @@ module Analyze =
             let dataTypeDefs =
                 importedTypeDefs
                 |> Map.fold (fun defs aliasName importedDef -> Map.add aliasName importedDef defs) dataTypeDefs
+            // インポート union のバリアント DataTypeDef を修飾名キーで合流する。
+            let dataTypeDefs =
+                importedUnionVariantDefs
+                |> Seq.fold (fun defs (kvp: System.Collections.Generic.KeyValuePair<string, DataTypeDef>) -> Map.add kvp.Key kvp.Value defs) dataTypeDefs
 
             // impl 宣言のシグネチャを先に登録し、メソッド解決を安定化する。
             let dataTypeDefsWithMethods, implMethodDecls, implDiagnostics =
