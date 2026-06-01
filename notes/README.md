@@ -11,6 +11,7 @@ This directory consolidates historical planning and design documentation that wa
 - `semantic-phase-design.md`: Semantic phase design details.
 - `unit-void-design.md`: Unit/Void semantics design notes.
 - `multi-impl-spec.md`: Proposal for allowing multiple `impl` blocks on a single `data` type.
+- `union-spec.md`: `union` (tagged sum type) specification — syntax, pattern matching, subtyping, and lowering to an abstract-class/variant hierarchy (replaces the removed `enum`).
 - `flow-control-spec.md`: Flow control and loop control specification (`return`, `break`, `continue`, `for`, `while`, `let-else`/`var-else`).
 
 ## Usage

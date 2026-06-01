@@ -18,8 +18,8 @@ Atla 言語のフロー制御文とループ制御文の構文・意味・制約
 ### return
 
 ```atla
-fn unwrap (o: Opt Int): Int =
-    let Opt'Some v = o
+fn unwrap (o: Opt Int): Int
+    val Opt'Some v = o
     | else -> return -1
     v
 ```
@@ -93,19 +93,20 @@ while cond
 ### let-else / var-else
 
 ```atla
-let Type'Case x = expr
+val Type'Variant x = expr
 | else -> return defaultValue
 
-var Type'Case x = expr
+var Type'Variant x = expr
 | else -> return defaultValue
 ```
 
-- RHS が指定ケースにマッチした場合、フィールドを束縛して後続処理を継続する。
+- RHS が指定バリアントにマッチした場合、フィールドを束縛して後続処理を継続する。
 - マッチしなかった場合、`| else -> body` を実行する。
 - `else` ブランチの末尾は `return` / `break` / `continue` のいずれかで発散しなければならない（強制）。
 - 発散がない場合はコンパイルエラー。
-- `let`: 束縛変数はイミュータブル。`var`: 束縛変数はミュータブル。
-- パターンは enum パターンのみ（`Type'Case`、または `Type'Case { field }`）。
+- `val`: 束縛変数はイミュータブル。`var`: 束縛変数はミュータブル。
+- パターンは union バリアントパターンのみ（`Type'Variant`、または `Type'Variant { field }`、
+  ネストは `Type'Sub'Variant`）。RHS の型はルート型でもバリアント型でもよい。
 
 ---
 
