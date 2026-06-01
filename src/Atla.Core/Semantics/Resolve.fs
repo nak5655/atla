@@ -10,10 +10,6 @@ module Resolve =
           typeParams: string list
           decl: Ast.Decl.Data }
 
-    type ResolvedEnumDecl =
-        { typeSid: SymbolId
-          typeParams: string list
-          decl: Ast.Decl.Enum }
 
     /// 解決済み union 宣言。variantSids は修飾なしバリアント名 → バリアント型 SymbolId のマップ
     /// （union 本体内バリアントと extendable union への外部バリアントの両方を含む）。
@@ -40,7 +36,6 @@ module Resolve =
           importedTypeAliases: Map<string, string>
           fnDecls: Ast.Decl.Fn list
           dataDecls: ResolvedDataDecl list
-          enumDecls: ResolvedEnumDecl list
           unionDecls: ResolvedUnionDecl list
           roleDecls: ResolvedRoleDecl list
           implDecls: (SymbolId * TypeId option * string option * Ast.Decl.Impl) list }
@@ -182,7 +177,6 @@ module Resolve =
 
         let fnDecls = ResizeArray<Ast.Decl.Fn>()
         let dataDecls = ResizeArray<ResolvedDataDecl>()
-        let enumDecls = ResizeArray<ResolvedEnumDecl>()
         let unionDecls = ResizeArray<ResolvedUnionDecl>()
         // 完全修飾 union 名 → (ルート型 SID, 親 union SID option, union 宣言 AST)。
         // ネスト union も含めて第一パスで再帰登録する。
@@ -267,15 +261,6 @@ module Resolve =
             // union ルートの登録後に処理する必要があるため、後続の専用パスで扱う。
             | :? Ast.Decl.Data -> ()
             | :? Ast.Decl.Object -> ()
-            | :? Ast.Decl.Enum as enumDecl ->
-                match moduleScope.ResolveType(enumDecl.name) with
-                | Some _ ->
-                    diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" enumDecl.name, enumDecl.span))
-                | None ->
-                    let typeSid = symbolTable.NextId()
-                    symbolTable.Add(typeSid, { name = enumDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
-                    moduleScope.DeclareType(enumDecl.name, TypeId.Name typeSid)
-                    enumDecls.Add({ typeSid = typeSid; typeParams = enumDecl.typeParams; decl = enumDecl })
             | :? Ast.Decl.Union as unionDecl ->
                 registerUnion "" None unionDecl
             | :? Ast.Decl.Role as roleDecl ->
@@ -365,8 +350,6 @@ module Resolve =
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
                 ()
-            | :? Ast.Decl.Enum ->
-                ()
             | :? Ast.Decl.Union ->
                 // union 宣言は第一パスで型名・バリアント名を登録済みのため、ここでは何もしない。
                 ()
@@ -382,8 +365,6 @@ module Resolve =
                     let isNominalType =
                         dataDecls
                         |> Seq.exists (fun dataDecl -> dataDecl.typeSid.id = typeSid.id)
-                        || enumDecls
-                        |> Seq.exists (fun enumDecl -> enumDecl.typeSid.id = typeSid.id)
                         || unionDecls
                         |> Seq.exists (fun unionDecl -> unionDecl.typeSid.id = typeSid.id)
                     if not isNominalType then
@@ -597,7 +578,6 @@ module Resolve =
                   importedTypeAliases = importedTypeAliases |> Seq.distinct |> Map.ofSeq
                   fnDecls = Seq.toList fnDecls
                   dataDecls = Seq.toList dataDecls
-                  enumDecls = Seq.toList enumDecls
                   unionDecls = Seq.toList unionDecls
                   roleDecls = Seq.toList roleDecls
                   implDecls = Seq.toList implDecls }

@@ -446,34 +446,7 @@ module AtlaLib =
                                       kind = typeNode.GetProperty("kind").GetString()
                                       typeSid = typeSid
                                       systemType = systemType }
-                                // enum 型の場合、ペイロード型（内部実装型）も先行登録する。
-                                // 隠しフィールドの型がペイロード型への packageType 参照として
-                                // エクスポートされるため、フィールド型解析前に predeclaredTypes に
-                                // 含まれていなければ "not exported" エラーになる。
-                                let payloadEntries =
-                                    if typeNode.GetProperty("kind").GetString() = "enum" then
-                                        let mutable casesNode = Unchecked.defaultof<JsonElement>
-                                        if typeNode.TryGetProperty("cases", &casesNode) && casesNode.ValueKind = JsonValueKind.Array then
-                                            casesNode.EnumerateArray()
-                                            |> Seq.choose (fun caseNode ->
-                                                let mutable payloadTypeNode = Unchecked.defaultof<JsonElement>
-                                                if caseNode.TryGetProperty("payloadTypeName", &payloadTypeNode) && payloadTypeNode.ValueKind = JsonValueKind.String then
-                                                    let payloadTypeName = payloadTypeNode.GetString()
-                                                    let payloadFullName = $"{moduleName}.{payloadTypeName}"
-                                                    let payloadSid = symbolTable.NextId()
-                                                    // payloadFullName の最終セグメント分割では CIL 型名（例: "Opt.__enum_payload_Some_type"）に
-                                                    // 到達できないため、payloadTypeName でも直接検索する。
-                                                    let payloadSystemType =
-                                                        tryResolveLoadedType payloadFullName
-                                                        |> Option.orElseWith (fun () -> tryResolveLoadedType payloadTypeName)
-                                                    symbolTable.Add(payloadSid, { name = payloadFullName; typ = TypeId.Name payloadSid; kind = SymbolKind.External(ExternalBinding.SystemTypeRef(payloadSystemType |> Option.toObj)) })
-                                                    Some (payloadFullName, { moduleName = moduleName; typeName = payloadTypeName; fullName = payloadFullName; element = Unchecked.defaultof<JsonElement>; kind = "data"; typeSid = payloadSid; systemType = payloadSystemType })
-                                                else
-                                                    None)
-                                            |> Seq.toList
-                                        else []
-                                    else []
-                                mainEntry :: payloadEntries)
+                                [ mainEntry ])
                             |> Seq.toList)
                         |> Map.ofList
 
@@ -629,92 +602,9 @@ module AtlaLib =
                                         else
                                             None
 
-                                    let enumInfo, enumDiagnostics =
-                                        if String.Equals(predeclared.kind, "enum", StringComparison.Ordinal) then
-                                            let casesNode = typeNode.GetProperty("cases")
-                                            let tagFieldOpt = hiddenFieldDefs |> List.tryFind (fun fieldDef -> fieldDef.name = "__enum_tag")
-                                            match tagFieldOpt with
-                                            | None ->
-                                                None, [ Diagnostic.Error($"enum `{fullTypeName}` is missing hidden tag metadata", Span.Empty) ]
-                                            | Some tagField ->
-                                                let caseDefs, caseErrs =
-                                                    casesNode.EnumerateArray()
-                                                    |> Seq.fold
-                                                        (fun (caseAcc, diagAcc) caseNode ->
-                                                            let caseName = caseNode.GetProperty("name").GetString()
-                                                            let tag = caseNode.GetProperty("tag").GetInt32()
-                                                            let payloadTypeSidOpt =
-                                                                let mutable payloadTypeNode = Unchecked.defaultof<JsonElement>
-                                                                if caseNode.TryGetProperty("payloadTypeName", &payloadTypeNode) && payloadTypeNode.ValueKind = JsonValueKind.String then
-                                                                    let payloadTypeName = payloadTypeNode.GetString()
-                                                                    let payloadFullName = $"{moduleName}.{payloadTypeName}"
-                                                                    // 先行登録済みの SID を再利用して重複登録を防ぐ。
-                                                                    match predeclaredTypes.TryFind payloadFullName with
-                                                                    | Some predeclaredPayload -> Some predeclaredPayload.typeSid
-                                                                    | None ->
-                                                                        // payloadFullName の最終セグメントでは CIL 型名に到達できないため payloadTypeName も試す。
-                                                                        let payloadSystemType =
-                                                                            tryResolveLoadedType payloadFullName
-                                                                            |> Option.orElseWith (fun () -> tryResolveLoadedType payloadTypeName)
-                                                                            |> Option.toObj
-                                                                        let payloadSid = symbolTable.NextId()
-                                                                        symbolTable.Add(payloadSid, { name = payloadFullName; typ = TypeId.Name payloadSid; kind = SymbolKind.External(ExternalBinding.SystemTypeRef payloadSystemType) })
-                                                                        Some payloadSid
-                                                                else
-                                                                    None
-                                                            let payloadSlotSidOpt =
-                                                                let payloadFieldName = $"__enum_payload_{caseName}"
-                                                                hiddenFieldDefs
-                                                                |> List.tryFind (fun fieldDef -> fieldDef.name = payloadFieldName)
-                                                                |> Option.map (fun fieldDef -> fieldDef.sid)
-                                                            let payloadFields =
-                                                                let mutable payloadFieldsNode = Unchecked.defaultof<JsonElement>
-                                                                if caseNode.TryGetProperty("payloadFields", &payloadFieldsNode) && payloadFieldsNode.ValueKind = JsonValueKind.Array then
-                                                                    payloadFieldsNode.EnumerateArray()
-                                                                    |> Seq.choose (fun payloadFieldNode ->
-                                                                        let fieldName = payloadFieldNode.GetProperty("name").GetString()
-                                                                        let payloadTypeName = $"__enum_payload_{caseName}_type"
-                                                                        match parseTypeNode (predeclaredTypes |> Map.map (fun _ value -> value.typeSid)) $"enum payload `{fullTypeName}.{caseName}.{fieldName}`" (payloadFieldNode.GetProperty("type")) with
-                                                                        | Result.Error _ -> None
-                                                                        | Ok fieldType ->
-                                                                            let fieldSid = symbolTable.NextId()
-                                                                            let reflectedField =
-                                                                                match payloadTypeSidOpt with
-                                                                                | Some payloadSid ->
-                                                                                    match symbolTable.Get(payloadSid) with
-                                                                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef payloadSystemType) } when not (isNull payloadSystemType) ->
-                                                                                        payloadSystemType.GetField(fieldName, BindingFlags.Public ||| BindingFlags.Instance) |> Option.ofObj
-                                                                                    | _ -> None
-                                                                                | None -> None
-                                                                            let fieldKind =
-                                                                                reflectedField
-                                                                                |> Option.map (fun fieldInfo -> SymbolKind.External(ExternalBinding.SystemFieldRef fieldInfo))
-                                                                                |> Option.defaultValue (SymbolKind.Local())
-                                                                            symbolTable.Add(fieldSid, { name = $"{moduleName}.{payloadTypeName}.{fieldName}"; typ = fieldType; kind = fieldKind })
-                                                                            Some
-                                                                                { name = fieldName
-                                                                                  sid = fieldSid
-                                                                                  typ = fieldType
-                                                                                  isMutable = false
-                                                                                  span = Span.Empty })
-                                                                    |> Seq.toList
-                                                                else
-                                                                    []
-                                                            let caseDef =
-                                                                { name = caseName
-                                                                  tag = tag
-                                                                  payloadTypeSid = payloadTypeSidOpt
-                                                                  payloadFieldSid = payloadSlotSidOpt
-                                                                  fields = payloadFields
-                                                                  span = Span.Empty }
-                                                            caseAcc @ [ caseDef ], diagAcc)
-                                                        ([], [])
-                                                Some { hiddenTagField = tagField; cases = caseDefs }, caseErrs
-                                        else
-                                            None, []
 
                                     let allDiagnostics =
-                                        fieldDiagnostics @ methodDiagnostics @ baseTypeDiagnostics @ enumDiagnostics
+                                        fieldDiagnostics @ methodDiagnostics @ baseTypeDiagnostics
 
                                     let dataTypeDef =
                                         { typeSid = predeclared.typeSid
@@ -723,7 +613,6 @@ module AtlaLib =
                                           typeParams = typeParamNames
                                           fields = fieldDefs
                                           hiddenFields = hiddenFieldDefs
-                                          enumInfo = enumInfo
                                           unionInfo = None
                                           methods = methodMap }
 

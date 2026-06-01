@@ -138,11 +138,14 @@ fn main: ()
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``enum lowering snapshot stays stable across HIR and MIR`` () =
+    let ``union lowering snapshot stays stable across HIR and MIR`` () =
         let program = """
-enum Color
-    | Black
-    | Rgb { r: Int, g: Int, b: Int }
+union Color
+    object Black: Color
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
 
 fn red (color: Color): Int
     match color
@@ -213,7 +216,7 @@ fn red (color: Color): Int
 
                     let snapshot = $"{hirTypeSnapshot}\n{hirMethodSnapshot}\n{mirTypeSnapshot}"
                     let expected =
-                        "Color.__enum_payload_Rgb_type=[Color.__enum_payload_Rgb_type.r,Color.__enum_payload_Rgb_type.g,Color.__enum_payload_Rgb_type.b];Color=[Color.__enum_tag,Color.__enum_payload_Rgb]\nred=Block(Block(If(Block(Int),If(Block(Block(Id)),Block(Block(Id))))))\n[Color.__enum_payload_Rgb_type.r,Color.__enum_payload_Rgb_type.g,Color.__enum_payload_Rgb_type.b];[Color.__enum_tag,Color.__enum_payload_Rgb]"
+                        "Color'Black=[];Color'Rgb=[Color'Rgb.r,Color'Rgb.g,Color'Rgb.b];Color=[]\nred=Block(Block(If(Block(Int),Block(Block(Id)))))\n[Color'Rgb.r,Color'Rgb.g,Color'Rgb.b];[];[]"
                     Assert.Equal(expected, snapshot)
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun err -> err.toDisplayText()) |> String.concat "; "

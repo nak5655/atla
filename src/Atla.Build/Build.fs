@@ -659,12 +659,11 @@ module BuildSystem =
             moduleAst.decls
             |> List.choose (fun decl ->
                 match decl with
-                | :? Ast.Decl.Data as dataDecl -> Some(dataDecl.name, "data", dataDecl.typeParams, Some dataDecl, None, None)
-                | :? Ast.Decl.Enum as enumDecl -> Some(enumDecl.name, "enum", enumDecl.typeParams, None, Some enumDecl, None)
-                | :? Ast.Decl.Role as roleDecl -> Some(roleDecl.name, "role", [], None, None, Some roleDecl)
+                | :? Ast.Decl.Data as dataDecl -> Some(dataDecl.name, "data", dataDecl.typeParams, Some dataDecl, None)
+                | :? Ast.Decl.Role as roleDecl -> Some(roleDecl.name, "role", [], None, Some roleDecl)
                 | _ -> None)
-            |> List.sortBy (fun (typeName, _, _, _, _, _) -> typeName)
-            |> List.iter (fun (typeName, kind, typeParams, dataDeclOpt, enumDeclOpt, roleDeclOpt) ->
+            |> List.sortBy (fun (typeName, _, _, _, _) -> typeName)
+            |> List.iter (fun (typeName, kind, typeParams, dataDeclOpt, roleDeclOpt) ->
                 let hirType = hirTypesByName[typeName]
                 let typeNode = JsonObject()
                 typeNode.Add("name", JsonValue.Create(typeName))
@@ -745,43 +744,6 @@ module BuildSystem =
                             |> List.find (fun methodInfo -> symbolNameOrFallback symbolTable methodInfo.sym = $"{typeName}.{methodDecl.name}")
                             |> fun methodInfo -> methodInfo.sym
                         addMethodNode (Ast.Decl.Fn(methodDecl.name, methodDecl.args, methodDecl.ret, Ast.Expr.Unit(Span.Empty), false, false, methodDecl.span)) methodSym)
-                | None -> ()
-
-                match enumDeclOpt with
-                | Some enumDecl ->
-                    hirType.fields
-                    |> List.iter (fun field -> addFieldNode field.sym field.typ true false)
-                    let casesNode = JsonArray()
-                    enumDecl.cases
-                    |> List.mapi (fun tag caseDecl -> tag, caseDecl)
-                    |> List.iter (fun (tag, caseDecl) ->
-                        match caseDecl with
-                        | :? Ast.EnumCase.Case as enumCase ->
-                            let caseNode = JsonObject()
-                            caseNode.Add("name", JsonValue.Create(enumCase.name))
-                            caseNode.Add("exportId", JsonValue.Create(buildExportId "enumCase" [ hirModule.name; typeName; enumCase.name ]))
-                            caseNode.Add("tag", JsonValue.Create(tag))
-                            let payloadTypeName = $"{typeName}.__enum_payload_{enumCase.name}_type"
-                            let payloadTypeOpt = hirTypesByName |> Map.tryFind payloadTypeName
-                            let payloadFieldsNode = JsonArray()
-                            enumCase.fields
-                            |> List.iteri (fun index fieldDecl ->
-                                let payloadFieldNode = JsonObject()
-                                payloadFieldNode.Add("name", JsonValue.Create(fieldDecl.name))
-                                let payloadFieldType =
-                                    match payloadTypeOpt with
-                                    | Some payloadType when index < payloadType.fields.Length ->
-                                        payloadType.fields[index].typ
-                                    | _ ->
-                                        TypeId.Unit
-                                payloadFieldNode.Add("type", typeIdToApiNode typeOwners symbolTable payloadFieldType)
-                                payloadFieldsNode.Add(payloadFieldNode))
-                            if not enumCase.fields.IsEmpty then
-                                caseNode.Add("payloadTypeName", JsonValue.Create(payloadTypeName))
-                            caseNode.Add("payloadFields", payloadFieldsNode)
-                            casesNode.Add(caseNode)
-                        | _ -> ())
-                    typeNode.Add("cases", casesNode)
                 | None -> ()
 
                 typeNode.Add("fields", fieldsNode)

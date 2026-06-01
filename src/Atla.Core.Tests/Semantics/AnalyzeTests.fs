@@ -3791,12 +3791,14 @@ impl Geometry for Rectangle
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``generic enum declaration produces HIR type with typeParams`` () =
-        // `enum Opt T` が typeParams=["T"] を持つ Hir.Type として解析されることを検証する。
+    let ``generic union declaration produces HIR type with typeParams`` () =
+        // `union Opt T` が typeParams=["T"] を持つ Hir.Type として解析され、
+        // バリアント型 `Opt'Some` が value: T フィールドを持つことを検証する。
         let source = """
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 """
         let input: Input<SourceChar> = StringInput source
         match Lexer.tokenize input Position.Zero with
@@ -3817,21 +3819,20 @@ enum Opt T
                             | None -> false)
                     Assert.True(optType.IsSome, "Expected 'Opt' HIR type to exist")
                     Assert.Equal<string list>(["T"], optType.Value.typeParams)
-                    let payloadType =
+                    let someType =
                         hirModule.types
                         |> List.tryFind (fun t ->
                             match symbolTable.Get(t.sym) with
-                            // ペイロード型名は "Opt.__enum_payload_Some_type" の形式。
-                            | Some symInfo -> symInfo.name.Contains("__enum_payload_Some")
+                            | Some symInfo -> symInfo.name = "Opt'Some"
                             | None -> false)
-                    match payloadType with
+                    match someType with
                     | Some p ->
                         Assert.Equal<string list>(["T"], p.typeParams)
                         // フィールド value の型が TypeId.TypeVar "T" であることを確認する。
                         match p.fields |> List.tryFind (fun f -> symbolTable.Get(f.sym) |> Option.map (fun s -> s.name.EndsWith(".value")) |> Option.defaultValue false) with
                         | Some field -> Assert.Equal(TypeId.TypeVar "T", field.typ)
-                        | None -> Assert.True(false, "Expected 'value' field in payload type")
-                    | None -> Assert.True(false, "Expected payload type for Some case")
+                        | None -> Assert.True(false, "Expected 'value' field in Opt'Some variant type")
+                    | None -> Assert.True(false, "Expected 'Opt'Some' variant type")
                 | { diagnostics = diagnostics } ->
                     let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
                     Assert.True(false, $"Semantic analysis failed: {message}")
@@ -3841,12 +3842,13 @@ enum Opt T
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``generic enum with impl analyzes without errors`` () =
-        // ジェネリック enum + impl の組み合わせが解析エラーなく通ることを検証する。
+    let ``generic union with impl analyzes without errors`` () =
+        // ジェネリック union + impl の組み合わせが解析エラーなく通ることを検証する。
         let source = """
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 impl Opt T
     fn isSome self: Bool

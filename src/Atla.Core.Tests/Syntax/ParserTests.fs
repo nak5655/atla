@@ -492,42 +492,13 @@ fn main (): Person
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses enum declaration`` () =
+    let ``fileModule parses union variant initialization expression with payload`` () =
         let program = """
-enum Color
-    | Black
-    | Rgb { r: Int, g: Int, b: Int }
-"""
-
-        match parseModule program with
-        | Success (astModule, _) ->
-            let enumDecl =
-                astModule.decls
-                |> List.tryPick (fun decl ->
-                    match decl with
-                    | :? Ast.Decl.Enum as enumDecl -> Some enumDecl
-                    | _ -> None)
-
-            match enumDecl with
-            | Some enumDecl ->
-                Assert.Equal("Color", enumDecl.name)
-                Assert.Equal(2, enumDecl.cases.Length)
-                match enumDecl.cases |> List.last with
-                | :? Ast.EnumCase.Case as caseDecl ->
-                    Assert.Equal("Rgb", caseDecl.name)
-                    Assert.Equal(3, caseDecl.fields.Length)
-                | _ ->
-                    Assert.True(false, "expected Ast.EnumCase.Case for enum case")
-            | None ->
-                Assert.True(false, "enum declaration not found")
-        | Failure (reason, span) ->
-            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
-
-    [<Fact>]
-    let ``fileModule parses enum initialization expression with payload`` () =
-        let program = """
-enum Color
-    | Rgb { r: Int, g: Int, b: Int }
+union Color
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
 
 fn main (): Color
     Color'Rgb { r = 255, g = 0, b = 0 }
@@ -1781,42 +1752,12 @@ fn main: ()
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses generic enum declaration with one type parameter`` () =
-        let program = """
-enum Opt T
-    | None
-    | Some { value: T }
-"""
-
-        match parseModule program with
-        | Success (astModule, _) ->
-            let enumDecl =
-                astModule.decls
-                |> List.tryPick (fun decl ->
-                    match decl with
-                    | :? Ast.Decl.Enum as enumDecl -> Some enumDecl
-                    | _ -> None)
-            match enumDecl with
-            | Some enumDecl ->
-                Assert.Equal("Opt", enumDecl.name)
-                Assert.Equal<string list>(["T"], enumDecl.typeParams)
-                Assert.Equal(2, enumDecl.cases.Length)
-                match enumDecl.cases |> List.item 1 with
-                | :? Ast.EnumCase.Case as someCase ->
-                    Assert.Equal("Some", someCase.name)
-                    Assert.Equal(1, someCase.fields.Length)
-                | _ -> Assert.True(false, "expected Ast.EnumCase.Case for Some case")
-            | None ->
-                Assert.True(false, "enum declaration not found")
-        | Failure (reason, span) ->
-            Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
-
-    [<Fact>]
     let ``fileModule parses generic impl declaration with type parameter`` () =
         let program = """
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 
 impl Opt T
     fn isSome self: Bool

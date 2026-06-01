@@ -307,9 +307,7 @@ module Compiler =
                                         moduleAst.decls
                                         |> List.choose (fun decl ->
                                             match decl with
-                                            | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
-                                            | :? Ast.Decl.Enum as enumDecl -> Some $"{moduleName}.{enumDecl.name}"
-                                            | :? Ast.Decl.Union as unionDecl -> Some $"{moduleName}.{unionDecl.name}"
+                                            | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"                                            | :? Ast.Decl.Union as unionDecl -> Some $"{moduleName}.{unionDecl.name}"
                                             | _ -> None))
                                     |> Set.ofList
                                 let availableTypeDecls =
@@ -319,9 +317,7 @@ module Compiler =
                                         moduleAst.decls
                                         |> List.choose (fun decl ->
                                             match decl with
-                                            | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)
-                                            | :? Ast.Decl.Enum as enumDecl -> Some ($"{moduleName}.{enumDecl.name}", enumDecl :> Ast.Decl)
-                                            | :? Ast.Decl.Union as unionDecl -> Some ($"{moduleName}.{unionDecl.name}", unionDecl :> Ast.Decl)
+                                            | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)                                            | :? Ast.Decl.Union as unionDecl -> Some ($"{moduleName}.{unionDecl.name}", unionDecl :> Ast.Decl)
                                             | _ -> None))
                                     |> Map.ofList
                                 let availableDataTypeImplDecls =
