@@ -380,6 +380,19 @@ module ExprAnalyze =
         |> Seq.tryPick (fun (_, def) ->
             if def.typeSid.id = typeSid.id then Some def else None)
 
+    /// 型の基底チェーン（baseType が TypeId.Name の連鎖）を辿り、継承フィールドを
+    /// 親に近い順（最も浅い基底が先頭）で収集する。union バリアントが
+    /// ネスト union/ルート union から受け継ぐフィールド一式を構築するのに使う。
+    let private collectInheritedFields (nameEnv: NameEnv) (def: DataTypeDef) : DataFieldDef list =
+        let rec loop (baseTypeOpt: TypeId option) (visited: Set<int>) (acc: DataFieldDef list) =
+            match baseTypeOpt with
+            | Some (TypeId.Name baseSid) when not (visited |> Set.contains baseSid.id) ->
+                match tryFindTypeDefBySid nameEnv baseSid with
+                | Some baseDef -> loop baseDef.baseType (visited |> Set.add baseSid.id) (baseDef.fields @ acc)
+                | None -> acc
+            | _ -> acc
+        loop def.baseType Set.empty []
+
     /// struct フィールドへの代入が `val`（不可変）でないことを検証する。
     /// 対応する DataFieldDef が見つからない場合は許容する（後段で別エラーが出る）。
     let private tryFindImmutableFieldName (nameEnv: NameEnv) (typeSid: SymbolId) (fieldSid: SymbolId) : string option =
@@ -624,21 +637,19 @@ module ExprAnalyze =
                 match enumRootDef.enumInfo with
                 | None ->
                     match enumRootDef.unionInfo with
-                    | Some unionDef ->
-                        // union バリアント構築: `Union'Variant { field = value, ... }`。
-                        // 提供フィールドはバリアント自身のフィールドと union 共有フィールドの和に対応する。
-                        match unionDef.variants |> List.tryFind (fun v -> v.name = enumInitExpr.caseName) with
+                    | Some _ ->
+                        // union バリアント構築: `Union'Variant { ... }`（ネスト union は `Union'Sub'Variant`）。
+                        // caseName は多段修飾名を `'` 連結したもの。完全修飾キーで直接バリアント型を引く。
+                        let qualifiedName = sprintf "%s'%s" enumInitExpr.typeName enumInitExpr.caseName
+                        match nameEnv.dataTypeDefs |> Map.tryFind qualifiedName with
                         | None ->
                             Hir.Expr.ExprError(sprintf "Unknown union variant '%s' for type '%s'" enumInitExpr.caseName enumInitExpr.typeName, tid, enumInitExpr.span)
-                        | Some variantInfo ->
-                            let qualifiedName = sprintf "%s'%s" enumInitExpr.typeName variantInfo.name
-                            match nameEnv.dataTypeDefs |> Map.tryFind qualifiedName with
-                            | None ->
-                                Hir.Expr.ExprError(sprintf "Union variant type '%s' is not defined" qualifiedName, tid, enumInitExpr.span)
-                            | Some variantDef ->
-                                // コンストラクタ引数の順序: バリアント自身のフィールド → union 共有フィールド。
+                        | Some variantDef when variantDef.unionInfo.IsSome ->
+                            Hir.Expr.ExprError(sprintf "Cannot construct abstract union '%s' directly; use one of its variants" qualifiedName, tid, enumInitExpr.span)
+                        | Some variantDef ->
+                                // コンストラクタ引数の順序: バリアント自身のフィールド → 継承フィールド（基底チェーン全体）。
                                 // Gen 側のバリアント ctor も同順でフィールドを受け取り、継承フィールドを含めて stfld する。
-                                let allFieldDefs = variantDef.fields @ enumRootDef.fields
+                                let allFieldDefs = variantDef.fields @ collectInheritedFields nameEnv variantDef
                                 let initFields =
                                     enumInitExpr.fields
                                     |> List.choose (fun field ->
@@ -662,9 +673,9 @@ module ExprAnalyze =
                                 | Some dup, _, _ ->
                                     Hir.Expr.ExprError(sprintf "Duplicate field initializer '%s'" dup, tid, enumInitExpr.span)
                                 | _, Some unknown, _ ->
-                                    Hir.Expr.ExprError(sprintf "Unknown field '%s' for union variant '%s'" unknown variantInfo.name, tid, enumInitExpr.span)
+                                    Hir.Expr.ExprError(sprintf "Unknown field '%s' for union variant '%s'" unknown enumInitExpr.caseName, tid, enumInitExpr.span)
                                 | _, _, Some missing ->
-                                    Hir.Expr.ExprError(sprintf "Missing required field '%s' for union variant '%s'" missing.name variantInfo.name, tid, enumInitExpr.span)
+                                    Hir.Expr.ExprError(sprintf "Missing required field '%s' for union variant '%s'" missing.name enumInitExpr.caseName, tid, enumInitExpr.span)
                                 | None, None, None ->
                                     let variantType = TypeId.Name variantDef.typeSid
                                     // 各フィールド値を期待型で解析する。エラーは伝播。
@@ -1487,7 +1498,7 @@ module ExprAnalyze =
                         match nameEnv.dataTypeDefs |> Map.tryFind qualifiedName with
                         | None -> Result.Error(sprintf "Union variant type '%s' is not defined" qualifiedName)
                         | Some variantDef ->
-                            let allFieldDefs = variantDef.fields @ typeDef.fields
+                            let allFieldDefs = variantDef.fields @ collectInheritedFields nameEnv variantDef
                             // object バリアントの初期値マップ（フィールド名 → AST 式）。
                             let initMap = variantInfo.objectFieldInits |> Option.defaultValue [] |> Map.ofList
                             // 全フィールドが初期値で供給されるか検査する。
@@ -1864,6 +1875,7 @@ module ExprAnalyze =
                             Hir.Expr.ExprError(sprintf "Type '%s' is not an enum or union" (formatTypeForDisplay nameEnv typeEnv analyzedScrutinee.typ), tid, matchExpr.span)
                         | Some unionDef ->
                             // union の match: 各 arm を isinst 型テストの if 連鎖へ lower する。
+                            // ネスト union に対応するため、バリアント名は多段修飾名（例: `HueColor'Hsv`）を取りうる。
                             let unionName =
                                 nameEnv.resolveSym scrutineeTypeDef.typeSid
                                 |> Option.map (fun symInfo -> symInfo.name)
@@ -1872,16 +1884,21 @@ module ExprAnalyze =
                             let scrutineeSid = matchNameEnv.declareLocal "__match_scrutinee" analyzedScrutinee.typ
                             let scrutineeRef = Hir.Expr.Id(scrutineeSid, analyzedScrutinee.typ, matchExpr.scrutinee.span)
 
-                            // バリアント名 → (variantDef, variantInfo) の索引を作る。
-                            // バリアント DataTypeDef は修飾名 `Union'Variant` で dataTypeDefs に登録されている。
-                            let variantByName =
-                                unionDef.variants
-                                |> List.choose (fun variantInfo ->
-                                    let qualifiedName = sprintf "%s'%s" unionName variantInfo.name
-                                    nameEnv.dataTypeDefs
-                                    |> Map.tryFind qualifiedName
-                                    |> Option.map (fun variantDef -> variantInfo.name, (variantDef, variantInfo)))
-                                |> Map.ofList
+                            // この union の葉バリアント（構築可能な struct/object）の修飾名集合を再帰収集する。
+                            // 網羅性チェックの基準に用いる。中間のネスト union 自身は葉に含めない。
+                            let rec collectLeafVariants (def: DataTypeDef) (prefix: string) : string list =
+                                match def.unionInfo with
+                                | None -> []
+                                | Some ui ->
+                                    ui.variants
+                                    |> List.collect (fun v ->
+                                        let vQual = sprintf "%s'%s" prefix v.name
+                                        if v.isUnion then
+                                            match nameEnv.dataTypeDefs |> Map.tryFind vQual with
+                                            | Some nestedDef -> collectLeafVariants nestedDef vQual
+                                            | None -> []
+                                        else [ vQual ])
+                            let allLeafQualified = collectLeafVariants scrutineeTypeDef unionName |> Set.ofList
 
                             let analyzeUnionArm (arm: Ast.MatchArm) =
                                 match arm with
@@ -1891,27 +1908,31 @@ module ExprAnalyze =
                                         if variantPattern.typeName <> unionName then
                                             Result.Error(Hir.Expr.ExprError(sprintf "Pattern type '%s' does not match union type '%s'" variantPattern.typeName unionName, tid, matchArm.span))
                                         else
-                                            match variantByName |> Map.tryFind variantPattern.caseName with
+                                            // caseName は多段修飾名を `'` 連結したもの。完全修飾キーで直接引く。
+                                            let qualifiedVariant = sprintf "%s'%s" unionName variantPattern.caseName
+                                            match nameEnv.dataTypeDefs |> Map.tryFind qualifiedVariant with
                                             | None ->
                                                 Result.Error(Hir.Expr.ExprError(sprintf "Unknown union variant '%s' for type '%s'" variantPattern.caseName unionName, tid, matchArm.span))
-                                            | Some (variantDef, variantInfo) ->
+                                            | Some variantDef ->
                                                 // フィールド束縛を構築する。`{ name, .. }` の各 name は
-                                                // バリアント自身のフィールド、または union 共有フィールドのいずれか。
+                                                // バリアント自身のフィールド、または基底チェーン上の継承フィールドのいずれか。
                                                 let namedFieldNames =
                                                     variantPattern.fields
                                                     |> List.choose (fun field ->
                                                         match field with
                                                         | :? Ast.PatternField.Named as namedField -> Some namedField.name
                                                         | _ -> None)
-                                                // フィールド名 → (定義型 SID, fieldDef) を own → union 共有の順に解決する。
+                                                let inheritedFields = collectInheritedFields nameEnv variantDef
+                                                // フィールド名 → (定義型 SID, fieldDef)。own → 継承の順に解決する。
                                                 let resolveField (fieldName: string) =
                                                     variantDef.fields
                                                     |> List.tryFind (fun fd -> fd.name = fieldName)
                                                     |> Option.map (fun fd -> variantDef.typeSid, fd)
                                                     |> Option.orElseWith (fun () ->
-                                                        scrutineeTypeDef.fields
+                                                        inheritedFields
                                                         |> List.tryFind (fun fd -> fd.name = fieldName)
-                                                        |> Option.map (fun fd -> scrutineeTypeDef.typeSid, fd))
+                                                        // 継承フィールドはバリアント型へキャスト後にアクセスできる（CIL 上は基底フィールド）。
+                                                        |> Option.map (fun fd -> variantDef.typeSid, fd))
                                                 let unknownField =
                                                     namedFieldNames |> List.tryFind (fun n -> (resolveField n).IsNone)
                                                 match unknownField with
@@ -1920,7 +1941,7 @@ module ExprAnalyze =
                                                 | None ->
                                                     let armNameEnv = matchNameEnv.sub()
                                                     let variantType = TypeId.Name variantDef.typeSid
-                                                    // scrutinee をバリアント型へダウンキャストした式（own フィールドアクセス用）。
+                                                    // scrutinee をバリアント型へダウンキャストした式（フィールドアクセス用）。
                                                     let castExpr = Hir.Expr.Cast(scrutineeRef, variantType, matchArm.span)
                                                     let bindingStmts =
                                                         namedFieldNames
@@ -1935,7 +1956,7 @@ module ExprAnalyze =
                                                     let thenExpr =
                                                         if bindingStmts.IsEmpty then bodyExpr
                                                         else Hir.Expr.Block(bindingStmts, bodyExpr, bodyExpr.typ, matchArm.span)
-                                                    Result.Ok(variantInfo.name, variantDef, thenExpr)
+                                                    Result.Ok(variantPattern.caseName, variantDef, thenExpr)
                                     | _ ->
                                         Result.Error(Hir.Expr.ExprError("Unsupported match pattern", tid, matchArm.span))
                                 | _ ->
@@ -1960,21 +1981,36 @@ module ExprAnalyze =
                                 | Some variantName ->
                                     Hir.Expr.ExprError(sprintf "Duplicate match arm for union variant '%s'" variantName, tid, matchExpr.span)
                                 | None ->
-                                    // 網羅性チェック: sealed union のみ。extendable union は省略する。
-                                    let coveredVariants = analyzedArms |> List.map (fun (n, _, _) -> n) |> Set.ofList
-                                    let missingVariant =
+                                    // 網羅性チェック（sealed union のみ）: 各葉バリアントが、直接または
+                                    // その祖先 union のいずれかが arm で覆われているかを検査する。
+                                    // arm の覆う修飾名集合（unionName 起点の相対パス）を構築する。
+                                    let coveredQualified =
+                                        analyzedArms |> List.map (fun (caseName, _, _) -> sprintf "%s'%s" unionName caseName) |> Set.ofList
+                                    let isLeafCovered (leafQual: string) =
+                                        // leafQual の祖先パス（例 "Color'HueColor'Hsv" → "Color'HueColor'Hsv","Color'HueColor"）の
+                                        // いずれかが覆われていれば被覆とみなす。unionName 自身までは遡らない。
+                                        let segs = leafQual.Split('\'')
+                                        let unionSegLen = unionName.Split('\'').Length
+                                        seq { for i in segs.Length .. -1 .. (unionSegLen + 1) -> segs.[0 .. i - 1] |> String.concat "'" }
+                                        |> Seq.exists (fun anc -> Set.contains anc coveredQualified)
+                                    let missingLeaf =
                                         if unionDef.isExtendable then None
-                                        else unionDef.variants |> List.tryFind (fun v -> not (Set.contains v.name coveredVariants))
-                                    match missingVariant with
-                                    | Some v ->
-                                        Hir.Expr.ExprError(sprintf "Non-exhaustive match: missing union variant '%s'" v.name, tid, matchExpr.span)
+                                        else allLeafQualified |> Set.toList |> List.tryFind (fun leaf -> not (isLeafCovered leaf))
+                                    match missingLeaf with
+                                    | Some leaf ->
+                                        let shortName = if leaf.StartsWith(unionName + "'") then leaf.Substring(unionName.Length + 1) else leaf
+                                        Hir.Expr.ExprError(sprintf "Non-exhaustive match: missing union variant '%s'" shortName, tid, matchExpr.span)
                                     | None when analyzedArms.IsEmpty ->
                                         Hir.Expr.ExprError("Match expression has no arms", tid, matchExpr.span)
                                     | None ->
-                                        // isinst による if 連鎖。最後の arm を末端 else とする。
+                                        // isinst による if 連鎖を組み立てる。最後の arm の本体を末端 else とし、
+                                        // それ以外の arm を後ろから畳み込んで条件分岐を積む。
+                                        // 末端 else は最後の arm の本体そのものであり、最後の arm を畳み込みに
+                                        // 含めると本体が二重に出力され不正な IL になるため、必ず除外する。
+                                        let initArms = analyzedArms |> List.take (analyzedArms.Length - 1)
                                         let lastThen = analyzedArms |> List.last |> (fun (_, _, e) -> e)
                                         let ifChain =
-                                            analyzedArms
+                                            initArms
                                             |> List.rev
                                             |> List.fold
                                                 (fun elseExpr (_, variantDef, thenExpr) ->

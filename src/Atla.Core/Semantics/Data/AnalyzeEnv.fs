@@ -26,9 +26,11 @@ module AnalyzeEnv =
     /// union バリアントの定義。name は修飾なしバリアント名、typeSid はバリアント型の SymbolId。
     /// objectFieldInits は `object` バリアントの継承フィールド初期値（フィールド名 → 初期化式 AST）。
     /// `struct` バリアントでは None。
+    /// isUnion=true のとき、このバリアント自身がネスト union（さらに下位バリアントを持つ）。
     type UnionVariantDef =
         { name: string
           typeSid: SymbolId
+          isUnion: bool
           objectFieldInits: (string * Ast.Expr) list option
           span: Atla.Core.Data.Span }
 

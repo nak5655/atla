@@ -196,12 +196,15 @@ module Parser =
             |>> fun ((openBrace, fields), closeBrace) ->
                 Ast.Expr.RecordLit(fields, { left = openBrace.span.left; right = closeBrace.span.right }) :> Ast.Expr)
 
-    // `EnumType'CaseName { field = value, ... }` 形式の enum case 初期化式を解析する。
+    // `EnumType'CaseName { field = value, ... }` 形式の enum/union case 初期化式を解析する。
+    // ネスト union の多段修飾名（例: `Color'HueColor'Hsv`）に対応するため、`'` 区切りの
+    // セグメント列を受理する。先頭セグメントを typeName、残りを `'` で連結して caseName とする。
     and enumInitExpr: PackratParser<Token, Ast.Expr> =
         Delay (fun () ->
-            tid <& delim '\'' <&> tid <& delim '{' <&> SepBy1 dataInitField (delim ',') <&> delim '}'
-            |>> fun (((typeId, caseId), fields), closeBrace) ->
-                Ast.Expr.EnumInit(typeId.str, caseId.str, fields, { left = typeId.span.left; right = closeBrace.span.right }) :> Ast.Expr)
+            tid <& delim '\'' <&> SepBy1 tid (delim '\'') <& delim '{' <&> SepBy1 dataInitField (delim ',') <&> delim '}'
+            |>> fun (((typeId, caseSegs), fields), closeBrace) ->
+                let caseName = caseSegs |> List.map (fun t -> t.str) |> String.concat "'"
+                Ast.Expr.EnumInit(typeId.str, caseName, fields, { left = typeId.span.left; right = closeBrace.span.right }) :> Ast.Expr)
 
     and patternField: PackratParser<Token, Ast.PatternField> =
         Delay (fun () ->
@@ -217,7 +220,8 @@ module Parser =
 
     and enumPattern: PackratParser<Token, Ast.Pattern> =
         Delay (fun () ->
-            tid <& delim '\'' <&> tid <&> (
+            // 多段修飾名（例: `Color'HueColor'Hsv`）に対応。先頭を typeName、残りを `'` 連結で caseName とする。
+            tid <& delim '\'' <&> SepBy1 tid (delim '\'') <&> (
                 // `{ field1, field2, .. }` 形式（named fields）
                 (delim '{' &> enumPatternFieldList <&> delim '}'
                  |>> fun ((fields, hasRest), closeBrace) ->
@@ -228,12 +232,14 @@ module Parser =
                          Some([Ast.PatternField.Positional(idToken.str, idToken.span) :> Ast.PatternField], false, idToken.span.right))
                 // フィールドなし
                 <|> (Delay (fun () -> fun _ pos -> Success(None, pos))))
-            |>> fun ((typeId, caseId), fieldSpecOpt) ->
+            |>> fun ((typeId, caseSegs), fieldSpecOpt) ->
+                let caseName = caseSegs |> List.map (fun t -> t.str) |> String.concat "'"
+                let lastSeg = List.last caseSegs
                 let fields, hasRest, rightSpanRight =
                     match fieldSpecOpt with
                     | Some (fields, hasRest, right) -> fields, hasRest, right
-                    | None -> [], false, caseId.span.right
-                Ast.Pattern.Enum(typeId.str, caseId.str, fields, hasRest, { left = typeId.span.left; right = rightSpanRight }) :> Ast.Pattern)
+                    | None -> [], false, lastSeg.span.right
+                Ast.Pattern.Enum(typeId.str, caseName, fields, hasRest, { left = typeId.span.left; right = rightSpanRight }) :> Ast.Pattern)
 
     and matchArm: PackratParser<Token, Ast.MatchArm> =
         Delay (fun () ->
@@ -736,9 +742,10 @@ module Parser =
                 let isExtendable = Option.isSome extendableTokenOpt
                 block (asToken (keyword "union"))
                     (Once
-                        (tid <&> Many tid <&> Many unionMember
-                         |>> fun ((id, typeParams), members) ->
+                        (tid <&> Many tid <&> Optional (delim ':' &> tid) <&> Many unionMember
+                         |>> fun (((id, typeParams), baseUnionOpt), members) ->
                              let typeParamNames = typeParams |> List.map (fun t -> t.str)
+                             let baseUnionName = baseUnionOpt |> Option.map (fun t -> t.str)
                              let fields = members |> List.choose (function Choice1Of2 f -> Some f | _ -> None)
                              let variants = members |> List.choose (function Choice2Of2 d -> Some d | _ -> None)
                              let rightSpan =
@@ -746,7 +753,7 @@ module Parser =
                                  | Some (Choice1Of2 f) -> f.span.right
                                  | Some (Choice2Of2 d) -> d.span.right
                                  | None -> id.span.right
-                             Ast.Decl.Union(id.str, typeParamNames, isExtendable, fields, variants, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
+                             Ast.Decl.Union(id.str, typeParamNames, isExtendable, baseUnionName, fields, variants, { left = id.span.left; right = rightSpan }) :> Ast.Decl)
                         (fun (msg, span) -> Ast.Decl.Error(msg, span) :> Ast.Decl)))
 
     and enumDecl: PackratParser<Token, Ast.Decl> =

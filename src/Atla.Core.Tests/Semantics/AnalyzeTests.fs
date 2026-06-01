@@ -4147,3 +4147,36 @@ fn main: Int
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    [<Fact>]
+    let ``semantic analysis reports non exhaustive match for nested union leaf`` () =
+        let source = """
+union Color
+    union HueColor: Color
+        struct Hsv: HueColor
+            val v: Int
+        struct Hsl: HueColor
+            val l: Int
+
+fn pick (c: Color): Int
+    match c
+    | Color'HueColor'Hsv { v, .. } -> v
+"""
+        let input: Input<SourceChar> = StringInput source
+        match Lexer.tokenize input Position.Zero with
+        | Success (tokens, _) ->
+            let tokenInput = TokenInput(tokens)
+            let start = if List.isEmpty tokens then Position.Zero else tokens.Head.span.left
+            match Parser.fileModule tokenInput start with
+            | Success (moduleAst, _) ->
+                let symbolTable = SymbolTable()
+                let subst = TypeSubst()
+                match Analyze.analyzeModule(symbolTable, subst, "main", moduleAst) with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    Assert.Contains(diagnostics, fun diagnostic -> diagnostic.message.Contains("Non-exhaustive match") && diagnostic.message.Contains("Hsl"))
+                | _ ->
+                    Assert.True(false, "Semantic analysis unexpectedly succeeded for non-exhaustive nested union match")
+            | Failure (reason, span) ->
+                Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
+        | Failure (reason, span) ->
+            Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
