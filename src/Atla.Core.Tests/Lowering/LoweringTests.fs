@@ -2960,3 +2960,34 @@ fn main: ()
     Color'Rgb { r = 7, g = 0, b = 0, alpha = 255 }'red. Console'WriteLine.
 """
         Assert.Equal("50\n30\n7", runForStdout "NestedUnion" program)
+
+    [<Fact>]
+    let ``generic union Opt constructs, matches, and dispatches methods`` () =
+        let program = """
+import System'Console
+
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
+
+impl Opt T
+    fn isSome self: Bool
+        match self
+        | Opt'None -> False
+        | Opt'Some { value, .. } -> True
+
+    fn isNone self: Bool
+        match self
+        | Opt'None -> True
+        | Opt'Some { value, .. } -> False
+
+fn main: ()
+    val a = Opt'Some { value = 42 }
+    (a'isSome.) Console'WriteLine.
+    (a'isNone.) Console'WriteLine.
+    val b = Opt'None
+    (b'isSome.) Console'WriteLine.
+    (b'isNone.) Console'WriteLine.
+"""
+        Assert.Equal("True\nFalse\nFalse\nTrue", runForStdout "GenericUnionOpt" program)

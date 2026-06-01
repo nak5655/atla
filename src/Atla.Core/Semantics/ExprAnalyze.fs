@@ -677,7 +677,17 @@ module ExprAnalyze =
                                 | _, _, Some missing ->
                                     Hir.Expr.ExprError(sprintf "Missing required field '%s' for union variant '%s'" missing.name enumInitExpr.caseName, tid, enumInitExpr.span)
                                 | None, None, None ->
-                                    let variantType = TypeId.Name variantDef.typeSid
+                                    // ジェネリック union バリアントの型パラメータを fresh メタへ具体化する。
+                                    // フィールド型中の TypeVar をメタへ置換してから値を解析し、`value: T` のような
+                                    // フィールドが実引数型（例 int）と単一化できるようにする。
+                                    let variantTypeParams = variantDef.typeParams
+                                    let typeVarSubst, variantType =
+                                        if variantTypeParams.IsEmpty then
+                                            Map.empty, TypeId.Name variantDef.typeSid
+                                        else
+                                            let metaArgs = variantTypeParams |> List.map (fun _ -> typeEnv.freshMeta())
+                                            let subst = List.zip variantTypeParams metaArgs |> Map.ofList
+                                            subst, TypeId.App(TypeId.Name variantDef.typeSid, metaArgs)
                                     // 各フィールド値を期待型で解析する。エラーは伝播。
                                     let typedArgsResult =
                                         allFieldDefs
@@ -688,7 +698,8 @@ module ExprAnalyze =
                                                 match Map.tryFind fieldDef.name initFieldMap with
                                                 | None -> Result.Error(Hir.Expr.ExprError(sprintf "Missing required field '%s'" fieldDef.name, tid, enumInitExpr.span))
                                                 | Some valueExpr ->
-                                                    let typedExpr = analyzeExpr nameEnv typeEnv valueExpr fieldDef.typ
+                                                    let expectedFieldType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                    let typedExpr = analyzeExpr nameEnv typeEnv valueExpr expectedFieldType
                                                     match typedExpr with
                                                     | Hir.Expr.ExprError _ as e -> Result.Error e
                                                     | _ -> Result.Ok(args @ [ typedExpr ])) (Result.Ok [])
@@ -1076,10 +1087,17 @@ module ExprAnalyze =
                                 // receiver が expectedThis のサブタイプ（union バリアント <: union ルート等）でも
                                 // 暗黙 this 注入を許可する。canUnify は別 SID の Name 同士を非互換とするため、
                                 // 名義サブタイプ判定 isSubtype を併用する。
+                                // ジェネリック型では actual/expected が App(Name, _) になりうるため、
+                                // ルート SID を抽出してから名義サブタイプ判定を行う。
+                                let rootSidOf (t: TypeId) =
+                                    match typeEnv.resolveType t with
+                                    | TypeId.Name sid -> Some sid
+                                    | TypeId.App(TypeId.Name sid, _) -> Some sid
+                                    | _ -> None
                                 let isThisCompatible (expectedThis: TypeId) =
                                     typeEnv.canUnify instance.typ expectedThis
-                                    || (match typeEnv.resolveType instance.typ, typeEnv.resolveType expectedThis with
-                                        | TypeId.Name actualSid, TypeId.Name expectedSid -> nameEnv.isSubtype actualSid expectedSid
+                                    || (match rootSidOf instance.typ, rootSidOf expectedThis with
+                                        | Some actualSid, Some expectedSid -> nameEnv.isSubtype actualSid expectedSid
                                         | _ -> false)
                                 match expectedArgs with
                                 | expectedThis :: _ when isThisCompatible expectedThis ->
@@ -1317,16 +1335,37 @@ module ExprAnalyze =
                     | Hir.Callable.Fn sid ->
                         match nameEnv.resolveSym sid with
                         | Some symInfo ->
-                            match typeEnv.resolveType symInfo.typ with
+                            // ジェネリック impl メソッド（型に TypeVar を含む）は型スキームを fresh メタへ
+                            // 具体化してから引数と単一化する。これにより `getOr: Fn([Opt, T], T)` を
+                            // `Opt<int>` レシーバ + `int` 引数で呼ぶと戻り値 T が int に解決される。
+                            let instantiated = instantiateTypeScheme typeEnv symInfo.typ
+                            match typeEnv.resolveType instantiated with
                             | TypeId.Fn(expectedArgs, expectedRet) when expectedArgs.Length = allArgs.Length ->
+                                let rootSidOf (t: TypeId) =
+                                    match typeEnv.resolveType t with
+                                    | TypeId.Name sid -> Some sid
+                                    | TypeId.App(TypeId.Name sid, _) -> Some sid
+                                    | _ -> None
                                 let argsMatch =
                                     List.zip allArgs expectedArgs
                                     |> List.forall (fun (actualArg, expectedArg) ->
-                                        typeEnv.canUnify actualArg.typ expectedArg
-                                        // 名義サブタイプ（union バリアント <: union ルート等）も許容する。
-                                        || (match typeEnv.resolveType actualArg.typ, typeEnv.resolveType expectedArg with
-                                            | TypeId.Name actualSid, TypeId.Name expectedSid -> nameEnv.isSubtype actualSid expectedSid
-                                            | _ -> false))
+                                        // メタ変数を含む期待型は単一化で具体化する（戻り値メタの解決に必要）。
+                                        match typeEnv.unifyTypes expectedArg actualArg.typ with
+                                        | Result.Ok _ -> true
+                                        | Result.Error _ ->
+                                            // 名義サブタイプ（union バリアント <: union ルート等）も許容する。
+                                            match rootSidOf actualArg.typ, rootSidOf expectedArg with
+                                            | Some actualSid, Some expectedSid when nameEnv.isSubtype actualSid expectedSid ->
+                                                // ジェネリックの場合、receiver の具体型引数を期待型の型引数（メタ）へ
+                                                // 単一化して型パラメータを束縛する（例 Opt'Some<int> から T=int）。
+                                                match typeEnv.resolveType actualArg.typ, typeEnv.resolveType expectedArg with
+                                                | TypeId.App(_, actualTyArgs), TypeId.App(_, expectedTyArgs)
+                                                    when actualTyArgs.Length = expectedTyArgs.Length ->
+                                                    List.zip expectedTyArgs actualTyArgs
+                                                    |> List.iter (fun (e, a) -> typeEnv.unifyTypes e a |> ignore)
+                                                    true
+                                                | _ -> true
+                                            | _ -> false)
                                 if argsMatch then
                                     Some (resolvedCallable, expectedRet)
                                 else
@@ -1884,6 +1923,15 @@ module ExprAnalyze =
                             let scrutineeSid = matchNameEnv.declareLocal "__match_scrutinee" analyzedScrutinee.typ
                             let scrutineeRef = Hir.Expr.Id(scrutineeSid, analyzedScrutinee.typ, matchExpr.scrutinee.span)
 
+                            // ジェネリック union の場合、scrutinee 型 App(Name, concreteArgs) から
+                            // 型パラメータ名 → 具体型の置換マップを構築する。パターン束縛フィールドの
+                            // 型（例 `value: T`）を具体型へ解決するのに使う。
+                            let scrutineeTypeVarSubst =
+                                match typeEnv.resolveType analyzedScrutinee.typ with
+                                | TypeId.App(_, concreteArgs) when concreteArgs.Length = scrutineeTypeDef.typeParams.Length && not scrutineeTypeDef.typeParams.IsEmpty ->
+                                    List.zip scrutineeTypeDef.typeParams concreteArgs |> Map.ofList
+                                | _ -> Map.empty
+
                             // この union の葉バリアント（構築可能な struct/object）の修飾名集合を再帰収集する。
                             // 網羅性チェックの基準に用いる。中間のネスト union 自身は葉に含めない。
                             let rec collectLeafVariants (def: DataTypeDef) (prefix: string) : string list =
@@ -1948,9 +1996,11 @@ module ExprAnalyze =
                                                         |> List.choose (fun fieldName ->
                                                             resolveField fieldName
                                                             |> Option.map (fun (ownerSid, fieldDef) ->
-                                                                let sid = armNameEnv.declareLocal fieldName fieldDef.typ
+                                                                // ジェネリック型パラメータ（T 等）を scrutinee の具体型で解決する。
+                                                                let boundType = substituteTypeVars scrutineeTypeVarSubst fieldDef.typ
+                                                                let sid = armNameEnv.declareLocal fieldName boundType
                                                                 let valueExpr =
-                                                                    Hir.Expr.MemberAccess(Hir.Member.DataField(ownerSid, fieldDef.sid), Some castExpr, fieldDef.typ, matchArm.span)
+                                                                    Hir.Expr.MemberAccess(Hir.Member.DataField(ownerSid, fieldDef.sid), Some castExpr, boundType, matchArm.span)
                                                                 Hir.Stmt.Let(sid, false, valueExpr, matchArm.span)))
                                                     let bodyExpr = analyzeExpr armNameEnv typeEnv matchArm.body tid
                                                     let thenExpr =
