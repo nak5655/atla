@@ -97,11 +97,16 @@ module Analyze =
                 | _ -> false
 
             /// 関数引数型を解決する。`self` 推論引数は呼び出し側コンテキストで確定した receiver 型を使い、
-            /// それ以外の引数は通常の型注釈解決（bootstrapNameEnv.resolveArgType）に委譲する。
-            let resolveArgTypeWithSelf (selfType: TypeId) (arg: Ast.FnArg) =
+            /// それ以外の引数は与えられた `env` で型注釈を解決する。
+            /// `env` には impl の型パラメータ（`impl Opt T` の T 等）をスコープへ登録した環境を渡すことで、
+            /// ジェネリック impl メソッドの引数注釈 `(x: T)` を TypeVar として解決できる。
+            let resolveArgTypeWithSelfEnv (env: NameEnv) (selfType: TypeId) (arg: Ast.FnArg) =
                 match arg with
                 | :? Ast.FnArg.Inferred as inferredArg when inferredArg.name = "self" -> selfType
-                | _ -> bootstrapNameEnv.resolveArgType arg
+                | _ -> env.resolveArgType arg
+            /// 既定の bootstrap 環境で引数型を解決する後方互換ヘルパ（role など型パラメータ非対応の文脈用）。
+            let resolveArgTypeWithSelf (selfType: TypeId) (arg: Ast.FnArg) =
+                resolveArgTypeWithSelfEnv bootstrapNameEnv selfType arg
 
             // data 宣言を型定義へ正規化し、後続の式解析で参照するメタデータを構築する。
             let dataTypeDefs =
@@ -814,7 +819,7 @@ module Analyze =
                                             else
                                                 let argTypes =
                                                     methodDecl.args
-                                                    |> List.map (resolveArgTypeWithSelf (TypeId.Name typeSid))
+                                                    |> List.map (resolveArgTypeWithSelfEnv implNameEnv (TypeId.Name typeSid))
                                                     |> List.filter (fun t -> t <> TypeId.Unit)
                                                 let retType =
                                                     let declared = implNameEnv.resolveTypeExpr methodDecl.ret
@@ -878,7 +883,7 @@ module Analyze =
 
                                                 // declAcc には (メソッドSID, 宣言, ターゲット型SID, isStatic, overrideTarget) を積む。
                                                 Map.add methodDecl.name (methodSid, methodType, isStatic) methodMap,
-                                                (methodSid, methodDecl, dataTypeDef.typeSid, isStatic, overrideTarget) :: declAcc,
+                                                (methodSid, methodDecl, dataTypeDef.typeSid, isStatic, overrideTarget, implDecl.typeParams) :: declAcc,
                                                 diagAcc @ overrideDiags
 
                                         if isInstanceMethod methodDecl.args then
@@ -910,8 +915,17 @@ module Analyze =
             let instanceImplMethodsByType = System.Collections.Generic.Dictionary<int, Hir.Method list>()
 
             implMethodDecls
-            |> List.iter (fun (methodSid, methodDecl, targetTypeSid, isStatic, overrideTarget) ->
-                let hirMethod = ExprAnalyze.analyzeMethodCoreWithOverride nameEnv typeEnv methodSid methodDecl overrideTarget
+            |> List.iter (fun (methodSid, methodDecl, targetTypeSid, isStatic, overrideTarget, implTypeParams) ->
+                // impl の型パラメータ（`impl Opt T` の T 等）を本体解析用の nameEnv へ注入する。
+                // これによりジェネリック union/struct のメソッド本体で戻り値・引数の `T` 注釈が解決できる。
+                let methodNameEnv =
+                    if List.isEmpty implTypeParams then nameEnv
+                    else
+                        let sub = nameEnv.sub()
+                        for paramName in implTypeParams do
+                            sub.scope.DeclareType(paramName, TypeId.TypeVar paramName)
+                        sub
+                let hirMethod = ExprAnalyze.analyzeMethodCoreWithOverride methodNameEnv typeEnv methodSid methodDecl overrideTarget
                 if isStatic then
                     methods.Add(hirMethod)
                 else
