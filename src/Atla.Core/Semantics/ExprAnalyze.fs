@@ -1061,6 +1061,70 @@ module ExprAnalyze =
                     | Result.Ok _ -> lowerEnumCaseConstructor typeDef enumDef caseDef rootType typedArgs applyExpr.span
             | None ->
 
+            // concatenative な union バリアント構築: `arg1 ... argN Union'Variant.`。
+            // バリアント自身のフィールド（own fields）の数と引数数が一致するときに適用する。
+            // 継承フィールドは位置引数で渡せないため、own フィールドのみを対象とする
+            // （単一フィールドの struct バリアント `value Opt'Some.` 等が主対象）。
+            let unionVariantCtorOpt =
+                match applyExpr.func with
+                | :? Ast.Expr.MemberAccess as ma ->
+                    match ma.receiver with
+                    | :? Ast.Expr.Id as receiverId when receiverId.name <> "base" ->
+                        match nameEnv.scope.ResolveType(receiverId.name) |> Option.bind tryGetTypeSidFromResolvedType with
+                        | Some typeSid ->
+                            match tryFindTypeDefBySid nameEnv typeSid with
+                            | Some typeDef when typeDef.unionInfo.IsSome ->
+                                let qualifiedName = sprintf "%s'%s" receiverId.name ma.memberName
+                                nameEnv.dataTypeDefs
+                                |> Map.tryFind qualifiedName
+                                |> Option.filter (fun variantDef -> variantDef.unionInfo.IsNone && variantDef.fields.Length = applyExpr.args.Length)
+                                |> Option.map (fun variantDef -> variantDef)
+                            | _ -> None
+                        | _ -> None
+                    | _ -> None
+                | _ -> None
+
+            match unionVariantCtorOpt with
+            | Some variantDef ->
+                // own フィールドのみ位置引数で受け取り、継承フィールドはこの構文では供給できないため
+                // 継承フィールドが存在する場合はエラーとする（`{ ... }` 形式を使う）。
+                let inheritedFields = collectInheritedFields nameEnv variantDef
+                if not (List.isEmpty inheritedFields) then
+                    Hir.Expr.ExprError(
+                        sprintf "Union variant requires named-field syntax `{ ... }` because it inherits fields (%s)"
+                            (inheritedFields |> List.map (fun fd -> fd.name) |> String.concat ", "),
+                        tid, applyExpr.span)
+                else
+                    // ジェネリックバリアントの型パラメータを fresh メタへ具体化する。
+                    let variantTypeParams = variantDef.typeParams
+                    let typeVarSubst, variantType =
+                        if variantTypeParams.IsEmpty then Map.empty, TypeId.Name variantDef.typeSid
+                        else
+                            let metaArgs = variantTypeParams |> List.map (fun _ -> typeEnv.freshMeta())
+                            List.zip variantTypeParams metaArgs |> Map.ofList, TypeId.App(TypeId.Name variantDef.typeSid, metaArgs)
+                    let typedArgsResult =
+                        List.zip variantDef.fields applyExpr.args
+                        |> List.fold
+                            (fun acc (fieldDef, argExpr) ->
+                                match acc with
+                                | Result.Error e -> Result.Error e
+                                | Result.Ok typedArgs ->
+                                    let expectedFieldType = substituteTypeVars typeVarSubst fieldDef.typ
+                                    let typedExpr = analyzeExpr nameEnv typeEnv argExpr expectedFieldType
+                                    match typedExpr with
+                                    | Hir.Expr.ExprError _ -> Result.Error typedExpr
+                                    | _ -> Result.Ok (typedArgs @ [ typedExpr ]))
+                            (Result.Ok [])
+                    match typedArgsResult with
+                    | Result.Error errExpr -> errExpr
+                    | Result.Ok typedArgs ->
+                        match unifyOrError nameEnv typeEnv tid variantType applyExpr.span with
+                        | Result.Error exprErr -> exprErr
+                        | Result.Ok _ ->
+                            let allFieldSids = variantDef.fields |> List.map (fun fd -> fd.sid)
+                            Hir.Expr.Call(Hir.Callable.DataConstructor(variantDef.typeSid, allFieldSids), None, typedArgs, variantType, applyExpr.span)
+            | None ->
+
             // 通常の関数呼び出しパス。
             let analyzedArgs = applyExpr.args |> List.map (fun arg -> analyzeExpr nameEnv typeEnv arg (typeEnv.freshMeta()))
             let callRetType = typeEnv.freshMeta()
@@ -2729,9 +2793,83 @@ module ExprAnalyze =
                 | None ->
                     Hir.Stmt.ErrorStmt(sprintf "Type '%s' is not defined" (formatTypeForDisplay nameEnv typeEnv analyzedRHS.typ), span)
                 | Some scrutineeTypeDef ->
+                    // RHS の型がバリアント（unionInfo なし）の場合もあるため、union ルートは
+                    // パターンの typeName から解決する。enum はルート型がそのまま RHS 型になる。
+                    let unionRootDefOpt =
+                        if scrutineeTypeDef.unionInfo.IsSome then Some scrutineeTypeDef
+                        else nameEnv.dataTypeDefs |> Map.tryFind enumPattern.typeName |> Option.filter (fun d -> d.unionInfo.IsSome)
                     match scrutineeTypeDef.enumInfo with
                     | None ->
-                        Hir.Stmt.ErrorStmt(sprintf "Type '%s' is not an enum" (formatTypeForDisplay nameEnv typeEnv analyzedRHS.typ), span)
+                        // union バリアントの let-else: isinst で判定し、castclass 後にフィールドを束縛する。
+                        match unionRootDefOpt with
+                        | None ->
+                            Hir.Stmt.ErrorStmt(sprintf "Type '%s' is not an enum or union" (formatTypeForDisplay nameEnv typeEnv analyzedRHS.typ), span)
+                        | Some unionRootDef ->
+                            let unionName = enumPattern.typeName
+                            let qualifiedVariant = sprintf "%s'%s" unionName enumPattern.caseName
+                            match nameEnv.dataTypeDefs |> Map.tryFind qualifiedVariant with
+                            | None ->
+                                Hir.Stmt.ErrorStmt(sprintf "Unknown union variant '%s' for type '%s'" enumPattern.caseName unionName, span)
+                            | Some variantDef ->
+                                let scrutineeSubEnv = nameEnv.sub()
+                                let scrutineeSid = scrutineeSubEnv.declareLocal "__le_scrutinee" analyzedRHS.typ
+                                let scrutineeRef = Hir.Expr.Id(scrutineeSid, analyzedRHS.typ, value.span)
+
+                                // ジェネリック union の型パラメータ置換マップを RHS の具体型引数から構築する。
+                                // RHS はバリアント型 App(Name variant, args) でも union ルート型でもよく、
+                                // 型パラメータ名は union ルート定義から取る。
+                                let typeVarSubst =
+                                    match typeEnv.resolveType analyzedRHS.typ with
+                                    | TypeId.App(_, concreteArgs) when concreteArgs.Length = unionRootDef.typeParams.Length && not unionRootDef.typeParams.IsEmpty ->
+                                        List.zip unionRootDef.typeParams concreteArgs |> Map.ofList
+                                    | _ -> Map.empty
+
+                                let variantType = TypeId.Name variantDef.typeSid
+                                let castExpr = Hir.Expr.Cast(scrutineeRef, variantType, span)
+                                let inheritedFields = collectInheritedFields nameEnv variantDef
+                                let resolveField (fieldName: string) =
+                                    variantDef.fields |> List.tryFind (fun fd -> fd.name = fieldName)
+                                    |> Option.orElseWith (fun () -> inheritedFields |> List.tryFind (fun fd -> fd.name = fieldName))
+                                // named / positional フィールド束縛（外側 nameEnv へ宣言）。
+                                let namedBindings =
+                                    enumPattern.fields
+                                    |> List.choose (fun f ->
+                                        match f with
+                                        | :? Ast.PatternField.Named as nf ->
+                                            resolveField nf.name
+                                            |> Option.map (fun fieldDef ->
+                                                let boundType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                let sid = nameEnv.declareLocal nf.name boundType
+                                                Hir.Stmt.Let(sid, isMutable, Hir.Expr.MemberAccess(Hir.Member.DataField(variantDef.typeSid, fieldDef.sid), Some castExpr, boundType, span), span))
+                                        | _ -> None)
+                                let positionalBindings =
+                                    enumPattern.fields
+                                    |> List.choose (fun f -> match f with | :? Ast.PatternField.Positional as pf -> Some pf | _ -> None)
+                                    |> List.mapi (fun i pf ->
+                                        if pf.varName = "_" then None
+                                        else
+                                            variantDef.fields |> List.tryItem i
+                                            |> Option.map (fun fieldDef ->
+                                                let boundType = substituteTypeVars typeVarSubst fieldDef.typ
+                                                let sid = nameEnv.declareLocal pf.varName boundType
+                                                Hir.Stmt.Let(sid, isMutable, Hir.Expr.MemberAccess(Hir.Member.DataField(variantDef.typeSid, fieldDef.sid), Some castExpr, boundType, span), span)))
+                                    |> List.choose id
+                                let bindingStmts = namedBindings @ positionalBindings
+
+                                // 条件: RHS を一時束縛しつつ isinst でバリアント判定する。
+                                let condExpr =
+                                    Hir.Expr.Block([ Hir.Stmt.Let(scrutineeSid, false, analyzedRHS, span) ], Hir.Expr.TypeTest(scrutineeRef, variantType, span), TypeId.Bool, span)
+
+                                let elseBodyStmts = elseBranch |> List.map (analyzeStmt nameEnv typeEnv)
+                                let diverges =
+                                    match List.tryLast elseBodyStmts with
+                                    | Some(Hir.Stmt.Return _) | Some(Hir.Stmt.Break _) | Some(Hir.Stmt.Continue _) -> true
+                                    | _ -> false
+                                let finalElseBody =
+                                    if not diverges then
+                                        elseBodyStmts @ [ Hir.Stmt.ErrorStmt("'else' branch of 'let-else' must end with 'return', 'break', or 'continue'", span) ]
+                                    else elseBodyStmts
+                                Hir.Stmt.If(condExpr, bindingStmts, finalElseBody, span)
                     | Some enumDef ->
                         match enumDef.cases |> List.tryFind (fun c -> c.name = enumPattern.caseName) with
                         | None ->

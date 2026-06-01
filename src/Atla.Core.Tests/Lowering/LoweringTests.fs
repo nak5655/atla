@@ -2991,3 +2991,28 @@ fn main: ()
     (b'isNone.) Console'WriteLine.
 """
         Assert.Equal("True\nFalse\nFalse\nTrue", runForStdout "GenericUnionOpt" program)
+
+    [<Fact>]
+    let ``union concatenative construction and let-else binding work`` () =
+        let program = """
+import System'Console
+
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
+
+fn check (o: Opt Int): ()
+    val Opt'Some x = o
+    | else ->
+        "none" Console'WriteLine.
+        return
+    x Console'WriteLine.
+
+fn main: ()
+    val a = 42 Opt'Some.
+    a check.
+    val n = Opt'None
+    n check.
+"""
+        Assert.Equal("42\nnone", runForStdout "UnionLetElse" program)
