@@ -78,20 +78,20 @@ public abstract record Color(int Alpha)
         public static readonly Gold Instance = new();
     }
 
-    public readonly record struct Rgb(int R, int G, int B, int Alpha) : Color(Alpha);
+    public sealed record Rgb(int R, int G, int B, int Alpha) : Color(Alpha);
 
     public abstract record Hsx(int H, int S, int Alpha) : Color(Alpha)
     {
-        public readonly record struct Hsv(int H, int S, int V, int Alpha) : Hsx(H, S, Alpha);
+        public sealed record Hsv(int H, int S, int V, int Alpha) : Hsx(H, S, Alpha);
 
-        public readonly record struct Hsl(int H, int S, int L, int Alpha) : Hsx(H, S, Alpha);
+        public sealed record Hsl(int H, int S, int L, int Alpha) : Hsx(H, S, Alpha);
     }
 
     public int Red()
     {
         return this switch
         {
-            Gold => 255,
+            Gold { } => 255,
             Rgb rgb => rgb.R,
             Hsx.Hsv hsv => (hsv.H * hsv.S * hsv.V) / 10000,
             Hsx.Hsl hsl => (hsl.H * hsl.S * hsl.L) / 10000,
