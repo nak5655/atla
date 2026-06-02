@@ -591,6 +591,40 @@ module BuildSystem =
         | (:? Ast.FnArg.Inferred as inferredArg) :: _ -> inferredArg.name = "self"
         | _ -> false
 
+    /// union 宣言を再帰的に走査し (qualifiedName * kind * typeParams * fieldDecls option * variantNames option * isExtendable) のリストを返す。
+    /// variantNames は union root のみ Some（直接バリアントの qualified name リスト）。
+    /// fieldDecls は isMutable lookup 用（None の場合は HIR fields のみ使用）。
+    let rec private collectUnionEntries
+        (qualifiedPrefix: string)
+        (unionDecl: Ast.Decl.Union)
+        : (string * string * string list * Ast.DataItem list option * string list option * bool) list =
+        let qualifiedName = qualifiedPrefix + unionDecl.name
+        let directVariantNames =
+            unionDecl.variants
+            |> List.choose (fun v ->
+                match v with
+                | :? Ast.Decl.Data as d -> Some(qualifiedName + "'" + d.name)
+                | :? Ast.Decl.Object as o -> Some(qualifiedName + "'" + o.name)
+                | :? Ast.Decl.Union as u -> Some(qualifiedName + "'" + u.name)
+                | _ -> None)
+        let rootEntry =
+            qualifiedName, "union", unionDecl.typeParams,
+            Some unionDecl.fields,
+            Some directVariantNames,
+            unionDecl.isExtendable
+        let variantEntries =
+            unionDecl.variants
+            |> List.collect (fun v ->
+                match v with
+                | :? Ast.Decl.Data as d ->
+                    [ qualifiedName + "'" + d.name, "data", d.typeParams, Some d.items, None, false ]
+                | :? Ast.Decl.Object as o ->
+                    [ qualifiedName + "'" + o.name, "data", [], Some [], None, false ]
+                | :? Ast.Decl.Union as u ->
+                    collectUnionEntries (qualifiedName + "'") u
+                | _ -> [])
+        rootEntry :: variantEntries
+
     /// モジュール別 HIR からトップレベル型所有者マップを構築する。
     let private collectTypeOwners (hirModules: Hir.Module list) (symbolTable: SymbolTable) : Map<int, string * string> =
         hirModules
@@ -760,6 +794,103 @@ module BuildSystem =
                 |> List.tryHead
                 |> Option.iter (fun delegatedFieldName -> typeNode.Add("delegatedByFieldName", JsonValue.Create(delegatedFieldName)))
                 typesNode.Add(typeNode))
+
+            // union 型（ルート + バリアント群）を再帰的に収集して export する。
+            moduleAst.decls
+            |> List.choose (fun decl ->
+                match decl with
+                | :? Ast.Decl.Union as u -> Some u
+                | _ -> None)
+            |> List.collect (collectUnionEntries "")
+            |> List.sortBy (fun (typeName, _, _, _, _, _) -> typeName)
+            |> List.iter (fun (typeName, kind, typeParams, fieldDeclsOpt, variantsOpt, isExtendable) ->
+                match hirTypesByName |> Map.tryFind typeName with
+                | None -> ()
+                | Some hirType ->
+                    let typeNode = JsonObject()
+                    typeNode.Add("name", JsonValue.Create(typeName))
+                    typeNode.Add("exportId", JsonValue.Create(buildExportId "type" [ hirModule.name; typeName ]))
+                    typeNode.Add("kind", JsonValue.Create(kind))
+                    typeNode.Add("typeParameters", JsonSerializer.SerializeToNode(typeParams))
+
+                    let fieldsNode = JsonArray()
+                    let methodsNode = JsonArray()
+
+                    let mutabilityByName =
+                        fieldDeclsOpt
+                        |> Option.defaultValue []
+                        |> List.choose (fun item ->
+                            match item with
+                            | :? Ast.DataItem.Field as f -> Some(f.name, f.isMutable)
+                            | _ -> None)
+                        |> Map.ofList
+
+                    let addFieldNodeU (fieldSid: SymbolId) (fieldType: TypeId) (isHidden: bool) (isMutable: bool) =
+                        let fieldName = lastNameSegment (symbolNameOrFallback symbolTable fieldSid)
+                        let fieldNode = JsonObject()
+                        fieldNode.Add("name", JsonValue.Create(fieldName))
+                        fieldNode.Add("exportId", JsonValue.Create(buildFieldExportId hirModule.name typeName fieldName isHidden))
+                        fieldNode.Add("type", typeIdToApiNode typeOwners symbolTable fieldType)
+                        fieldNode.Add("isHidden", JsonValue.Create(isHidden))
+                        fieldNode.Add("isMutable", JsonValue.Create(isMutable))
+                        fieldsNode.Add(fieldNode)
+
+                    let addMethodNodeU (methodDecl: Ast.Decl.Fn) (methodSym: SymbolId) =
+                        let methodInfo =
+                            allHirMethods
+                            |> List.find (fun m -> m.sym.id = methodSym.id)
+                        let isStatic = not (isInstanceMethod methodDecl)
+                        let methodNode = JsonObject()
+                        methodNode.Add("name", JsonValue.Create(methodDecl.name))
+                        methodNode.Add(
+                            "exportId",
+                            JsonValue.Create(buildExportId "method" [ hirModule.name; typeName; methodDecl.name; if isStatic then "static" else "instance" ]))
+                        methodNode.Add("isStatic", JsonValue.Create(isStatic))
+                        let argDefs =
+                            methodInfo.args
+                            |> List.map (fun (argSid, argType) -> lastNameSegment (symbolNameOrFallback symbolTable argSid), argType)
+                        methodNode.Add(
+                            "signature",
+                            createSignatureNode typeOwners symbolTable argDefs (match methodInfo.typ with | TypeId.Fn(_, ret) -> ret | _ -> methodInfo.typ))
+                        methodsNode.Add(methodNode)
+
+                    hirType.fields
+                    |> List.sortBy (fun field -> lastNameSegment (symbolNameOrFallback symbolTable field.sym))
+                    |> List.iter (fun field ->
+                        let fieldName = lastNameSegment (symbolNameOrFallback symbolTable field.sym)
+                        let isMutable = mutabilityByName |> Map.tryFind fieldName |> Option.defaultValue false
+                        addFieldNodeU field.sym field.typ false isMutable)
+
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Impl as implDecl
+                            when (implDecl.forTypeName |> Option.defaultValue implDecl.typeName) = typeName ->
+                            Some implDecl
+                        | _ -> None)
+                    |> List.collect (fun implDecl -> implDecl.methods)
+                    |> List.sortBy (fun md -> md.name)
+                    |> List.iter (fun methodDecl ->
+                        let methodSym =
+                            allHirMethods
+                            |> List.find (fun m -> symbolNameOrFallback symbolTable m.sym = $"{typeName}.{methodDecl.name}")
+                            |> fun m -> m.sym
+                        addMethodNodeU methodDecl methodSym)
+
+                    typeNode.Add("fields", fieldsNode)
+                    typeNode.Add("methods", methodsNode)
+
+                    match hirType.baseType with
+                    | Some baseType -> typeNode.Add("baseType", typeIdToApiNode typeOwners symbolTable baseType)
+                    | None -> ()
+
+                    match variantsOpt with
+                    | Some variantNames ->
+                        typeNode.Add("isExtendable", JsonValue.Create(isExtendable))
+                        typeNode.Add("variants", JsonSerializer.SerializeToNode(variantNames))
+                    | None -> ()
+
+                    typesNode.Add(typeNode))
 
             exportsNode.Add("values", valuesNode)
             exportsNode.Add("types", typesNode)

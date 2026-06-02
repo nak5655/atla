@@ -94,6 +94,7 @@ module Resolve =
         (dependencyTypeFullNames: Set<string>)
         (importedModules: ResizeArray<string * string>)
         (importedTypeAliases: ResizeArray<string * string>)
+        (importedAtlaNominalTypeSids: ResizeArray<SymbolId>)
         (importDecl: Ast.Decl.Import)
         : Diagnostic list =
         let classPath = String.concat "." importDecl.path
@@ -112,6 +113,13 @@ module Resolve =
                 []
             | false, true ->
                 importedTypeAliases.Add(shortName, classPath)
+                // atlalib 型インポートはスコープにプレースホルダー SID を登録し、
+                // 同モジュール内の `impl` 宣言が Resolve フェーズで型を参照できるようにする。
+                // Analyze フェーズで正式な typeSid へ上書きされる。
+                let sid = symbolTable.NextId()
+                symbolTable.Add(sid, { name = classPath; typ = TypeId.Name sid; kind = SymbolKind.Local() })
+                scope.DeclareType(shortName, TypeId.Name sid)
+                importedAtlaNominalTypeSids.Add(sid)
                 []
             | false, false ->
                 []
@@ -191,6 +199,9 @@ module Resolve =
         let implDecls = ResizeArray<SymbolId * TypeId option * string option * Ast.Decl.Impl>()
         let importedModules = ResizeArray<string * string>()
         let importedTypeAliases = ResizeArray<string * string>()
+        // atlalib 型インポート時に登録したプレースホルダー SID のリスト。
+        // `impl ImportedType` の isNominalType チェックでこれらを許容するために使う。
+        let importedAtlaNominalTypeSids = ResizeArray<SymbolId>()
         let diagnostics = ResizeArray<Diagnostic>()
 
         // union を再帰的に登録する。qualifiedPrefix は親までの修飾名（トップでは空文字）。
@@ -346,6 +357,7 @@ module Resolve =
                         dependencyTypeFullNames
                         importedModules
                         importedTypeAliases
+                        importedAtlaNominalTypeSids
                         importDecl
                 diagnostics.AddRange(importDiagnostics)
             | :? Ast.Decl.Data ->
@@ -367,6 +379,9 @@ module Resolve =
                         |> Seq.exists (fun dataDecl -> dataDecl.typeSid.id = typeSid.id)
                         || unionDecls
                         |> Seq.exists (fun unionDecl -> unionDecl.typeSid.id = typeSid.id)
+                        // atlalib インポート型（プレースホルダー SID）も `impl` の対象として許容する。
+                        || importedAtlaNominalTypeSids
+                        |> Seq.exists (fun importedSid -> importedSid.id = typeSid.id)
                     if not isNominalType then
                         diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data or enum type in this module" implTargetTypeName, implDecl.span))
                     else

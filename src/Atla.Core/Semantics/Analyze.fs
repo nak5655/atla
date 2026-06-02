@@ -346,6 +346,27 @@ module Analyze =
                         | None when importedDependencyTypeDefs.ContainsKey(fullTypePath) ->
                             let importedDef = importedDependencyTypeDefs[fullTypePath]
                             resolvedModule.moduleScope.DeclareType(aliasName, TypeId.Name importedDef.typeSid)
+                            // union 型の場合、バリアント DataTypeDef も修飾名キーで登録しスコープへ宣言する。
+                            // これにより `Union'Variant` 構築式・パターンが atlalib 経由で解決できる。
+                            match importedDef.unionInfo with
+                            | Some unionTypeDef ->
+                                let lastDotInPath = fullTypePath.LastIndexOf('.')
+                                let srcModuleName = if lastDotInPath > 0 then fullTypePath.Substring(0, lastDotInPath) else ""
+                                let rec registerVariants (parentAliasName: string) (variants: UnionVariantDef list) =
+                                    for variant in variants do
+                                        let qualifiedVariantAlias = sprintf "%s'%s" parentAliasName variant.name
+                                        let variantFullKey = $"{srcModuleName}.{qualifiedVariantAlias}"
+                                        match importedDependencyTypeDefs.TryFind(variantFullKey) with
+                                        | Some fullVariantDef ->
+                                            importedUnionVariantDefs.[qualifiedVariantAlias] <- fullVariantDef
+                                            resolvedModule.moduleScope.DeclareType(qualifiedVariantAlias, TypeId.Name fullVariantDef.typeSid)
+                                            if variant.isUnion then
+                                                match fullVariantDef.unionInfo with
+                                                | Some nestedUnionInfo -> registerVariants qualifiedVariantAlias nestedUnionInfo.variants
+                                                | None -> ()
+                                        | None -> ()
+                                registerVariants aliasName unionTypeDef.variants
+                            | None -> ()
                             Map.add aliasName importedDef defs, diagnostics
                         | None ->
                             defs, diagnostics @ [ Diagnostic.Error(sprintf "Imported type '%s' was not found" fullTypePath, Atla.Core.Data.Span.Empty) ]
@@ -638,7 +659,7 @@ module Analyze =
                                             else
                                                 let argTypes =
                                                     methodDecl.args
-                                                    |> List.map (resolveArgTypeWithSelfEnv implNameEnv (TypeId.Name typeSid))
+                                                    |> List.map (resolveArgTypeWithSelfEnv implNameEnv (TypeId.Name dataTypeDef.typeSid))
                                                     |> List.filter (fun t -> t <> TypeId.Unit)
                                                 let retType =
                                                     let declared = implNameEnv.resolveTypeExpr methodDecl.ret
