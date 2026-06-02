@@ -105,7 +105,7 @@ C#’s `abstract record` is an OOP-style abstract class, not an algebraic data t
 - The meaning that Color is a set of variants.
 - The guarantee that the types under Color are closed (a sealed union).
 
-## Installation
+## Install the `atla` CLI
 
 ### Prerequisites
 
@@ -123,11 +123,6 @@ install.bat
 bash install.sh
 ```
 
-Both scripts:
-1. Publish `Atla.Console` and `Atla.LanguageServer` to `~/.atla/bin` (Windows: `%USERPROFILE%\.atla\bin`)
-2. Add `~/.atla/bin` to `PATH`
-3. Run `atla install` in the `Std/` directory to set up the standard library
-
 ### Post-install layout
 
 ```
@@ -136,6 +131,8 @@ Both scripts:
     atla           # CLI (atla.exe on Windows)
     atla-lsp       # LSP Server (atla-lsp.exe on Windows)
     ...
+  packages/
+    Std/
 ```
 
 ## Examples
@@ -155,6 +152,6 @@ Output is placed in `out/` by default. For `package.type: exe`, run the resultin
 dotnet out/hello.dll
 ```
 
-## For Contributors
+## For Maintainers
 
 Refer to [`GUIDELINES.md`](GUIDELINES.md) for compilation flow, phase invariants, IR invariants, and the `notes/` directory conventions.

@@ -1,4 +1,4 @@
-# Developer Guidelines
+# Guidelines
 
 ## Compilation Flow
 
@@ -20,12 +20,6 @@ Source Text
 - **Async Rewrite**: Transforms ClosedHIR without introducing new type information.
 - **Frame Allocation (Layout)**: References only ClosedHIR type information.
 - **Code Generation**: Takes only MIR as input; must not reference upper-level IRs.
-
-Cross-cutting invariants:
-
-- Phase boundaries must be explicit; hidden internal phase jumps are disallowed.
-- Error handling must be `Result`-based with structured diagnostics; `failwith` as control flow is disallowed.
-- Diagnostic and IR output ordering must be deterministic.
 
 ## IR Invariants
 
