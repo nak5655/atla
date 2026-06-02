@@ -355,11 +355,12 @@ fn main: ()
         let libOutDir = createTempProjectDir ()
         let appOutDir = createTempProjectDir ()
 
-        // ライブラリ: ジェネリック enum Opt T を定義する。
+        // ライブラリ: ジェネリック union Opt T を定義する。
         let librarySource = """
-enum Opt T
-    | None
-    | Some { value: T }
+union Opt T
+    object None: Opt
+    struct Some: Opt
+        val value: T
 """
 
         let libraryResult =

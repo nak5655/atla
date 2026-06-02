@@ -617,9 +617,9 @@ module BuildSystem =
             |> List.collect (fun v ->
                 match v with
                 | :? Ast.Decl.Data as d ->
-                    [ qualifiedName + "'" + d.name, "data", d.typeParams, Some d.items, None, false ]
+                    [ qualifiedName + "'" + d.name, "data", unionDecl.typeParams, Some d.items, None, false ]
                 | :? Ast.Decl.Object as o ->
-                    [ qualifiedName + "'" + o.name, "data", [], Some [], None, false ]
+                    [ qualifiedName + "'" + o.name, "data", unionDecl.typeParams, Some [], None, false ]
                 | :? Ast.Decl.Union as u ->
                     collectUnionEntries (qualifiedName + "'") u
                 | _ -> [])
