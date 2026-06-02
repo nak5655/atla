@@ -461,55 +461,90 @@ module Analyze =
                                     if not isReusingExistingType then
                                         let rootFields = unionFieldDefs |> List.map (fun fd -> Hir.Field(fd.sid, fd.typ, Hir.Expr.Unit(fd.span), fd.span))
                                         types.Add(Hir.Type(unionRootSid, false, true, None, unionTypeParams, rootFields, []))
-                                    // 各バリアントの型 SID と DataTypeDef を再構築する。
-                                    let variantInfos =
-                                        (unionDecl.variants)
+                                    // 各バリアントの型 SID と DataTypeDef を再構築する。ネスト union も再帰的に処理する。
+                                    let rec processVariants (parentSid: SymbolId) (qualifiedParentName: string) (variants: Ast.Decl list) : UnionVariantDef list =
+                                        variants
                                         |> List.choose (fun variant ->
-                                            let variantNameOpt, ownItems, objInits =
-                                                match variant with
-                                                | :? Ast.Decl.Data as sv -> Some sv.name, sv.items, None
-                                                | :? Ast.Decl.Object as ov ->
-                                                    let inits = ov.fieldInits |> List.choose (fun i -> match i with | :? Ast.DataInitField.Field as f -> Some(f.name, f.value) | _ -> None)
-                                                    Some ov.name, [], Some inits
-                                                | _ -> None, [], None
-                                            match variantNameOpt with
-                                            | None -> None
-                                            | Some vName ->
-                                                let qualifiedName = sprintf "%s'%s" typeNameForLookup vName
-                                                let variantSid, _ = resolveExportedSid $"type:{qualifiedName}" (TypeId.Name (SymbolId 0))
-                                                // SymbolId 0 のプレースホルダーを避けるため、export 無い場合は新規 SID を typ に使う。
-                                                let variantSidFixed =
-                                                    match sourceModuleExports |> Map.tryFind $"type:{qualifiedName}" with
+                                            match variant with
+                                            | :? Ast.Decl.Union as nestedUnionDecl ->
+                                                // ネスト union バリアント: 抽象クラスとして再構築し、そのバリアントも再帰的に処理する。
+                                                let nestedQualifiedName = sprintf "%s'%s" qualifiedParentName nestedUnionDecl.name
+                                                let nestedSid =
+                                                    match sourceModuleExports |> Map.tryFind $"type:{nestedQualifiedName}" with
                                                     | Some e -> e.symbolId
                                                     | None ->
                                                         let s = symbolTable.NextId()
-                                                        symbolTable.Add(s, { name = qualifiedName; typ = TypeId.Name s; kind = SymbolKind.Local() })
+                                                        symbolTable.Add(s, { name = nestedQualifiedName; typ = TypeId.Name s; kind = SymbolKind.Local() })
                                                         s
-                                                let _ = variantSid
-                                                let ownFieldDefs =
-                                                    ownItems
+                                                resolvedModule.moduleScope.DeclareType(nestedQualifiedName, TypeId.Name nestedSid)
+                                                let nestedFieldDefs =
+                                                    nestedUnionDecl.fields
                                                     |> List.choose (fun item ->
                                                         match item with
                                                         | :? Ast.DataItem.Field as fieldItem ->
                                                             let fieldType = fieldNameEnv.resolveTypeExpr fieldItem.typeExpr
-                                                            let fieldSid, ft = resolveExportedSid $"field:{qualifiedName}.{fieldItem.name}" fieldType
+                                                            let fieldSid, ft = resolveExportedSid $"field:{nestedQualifiedName}.{fieldItem.name}" fieldType
                                                             Some { name = fieldItem.name; sid = fieldSid; typ = ft; isMutable = fieldItem.isMutable; span = fieldItem.span }
                                                         | _ -> None)
                                                 if not isReusingExistingType then
-                                                    let vFields = ownFieldDefs |> List.map (fun fd -> Hir.Field(fd.sid, fd.typ, Hir.Expr.Unit(fd.span), fd.span))
-                                                    types.Add(Hir.Type(variantSidFixed, false, false, Some(TypeId.Name unionRootSid), unionTypeParams, vFields, []))
-                                                let variantDef =
-                                                    { typeSid = variantSidFixed
-                                                      baseType = Some(TypeId.Name unionRootSid)
+                                                    let rootFields = nestedFieldDefs |> List.map (fun fd -> Hir.Field(fd.sid, fd.typ, Hir.Expr.Unit(fd.span), fd.span))
+                                                    types.Add(Hir.Type(nestedSid, false, true, Some(TypeId.Name parentSid), unionTypeParams, rootFields, []))
+                                                let nestedVariantInfos = processVariants nestedSid nestedQualifiedName nestedUnionDecl.variants
+                                                let nestedUnionDef =
+                                                    { typeSid = nestedSid
+                                                      baseType = Some(TypeId.Name parentSid)
                                                       delegatedByFieldName = None
                                                       typeParams = unionTypeParams
-                                                      fields = ownFieldDefs
+                                                      fields = nestedFieldDefs
                                                       hiddenFields = []
-                                                      unionInfo = None
+                                                      unionInfo = Some { isExtendable = nestedUnionDecl.isExtendable; variants = nestedVariantInfos }
                                                       methods = Map.empty }
-                                                importedUnionVariantDefs.[qualifiedName] <- variantDef
-                                                resolvedModule.moduleScope.DeclareType(qualifiedName, TypeId.Name variantSidFixed)
-                                                Some { name = vName; typeSid = variantSidFixed; isUnion = false; objectFieldInits = objInits; span = variant.span })
+                                                importedUnionVariantDefs.[nestedQualifiedName] <- nestedUnionDef
+                                                Some { name = nestedUnionDecl.name; typeSid = nestedSid; isUnion = true; objectFieldInits = None; span = nestedUnionDecl.span }
+                                            | _ ->
+                                                let variantNameOpt, ownItems, objInits =
+                                                    match variant with
+                                                    | :? Ast.Decl.Data as sv -> Some sv.name, sv.items, None
+                                                    | :? Ast.Decl.Object as ov ->
+                                                        let inits = ov.fieldInits |> List.choose (fun i -> match i with | :? Ast.DataInitField.Field as f -> Some(f.name, f.value) | _ -> None)
+                                                        Some ov.name, [], Some inits
+                                                    | _ -> None, [], None
+                                                match variantNameOpt with
+                                                | None -> None
+                                                | Some vName ->
+                                                    let qualifiedName = sprintf "%s'%s" qualifiedParentName vName
+                                                    let variantSid =
+                                                        match sourceModuleExports |> Map.tryFind $"type:{qualifiedName}" with
+                                                        | Some e -> e.symbolId
+                                                        | None ->
+                                                            let s = symbolTable.NextId()
+                                                            symbolTable.Add(s, { name = qualifiedName; typ = TypeId.Name s; kind = SymbolKind.Local() })
+                                                            s
+                                                    let ownFieldDefs =
+                                                        ownItems
+                                                        |> List.choose (fun item ->
+                                                            match item with
+                                                            | :? Ast.DataItem.Field as fieldItem ->
+                                                                let fieldType = fieldNameEnv.resolveTypeExpr fieldItem.typeExpr
+                                                                let fieldSid, ft = resolveExportedSid $"field:{qualifiedName}.{fieldItem.name}" fieldType
+                                                                Some { name = fieldItem.name; sid = fieldSid; typ = ft; isMutable = fieldItem.isMutable; span = fieldItem.span }
+                                                            | _ -> None)
+                                                    if not isReusingExistingType then
+                                                        let vFields = ownFieldDefs |> List.map (fun fd -> Hir.Field(fd.sid, fd.typ, Hir.Expr.Unit(fd.span), fd.span))
+                                                        types.Add(Hir.Type(variantSid, false, false, Some(TypeId.Name parentSid), unionTypeParams, vFields, []))
+                                                    let variantDef =
+                                                        { typeSid = variantSid
+                                                          baseType = Some(TypeId.Name parentSid)
+                                                          delegatedByFieldName = None
+                                                          typeParams = unionTypeParams
+                                                          fields = ownFieldDefs
+                                                          hiddenFields = []
+                                                          unionInfo = None
+                                                          methods = Map.empty }
+                                                    importedUnionVariantDefs.[qualifiedName] <- variantDef
+                                                    resolvedModule.moduleScope.DeclareType(qualifiedName, TypeId.Name variantSid)
+                                                    Some { name = vName; typeSid = variantSid; isUnion = false; objectFieldInits = objInits; span = variant.span })
+                                    let variantInfos = processVariants unionRootSid typeNameForLookup unionDecl.variants
                                     { typeSid = unionRootSid
                                       baseType = None
                                       delegatedByFieldName = None

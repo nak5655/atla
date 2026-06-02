@@ -4185,3 +4185,185 @@ fn pick (c: Color): Int
                 Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
+
+    /// クロスモジュールのネスト union import: 別モジュールで宣言したネスト union を import して
+    /// バリアント構築・パターンマッチが正しく解決されることを検証する。
+    [<Fact>]
+    let ``cross-module nested union import resolves nested variants and match`` () =
+        let moduleASource = """
+union Color
+    val alpha: Int
+
+    struct Rgb: Color
+        val r: Int
+        val g: Int
+        val b: Int
+
+    union HueColor: Color
+        val h: Int
+        val s: Int
+
+        struct Hsv: HueColor
+            val v: Int
+
+        struct Hsl: HueColor
+            val l: Int
+"""
+        let moduleBSource = """
+import ModuleA'Color
+
+fn pick (c: Color): Int
+    match c
+    | Color'Rgb { r, .. } -> r
+    | Color'HueColor'Hsv { v, .. } -> v
+    | Color'HueColor'Hsl { l, .. } -> l
+"""
+        match parseSourceModule "ModuleA" moduleASource, parseSourceModule "ModuleB" moduleBSource with
+        | Ok (nameA, astA), Ok (nameB, astB) ->
+            let moduleAsts = Map.ofList [ nameA, astA; nameB, astB ]
+            let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
+            let availableTypeFullNames =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
+                        | :? Ast.Decl.Union as unionDecl -> Some $"{moduleName}.{unionDecl.name}"
+                        | _ -> None))
+                |> Set.ofList
+            let availableTypeDecls =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)
+                        | :? Ast.Decl.Union as unionDecl -> Some ($"{moduleName}.{unionDecl.name}", unionDecl :> Ast.Decl)
+                        | _ -> None))
+                |> Map.ofList
+            let availableDataTypeImplDecls = Map.empty
+
+            let symbolTable = SymbolTable()
+            let typeSubst = TypeSubst()
+            let typeMetaFactory = TypeMetaFactory()
+
+            let moduleAResult =
+                Analyze.analyzeModuleWithImports(
+                    symbolTable, typeSubst, typeMetaFactory, nameA, astA,
+                    availableModuleNames, availableTypeFullNames,
+                    Set.empty, Set.empty,
+                    availableTypeDecls, availableDataTypeImplDecls, Map.empty, Map.empty)
+
+            match moduleAResult with
+            | { succeeded = false; diagnostics = diagnostics } ->
+                let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                Assert.True(false, $"Module A analysis failed: {message}")
+            | { value = Some hirModuleA } ->
+                let moduleAExports = buildModuleExports symbolTable hirModuleA
+
+                let moduleBResult =
+                    Analyze.analyzeModuleWithImports(
+                        symbolTable, typeSubst, typeMetaFactory, nameB, astB,
+                        availableModuleNames, availableTypeFullNames,
+                        Set.empty, Set.empty,
+                        availableTypeDecls, availableDataTypeImplDecls,
+                        Map.ofList [ nameA, moduleAExports ], Map.empty)
+
+                match moduleBResult with
+                | { succeeded = true } -> ()
+                | { diagnostics = diagnostics } ->
+                    let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                    Assert.True(false, $"Module B analysis failed (cross-module nested union): {message}")
+            | { value = None } ->
+                Assert.True(false, "Module A analysis returned no HIR module")
+        | Result.Error message, _ | _, Result.Error message ->
+            Assert.True(false, $"Parse error: {message}")
+
+    /// クロスモジュールのネスト union import: 網羅性チェックがネストバリアントまで機能することを検証する。
+    [<Fact>]
+    let ``cross-module nested union import reports non-exhaustive match`` () =
+        let moduleASource = """
+union Color
+    struct Rgb: Color
+        val r: Int
+
+    union HueColor: Color
+        struct Hsv: HueColor
+            val v: Int
+
+        struct Hsl: HueColor
+            val l: Int
+"""
+        let moduleBSource = """
+import ModuleA'Color
+
+fn pick (c: Color): Int
+    match c
+    | Color'Rgb { r, .. } -> r
+    | Color'HueColor'Hsv { v, .. } -> v
+"""
+        match parseSourceModule "ModuleA" moduleASource, parseSourceModule "ModuleB" moduleBSource with
+        | Ok (nameA, astA), Ok (nameB, astB) ->
+            let moduleAsts = Map.ofList [ nameA, astA; nameB, astB ]
+            let availableModuleNames = moduleAsts |> Map.keys |> Set.ofSeq
+            let availableTypeFullNames =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some $"{moduleName}.{dataDecl.name}"
+                        | :? Ast.Decl.Union as unionDecl -> Some $"{moduleName}.{unionDecl.name}"
+                        | _ -> None))
+                |> Set.ofList
+            let availableTypeDecls =
+                moduleAsts
+                |> Map.toList
+                |> List.collect (fun (moduleName, moduleAst) ->
+                    moduleAst.decls
+                    |> List.choose (fun decl ->
+                        match decl with
+                        | :? Ast.Decl.Data as dataDecl -> Some ($"{moduleName}.{dataDecl.name}", dataDecl :> Ast.Decl)
+                        | :? Ast.Decl.Union as unionDecl -> Some ($"{moduleName}.{unionDecl.name}", unionDecl :> Ast.Decl)
+                        | _ -> None))
+                |> Map.ofList
+
+            let symbolTable = SymbolTable()
+            let typeSubst = TypeSubst()
+            let typeMetaFactory = TypeMetaFactory()
+
+            let moduleAResult =
+                Analyze.analyzeModuleWithImports(
+                    symbolTable, typeSubst, typeMetaFactory, nameA, astA,
+                    availableModuleNames, availableTypeFullNames,
+                    Set.empty, Set.empty,
+                    availableTypeDecls, Map.empty, Map.empty, Map.empty)
+
+            match moduleAResult with
+            | { succeeded = false; diagnostics = diagnostics } ->
+                let message = diagnostics |> List.map (fun d -> d.toDisplayText()) |> String.concat "; "
+                Assert.True(false, $"Module A analysis failed: {message}")
+            | { value = Some hirModuleA } ->
+                let moduleAExports = buildModuleExports symbolTable hirModuleA
+
+                let moduleBResult =
+                    Analyze.analyzeModuleWithImports(
+                        symbolTable, typeSubst, typeMetaFactory, nameB, astB,
+                        availableModuleNames, availableTypeFullNames,
+                        Set.empty, Set.empty,
+                        availableTypeDecls, Map.empty,
+                        Map.ofList [ nameA, moduleAExports ], Map.empty)
+
+                match moduleBResult with
+                | { succeeded = false; diagnostics = diagnostics } ->
+                    Assert.Contains(diagnostics, fun d -> d.message.Contains("Non-exhaustive match") && d.message.Contains("Hsl"))
+                | _ ->
+                    Assert.True(false, "Expected non-exhaustive match error for cross-module nested union")
+            | { value = None } ->
+                Assert.True(false, "Module A analysis returned no HIR module")
+        | Result.Error message, _ | _, Result.Error message ->
+            Assert.True(false, $"Parse error: {message}")
