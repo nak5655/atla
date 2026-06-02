@@ -1762,9 +1762,13 @@ module ExprAnalyze =
                         | Some unionDef ->
                             // union の match: 各 arm を isinst 型テストの if 連鎖へ lower する。
                             // ネスト union に対応するため、バリアント名は多段修飾名（例: `HueColor'Hsv`）を取りうる。
+                            // dataTypeDefs のキー（エイリアス名）を unionName とする。
+                            // シンボルテーブルに格納された完全修飾名（例: "color.Color"）ではなく、
+                            // 現モジュールで使われるエイリアス（例: "Color"）をパターンとの照合に用いる。
                             let unionName =
-                                nameEnv.resolveSym scrutineeTypeDef.typeSid
-                                |> Option.map (fun symInfo -> symInfo.name)
+                                nameEnv.dataTypeDefs
+                                |> Map.toSeq
+                                |> Seq.tryPick (fun (key, def) -> if def.typeSid.id = scrutineeTypeDef.typeSid.id then Some key else None)
                                 |> Option.defaultValue ""
                             let matchNameEnv = nameEnv.sub()
                             let scrutineeSid = matchNameEnv.declareLocal "__match_scrutinee" analyzedScrutinee.typ

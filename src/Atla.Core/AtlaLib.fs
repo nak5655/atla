@@ -606,6 +606,39 @@ module AtlaLib =
                                     let allDiagnostics =
                                         fieldDiagnostics @ methodDiagnostics @ baseTypeDiagnostics
 
+                                    let unionInfo =
+                                        if predeclared.kind = "union" then
+                                            let isExtendable =
+                                                let mutable extNode = Unchecked.defaultof<JsonElement>
+                                                typeNode.TryGetProperty("isExtendable", &extNode)
+                                                && extNode.ValueKind = JsonValueKind.True
+                                            let variantDefs =
+                                                let mutable variantsNode = Unchecked.defaultof<JsonElement>
+                                                if typeNode.TryGetProperty("variants", &variantsNode)
+                                                   && variantsNode.ValueKind = JsonValueKind.Array then
+                                                    variantsNode.EnumerateArray()
+                                                    |> Seq.choose (fun variantNameNode ->
+                                                        let variantQName = variantNameNode.GetString()
+                                                        let variantFullName = $"{moduleName}.{variantQName}"
+                                                        match predeclaredTypes |> Map.tryFind variantFullName with
+                                                        | None -> None
+                                                        | Some vp ->
+                                                            let unqualName =
+                                                                let i = variantQName.LastIndexOf('\'')
+                                                                if i >= 0 then variantQName.Substring(i + 1) else variantQName
+                                                            Some
+                                                                { name = unqualName
+                                                                  typeSid = vp.typeSid
+                                                                  isUnion = vp.kind = "union"
+                                                                  objectFieldInits = None
+                                                                  span = Span.Empty })
+                                                    |> Seq.toList
+                                                else
+                                                    []
+                                            Some { isExtendable = isExtendable; variants = variantDefs }
+                                        else
+                                            None
+
                                     let dataTypeDef =
                                         { typeSid = predeclared.typeSid
                                           baseType = baseTypeOpt
@@ -613,7 +646,7 @@ module AtlaLib =
                                           typeParams = typeParamNames
                                           fields = fieldDefs
                                           hiddenFields = hiddenFieldDefs
-                                          unionInfo = None
+                                          unionInfo = unionInfo
                                           methods = methodMap }
 
                                     Map.add fullTypeName dataTypeDef defs, diagnostics @ allDiagnostics)
