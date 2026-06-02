@@ -113,13 +113,6 @@ module Resolve =
                 []
             | false, true ->
                 importedTypeAliases.Add(shortName, classPath)
-                // atlalib 型インポートはスコープにプレースホルダー SID を登録し、
-                // 同モジュール内の `impl` 宣言が Resolve フェーズで型を参照できるようにする。
-                // Analyze フェーズで正式な typeSid へ上書きされる。
-                let sid = symbolTable.NextId()
-                symbolTable.Add(sid, { name = classPath; typ = TypeId.Name sid; kind = SymbolKind.Local() })
-                scope.DeclareType(shortName, TypeId.Name sid)
-                importedAtlaNominalTypeSids.Add(sid)
                 []
             | false, false ->
                 []
