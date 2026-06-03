@@ -1,19 +1,19 @@
-# Notes Index
+# Notes
 
-This directory consolidates historical planning and design documentation.
+Implementation and design notes for Atla.
 
-## Contents
-- `plans-archive.md`: Archived historical plan entries.
-- `phases/README.md`: Compiler notes reorganized by phase (`AST -> Semantic -> HIR -> Closure Conversion -> Frame Allocation -> MIR -> CIL`).
-- `build-system-phase1.md`: Build system phase design notes.
-- `cli-interface.md`: CLI behavior and interface notes.
-- `language-server.md`: Language Server design notes.
-- `semantic-phase-design.md`: Semantic phase design details.
-- `unit-void-design.md`: Unit/Void semantics design notes.
-- `multi-impl-spec.md`: Proposal for allowing multiple `impl` blocks on a single `data` type.
-- `union-spec.md`: `union` (tagged sum type) specification — syntax, pattern matching, subtyping, and lowering to an abstract-class/variant hierarchy (replaces the removed `enum`).
-- `flow-control-spec.md`: Flow control and loop control specification (`return`, `break`, `continue`, `for`, `while`, `let-else`/`var-else`).
+## Sections
 
-## Usage
-- Keep durable design rationale and historical records in this `notes/` directory.
-- Add new compiler design decisions to `notes/phases/` in the corresponding phase file.
+- [`language/`](language/README.md) — Atla language semantics and user-visible behavior.
+- [`compiler/`](compiler/README.md) — `Atla.Core` compiler pipeline, IRs, dependency loading, and code generation.
+- [`build/`](build/README.md) — `Atla.Build` project configuration, dependency resolution, build flow, package kinds, and install flow.
+- [`cli/`](cli/README.md) — `Atla.Console` command behavior and user-facing output.
+- [`language-server/`](language-server/README.md) — `Atla.LanguageServer` LSP behavior.
+- [`vscode/`](vscode/README.md) — VSCode extension integration.
+
+## Policy
+
+- Keep notes grouped by feature unit rather than by historical implementation phase.
+- Prefer current implementation facts over old phase plans.
+- If a note describes implementation behavior, list the corresponding source paths near the top of the note.
+- Do not add unrelated sample, decision-log, standard-library, or catch-all historical buckets under `notes/`.
