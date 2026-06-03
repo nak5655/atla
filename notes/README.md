@@ -1,9 +1,9 @@
 # Notes Index
 
-This directory consolidates historical planning and design documentation that was previously split across `PLANS.md` and `doc/`.
+This directory consolidates historical planning and design documentation.
 
 ## Contents
-- `plans-archive.md`: Archived historical plan entries from the previous root `PLANS.md`.
+- `plans-archive.md`: Archived historical plan entries.
 - `phases/README.md`: Compiler notes reorganized by phase (`AST -> Semantic -> HIR -> Closure Conversion -> Frame Allocation -> MIR -> CIL`).
 - `build-system-phase1.md`: Build system phase design notes.
 - `cli-interface.md`: CLI behavior and interface notes.
@@ -15,6 +15,5 @@ This directory consolidates historical planning and design documentation that wa
 - `flow-control-spec.md`: Flow control and loop control specification (`return`, `break`, `continue`, `for`, `while`, `let-else`/`var-else`).
 
 ## Usage
-- Keep `PLANS.md` focused on active execution plans.
 - Keep durable design rationale and historical records in this `notes/` directory.
 - Add new compiler design decisions to `notes/phases/` in the corresponding phase file.
