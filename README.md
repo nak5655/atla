@@ -135,6 +135,61 @@ bash install.sh
     Std/
 ```
 
+## Building from source
+
+### Prerequisites
+
+- .NET SDK 10.0 or later for the compiler, CLI, and language server projects.
+- Node.js 22 or later for the VSCode extension.
+
+### Build the compiler, CLI, and language server
+
+From the repository root:
+
+```bash
+dotnet build src/Atla.slnx
+```
+
+To build a single project, pass the project file instead. For example:
+
+```bash
+dotnet build src/Atla.Console/Atla.Console.fsproj
+dotnet build src/Atla.LanguageServer/Atla.LanguageServer.fsproj
+```
+
+### Build the VSCode extension
+
+```bash
+cd vscode
+npm install
+npm run build
+```
+
+`npm run check` runs linting, type checking, and bundling together.
+
+## Running tests
+
+From the repository root, run all .NET tests with:
+
+```bash
+dotnet test src/Atla.slnx
+```
+
+To run a specific test project, pass the test project file instead. For example:
+
+```bash
+dotnet test src/Atla.Core.Tests/Atla.Core.Tests.fsproj
+dotnet test src/Atla.LanguageServer.Tests/Atla.LanguageServer.Tests.fsproj
+```
+
+For the VSCode extension checks, run:
+
+```bash
+cd vscode
+npm install
+npm run check
+```
+
 ## Examples
 
 See the [`examples/`](examples/) directory for sample projects.
