@@ -605,11 +605,10 @@ module Analyze =
                             let importedBaseTypeOpt, importedDelegatedByFieldNameOpt, importedDelegationDiagnostics =
                                 let implDecls = availableDataTypeImplDecls |> Map.tryFind fullTypePath |> Option.defaultValue []
 
-                                // `impl X as DotNetBase` パターンを先にチェックする。
-                                // この場合、モジュールエクスポートの "implBase:{TypeName}" キーから .NET 基底型を復元する。
-                                // asTypeName.IsSome の有無のみを確認し、宣言の内容は不要なため Some _ でマッチする。
-                                let hasAsImpl = implDecls |> List.exists (fun implDecl -> implDecl.asTypeName.IsSome)
-                                if hasAsImpl then
+                                // `struct T: NativeClass` パターンを確認する。
+                                // モジュールエクスポートの "implBase:{TypeName}" キーが存在すれば native base あり。
+                                let hasNativeBase = sourceModuleExports |> Map.containsKey $"implBase:{typeNameForLookup}"
+                                if hasNativeBase then
                                     let baseTypeOpt =
                                         sourceModuleExports
                                         |> Map.tryFind $"implBase:{typeNameForLookup}"

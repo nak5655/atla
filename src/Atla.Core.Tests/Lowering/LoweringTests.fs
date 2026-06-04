@@ -1758,7 +1758,7 @@ fn main: ()
 
     [<Fact>]
     let ``override fn body calls base'Method as non-virtual call (not callvirt)`` () =
-        // 回帰テスト: `impl A as B` の `override fn` から `base'Method` を呼んだとき、
+        // 回帰テスト: `struct T: B` の `impl T` の `override fn` から `base'Method` を呼んだとき、
         // CIL が `callvirt` で発行されるとオーバーライド側に再ディスパッチして無限再帰になる。
         // `OpCodes.Call`（非仮想）で発行されていれば親クラス（Exception）の実装が直接実行される。
         let outDir = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
@@ -1768,10 +1768,10 @@ fn main: ()
 import System'Console
 import System'Exception
 
-struct MyError
+struct MyError: Exception
     val code: Int
 
-impl MyError as Exception
+impl MyError
     fn new (c: Int): MyError
         { code = c } MyError.
     override fn ToString self: String

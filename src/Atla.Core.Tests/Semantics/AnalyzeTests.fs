@@ -641,7 +641,7 @@ fn buildPerson (): Person
         let xArg = Ast.FnArg.Named("x", doubleType, span) :> Ast.FnArg
         let evalBody = Ast.Expr.MemberAccess(Ast.Expr.Id("self", span) :> Ast.Expr, "slope", span) :> Ast.Expr
         let evalFn = Ast.Decl.Fn("evaluate", [ thisArg; xArg ], doubleType, evalBody, false, false, span)
-        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ evalFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, [ evalFn ], span) :> Ast.Decl
 
         let lineInit =
             let recordLit =
@@ -686,7 +686,7 @@ fn buildPerson (): Person
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, false, false, span)
-        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, [ oneFn ], span) :> Ast.Decl
         let staticCall = Ast.Expr.Apply(Ast.Expr.MemberAccess(Ast.Expr.Id("Line", span) :> Ast.Expr, "one", span) :> Ast.Expr, [], span) :> Ast.Expr
         let mainDecl = Ast.Decl.Fn("main", [], intType, staticCall, false, false, span) :> Ast.Decl
 
@@ -717,7 +717,7 @@ fn buildPerson (): Person
                 span) :> Ast.Decl
 
         let helperFn = Ast.Decl.Fn("helper", [], intType, Ast.Expr.Int(42, span) :> Ast.Expr, false, false, span)
-        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ helperFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, [ helperFn ], span) :> Ast.Decl
 
         // main calls `helper` as a bare name — this was previously "Undefined variable 'helper'"
         let bareNameCall = Ast.Expr.Apply(Ast.Expr.Id("helper", span) :> Ast.Expr, [], span) :> Ast.Expr
@@ -745,7 +745,7 @@ fn buildPerson (): Person
                 span) :> Ast.Decl
 
         let oneFn = Ast.Decl.Fn("one", [], intType, Ast.Expr.Int(1, span) :> Ast.Expr, false, false, span)
-        let implDecl = Ast.Decl.Impl("Line", [], None, None, None, [ oneFn ], span) :> Ast.Decl
+        let implDecl = Ast.Decl.Impl("Line", [], None, None, [ oneFn ], span) :> Ast.Decl
         let lineInit =
             let recordLit =
                 Ast.Expr.RecordLit(
@@ -986,12 +986,12 @@ impl Line for Reader
 
     [<Fact>]
     let ``semantic analysis reports error for impl as with interface type`` () =
-        // IDisposable はインターフェイスなので impl ... as IDisposable は禁止。
+        // IDisposable はインターフェイスなので struct: IDisposable は禁止。
         let source = """
 import System'IDisposable
-struct Resource
+struct Resource: IDisposable
     val id: Int
-impl Resource as IDisposable
+impl Resource
     fn dispose self: Unit
         ()
 """
@@ -1020,12 +1020,12 @@ impl Resource as IDisposable
 
     [<Fact>]
     let ``semantic analysis reports error for impl as with sealed class`` () =
-        // System.Math はシールドクラスなので impl ... as Math は禁止。
+        // System.Math はシールドクラスなので struct: Math は禁止。
         let source = """
 import System'Math
-struct Token
+struct Token: Math
     val value: Int
-impl Token as Math
+impl Token
     fn run self: Unit
         ()
 """
@@ -1054,11 +1054,11 @@ impl Token as Math
 
     [<Fact>]
     let ``semantic analysis reports error for impl as with unimported type`` () =
-        // import なしで as 句を使おうとした場合のエラー。
+        // import なしで struct: X を使おうとした場合のエラー。
         let source = """
-struct Widget
+struct Widget: UnknownBase
     val id: Int
-impl Widget as UnknownBase
+impl Widget
     fn run self: Unit
         ()
 """
@@ -1078,8 +1078,8 @@ impl Widget as UnknownBase
                         diagnostics
                         |> List.exists (fun diagnostic ->
                             diagnostic.message.Contains("UnknownBase") &&
-                            (diagnostic.message.Contains("not defined") || diagnostic.message.Contains("not an imported")))
-                    Assert.True(hasExpectedDiagnostic, "Expected error about undefined 'as' type was not reported")
+                            (diagnostic.message.Contains("undefined") || diagnostic.message.Contains("not an imported")))
+                    Assert.True(hasExpectedDiagnostic, "Expected error about undefined base type was not reported")
                 | _ ->
                     Assert.True(false, "Semantic analysis unexpectedly succeeded for impl as unimported type")
             | Failure (reason, span) ->
@@ -2796,12 +2796,12 @@ fn main (): ()
     [<Fact>]
     let ``semantic analysis resolves inherited native property read via impl as`` () =
         // System.Exception は非シール・非インターフェイスクラス。Message プロパティを持つ。
-        // impl MyError as Exception により MyError 型の変数から .Message を読み取れる必要がある。
+        // struct MyError: Exception により MyError 型の変数から .Message を読み取れる必要がある。
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
 fn getMessage (e: MyError): String
@@ -2840,12 +2840,12 @@ fn getMessage (e: MyError): String
     [<Fact>]
     let ``semantic analysis resolves inherited native property assignment via impl as`` () =
         // System.Exception.HelpLink は読み書き可能な String プロパティ。
-        // impl MyError as Exception により MyError 型の変数への .HelpLink 代入が通る必要がある。
+        // struct MyError: Exception により MyError 型の変数への .HelpLink 代入が通る必要がある。
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
 fn setLink (e: MyError): ()
@@ -2883,13 +2883,13 @@ fn setLink (e: MyError): ()
 
     [<Fact>]
     let ``semantic analysis resolves base member access inside impl as instance method`` () =
-        // Regression: `base'...` must resolve inside impl-as instance methods
+        // Regression: `base'...` must resolve inside impl instance methods
         // using current `this` and the declared native base type.
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn baseText self: String
         base'ToString.
 """
@@ -2929,12 +2929,12 @@ impl MyError as Exception
 
     [<Fact>]
     let ``semantic analysis reports error for undefined member on impl as native base type`` () =
-        // impl MyError as Exception でも存在しないメンバーへのアクセスはエラーになる必要がある。
+        // struct MyError: Exception でも存在しないメンバーへのアクセスはエラーになる必要がある。
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
 fn bad (e: MyError): String
@@ -2972,9 +2972,9 @@ fn bad (e: MyError): String
         // System.Object.ToString は public virtual。MyError.ToString を override できる必要がある。
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
     override fn ToString self: String
@@ -3008,9 +3008,9 @@ impl MyError as Exception
         // System.Exception には `NotARealMethod` というメソッドはないので override エラー。
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
     override fn NotARealMethod self: Unit
@@ -3043,9 +3043,9 @@ impl MyError as Exception
         // arity 0 で `GetType` を override しようとすると候補無しエラー。
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
     override fn GetType self: String
@@ -3074,7 +3074,7 @@ impl MyError as Exception
 
     [<Fact>]
     let ``semantic analysis rejects override modifier in plain impl block`` () =
-        // `impl A`（as/for なし）の中での override はエラー。
+        // `impl A`（native base なし）の中での override はエラー。
         let source = """
 struct Foo
     val x: Int
@@ -3095,7 +3095,7 @@ impl Foo
                 match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
                 | { succeeded = false; diagnostics = diagnostics } ->
                     let combined = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
-                    Assert.Contains("'override' keyword is only allowed in 'impl ... as ...' blocks", combined)
+                    Assert.Contains("'override' keyword is only allowed in impl blocks with a native base class", combined)
                 | _ ->
                     Assert.True(false, "Semantic analysis unexpectedly succeeded for override in plain impl block")
             | Failure (reason, span) ->
@@ -3127,7 +3127,7 @@ impl IDisposable for Box
                 match Analyze.analyzeModule(symbolTable, subst, "main", astModule) with
                 | { succeeded = false; diagnostics = diagnostics } ->
                     let combined = diagnostics |> List.map (fun d -> d.message) |> String.concat "; "
-                    Assert.Contains("'override' keyword is only allowed in 'impl ... as ...' blocks", combined)
+                    Assert.Contains("'override' keyword is only allowed in impl blocks with a native base class", combined)
                 | _ ->
                     Assert.True(false, "Semantic analysis unexpectedly succeeded for override in 'impl for' block")
             | Failure (reason, span) ->
@@ -3140,9 +3140,9 @@ impl IDisposable for Box
         // self を取らない static メソッドへの override はインスタンスメソッド限定の制約に反する。
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     override fn ToString (x: Int): String
         "static"
 """
@@ -3167,7 +3167,7 @@ impl MyError as Exception
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
-    // クロスモジュール `impl X as DotNetBase` テスト共通ヘルパー。
+    // クロスモジュール `struct T: DotNetBase` テスト共通ヘルパー。
     // ソース文字列を解析してモジュール名と AST のペアを返す。
     let private parseSourceModule (moduleName: string) (source: string) : Result<string * Ast.Module, string> =
         let input: Input<SourceChar> = StringInput source
@@ -3224,16 +3224,16 @@ impl MyError as Exception
         [ typeExports; methodExports; fieldExports; implBaseExports ]
         |> List.fold (fun acc m -> Map.fold (fun a k v -> Map.add k v a) acc m) Map.empty
 
-    /// クロスモジュールの `impl X as DotNetBase` で、import 先からインスタンスプロパティを読み取れることを検証する。
+    /// クロスモジュールの `struct T: DotNetBase` で、import 先からインスタンスプロパティを読み取れることを検証する。
     /// 回帰テスト: import 後に baseType が None になり "does not support member access" が出ていたバグの修正確認。
     [<Fact>]
     let ``cross-module impl as restores base type and resolves native property read`` () =
         // モジュール A: MyError を Exception のサブクラスとして定義する。
         let moduleASource = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
 """
@@ -3324,15 +3324,15 @@ fn getMessage (e: MyError): String
         | Result.Error message, _ | _, Result.Error message ->
             Assert.True(false, $"Parse error: {message}")
 
-    /// クロスモジュールの `impl X as DotNetBase` で、import 先からプロパティへ代入できることを検証する。
+    /// クロスモジュールの `struct T: DotNetBase` で、import 先からプロパティへ代入できることを検証する。
     [<Fact>]
     let ``cross-module impl as restores base type and resolves native property assignment`` () =
         // モジュール A: MyError を Exception のサブクラスとして定義する。
         let moduleASource = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
 """
@@ -3419,18 +3419,18 @@ fn setLink (e: MyError): ()
         | Result.Error message, _ | _, Result.Error message ->
             Assert.True(false, $"Parse error: {message}")
 
-    /// 回帰テスト: `impl X as DotNetBase` 型を引数に取る関数へ X 型の値を渡せる。
+    /// 回帰テスト: `struct T: DotNetBase` 型を引数に取る関数へ T 型の値を渡せる。
     /// unifyOrError 内の isSubtypeOfSystemType が TypeId.Native ベース型を辿れることを検証する (Fix 1)。
     [<Fact>]
     let ``semantic analysis accepts impl-as data type passed as native base type function argument`` () =
         // getMsg は Exception 型の引数を取る Atla 関数。
-        // MyError は impl MyError as Exception を宣言しているため
+        // struct MyError: Exception を宣言しているため
         // MyError の値を getMsg に渡せなければならない。
         let source = """
 import System'Exception
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
 fn getMsg (e: Exception): String
@@ -3468,18 +3468,18 @@ fn test (): String
         | Failure (reason, span) ->
             Assert.True(false, $"Lexing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
-    /// 回帰テスト: `impl X as DotNetBase` 型を .NET 静的メソッドのオーバーロード解決で正しく選択する。
+    /// 回帰テスト: `struct T: DotNetBase` 型を .NET 静的メソッドのオーバーロード解決で正しく選択する。
     /// isSubtypeCompatible 内の isNameSubtypeOfNative が TypeId.Native ベース型を辿れることを検証する (Fix 2)。
     [<Fact>]
     let ``semantic analysis resolves native static method overload for impl-as data type argument`` () =
         // ExceptionDispatchInfo.Capture(Exception) は Exception 引数を取る静的メソッド。
-        // impl MyError as Exception により MyError :< Exception が成立するため Capture が選択される。
+        // struct MyError: Exception により MyError :< Exception が成立するため Capture が選択される。
         let source = """
 import System'Exception
 import System'Runtime'ExceptionServices'ExceptionDispatchInfo
-struct MyError
+struct MyError: Exception
     val code: Int
-impl MyError as Exception
+impl MyError
     fn new (code: Int): MyError
         { code = code } MyError.
 fn test (): ExceptionDispatchInfo

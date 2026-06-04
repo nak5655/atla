@@ -11,7 +11,7 @@ import System'Threading'Tasks'Task
 import Stride'Input'Keys
 import System'Random
 
-struct FlappyGame
+struct FlappyGame: Game
     var _spriteBatch: Opt SpriteBatch
     var _whiteTexture: Opt Texture
 
@@ -29,7 +29,7 @@ struct FlappyGame
     val _pipeSpeed: Float
     val _rand: Random
 
-impl FlappyGame as Game
+impl FlappyGame
     fn new: FlappyGame
         { _spriteBatch = Opt'None
         , _whiteTexture = Opt'None
