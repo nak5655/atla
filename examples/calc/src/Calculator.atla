@@ -9,14 +9,14 @@ import Avalonia'Controls'ColumnDefinitions
 import Avalonia'Layout'Orientation
 import Avalonia'Layout'HorizontalAlignment
 
-struct CalculatorWindow
+struct CalculatorWindow: Window
     val _grid: Grid
     val _display: TextBox
     var _currentValue: Double
     var _pendingOperator: String
     var _clearOnNextDigit: Bool
 
-impl CalculatorWindow as Window
+impl CalculatorWindow
     fn new: CalculatorWindow
         val root = StackPanel.
         root'Orientation = Orientation'Vertical

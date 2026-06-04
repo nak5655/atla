@@ -1211,7 +1211,6 @@ impl Base for Wrapper by inner
             match implDecl with
             | Some parsedImplDecl ->
                 Assert.Equal("Base", parsedImplDecl.typeName)
-                Assert.True(parsedImplDecl.asTypeName.IsNone)
                 Assert.Equal(Some "Wrapper", parsedImplDecl.forTypeName)
                 Assert.Equal(Some "inner", parsedImplDecl.byFieldName)
                 Assert.Empty(parsedImplDecl.methods)
@@ -1221,17 +1220,23 @@ impl Base for Wrapper by inner
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses impl declaration with as clause`` () =
+    let ``fileModule parses impl declaration with native base class`` () =
         let program = """
-struct MyButton
+struct MyButton: Button
     val label: String
-impl MyButton as Button
+impl MyButton
     fn click self: Unit
         ()
 """
 
         match parseModule program with
         | Success (astModule, _) ->
+            let dataDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Data as d -> Some d
+                    | _ -> None)
             let implDecl =
                 astModule.decls
                 |> List.tryPick (fun decl ->
@@ -1239,28 +1244,35 @@ impl MyButton as Button
                     | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
                     | _ -> None)
 
-            match implDecl with
-            | Some parsedImplDecl ->
+            match dataDecl, implDecl with
+            | Some parsedDataDecl, Some parsedImplDecl ->
+                Assert.Equal("MyButton", parsedDataDecl.name)
+                Assert.Equal(Some "Button", parsedDataDecl.baseName)
                 Assert.Equal("MyButton", parsedImplDecl.typeName)
-                Assert.Equal(Some "Button", parsedImplDecl.asTypeName)
                 Assert.True(parsedImplDecl.forTypeName.IsNone)
                 Assert.True(parsedImplDecl.byFieldName.IsNone)
                 Assert.Single(parsedImplDecl.methods) |> ignore
-            | None ->
-                Assert.True(false, "impl declaration with as clause was not parsed")
+            | _ ->
+                Assert.True(false, "struct and impl declarations with native base class were not parsed")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses impl as clause with no methods`` () =
+    let ``fileModule parses struct with native base class and no impl methods`` () =
         let program = """
-struct Widget
+struct Widget: Control
     val id: Int
-impl Widget as Control
+impl Widget
 """
 
         match parseModule program with
         | Success (astModule, _) ->
+            let dataDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Data as d -> Some d
+                    | _ -> None)
             let implDecl =
                 astModule.decls
                 |> List.tryPick (fun decl ->
@@ -1268,24 +1280,25 @@ impl Widget as Control
                     | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
                     | _ -> None)
 
-            match implDecl with
-            | Some parsedImplDecl ->
+            match dataDecl, implDecl with
+            | Some parsedDataDecl, Some parsedImplDecl ->
+                Assert.Equal("Widget", parsedDataDecl.name)
+                Assert.Equal(Some "Control", parsedDataDecl.baseName)
                 Assert.Equal("Widget", parsedImplDecl.typeName)
-                Assert.Equal(Some "Control", parsedImplDecl.asTypeName)
                 Assert.True(parsedImplDecl.forTypeName.IsNone)
                 Assert.True(parsedImplDecl.byFieldName.IsNone)
                 Assert.Empty(parsedImplDecl.methods)
-            | None ->
-                Assert.True(false, "impl as declaration without methods was not parsed")
+            | _ ->
+                Assert.True(false, "struct with native base class declaration was not parsed")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses override fn in impl as block`` () =
+    let ``fileModule parses override fn in impl block with native base class`` () =
         let program = """
-struct MyButton
+struct MyButton: Button
     val label: String
-impl MyButton as Button
+impl MyButton
     override fn click self: Unit
         ()
     fn helper self: Unit
@@ -1294,6 +1307,12 @@ impl MyButton as Button
 
         match parseModule program with
         | Success (astModule, _) ->
+            let dataDecl =
+                astModule.decls
+                |> List.tryPick (fun decl ->
+                    match decl with
+                    | :? Ast.Decl.Data as d -> Some d
+                    | _ -> None)
             let implDecl =
                 astModule.decls
                 |> List.tryPick (fun decl ->
@@ -1301,24 +1320,25 @@ impl MyButton as Button
                     | :? Ast.Decl.Impl as parsedImplDecl -> Some parsedImplDecl
                     | _ -> None)
 
-            match implDecl with
-            | Some parsedImplDecl ->
+            match dataDecl, implDecl with
+            | Some parsedDataDecl, Some parsedImplDecl ->
+                Assert.Equal("MyButton", parsedDataDecl.name)
+                Assert.Equal(Some "Button", parsedDataDecl.baseName)
                 Assert.Equal("MyButton", parsedImplDecl.typeName)
-                Assert.Equal(Some "Button", parsedImplDecl.asTypeName)
                 Assert.Equal(2, parsedImplDecl.methods.Length)
                 let clickMethod = parsedImplDecl.methods |> List.find (fun m -> m.name = "click")
                 let helperMethod = parsedImplDecl.methods |> List.find (fun m -> m.name = "helper")
                 Assert.True(clickMethod.isOverride, "click method should have isOverride = true")
                 Assert.False(helperMethod.isOverride, "helper method should have isOverride = false")
-            | None ->
-                Assert.True(false, "impl declaration was not parsed")
+            | _ ->
+                Assert.True(false, "struct and impl declarations were not parsed")
         | Failure (reason, span) ->
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
     let ``fileModule parses override fn even in plain impl block (resolve will reject later)`` () =
         // override 修飾子は構文上はどの impl ブロックでも受理する。
-        // `impl A as B` 以外でのエラーは Resolve フェーズで報告される。
+        // `struct T: NativeClass` を伴わない impl ブロックでのエラーは Resolve フェーズで報告される。
         let program = """
 struct Foo
     val x: Int
@@ -1338,7 +1358,6 @@ impl Foo
 
             match implDecl with
             | Some parsedImplDecl ->
-                Assert.True(parsedImplDecl.asTypeName.IsNone)
                 Assert.Single(parsedImplDecl.methods) |> ignore
                 let barMethod = parsedImplDecl.methods.Head
                 Assert.True(barMethod.isOverride, "override should be captured even in plain impl block")
@@ -1370,11 +1389,11 @@ override fn main (): Unit
             ()
 
     [<Fact>]
-    let ``fileModule parses async fn in impl as block`` () =
+    let ``fileModule parses async fn in impl block with native base class`` () =
         let program = """
-struct MyTask
+struct MyTask: Object
     val value: Int
-impl MyTask as Object
+impl MyTask
     async fn run self: Unit
         ()
     fn sync self: Unit
@@ -1404,11 +1423,11 @@ impl MyTask as Object
             Assert.True(false, $"Parsing failed: {reason} at {span.left.Line}:{span.left.Column}")
 
     [<Fact>]
-    let ``fileModule parses override async fn in impl as block`` () =
+    let ``fileModule parses override async fn in impl block with native base class`` () =
         let program = """
-struct MyTask
+struct MyTask: Object
     val value: Int
-impl MyTask as Object
+impl MyTask
     override async fn run self: Unit
         ()
 """
@@ -2139,7 +2158,7 @@ union Color
                     Assert.Equal("Color", objVariant.baseUnionName)
                     Assert.Equal(1, objVariant.fieldInits.Length)
                     Assert.Equal("Rgb", structVariant.name)
-                    Assert.Equal(Some "Color", structVariant.baseUnionName)
+                    Assert.Equal(Some "Color", structVariant.baseName)
                     Assert.Equal(3, structVariant.items.Length)
                 | _ ->
                     Assert.True(false, "expected an Object variant followed by a Data variant")
@@ -2195,7 +2214,7 @@ union Color
                     match hueUnion.variants with
                     | [ (:? Ast.Decl.Data as hsv) ] ->
                         Assert.Equal("Hsv", hsv.name)
-                        Assert.Equal(Some "HueColor", hsv.baseUnionName)
+                        Assert.Equal(Some "HueColor", hsv.baseName)
                     | _ -> Assert.True(false, "expected a single Hsv struct variant inside HueColor")
                 | _ -> Assert.True(false, "expected a single nested HueColor union variant")
             | _ -> Assert.True(false, "expected a single Ast.Decl.Union for Color")

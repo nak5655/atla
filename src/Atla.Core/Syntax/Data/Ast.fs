@@ -518,17 +518,18 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        type Data(name: string, typeParams: string list, items: DataItem list, baseUnionName: string option, span: Span) =
-            /// 後方互換コンストラクタ。派生元 union を持たない通常の `struct` 宣言用。
+        type Data(name: string, typeParams: string list, items: DataItem list, baseName: string option, span: Span) =
+            /// 後方互換コンストラクタ。派生元を持たない通常の `struct` 宣言用。
             new(name: string, typeParams: string list, items: DataItem list, span: Span) =
                 Data(name, typeParams, items, None, span)
             member this.name = name
             /// 型パラメータ名のリスト（例: `struct Pair A B` では `["A"; "B"]`）。非ジェネリックの場合は空リスト。
             member this.typeParams = typeParams
             member this.items = items
-            /// `struct Rgb: Color` のように `:` で派生元 union を指定した場合の union 名。
+            /// `struct Rgb: Color` のように `:` で基底名を指定した場合の名前。
+            /// union バリアントの場合は親 union 名、.NET クラス継承の場合は import 済みクラス名。
             /// 通常の struct 宣言では `None`。
-            member this.baseUnionName = baseUnionName
+            member this.baseName = baseName
             member this.span = span
             interface Decl with
                 member this.span = span
@@ -574,7 +575,7 @@ module Ast =
             member this.args = args
             member this.ret = ret
             member this.body = body
-            /// `override` 修飾子の有無。`impl A as B` 内のメソッドでのみ意味があり、
+            /// `override` 修飾子の有無。`struct T: NativeClass` + `impl T` ブロックでのみ意味があり、
             /// 他の文脈では Resolve フェーズでエラー扱いされる。
             member this.isOverride = isOverride
             /// `async` 修飾子の有無。本体内で `await` を使用できる。戻り値注釈は
@@ -587,13 +588,12 @@ module Ast =
             interface HasSpan with
                 member this.span = span
 
-        /// `impl TypeName as DotNetClass { methods }` — .NET クラスを継承する形式。
-        /// `asTypeName` が `Some` のとき `forTypeName` と `byFieldName` は常に `None`（パーサーが保証）。
-        type Impl(typeName: string, typeParams: string list, asTypeName: string option, forTypeName: string option, byFieldName: string option, methods: Fn list, span: Span) =
+        /// `impl TypeName [T...] [for Role] [by field] { methods }` — メソッド実装ブロック。
+        /// native base は `struct T: NativeClass` 宣言側で指定する。
+        type Impl(typeName: string, typeParams: string list, forTypeName: string option, byFieldName: string option, methods: Fn list, span: Span) =
             member this.typeName = typeName
             /// 型パラメータ名のリスト（例: `impl Opt T` では `["T"]`）。非ジェネリックの場合は空リスト。
             member this.typeParams = typeParams
-            member this.asTypeName = asTypeName
             member this.forTypeName = forTypeName
             member this.byFieldName = byFieldName
             member this.methods = methods

@@ -8,6 +8,7 @@ module Resolve =
     type ResolvedDataDecl =
         { typeSid: SymbolId
           typeParams: string list
+          nativeBaseType: System.Type option
           decl: Ast.Decl.Data }
 
 
@@ -250,21 +251,29 @@ module Resolve =
                     unionQualifiedBySimple.[unionDecl.name] <- lst
 
         // data / enum / role 型名を先に登録し、同一モジュール内で相互参照可能にする。
+        // パス 0: import 宣言を先行処理し、.NET 型をスコープへ登録する。
+        // これにより、パス 1b や外部バリアントパスで `struct T: DotNetClass` の X が解決できる。
         for decl in moduleAst.decls do
             match decl with
-            | :? Ast.Decl.Data as dataDecl when dataDecl.baseUnionName.IsNone ->
-                match moduleScope.ResolveType(dataDecl.name) with
-                | Some _ ->
-                    diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" dataDecl.name, dataDecl.span))
-                | None ->
-                    let typeSid = symbolTable.NextId()
-                    symbolTable.Add(typeSid, { name = dataDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
-                    moduleScope.DeclareType(dataDecl.name, TypeId.Name typeSid)
-                    dataDecls.Add({ typeSid = typeSid; typeParams = dataDecl.typeParams; decl = dataDecl })
-            // `struct V: Union` / `object V: Union` 形式の外部バリアントは第一パスでは登録しない。
-            // union ルートの登録後に処理する必要があるため、後続の専用パスで扱う。
-            | :? Ast.Decl.Data -> ()
-            | :? Ast.Decl.Object -> ()
+            | :? Ast.Decl.Import as importDecl ->
+                let importDiagnostics =
+                    resolveImport
+                        symbolTable
+                        moduleScope
+                        sourceModuleNames
+                        sourceTypeFullNames
+                        dependencyModuleNames
+                        dependencyTypeFullNames
+                        importedModules
+                        importedTypeAliases
+                        importedAtlaNominalTypeSids
+                        importDecl
+                diagnostics.AddRange(importDiagnostics)
+            | _ -> ()
+
+        // パス 1a: union と role を先に登録する（data より先に union を確定させるため）。
+        for decl in moduleAst.decls do
+            match decl with
             | :? Ast.Decl.Union as unionDecl ->
                 registerUnion "" None unionDecl
             | :? Ast.Decl.Role as roleDecl ->
@@ -279,7 +288,38 @@ module Resolve =
                     roleDecls.Add({ typeSid = typeSid; decl = roleDecl })
             | _ -> ()
 
+        // パス 1b: data 型を登録する。
+        // - `struct T` (baseName なし) → 常にデータ型として登録。
+        // - `struct T: X` で X が既知 union → スキップ（外部バリアントパスで処理）。
+        // - `struct T: X` で X が既知 union でない → データ型として仮登録（外部バリアントパスで native base を確定）。
+        let isKnownUnionName (name: string) =
+            unionRootsByName.ContainsKey(name)
+            || (match unionQualifiedBySimple.TryGetValue(name) with
+                | true, lst -> lst.Count > 0
+                | false, _ -> false)
+
+        for decl in moduleAst.decls do
+            match decl with
+            | :? Ast.Decl.Data as dataDecl ->
+                let isUnionVariant =
+                    match dataDecl.baseName with
+                    | Some baseName -> isKnownUnionName baseName
+                    | None -> false
+                if not isUnionVariant then
+                    match moduleScope.ResolveType(dataDecl.name) with
+                    | Some _ ->
+                        diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' is already defined" dataDecl.name, dataDecl.span))
+                    | None ->
+                        let typeSid = symbolTable.NextId()
+                        symbolTable.Add(typeSid, { name = dataDecl.name; typ = TypeId.Name typeSid; kind = SymbolKind.Local() })
+                        moduleScope.DeclareType(dataDecl.name, TypeId.Name typeSid)
+                        dataDecls.Add({ typeSid = typeSid; typeParams = dataDecl.typeParams; nativeBaseType = None; decl = dataDecl })
+            | :? Ast.Decl.Object -> ()
+            | _ -> ()
+
         // 外部バリアントパス: union 本体外で宣言された `struct V: Union` / `object V: Union` を処理する。
+        // `struct V: X` の X が union の場合 → union バリアントとして登録。
+        // `struct V: X` の X が .NET クラスの場合 → nativeBaseType として dataDecls に記録する。
         // - 対象 union が存在し、かつ extendable であることを検証する（sealed への外部追加はエラー）。
         // - バリアント型を修飾名 `Union'V` で登録し、unionExternalVariants へ蓄積する。
         let registerExternalVariant (unionRef: string) (variantName: string) (span: Atla.Core.Data.Span) (variantDecl: Ast.Decl) =
@@ -316,9 +356,55 @@ module Resolve =
         for decl in moduleAst.decls do
             match decl with
             | :? Ast.Decl.Data as structVariant ->
-                match structVariant.baseUnionName with
-                | Some unionName -> registerExternalVariant unionName structVariant.name structVariant.span decl
+                match structVariant.baseName with
                 | None -> ()
+                | Some baseName ->
+                    if isKnownUnionName baseName then
+                        // union バリアント → 既存ロジック
+                        registerExternalVariant baseName structVariant.name structVariant.span decl
+                    else
+                        // .NET クラス継承の可能性をチェック
+                        let isAlsoUnion = isKnownUnionName baseName
+                        let nativeTypeResolutionOpt =
+                            match moduleScope.ResolveType(baseName) with
+                            | Some (TypeId.Name bSid) ->
+                                match symbolTable.Get(bSid) with
+                                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
+                                    if isAlsoUnion then
+                                        diagnostics.Add(Diagnostic.Error(sprintf "struct '%s': base type '%s' is ambiguous (matches both a union and a .NET type)" structVariant.name baseName, structVariant.span))
+                                        None
+                                    elif sysType.IsInterface then
+                                        diagnostics.Add(Diagnostic.Error(sprintf "struct '%s': cannot inherit from interface type '%s'" structVariant.name sysType.FullName, structVariant.span))
+                                        None
+                                    elif sysType.IsSealed then
+                                        diagnostics.Add(Diagnostic.Error(sprintf "struct '%s': cannot inherit from sealed class '%s'" structVariant.name sysType.FullName, structVariant.span))
+                                        None
+                                    elif not sysType.IsClass then
+                                        diagnostics.Add(Diagnostic.Error(sprintf "struct '%s': '%s' is not a class" structVariant.name baseName, structVariant.span))
+                                        None
+                                    else
+                                        Some sysType
+                                | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef _) } ->
+                                    // sysType が null（.NET 型解決失敗）のケース。
+                                    diagnostics.Add(Diagnostic.Error(sprintf "struct '%s': the .NET type '%s' could not be resolved. Ensure the dependency is restored." structVariant.name baseName, structVariant.span))
+                                    None
+                                | _ ->
+                                    diagnostics.Add(Diagnostic.Error(sprintf "struct '%s': base type '%s' is not an imported .NET class" structVariant.name baseName, structVariant.span))
+                                    None
+                            | None ->
+                                diagnostics.Add(Diagnostic.Error(sprintf "struct '%s': undefined base type '%s'" structVariant.name baseName, structVariant.span))
+                                None
+                            | _ ->
+                                diagnostics.Add(Diagnostic.Error(sprintf "struct '%s': base type '%s' must be an imported .NET class" structVariant.name baseName, structVariant.span))
+                                None
+                        // nativeBaseType を対応する dataDecls エントリへ記録する。
+                        match nativeTypeResolutionOpt with
+                        | Some sysType ->
+                            let idx = dataDecls |> Seq.tryFindIndex (fun dd -> dd.decl.name = structVariant.name)
+                            match idx with
+                            | Some i -> dataDecls.[i] <- { dataDecls.[i] with nativeBaseType = Some sysType }
+                            | None -> ()
+                        | None -> ()
             | :? Ast.Decl.Object as objVariant ->
                 registerExternalVariant objVariant.baseUnionName objVariant.name objVariant.span decl
             | _ -> ()
@@ -339,20 +425,9 @@ module Resolve =
 
         for decl in moduleAst.decls do
             match decl with
-            | :? Ast.Decl.Import as importDecl ->
-                let importDiagnostics =
-                    resolveImport
-                        symbolTable
-                        moduleScope
-                        sourceModuleNames
-                        sourceTypeFullNames
-                        dependencyModuleNames
-                        dependencyTypeFullNames
-                        importedModules
-                        importedTypeAliases
-                        importedAtlaNominalTypeSids
-                        importDecl
-                diagnostics.AddRange(importDiagnostics)
+            | :? Ast.Decl.Import ->
+                // import 宣言はパス 0 で処理済みのためここでは何もしない。
+                ()
             | :? Ast.Decl.Data ->
                 ()
             | :? Ast.Decl.Union ->
@@ -378,42 +453,16 @@ module Resolve =
                     if not isNominalType then
                         diagnostics.Add(Diagnostic.Error(sprintf "impl target '%s' must be a data or enum type in this module" implTargetTypeName, implDecl.span))
                     else
-                        // `impl A as DotNetClass` の `as` 句を解決し .NET 基底型を返す。
-                        // `impl B for A` の `for` 句は「A が B のサブタイプ」を意味するため、
-                        // `B` を基底型として解決して保持する。
+                        // `impl T`（for なし）の場合、対応する struct 宣言の nativeBaseType を取得する。
                         let resolvedBaseTypeOpt =
-                            match implDecl.asTypeName, implDecl.forTypeName with
-                            | Some asTypeName, _ ->
-                                // `impl A as B` 形式: B は import 済みの .NET クラスでなければならない。
-                                match moduleScope.ResolveType(asTypeName) with
-                                | Some (TypeId.Name asSid) ->
-                                    match symbolTable.Get(asSid) with
-                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef sysType) } when not (obj.ReferenceEquals(sysType, null)) ->
-                                        if sysType.IsInterface then
-                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': cannot inherit from interface type '%s'" implDecl.typeName asTypeName sysType.FullName, implDecl.span))
-                                            None
-                                        elif sysType.IsSealed then
-                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': cannot inherit from sealed class '%s'" implDecl.typeName asTypeName sysType.FullName, implDecl.span))
-                                            None
-                                        elif not sysType.IsClass then
-                                            diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': type '%s' is not a class" implDecl.typeName asTypeName sysType.FullName, implDecl.span))
-                                            None
-                                        else
-                                            Some (TypeId.Native sysType)
-                                    | Some { kind = SymbolKind.External(ExternalBinding.SystemTypeRef _) } ->
-                                        // sysType が null（解決失敗）のケース。
-                                        diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': the .NET type could not be resolved. Ensure it is imported and the dependency is restored." implDecl.typeName asTypeName, implDecl.span))
-                                        None
-                                    | _ ->
-                                        diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': '%s' is not an imported .NET type" implDecl.typeName asTypeName asTypeName, implDecl.span))
-                                        None
-                                | Some _ ->
-                                    diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': '%s' must be an imported .NET type" implDecl.typeName asTypeName asTypeName, implDecl.span))
-                                    None
-                                | None ->
-                                    diagnostics.Add(Diagnostic.Error(sprintf "impl '%s' as '%s': type '%s' is not defined. Use 'import' to import it." implDecl.typeName asTypeName asTypeName, implDecl.span))
-                                    None
-                            | None, Some _ ->
+                            match implDecl.forTypeName with
+                            | None ->
+                                // forTypeName なし → struct T: NativeClass の nativeBaseType を使用する。
+                                dataDecls
+                                |> Seq.tryFind (fun dd -> dd.typeSid.id = typeSid.id)
+                                |> Option.bind (fun dd -> dd.nativeBaseType)
+                                |> Option.map TypeId.Native
+                            | Some _ ->
                                 // `impl B for A` 形式: A は Atla の data 型、B は imported .NET インターフェイスのみ許可する。
                                 match moduleScope.ResolveType(implDecl.typeName) with
                                 | Some (TypeId.Name baseTypeSid) ->
@@ -444,9 +493,8 @@ module Resolve =
                                 | None ->
                                     diagnostics.Add(Diagnostic.Error(sprintf "Undefined impl base type '%s'" implDecl.typeName, implDecl.span))
                                     None
-                            | None, None -> None
 
-                        if implDecl.byFieldName.IsSome && implDecl.forTypeName.IsNone && implDecl.asTypeName.IsNone then
+                        if implDecl.byFieldName.IsSome && implDecl.forTypeName.IsNone then
                             diagnostics.Add(Diagnostic.Error("'impl ... by ...' requires an explicit 'for' base type", implDecl.span))
 
                         let byFieldNameOpt =
@@ -488,17 +536,18 @@ module Resolve =
                             diagnostics.Add(Diagnostic.Error(sprintf "Duplicate method '%s' in impl '%s'" methodName implDecl.typeName, implDecl.span))
                         | None -> ()
 
-                        // `override` 修飾子は `impl A as B` 形式（asTypeName が解決済み）でのみ許可する。
-                        // - `impl A` / `impl B for A` 内の override はエラー。
-                        // - `impl A as B` でも as の解決に失敗（resolvedBaseTypeOpt = None）した場合はエラー（基底クラスが無いため）。
-                        match implDecl.asTypeName, resolvedBaseTypeOpt with
-                        | Some _, Some (TypeId.Native _) -> ()
-                        | _ ->
+                        // `override` 修飾子は native base クラス（struct T: NativeClass）を持つ impl T ブロックでのみ許可する。
+                        // - `impl T`（native base なし）/ `impl T for Role` 内の override はエラー。
+                        // - struct T: NativeClass の解決に失敗した場合もエラー（基底クラスが無いため）。
+                        let hasNativeBase =
+                            implDecl.forTypeName.IsNone
+                            && (match resolvedBaseTypeOpt with Some (TypeId.Native _) -> true | _ -> false)
+                        if not hasNativeBase then
                             for methodDecl in implDecl.methods do
                                 if methodDecl.isOverride then
                                     diagnostics.Add(
                                         Diagnostic.Error(
-                                            sprintf "'override' keyword is only allowed in 'impl ... as ...' blocks; method '%s' in impl '%s'"
+                                            sprintf "'override' keyword is only allowed in impl blocks with a native base class; method '%s' in impl '%s'"
                                                 methodDecl.name implDecl.typeName,
                                             methodDecl.span))
 
@@ -529,13 +578,11 @@ module Resolve =
                                     && existingBaseTypeOpt = resolvedBaseTypeOpt)
 
                         if hasExistingImpl then
-                            match implDecl.asTypeName, implDecl.forTypeName with
-                            | Some asName, _ ->
-                                diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block for .NET base type '%s'" implDecl.typeName asName, implDecl.span))
-                            | _, Some roleName ->
+                            match implDecl.forTypeName with
+                            | Some roleName ->
                                 let targetTypeName = implDecl.forTypeName |> Option.defaultValue implDecl.typeName
                                 diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has an impl block for role '%s'" targetTypeName roleName, implDecl.span))
-                            | None, None ->
+                            | None ->
                                 diagnostics.Add(Diagnostic.Error(sprintf "Type '%s' already has a default impl block" implDecl.typeName, implDecl.span))
                         elif hasResolvableRoleKey then
                             implDecls.Add(targetTypeSid, resolvedBaseTypeOpt, byFieldNameOpt, implDecl)
